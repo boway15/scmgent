@@ -1,0 +1,2 @@
+// nest build 勿编译 hono-app（运行时动态 load index.js）；在 tsconfig.build.json 的 exclude 中加入：
+"server/hono-app"

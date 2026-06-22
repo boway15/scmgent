@@ -1,0 +1,18 @@
+# Cloudflare Tunnel 配置模板（专用 Win11 宿主机）
+#
+# 1. 复制到：%USERPROFILE%\.cloudflared\config.yml
+# 2. 将 <USERNAME>、<TUNNEL-ID> 替换为实际值
+# 3. credentials 文件由 `cloudflared tunnel create scm-al6s` 生成
+#
+# 验证：cloudflared tunnel run scm-al6s
+# 安装服务：cloudflared service install && cloudflared service start
+
+tunnel: scm-al6s
+credentials-file: C:\Users\<USERNAME>\.cloudflared\<TUNNEL-ID>.json
+
+ingress:
+  # 公网子域名 → 本机 Docker web 端口（与 docker-compose ports 8081:8080 一致）
+  - hostname: scm.al6s.cn
+    service: http://localhost:8081
+  # 兜底：未匹配域名返回 404
+  - service: http_status:404

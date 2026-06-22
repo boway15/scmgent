@@ -1,0 +1,27 @@
+# 公网专用机 override 示例（Win11 + Cloudflare Tunnel）
+#
+# 用法：
+#   copy docker-compose.public.example.yml docker-compose.public.yml
+#   编辑 docker-compose.public.yml（域名、密钥、飞书）
+#   docker compose -f docker-compose.yml -f docker-compose.public.yml up -d --build
+#
+# docker-compose.public.yml 已加入 .gitignore，避免密钥进仓库。
+
+services:
+  web:
+    environment:
+      # 与 Cloudflare Tunnel 子域名一致，无末尾斜杠
+      APP_BASE_URL: https://scm.al6s.cn
+
+      # 演示内测可保持 true；对外务必 false 并配置飞书 + Cloudflare Access
+      AUTH_DEV_MODE: "true"
+
+      # 生产必改（示例占位，请换成随机串）
+      JWT_SECRET: change-me-to-random-32-chars-minimum
+      CRON_SECRET: change-me-cron-secret-production
+
+      # 启用飞书登录时取消注释并填写
+      # AUTH_DEV_MODE: "false"
+      # FEISHU_APP_ID: cli_xxxxxxxx
+      # FEISHU_APP_SECRET: xxxxxxxx
+      # FEISHU_OAUTH_REDIRECT_URI: https://scm.al6s.cn/api/auth/feishu/callback

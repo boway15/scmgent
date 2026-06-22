@@ -1,0 +1,42 @@
+.shadow-card {
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+}
+
+.font-numeric {
+  font-family: 'Inter', 'Roboto Mono', ui-monospace, monospace;
+  font-variant-numeric: tabular-nums;
+}
+
+.btn-ai-fix {
+  @apply inline-flex items-center justify-center rounded-md px-4 py-1.5 text-sm font-medium text-white transition-opacity hover:opacity-90;
+  background: linear-gradient(135deg, #a855f7, #ff5000);
+}
+
+.ai-progress-bar {
+  background: linear-gradient(135deg, #a855f7, #ff5000, #a855f7);
+  background-size: 200% 100%;
+  animation: ai-shimmer 1.5s ease-in-out infinite;
+}
+
+.highlight-pulse {
+  animation: highlight-flash 0.6s ease-out;
+}
+
+@keyframes ai-shimmer {
+  0% {
+    background-position: 100% 0;
+  }
+  100% {
+    background-position: -100% 0;
+  }
+}
+
+@keyframes highlight-flash {
+  0%,
+  100% {
+    background-color: transparent;
+  }
+  50% {
+    background-color: #ffedd5;
+  }
+}

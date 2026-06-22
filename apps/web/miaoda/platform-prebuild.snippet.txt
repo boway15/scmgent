@@ -1,0 +1,20 @@
+# 妙搭平台 package.json · prebuild 片段（可选）
+
+若同步脚本未能自动写入，在**妙搭平台根** `package.json` 的 `scripts` 中加入：
+
+```json
+{
+  "scripts": {
+    "prebuild": "node source_package/scripts/miaoda-sync-to-server.js",
+    "build": "..."
+  }
+}
+```
+
+若已有 `prebuild`，改为：
+
+```json
+"prebuild": "node source_package/scripts/miaoda-sync-to-server.js && 原有prebuild命令"
+```
+
+效果：每次 `npm run build` 前自动把 `source_package` 同步到 `server/hono-app`，无需再手工复制。

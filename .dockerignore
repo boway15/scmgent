@@ -1,0 +1,13 @@
+node_modules
+**/node_modules
+.git
+.env
+.env.local
+dist
+**/*.zip
+pgdata
+.turbo
+.cursor
+docs/archive
+apps/web/scm-agent-miaoda.zip
+**/.DS_Store

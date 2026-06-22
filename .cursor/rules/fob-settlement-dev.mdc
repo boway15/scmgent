@@ -1,0 +1,103 @@
+---
+description: FOB 分账 v2 本地实现约定（术语、体积导入、分摊基数、导出、已知坑）
+globs:
+  - apps/web/server/lib/fob-*.ts
+  - apps/web/server/routes/logistics.ts
+  - apps/web/src/pages/FobSettlement*.tsx
+  - apps/web/src/components/Fob*.tsx
+  - apps/web/server/lib/fob-allocation-base-meta.ts
+---
+
+# FOB 分账 v2 · 开发记忆（2026-06）
+
+## 业务锁定（见 `docs/prd/fob-settlement-split-v2.md`）
+
+- 一批次 = 一个 `settlementType`（trucking | freight）+ 一个 `serviceProviderId`
+- 体积各批次独立；拖车/货代账单互斥导入
+- 付款三态：paid / unpaid / not_required；选「无需支付」时备注必填（可先选状态，备注失焦后保存）
+- 导出：两级行（柜汇总 + 费用明细）；无业务编号列（业务编号在分摊基数/平账展示）
+
+## 术语（FOB 模块内统一）
+
+| 旧 | 新 |
+|----|-----|
+| 商家 / 公司 / 主体（UI） | **工厂/主体** |
+| 本公司金额 | **工厂/主体金额** |
+| 按公司导出 | **按工厂/主体导出** |
+| 商家汇总 Tab | **工厂/主体汇总** |
+
+导出 ZIP 文件名用 `按工厂主体导出`（无 `/`）。Excel 列：`工厂/主体名称`、`工厂/主体金额`。
+
+## 体积导入 · 三种格式（`parseVolumeSheetRows`）
+
+| 格式 | 识别 | 关键列 |
+|------|------|--------|
+| **调拨 SKU 明细** | `临柜号`+`调拨单号`+`订舱编号`+`SKU编码`+`是否退税` | 柜=临柜号；主体=订舱编号（无则调拨单号）；类别=是否退税 |
+| **ED/汇总模板** | `工厂类别`+主体+体积+柜号 | 主体=法人主体/主体/工厂/主体；类别=工厂类别 |
+| **简易 CSV** | 首行表头映射 | 同汇总模板 |
+
+**柜参与分账**：含 FOB 行，或含退税/非退税等有效体积（非纯「非FOB」柜）。`非FOB` 不能被 `/FOB/i` 误判（已修）。
+
+**SKU**：存 `fob_merchant_shipments.sku_code`；分摊基数按柜+主体聚合 `skuCodes`（逗号分隔）。
+
+**备注约定**（供 `fob-allocation-base-meta` 解析）：`业务编号:…；类别:…；调拨:…；目的仓:…`
+
+## 分摊基数展示列（`ImportedVolumeStatsList`）
+
+柜号 → 业务编号 → 工厂/主体 → 工厂类别 → **SKU** → 体积 → 票数 → 占比
+
+- **业务编号**：账单导入（拖车 internalNo / 货代 orderNo），按柜聚合逗号分隔
+- **工厂类别**：体积 remark `类别:…`，按柜+主体聚合
+- **SKU**：体积 `skuCode`，按柜+主体聚合
+
+数据来自 `enrichContainerStats()`（`fob-allocation-base-meta.ts`），勿在 route 里重复拼。
+
+## 导出
+
+- **分摊总账**：单 xlsx 宽表（`buildTotalBillWideExportAoa`）= 各工厂/主体宽表行合集
+- **按工厂/主体导出（ZIP）**：每主体一个 xlsx，**宽表** = 账单导入列（拖车/货代 meta + 费用列）+ 追加列：
+  `合计金额 | 承担金额 | 总体积 | 承担体积 | 体积占比 | 承担工厂/主体 | 收款公司名称`
+  - 合计金额 = 货柜账单总额（非主体承担）
+  - 承担金额 = 该主体在该柜分摊合计
+  - 收款公司名称 = 批次服务商名称
+
+## 平账矩阵（`FobContainerMatrixPanel`）
+
+- 无拖车/货代/全局切换；`settlementType` 只读
+- 柜号下方副标题：`N 工厂/主体 · 业务编号`（不再显示「x 项费用」）
+- 悬停 tooltip 含：柜号、业务编号、工厂/主体数
+
+## 创建批次 UI
+
+- 分账类型、服务商均为下拉；类型默认「请选择类型」，未选时禁用服务商
+- 单行布局：名称 | 账期 | 类型 | 服务商 | 创建
+
+## 已知坑
+
+1. **`logistics.ts` GET detail**：局部变量勿命名 `fobMerchantShipments`（与 Drizzle 表 import 冲突 → 500 + 前端永久「加载中」）。用 `fobShipmentRows`。
+2. **`loadReconcileExportData`**：`getBatchWithProvider()` 返回扁平 `{ ...batch, serviceProvider }`，不是 `{ batch, provider }`。
+3. **临柜号 vs 正式柜号**：调拨导出用 H 开头临柜号，账单常为 WHSU…；不匹配则 `containerMatch` 失败，需业务确认映射。
+4. **汇总模板无 SKU 列**：分摊基数 SKU 列为空；调拨明细或 ED 带 Sku 才有值。
+5. **Docker 改代码后**：`pnpm docker:build && pnpm docker:start`，浏览器 Ctrl+F5。
+
+## 关键文件
+
+| 区域 | 路径 |
+|------|------|
+| 体积解析 | `apps/web/server/lib/fob-bill-parsers.ts` |
+| 基数 enrich | `apps/web/server/lib/fob-allocation-base-meta.ts` |
+| 导出 | `apps/web/server/lib/fob-reconcile-export.ts` |
+| API | `apps/web/server/routes/logistics.ts` |
+| 详情页 | `apps/web/src/pages/FobSettlementDetailPage.tsx` |
+| 平账矩阵 | `apps/web/src/components/FobContainerMatrixPanel.tsx` |
+| 列表/创建 | `apps/web/src/pages/FobSettlementListPage.tsx` |
+| 样例 | `docs/samples/import-fob/`（含 `体积信息_202606181444.xlsx`） |
+
+## 测试
+
+```bash
+cd apps/web
+npx tsx --test server/lib/fob-bill-parsers.test.ts
+npx tsx --test server/lib/fob-allocation-base-meta.test.ts
+npx tsx --test server/lib/fob-reconcile-export.test.ts
+```

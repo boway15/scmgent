@@ -1,0 +1,110 @@
+---
+description: 飞书妙搭对齐技术栈与编码规范（含 NestJS 外壳、server/hono-app、ScmHonoModule、部署避坑）
+alwaysApply: true
+---
+
+# 妙搭对齐技术栈
+
+## 部署避坑（按优先级）
+
+导入后「服务不可用 / API 失败」**多数是平台编译与挂载问题**，不是业务逻辑坏了：
+
+| 优先级 | 现象 | 根因 | 处理 |
+|:------:|------|------|------|
+| P0 | `/api/auth/config` 失败，响应为 **HTML** | ViewModule 先于 Hono；或未注册 ScmHonoModule | `app.module.ts`：ScmHonoModule **在 ViewModule 之前** |
+| P0 | 构建无 `SCM Hono mounted` | 业务在 `source_package/`，未参与 nest build | 迁入 **`server/hono-app/`** |
+| P0 | `Hono entry not found` | hono-app 不在 dist | 确认 `server/hono-app/index.ts` 被编译 |
+| P0 | `import.meta is not defined` | ESM 语法 + CJS 产物 | hono-app 删 `import.meta.url`，用 `__dirname` |
+| P0 | `@scm/db` 解析失败 | 根 `packages/db/` 缺失 | 复制到根目录，`npm install` |
+| P0 | API URL 无 `/app/app_xxx` | 前端子路径 | `apiUrl()` + vite `base` + Router basename |
+| P1 | 「服务不可用」文案 | config 请求非 JSON | 修上列 P0 |
+| P1 | 侧边栏空 | 未 seed | `miaoda-init-all.sql` |
+| P2 | 地址栏 `/api/*` → CSRF 403 | 平台网关 | 应用内 F12 |
+| P2 | `SERVE_STATIC=true` | 反模式 | 妙搭 **`false`** |
+| P2 | `AUTH_DEV_MOD` | 拼写错 | `AUTH_DEV_MODE` |
+
+**响应诊断**：HTML → View fallback；NestJS `Cannot GET` → hono 加载失败；`{ "message": "Not Found" }` → Hono 已挂载。
+
+**已建项目不能重新导入 ZIP** → 在线改 `server/hono-app/` + `client/` + `app.module.ts`，或新建应用导入。
+
+## 固定选型
+
+- 前端：React 18 + TypeScript + Vite + Tailwind CSS + shadcn/ui
+- 后端：Node.js + Hono + TypeScript（妙搭：`server/hono-app/`）
+- 数据库：PostgreSQL + Drizzle ORM（`packages/db`）
+- 包管理：pnpm（本地）/ npm（妙搭 ZIP）
+- AI：Dify MVP 不对接
+
+## 妙搭运行形态（必读）
+
+| 本地开发 | 妙搭生产 |
+|----------|----------|
+| `apps/web/server/index.ts`（ESM，tsx） | **`server/hono-app/index.ts`**（CJS，nest build） |
+| `apps/web/src/` | `client/` |
+| 无 NestJS | `server/main.ts`（**禁止修改**） |
+| — | `server/app.module.ts`（注册 ScmHonoModule，**在 ViewModule 前**） |
+| — | `server/modules/scm-hono/scm-hono.module.ts` |
+
+**禁止**：修改 `server/main.ts`、`server/modules/view/*`。
+
+**必须**：Hono 在 `server/hono-app/`（非 `source_package/server/`）；ScmHonoModule 挂载 `export default app`。
+
+## 子路径 CLIENT_BASE_PATH
+
+| 层 | 实现 |
+|----|------|
+| Vite | `vite.config.ts` → `base` |
+| React Router | `App.tsx` → `basename` |
+| 前端 API | `base-path.ts` → `apiUrl()` |
+| Hono | `server/hono-app/index.ts` → `basePath()` |
+
+## 环境变量（妙搭）
+
+| 变量 | 妙搭建议 |
+|------|----------|
+| `SERVE_STATIC` | **`false`** |
+| `AUTH_DEV_MODE` | 内测 `true` / 正式 `false` |
+| `DATABASE_URL` | 平台注入 |
+| `APP_BASE_URL` | 含 `/app/app_xxx`，无末尾 `/` |
+| `CLIENT_BASE_PATH` | 平台自带，勿改 |
+
+改环境变量后 **保存 → 重新发布**。
+
+## 数据库
+
+- Schema：`packages/db/schema/`
+- 妙搭初始化：`drizzle/miaoda-init-all.sql`（SQL 控制台）
+- 本地 Docker 自动 migrate + seed；**妙搭不会**
+
+## Hono 双轨约定
+
+| | 本地 `apps/web/server/` | 妙搭 `server/hono-app/` |
+|--|-------------------------|-------------------------|
+| 模块 | ESM（`import.meta`、`.js` 后缀） | CJS（`__dirname`、无 `.js` 后缀） |
+| 启动 | `tsx server/index.ts` 可 `serve()` | 仅 `export default app`，由 ScmHonoModule 挂载 |
+| health | `/api/health` 含 db 探测 | 同左 |
+
+## 前端鉴权
+
+- `RequireAuth`：config 失败 →「服务不可用」（非永久加载中）
+- 勿在地址栏直接访问 `/api/*`
+
+## 导入与打包
+
+- `pnpm zip:miaoda` → `apps/web/scm-agent-miaoda.zip`
+- 自动打入：`server/hono-app/`（CJS）、`server/modules/scm-hono/`、`packages/db/`、`drizzle/`
+- 脚本：`apps/web/scripts/zip-for-miaoda.js`、`miaoda-cjs-transform.js`
+- 现场文档：`apps/web/miaoda/MIAODA-SETUP.md`、`hono-app-checklist.md`
+- 发布 SOP：`docs/miaoda-new-app-release.md`
+
+## 代码规范
+
+- 本地 API 路由：`apps/web/server/routes/`（同步到妙搭 `server/hono-app/routes/`）
+- 定时任务：`server/tasks/*.ts`
+- 函数组件 + Hooks；snake_case 字段
+
+## 智能体开发
+
+- PRD：`.cursor/skills/miaoda-prd/`
+- 妙搭部署：`.cursor/skills/feishu-miaoda/SKILL.md`
+- 导入清单：`docs/miaoda-import-checklist.md`

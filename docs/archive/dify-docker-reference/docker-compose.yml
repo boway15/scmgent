@@ -1,0 +1,108 @@
+# Simplified Dify stack for SCM Agent local development
+# Full docs: https://docs.dify.ai/getting-started/install-self-hosted
+
+x-shared-env: &shared-env
+  CONSOLE_API_URL: http://localhost:8080/console/api
+  CONSOLE_WEB_URL: http://localhost:8080
+  SERVICE_API_URL: http://localhost:8080/api
+  APP_API_URL: http://localhost:8080/api
+  APP_WEB_URL: http://localhost:8080
+  SECRET_KEY: ${DIFY_SECRET_KEY:-scm-dify-secret-change-me}
+  DB_USERNAME: postgres
+  DB_PASSWORD: ${DIFY_DB_PASSWORD:-dify_dev_pass}
+  DB_HOST: dify-db
+  DB_PORT: 5432
+  DB_DATABASE: dify
+  REDIS_HOST: dify-redis
+  REDIS_PORT: 6379
+  REDIS_PASSWORD: ${DIFY_REDIS_PASSWORD:-dify_redis_pass}
+  REDIS_DB: 0
+  CELERY_BROKER_URL: redis://:${DIFY_REDIS_PASSWORD:-dify_redis_pass}@dify-redis:6379/1
+  VECTOR_STORE: weaviate
+  WEAVIATE_ENDPOINT: http://dify-weaviate:8080
+  WEAVIATE_API_KEY: WVF5YThaHlkYwhGUSmCRgsX3tD5ngdN8pkih
+  STORAGE_TYPE: local
+  STORAGE_LOCAL_PATH: /app/api/storage
+
+services:
+  dify-api:
+    image: langgenius/dify-api:0.15.3
+    restart: unless-stopped
+    environment:
+      <<: *shared-env
+      MODE: api
+    depends_on:
+      dify-db:
+        condition: service_healthy
+      dify-redis:
+        condition: service_started
+    volumes:
+      - dify_storage:/app/api/storage
+
+  dify-worker:
+    image: langgenius/dify-api:0.15.3
+    restart: unless-stopped
+    environment:
+      <<: *shared-env
+      MODE: worker
+    depends_on:
+      - dify-api
+    volumes:
+      - dify_storage:/app/api/storage
+
+  dify-web:
+    image: langgenius/dify-web:0.15.3
+    restart: unless-stopped
+    environment:
+      CONSOLE_API_URL: http://localhost:8080/console/api
+      APP_API_URL: http://localhost:8080/api
+
+  dify-db:
+    image: postgres:15-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${DIFY_DB_PASSWORD:-dify_dev_pass}
+      POSTGRES_DB: dify
+    volumes:
+      - dify_pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d dify"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  dify-redis:
+    image: redis:6-alpine
+    restart: unless-stopped
+    command: redis-server --requirepass ${DIFY_REDIS_PASSWORD:-dify_redis_pass}
+    volumes:
+      - dify_redis:/data
+
+  dify-weaviate:
+    image: semitechnologies/weaviate:1.19.0
+    restart: unless-stopped
+    environment:
+      AUTHENTICATION_ANONYMOUS_ACCESS_ENABLED: "true"
+      PERSISTENCE_DATA_PATH: /var/lib/weaviate
+      DEFAULT_VECTORIZER_MODULE: none
+      CLUSTER_HOSTNAME: node1
+    volumes:
+      - dify_weaviate:/var/lib/weaviate
+
+  dify-nginx:
+    image: nginx:1.25-alpine
+    restart: unless-stopped
+    ports:
+      - "8080:80"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - dify-api
+      - dify-web
+
+volumes:
+  dify_pg:
+  dify_redis:
+  dify_weaviate:
+  dify_storage:

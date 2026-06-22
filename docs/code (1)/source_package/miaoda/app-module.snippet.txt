@@ -1,0 +1,21 @@
+// 导入后必做：在 server/app.module.ts 注册 ScmHonoModule（勿改 server/main.ts）
+// ★ ScmHonoModule 必须在 ViewModule 之前，否则 /api/* 落入 View fallback 返回 HTML
+
+import { ScmHonoModule } from './modules/scm-hono/scm-hono.module';
+
+@Module({
+  imports: [
+    PlatformModule.forRoot(),
+    // ====== @route-section: business-modules START ======
+    ScmHonoModule,   // ★ 必须在 ViewModule 之前
+    // ====== @route-section: business-modules END ======
+    // ⚠️ @route-order: last
+    ViewModule,
+  ],
+  // ...providers 等平台原有配置保留
+})
+export class AppModule {}
+
+// 构建日志成功关键字：
+//   CLIENT_BASE_PATH=/app/app_xxx
+//   SCM Hono loaded from .../server/hono-app/index.js

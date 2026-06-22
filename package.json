@@ -1,0 +1,25 @@
+{
+  "name": "scm-agent",
+  "private": true,
+  "scripts": {
+    "dev": "pnpm --filter @scm/web dev",
+    "dev:server": "pnpm --filter @scm/web dev:server",
+    "build": "pnpm --filter @scm/web build",
+    "db:generate": "pnpm --filter @scm/db generate",
+    "db:migrate": "pnpm --filter @scm/db migrate",
+    "db:seed": "pnpm --filter @scm/db seed",
+    "db:seed:sql": "pnpm --filter @scm/db seed:sql",
+    "miaoda:init-sql": "pnpm --filter @scm/db init:sql",
+    "zip:miaoda": "pnpm db:seed:sql && pnpm miaoda:init-sql && pnpm --filter @scm/web zip:miaoda",
+    "docker:build": "docker compose build web",
+    "docker:start": "docker compose up -d",
+    "docker:up": "docker compose build web && docker compose up -d",
+    "docker:rebuild": "docker compose build --no-cache web && docker compose up -d",
+    "docker:down": "docker compose down",
+    "docker:logs": "docker compose logs -f web",
+    "samples:fob": "pnpm --filter @scm/web exec tsx server/scripts/generate-fob-samples.ts"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

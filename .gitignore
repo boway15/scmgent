@@ -1,0 +1,12 @@
+node_modules/
+dist/
+.env
+.env.local
+docker-compose.public.yml
+*.log
+.DS_Store
+pgdata/
+docker/dify/volumes/
+docker/dify/.env
+*.zip
+.turbo

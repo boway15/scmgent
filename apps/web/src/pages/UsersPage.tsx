@@ -25,7 +25,7 @@ export function UsersPage() {
       <PageHeader title="用户管理" />
       <Card>
         <CardHeader>
-          <CardTitle>飞书用户</CardTitle>
+          <CardTitle>系统用户</CardTitle>
         </CardHeader>
         <CardContent>
           <table className="w-full text-sm">
@@ -73,7 +73,7 @@ export function UsersPage() {
               {!users.length && (
                 <tr>
                   <td colSpan={6} className="p-4 text-center text-text-hint">
-                    暂无用户，飞书登录后将自动创建
+                    暂无用户，注册或飞书登录后将自动创建
                   </td>
                 </tr>
               )}

@@ -5,9 +5,7 @@ import { requireSuperAdmin } from '../middleware/auth.js';
 
 export const userRoutes = new Hono();
 
-userRoutes.use('*', requireSuperAdmin);
-
-userRoutes.get('/users', async (c) => {
+userRoutes.get('/users', requireSuperAdmin, async (c) => {
   const rows = await db
     .select({
       id: users.id,
@@ -27,7 +25,7 @@ userRoutes.get('/users', async (c) => {
   return c.json(rows);
 });
 
-userRoutes.patch('/users/:id', async (c) => {
+userRoutes.patch('/users/:id', requireSuperAdmin, async (c) => {
   const body = await c.req.json<{ roleId?: string; isActive?: boolean; name?: string }>();
   const userId = c.req.param('id');
 

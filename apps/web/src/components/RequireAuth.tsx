@@ -4,6 +4,7 @@ import { api } from '@/lib/api';
 import { canAccessPath, flattenMenuPaths } from '@/lib/menu-utils';
 import { apiUrl } from '@/lib/base-path';
 import { PlaceholderPage } from '@/pages/PlaceholderPage';
+import { PendingAccessPage } from '@/components/PendingAccessPage';
 
 export function RequireAuth() {
   const location = useLocation();
@@ -26,10 +27,10 @@ export function RequireAuth() {
     enabled: !!config && !configError,
   });
 
-  const { data: menus = [] } = useQuery({
+  const { data: menus = [], isLoading: menusLoading } = useQuery({
     queryKey: ['my-menus'],
     queryFn: api.getMyMenus,
-    enabled: !!user,
+    enabled: !!user && user.role.code !== 'pending',
   });
 
   if (configLoading) {
@@ -42,23 +43,27 @@ export function RequireAuth() {
     return (
       <PlaceholderPage
         title="服务不可用"
-        description={`无法连接 ${apiUrl('/api/auth/config')}：${detail}。请确认已运行 source_package/scripts/miaoda-sync-to-server.js、重新构建发布，且 ScmHonoModule 在 ViewModule 之前。`}
+        description={`无法连接 ${apiUrl('/api/auth/config')}：${detail}。请确认后端服务已启动且数据库迁移完成。`}
       />
     );
   }
 
-  if (userLoading) {
+  if (userLoading || (user && user.role.code !== 'pending' && menusLoading)) {
     return <p className="flex min-h-screen items-center justify-center text-text-sub">加载中...</p>;
   }
 
-  if (config.feishuEnabled && (userError || !user)) {
+  if (userError || !user) {
     return <Navigate to="/login" state={{ from: location }} replace />;
+  }
+
+  if (user.role.code === 'pending') {
+    return <PendingAccessPage />;
   }
 
   const pathname = location.pathname;
   const allowedPaths = flattenMenuPaths(menus);
 
-  if (user && !canAccessPath(pathname, allowedPaths, user.role.code)) {
+  if (!canAccessPath(pathname, allowedPaths, user.role.code)) {
     return (
       <PlaceholderPage title="403" description="您没有访问此页面的权限，请联系管理员。" />
     );

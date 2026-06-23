@@ -1,8 +1,19 @@
 import { isDifyEnabled, isReplenishmentWorkflowEnabled, isAlertWorkflowEnabled } from '../integrations/dify.js';
-import { isDevAuthMode } from '../integrations/feishu-auth.js';
+import {
+  isAuthBypassLogin,
+  isAuthRequired,
+  isEmailAuthEnabled,
+  isFeishuAuthEnabledFlag,
+  isFeishuCredentialsConfigured,
+  isFeishuLoginAvailable,
+} from '../lib/auth-policy.js';
 
 export type RuntimeConfigSummary = {
-  authDevMode: boolean;
+  authBypass: boolean;
+  authRequired: boolean;
+  emailAuthEnabled: boolean;
+  feishuAuthEnabled: boolean;
+  feishuLoginAvailable: boolean;
   rbacEnabled: boolean;
   serveStatic: boolean;
   difyEnabled: boolean;
@@ -15,22 +26,37 @@ export type RuntimeConfigSummary = {
 };
 
 export function getRuntimeConfigSummary(): RuntimeConfigSummary {
-  const authDevMode = isDevAuthMode();
+  const authBypass = isAuthBypassLogin();
+  const authRequired = isAuthRequired();
+  const emailAuthEnabled = isEmailAuthEnabled();
+  const feishuAuthEnabled = isFeishuAuthEnabledFlag();
+  const feishuLoginAvailable = isFeishuLoginAvailable();
   const rbacEnabled = process.env.ENFORCE_RBAC !== 'false';
   const serveStatic = process.env.SERVE_STATIC === 'true';
   const cronSecretConfigured = !!process.env.CRON_SECRET?.trim();
-  const feishuConfigured = !!(process.env.FEISHU_APP_ID?.trim() && process.env.FEISHU_APP_SECRET?.trim());
+  const feishuConfigured = isFeishuCredentialsConfigured();
 
   const warnings: string[] = [];
-  if (authDevMode) warnings.push('AUTH_DEV_MODE=true：当前为开发免登录模式，不适合生产');
+  if (authBypass) warnings.push('AUTH_BYPASS_LOGIN=true：当前跳过登录，仅用于紧急调试');
   if (serveStatic) warnings.push('SERVE_STATIC=true：妙搭生产建议设为 false');
   if (!cronSecretConfigured) warnings.push('CRON_SECRET 未配置：定时任务无法安全触发');
-  if (!feishuConfigured) warnings.push('飞书 OAuth 未配置：生产登录需配置 FEISHU_APP_ID/SECRET');
+  if (authRequired && !emailAuthEnabled) warnings.push('EMAIL_AUTH_ENABLED=false：邮箱登录已关闭');
+  if (feishuAuthEnabled && !feishuConfigured) {
+    warnings.push('FEISHU_AUTH_ENABLED=true 但 FEISHU_APP_ID/SECRET 未配置');
+  }
+  if (authRequired && !feishuLoginAvailable && !emailAuthEnabled) {
+    warnings.push('无可用登录方式：请启用邮箱或飞书登录');
+  }
 
-  const productionReady = !authDevMode && !serveStatic && cronSecretConfigured;
+  const productionReady =
+    authRequired && emailAuthEnabled && !authBypass && !serveStatic && cronSecretConfigured;
 
   return {
-    authDevMode,
+    authBypass,
+    authRequired,
+    emailAuthEnabled,
+    feishuAuthEnabled,
+    feishuLoginAvailable,
     rbacEnabled,
     serveStatic,
     difyEnabled: isDifyEnabled(),

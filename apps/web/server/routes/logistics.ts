@@ -1404,6 +1404,18 @@ logisticsRoutes.patch('/logistics/fob-settlements/:id', fobMenu, async (c) => {
   return c.json(batch);
 });
 
+logisticsRoutes.delete('/logistics/fob-settlements/:id', fobMenu, async (c) => {
+  const batchId = c.req.param('id');
+  const existing = await getBatchOr404(batchId);
+  if (!existing) return c.json({ message: 'Batch not found' }, 404);
+  if (existing.status === 'confirmed') {
+    return c.json({ message: '批次已确认，不可删除' }, 400);
+  }
+
+  await db.delete(fobSettlementBatches).where(eq(fobSettlementBatches.id, batchId));
+  return c.json({ ok: true });
+});
+
 logisticsRoutes.get('/logistics/fob-service-providers', fobMenu, async (c) => {
   const providerType = c.req.query('providerType');
   const activeOnly = c.req.query('activeOnly') === 'true';

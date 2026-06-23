@@ -156,7 +156,22 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const api = {
-  getAuthConfig: () => request<{ feishuEnabled: boolean }>('/api/auth/config'),
+  getAuthConfig: () =>
+    request<{
+      feishuEnabled: boolean;
+      emailAuthEnabled: boolean;
+      authBypass: boolean;
+    }>('/api/auth/config'),
+  register: (data: { email: string; password: string; name?: string }) =>
+    request<{ ok: boolean; user: User }>('/api/auth/register', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+  login: (data: { email: string; password: string }) =>
+    request<{ ok: boolean; user: User }>('/api/auth/login', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
   getFeishuLoginUrl: () => request<{ url: string }>('/api/auth/feishu/url'),
   logout: () => request<{ ok: boolean }>('/api/auth/logout', { method: 'POST' }),
   getMe: () => request<User>('/api/me'),
@@ -842,6 +857,8 @@ export const api = {
     data: { name?: string; usdToCnyRate?: number; status?: string; remark?: string },
   ) =>
     request(`/api/logistics/fob-settlements/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
+  deleteFobSettlement: (id: string) =>
+    request<{ ok: boolean }>(`/api/logistics/fob-settlements/${id}`, { method: 'DELETE' }),
   patchFobMerchantPayments: (
     id: string,
     data: {

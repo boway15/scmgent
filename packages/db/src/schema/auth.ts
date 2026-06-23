@@ -54,6 +54,7 @@ export const users = pgTable('users', {
   feishuUserId: varchar('feishu_user_id', { length: 100 }),
   name: varchar('name', { length: 100 }).notNull(),
   email: varchar('email', { length: 200 }).notNull().unique(),
+  passwordHash: varchar('password_hash', { length: 255 }),
   roleId: uuid('role_id')
     .notNull()
     .references(() => roles.id),

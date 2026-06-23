@@ -26,7 +26,7 @@ export class ScmHonoAppService implements OnModuleInit {
     const clientBasePath = process.env.CLIENT_BASE_PATH?.trim() || '(not set)';
     this.logger.log(`CLIENT_BASE_PATH=${clientBasePath}`);
     this.logger.log(
-      `AUTH_DEV_MODE=${process.env.AUTH_DEV_MODE === 'true' ? 'true' : 'false'} FEISHU_OAUTH=${process.env.FEISHU_APP_ID ? 'configured' : 'off'}`,
+      `AUTH_REQUIRE_LOGIN=${process.env.AUTH_REQUIRE_LOGIN !== 'false'} EMAIL=${process.env.EMAIL_AUTH_ENABLED !== 'false'} FEISHU=${process.env.FEISHU_AUTH_ENABLED === 'true' && !!process.env.FEISHU_APP_ID}`,
     );
 
     const isProd = process.env.NODE_ENV === 'production';

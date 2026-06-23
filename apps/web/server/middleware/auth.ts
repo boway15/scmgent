@@ -1,5 +1,5 @@
 import type { Context, Next } from 'hono';
-import { isFeishuAuthEnabled } from '../integrations/feishu-auth.js';
+import { isAuthRequired } from '../lib/auth-policy.js';
 import { getCurrentUserOptional } from '../lib/auth-context.js';
 import { isRbacEnforced } from '../lib/rbac.js';
 
@@ -15,7 +15,7 @@ export async function authMiddleware(c: Context, next: Next) {
     return next();
   }
 
-  if (!isFeishuAuthEnabled()) {
+  if (!isAuthRequired()) {
     if (isRbacEnforced()) {
       const user = await getCurrentUserOptional(c);
       if (user) c.set('user', user);

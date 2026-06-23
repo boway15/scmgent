@@ -2,8 +2,11 @@ import { eq } from 'drizzle-orm';
 import type { Context } from 'hono';
 import { getCookie } from 'hono/cookie';
 import { db, users, roles } from '@scm/db';
-import { isFeishuAuthEnabled } from '../integrations/feishu-auth.js';
+import { isAuthBypassLogin, isAuthRequired } from '../lib/auth-policy.js';
 import { COOKIE_NAME, verifySessionToken, type SessionPayload } from './session.js';
+import { hashPassword, verifyPassword } from './password.js';
+
+export const PENDING_ROLE_CODE = 'pending';
 
 export type AuthUser = {
   id: string;
@@ -18,11 +21,30 @@ const userSelect = {
   name: users.name,
   email: users.email,
   feishuUserId: users.feishuUserId,
+  passwordHash: users.passwordHash,
   roleId: users.roleId,
   roleName: roles.name,
   roleCode: roles.code,
   isActive: users.isActive,
 };
+
+function toAuthUser(row: {
+  id: string;
+  name: string;
+  email: string;
+  feishuUserId: string | null;
+  roleId: string;
+  roleName: string;
+  roleCode: string;
+}): AuthUser {
+  return {
+    id: row.id,
+    name: row.name,
+    email: row.email,
+    feishuUserId: row.feishuUserId,
+    role: { id: row.roleId, name: row.roleName, code: row.roleCode },
+  };
+}
 
 async function loadUserById(id: string): Promise<AuthUser | null> {
   const [user] = await db
@@ -33,17 +55,10 @@ async function loadUserById(id: string): Promise<AuthUser | null> {
     .limit(1);
 
   if (!user || !user.isActive) return null;
-
-  return {
-    id: user.id,
-    name: user.name,
-    email: user.email,
-    feishuUserId: user.feishuUserId,
-    role: { id: user.roleId, name: user.roleName, code: user.roleCode },
-  };
+  return toAuthUser(user);
 }
 
-/** Dev fallback when Feishu OAuth is not configured */
+/** Emergency bypass only (AUTH_BYPASS_LOGIN / legacy AUTH_DEV_MODE) */
 async function loadDevAdmin(): Promise<AuthUser> {
   const [user] = await db
     .select(userSelect)
@@ -56,13 +71,13 @@ async function loadDevAdmin(): Promise<AuthUser> {
     throw new Error('Default admin user not found. Run pnpm db:seed first.');
   }
 
-  return {
-    id: user.id,
-    name: user.name,
-    email: user.email,
-    feishuUserId: user.feishuUserId,
-    role: { id: user.roleId, name: user.roleName, code: user.roleCode },
-  };
+  return toAuthUser(user);
+}
+
+export async function getPendingRoleId(): Promise<string> {
+  const [role] = await db.select({ id: roles.id }).from(roles).where(eq(roles.code, PENDING_ROLE_CODE)).limit(1);
+  if (!role) throw new Error(`Role "${PENDING_ROLE_CODE}" not found. Run db migrate/seed.`);
+  return role.id;
 }
 
 export async function getSessionFromRequest(c: Context): Promise<SessionPayload | null> {
@@ -83,7 +98,7 @@ export async function getCurrentUser(c?: Context): Promise<AuthUser> {
     }
   }
 
-  if (!isFeishuAuthEnabled()) {
+  if (isAuthBypassLogin()) {
     return loadDevAdmin();
   }
 
@@ -124,18 +139,10 @@ export async function findOrCreateFeishuUser(info: {
       .set({ name: info.name })
       .where(eq(users.id, existing.id));
 
-    return {
-      id: existing.id,
-      name: info.name,
-      email: existing.email,
-      feishuUserId: existing.feishuUserId,
-      role: { id: existing.roleId, name: existing.roleName, code: existing.roleCode },
-    };
+    return toAuthUser({ ...existing, name: info.name });
   }
 
-  const [viewerRole] = await db.select().from(roles).where(eq(roles.code, 'viewer')).limit(1);
-  if (!viewerRole) throw new Error('Default viewer role not found. Run pnpm db:seed.');
-
+  const pendingRoleId = await getPendingRoleId();
   const email = info.email?.trim() || `${info.openId}@feishu.local`;
 
   const [created] = await db
@@ -144,7 +151,7 @@ export async function findOrCreateFeishuUser(info: {
       feishuUserId: info.openId,
       name: info.name,
       email,
-      roleId: viewerRole.id,
+      roleId: pendingRoleId,
       isActive: true,
     })
     .returning({ id: users.id });
@@ -152,4 +159,52 @@ export async function findOrCreateFeishuUser(info: {
   const user = await loadUserById(created.id);
   if (!user) throw new Error('Failed to create user');
   return user;
+}
+
+export async function registerEmailUser(input: {
+  email: string;
+  password: string;
+  name?: string;
+}): Promise<AuthUser> {
+  const email = input.email.trim().toLowerCase();
+  const [taken] = await db.select({ id: users.id }).from(users).where(eq(users.email, email)).limit(1);
+  if (taken) throw new Error('Email already registered');
+
+  const pendingRoleId = await getPendingRoleId();
+  const name = input.name?.trim() || email.split('@')[0] || '用户';
+
+  const [created] = await db
+    .insert(users)
+    .values({
+      name,
+      email,
+      passwordHash: hashPassword(input.password),
+      roleId: pendingRoleId,
+      isActive: true,
+    })
+    .returning({ id: users.id });
+
+  const user = await loadUserById(created.id);
+  if (!user) throw new Error('Failed to create user');
+  return user;
+}
+
+export async function loginEmailUser(email: string, password: string): Promise<AuthUser> {
+  const normalized = email.trim().toLowerCase();
+  const [row] = await db
+    .select(userSelect)
+    .from(users)
+    .innerJoin(roles, eq(users.roleId, roles.id))
+    .where(eq(users.email, normalized))
+    .limit(1);
+
+  if (!row || !row.passwordHash || !row.isActive) {
+    throw new Error('Invalid credentials');
+  }
+
+  if (!verifyPassword(password, row.passwordHash)) {
+    throw new Error('Invalid credentials');
+  }
+
+  return toAuthUser(row);
 }

@@ -13,15 +13,19 @@ services:
       # 与 Cloudflare Tunnel 子域名一致，无末尾斜杠
       APP_BASE_URL: https://scm.al6s.cn
 
-      # 演示内测可保持 true；对外务必 false 并配置飞书 + Cloudflare Access
-      AUTH_DEV_MODE: "true"
+      # 登录策略：必须登录；邮箱 + 飞书（需配置 FEISHU_*）
+      AUTH_REQUIRE_LOGIN: "true"
+      EMAIL_AUTH_ENABLED: "true"
+      FEISHU_AUTH_ENABLED: "true"
 
       # 生产必改（示例占位，请换成随机串）
       JWT_SECRET: change-me-to-random-32-chars-minimum
       CRON_SECRET: change-me-cron-secret-production
 
-      # 启用飞书登录时取消注释并填写
-      # AUTH_DEV_MODE: "false"
-      # FEISHU_APP_ID: cli_xxxxxxxx
-      # FEISHU_APP_SECRET: xxxxxxxx
-      # FEISHU_OAUTH_REDIRECT_URI: https://scm.al6s.cn/api/auth/feishu/callback
+      # 首次部署设置超管密码（seed 后 admin@scm.local 可用此密码登录）
+      BOOTSTRAP_ADMIN_PASSWORD: change-me-strong-password
+
+      # 飞书 OAuth（与飞书开放平台重定向 URL 完全一致）
+      FEISHU_APP_ID: cli_xxxxxxxx
+      FEISHU_APP_SECRET: xxxxxxxx
+      FEISHU_OAUTH_REDIRECT_URI: https://scm.al6s.cn/api/auth/feishu/callback

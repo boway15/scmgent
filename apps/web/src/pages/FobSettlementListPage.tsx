@@ -53,6 +53,8 @@ export function FobSettlementListPage() {
     enabled: showForm && tab === 'batches' && !!form.settlementType,
   });
 
+  const [deleteError, setDeleteError] = useState('');
+
   const createBatch = useMutation({
     mutationFn: () => {
       if (!form.settlementType) {
@@ -76,6 +78,24 @@ export function FobSettlementListPage() {
       });
     },
   });
+
+  const deleteBatch = useMutation({
+    mutationFn: (id: string) => api.deleteFobSettlement(id),
+    onSuccess: () => {
+      setDeleteError('');
+      qc.invalidateQueries({ queryKey: ['fob-settlements'] });
+    },
+    onError: (e: Error) => setDeleteError(e.message),
+  });
+
+  const handleDeleteBatch = (batch: (typeof batches)[number]) => {
+    if (batch.status === 'confirmed') return;
+    const ok = window.confirm(
+      `确定删除批次「${batch.name}」（${batch.batchNo}）？\n关联的体积、账单与分摊数据将一并删除，且不可恢复。`,
+    );
+    if (!ok) return;
+    deleteBatch.mutate(batch.id);
+  };
 
   const setTab = (next: TabKey) => {
     if (next === 'batches') {
@@ -192,6 +212,7 @@ export function FobSettlementListPage() {
               <CardTitle>核算批次</CardTitle>
             </CardHeader>
             <CardContent>
+              {deleteError && <p className="mb-3 text-sm text-destructive">{deleteError}</p>}
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b border-border text-left text-text-sub">
@@ -203,6 +224,7 @@ export function FobSettlementListPage() {
                     <th className="p-2 font-normal">创建人</th>
                     <th className="p-2 font-normal">创建时间</th>
                     <th className="p-2 font-normal">状态</th>
+                    <th className="p-2 font-normal">操作</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -225,11 +247,26 @@ export function FobSettlementListPage() {
                       <td className="p-2">
                         <FobBatchStatusBadge status={b.status} />
                       </td>
+                      <td className="p-2">
+                        {b.status === 'confirmed' ? (
+                          <span className="text-text-hint">—</span>
+                        ) : (
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            className="h-8 px-2 text-primary"
+                            disabled={deleteBatch.isPending}
+                            onClick={() => handleDeleteBatch(b)}
+                          >
+                            删除
+                          </Button>
+                        )}
+                      </td>
                     </tr>
                   ))}
                   {!batches.length && (
                     <tr>
-                      <td colSpan={8} className="p-4 text-center text-text-hint">
+                      <td colSpan={9} className="p-4 text-center text-text-hint">
                         暂无批次，点击「新建批次」开始
                       </td>
                     </tr>

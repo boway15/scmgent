@@ -2,7 +2,7 @@ import type { Context, Next } from 'hono';
 import { Hono } from 'hono';
 import { runStockAlert } from '../tasks/stockAlert.js';
 import { runReplenishmentForecast } from '../tasks/replenishmentForecast.js';
-import { isDevAuthMode } from '../integrations/feishu-auth.js';
+import { isAuthBypassLogin } from '../lib/auth-policy.js';
 import { resolveRequestUser } from '../lib/rbac.js';
 import { finishTaskRun, getLatestTaskRuns, startTaskRun } from '../lib/task-runs.js';
 
@@ -13,7 +13,7 @@ async function requireCronSecret(c: Context, next: Next) {
   const header = c.req.header('X-Cron-Secret');
   if (secret && header === secret) return next();
 
-  if (isDevAuthMode()) {
+  if (isAuthBypassLogin()) {
     const user = await resolveRequestUser(c);
     if (user?.role.code === 'super_admin') return next();
   }

@@ -1,12 +1,12 @@
 import { eq } from 'drizzle-orm';
 import type { Context, Next } from 'hono';
 import { db, roleMenus, menus } from '@scm/db';
-import { isFeishuAuthEnabled } from '../integrations/feishu-auth.js';
+import { isAuthRequired } from '../lib/auth-policy.js';
 import type { AuthUser } from './auth-context.js';
 import { getCurrentUserOptional } from './auth-context.js';
 
 export function isRbacEnforced(): boolean {
-  return process.env.ENFORCE_RBAC === 'true' || isFeishuAuthEnabled();
+  return process.env.ENFORCE_RBAC === 'true' || isAuthRequired();
 }
 
 const menuCache = new Map<string, { codes: Set<string>; at: number }>();
@@ -75,7 +75,7 @@ export function requireWrite() {
     if (!user) return c.json({ message: 'Unauthorized' }, 401);
     c.set('user', user);
 
-    if (user.role.code === 'viewer') {
+    if (user.role.code === 'viewer' || user.role.code === 'pending') {
       return c.json({ message: 'Forbidden' }, 403);
     }
     return next();

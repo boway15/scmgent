@@ -19,12 +19,14 @@ import { ProductMasterPage } from '@/pages/ProductMasterPage';
 import { DashboardPage } from '@/pages/DashboardPage';
 import { SalesHistoryPage } from '@/pages/SalesHistoryPage';
 import { HelpCenterPage } from '@/pages/HelpCenterPage';
+import { RegisterPage } from '@/pages/RegisterPage';
 import { PlaceholderPage } from '@/pages/PlaceholderPage';
 
 export function AppRouter() {
   return (
     <Routes>
       <Route path="/login" element={<LoginPage />} />
+      <Route path="/register" element={<RegisterPage />} />
       <Route element={<RequireAuth />}>
         <Route path="/" element={<AppLayout />}>
           <Route index element={<Navigate to="/dashboard" replace />} />

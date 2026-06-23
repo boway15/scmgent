@@ -32,8 +32,13 @@ services:
       APP_BASE_URL: http://localhost:8081
       NODE_ENV: production
       SERVE_STATIC: "true"
-      # 本地 Docker 开发免登录：自动以 admin@scm.local（超级管理员）访问
-      AUTH_DEV_MODE: "true"
+      JWT_SECRET: local-docker-jwt-secret-scm-agent-dev
+      # 登录策略：开发环境仅邮箱登录，不启用飞书
+      AUTH_REQUIRE_LOGIN: "true"
+      EMAIL_AUTH_ENABLED: "true"
+      FEISHU_AUTH_ENABLED: "false"
+      BOOTSTRAP_ADMIN_PASSWORD: "admin123456"
+      BOOTSTRAP_ADMIN_PASSWORD_FORCE: "true"
       ENFORCE_RBAC: "true"
       CRON_SECRET: "dev-cron-secret-local"
     depends_on:

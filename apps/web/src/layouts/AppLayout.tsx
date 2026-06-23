@@ -1,5 +1,5 @@
 import { Link, Outlet, useNavigate } from 'react-router-dom';
-import { useMutation } from '@tanstack/react-query';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { Sidebar } from '@/components/Sidebar';
 import { useCurrentUser, useMyMenus } from '@/hooks/useAuth';
 import { api } from '@/lib/api';
@@ -7,12 +7,18 @@ import { Button } from '@/components/ui/button';
 
 export function AppLayout() {
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const { data: user } = useCurrentUser();
   const { data: menus = [], isLoading } = useMyMenus();
 
   const logout = useMutation({
     mutationFn: api.logout,
-    onSuccess: () => navigate('/login'),
+    onSuccess: async () => {
+      await queryClient.cancelQueries({ queryKey: ['me'] });
+      queryClient.removeQueries({ queryKey: ['me'] });
+      queryClient.removeQueries({ queryKey: ['my-menus'] });
+      navigate('/login', { replace: true });
+    },
   });
 
   return (
@@ -31,8 +37,8 @@ export function AppLayout() {
                 <span className="ml-2 text-text-sub">({user.role.name})</span>
               </div>
             )}
-            <Button size="sm" variant="ghost" onClick={() => logout.mutate()}>
-              退出
+            <Button size="sm" variant="ghost" onClick={() => logout.mutate()} disabled={logout.isPending}>
+              {logout.isPending ? '退出中...' : '退出'}
             </Button>
           </div>
         </header>

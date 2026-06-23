@@ -120,6 +120,13 @@
       "when": 1780717058156,
       "tag": "0016_remove_compliance",
       "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "6",
+      "when": 1780717058157,
+      "tag": "0017_email_auth",
+      "breakpoints": true
     }
   ]
 }

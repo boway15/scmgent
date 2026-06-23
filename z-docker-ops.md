@@ -1,16 +1,34 @@
 # 本地 Docker 运维速查
 
 项目根目录：`d:\Docker\project\scm-agent`  
-访问地址：http://localhost:8081（默认免登录 `admin@scm.local`）
+访问地址：http://localhost:8081（需邮箱登录，默认超管 `admin@scm.local` / `admin123456`）
 
+> **本地服务器版发布 SOP（日常更新/回滚/备份）**：见 [docs/local-server-release-sop.md](docs/local-server-release-sop.md)  
 > **全新专用机安装与迁移（Win11 + Docker + cloudflared + al6s.cn）**：见 [docs/dedicated-host-setup-migration.md](docs/dedicated-host-setup-migration.md)  
+> **服务器本地部署清单（推荐，不依赖 SSH）**：见 [docs/dedicated-host-server-checklist.md](docs/dedicated-host-server-checklist.md)  
 > Tunnel 运维详解：[docs/win11-cloudflare-tunnel-deploy.md](docs/win11-cloudflare-tunnel-deploy.md)
 
 > 宿主机端口映射为 `8081:8080`。若本机 8080 已被其他项目占用（如 Dify / mail-guide 的 `8080:80`），scm-agent 会使用 8081，避免冲突。
 
 ---
 
-pnpm db:migrate   # 应用最新迁移（含 0009 看板/合规菜单）
+## 登录账号（本地 Docker）
+
+| 项 | 值 |
+|----|-----|
+| 登录页 | http://localhost:8081/login |
+| 注册页 | http://localhost:8081/register |
+| 超管邮箱 | `admin@scm.local` |
+| 超管密码 | `admin123456`（`BOOTSTRAP_ADMIN_PASSWORD`，仅本地） |
+| 飞书登录 | **关闭**（`FEISHU_AUTH_ENABLED=false`） |
+
+新注册用户默认 **待分配** 权限，需超管在「用户管理」分配角色。
+
+线上环境见 [docs/local-server-release-sop.md](docs/local-server-release-sop.md)，启用 `FEISHU_AUTH_ENABLED=true` + 飞书凭证。
+
+---
+
+pnpm db:migrate   # 应用最新迁移
 pnpm db:seed      # 补全菜单与演示数据（可选）
 pnpm docker:up    # 构建 + 启动（改代码后）
 pnpm docker:start # 仅启动，不构建（代码未改时几秒完成）
@@ -86,10 +104,12 @@ curl.exe -s http://localhost:8081/api/me
 
 | 变量 | 作用 |
 |------|------|
-| `AUTH_DEV_MODE` | `"true"` 免登录；`"false"` 走飞书登录 |
+| `AUTH_REQUIRE_LOGIN` | `"true"` 必须登录（默认） |
+| `EMAIL_AUTH_ENABLED` | `"true"` 邮箱注册/登录 |
+| `FEISHU_AUTH_ENABLED` | 本地 `"false"`；线上 `"true"` + `FEISHU_APP_ID/SECRET` |
+| `BOOTSTRAP_ADMIN_PASSWORD` | seed 时为 `admin@scm.local` 设密码 |
+| `AUTH_BYPASS_LOGIN` | `"true"` 紧急跳过登录（勿用于生产） |
 | `DATABASE_URL` | 数据库连接（一般不用改） |
-| `PORT` | 容器内端口，默认 `8080` |
-| `FEISHU_APP_ID` / `FEISHU_APP_SECRET` | 飞书 OAuth（上线联调时加） |
 
 改完后：
 

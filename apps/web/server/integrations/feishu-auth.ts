@@ -1,14 +1,27 @@
 const FEISHU_BASE = 'https://open.feishu.cn/open-apis';
 
-export function isDevAuthMode(): boolean {
-  return process.env.AUTH_DEV_MODE === 'true';
-}
+import {
+  isAuthBypassLogin,
+  isAuthRequired,
+  isEmailAuthEnabled,
+  isFeishuAuthEnabledFlag,
+  isFeishuCredentialsConfigured,
+  isFeishuLoginAvailable,
+  isDevAuthMode,
+} from '../lib/auth-policy.js';
+
+export {
+  isAuthBypassLogin,
+  isAuthRequired,
+  isEmailAuthEnabled,
+  isFeishuAuthEnabledFlag,
+  isFeishuCredentialsConfigured,
+  isFeishuLoginAvailable,
+  isDevAuthMode,
+};
 
 export function isFeishuAuthEnabled(): boolean {
-  if (isDevAuthMode()) return false;
-  const appId = process.env.FEISHU_APP_ID?.trim();
-  const appSecret = process.env.FEISHU_APP_SECRET?.trim();
-  return !!(appId && appSecret);
+  return isFeishuLoginAvailable();
 }
 
 export function getOAuthRedirectUri(): string {

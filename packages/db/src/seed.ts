@@ -2,11 +2,13 @@ import { eq } from 'drizzle-orm';
 import 'dotenv/config';
 import { db } from './client';
 import { roles, menus, roleMenus, users } from './schema/auth';
+import { hashPassword } from './password';
 import { seedFobFeeRules } from './seed-fob-rules';
 import { seedFobServiceProviders } from './seed-fob-service-providers';
 
 const ROLE_SEEDS = [
   { code: 'super_admin', name: '超级管理员', description: '管理角色/菜单/用户', isSystem: true },
+  { code: 'pending', name: '待分配', description: '注册或首次飞书登录默认角色，无菜单权限', isSystem: true },
   { code: 'pmc_planner', name: 'PMC 计划员', description: '管理 PMC 计划', isSystem: true },
   { code: 'warehouse', name: '仓库员', description: '录入库存/出入库', isSystem: true },
   { code: 'purchaser', name: '采购员', description: '管理采购/补货', isSystem: true },
@@ -241,6 +243,7 @@ async function main() {
   }
 
   const adminRoleId = roleIdByCode.get('super_admin');
+  const bootstrapPassword = process.env.BOOTSTRAP_ADMIN_PASSWORD?.trim();
   if (adminRoleId) {
     const existing = await db.select().from(users).where(eq(users.email, 'admin@scm.local')).limit(1);
     if (!existing.length) {
@@ -249,8 +252,22 @@ async function main() {
         email: 'admin@scm.local',
         roleId: adminRoleId,
         isActive: true,
+        ...(bootstrapPassword ? { passwordHash: hashPassword(bootstrapPassword) } : {}),
       });
       console.log('Created default admin user: admin@scm.local');
+    } else if (bootstrapPassword) {
+      const forceSync = process.env.BOOTSTRAP_ADMIN_PASSWORD_FORCE === 'true';
+      if (!existing[0].passwordHash || forceSync) {
+        await db
+          .update(users)
+          .set({ passwordHash: hashPassword(bootstrapPassword) })
+          .where(eq(users.email, 'admin@scm.local'));
+        console.log(
+          forceSync
+            ? 'Synced bootstrap password for admin@scm.local'
+            : 'Set bootstrap password for admin@scm.local',
+        );
+      }
     }
   }
 

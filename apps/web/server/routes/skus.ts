@@ -4,6 +4,8 @@ import { db, skus, spus } from '@scm/db';
 import { upsertSkuSupplierFromImport } from '../lib/product-master.js';
 import { requireMenu } from '../lib/rbac.js';
 import { normalizeReplenishLight } from '../lib/replenish-light.js';
+import { ensureSpuFromSkuEncoding } from '../lib/spu-from-sku.js';
+import { skuEncodingToColumns } from '../lib/sku-encoding.js';
 
 export const skuRoutes = new Hono();
 
@@ -29,6 +31,7 @@ skuRoutes.post('/skus', requireMenu('data.products'), async (c) => {
     unit: string;
     spuId?: string;
     spuCode?: string;
+    externalCode?: string;
     category?: string;
     specAttrs?: Record<string, string>;
     barcode?: string;
@@ -45,16 +48,25 @@ skuRoutes.post('/skus', requireMenu('data.products'), async (c) => {
   }
 
   let spuId = body.spuId;
-  if (!spuId && body.spuCode?.trim()) {
-    const [spu] = await db.select().from(spus).where(eq(spus.code, body.spuCode.trim())).limit(1);
-    if (!spu) return c.json({ message: 'SPU not found' }, 404);
-    spuId = spu.id;
-  }
+  const { spuId: derivedSpuId, parse } = await ensureSpuFromSkuEncoding(
+    body.code.trim(),
+    body.externalCode?.trim(),
+    {
+      name: body.name.trim(),
+      category: body.category,
+      moq: body.moq,
+      spuCodeOverride: body.spuCode?.trim(),
+    },
+  );
+  if (!spuId) spuId = derivedSpuId ?? undefined;
+
+  const skuCode = parse.normalizedCode || body.code.trim();
+  const encodingCols = skuEncodingToColumns(parse);
 
   const [row] = await db
     .insert(skus)
     .values({
-      code: body.code.trim(),
+      code: skuCode,
       name: body.name.trim(),
       unit: body.unit.trim(),
       spuId,
@@ -69,6 +81,7 @@ skuRoutes.post('/skus', requireMenu('data.products'), async (c) => {
       replenishLight: normalizeReplenishLight(body.replenishLight),
       isActive: true,
       updatedAt: new Date(),
+      ...encodingCols,
     })
     .returning();
 

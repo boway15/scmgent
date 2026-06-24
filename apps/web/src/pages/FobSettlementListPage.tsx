@@ -54,6 +54,7 @@ export function FobSettlementListPage() {
   });
 
   const [deleteError, setDeleteError] = useState('');
+  const [createError, setCreateError] = useState('');
 
   const createBatch = useMutation({
     mutationFn: () => {
@@ -68,6 +69,7 @@ export function FobSettlementListPage() {
       });
     },
     onSuccess: () => {
+      setCreateError('');
       qc.invalidateQueries({ queryKey: ['fob-settlements'] });
       setShowForm(false);
       setForm({
@@ -77,6 +79,7 @@ export function FobSettlementListPage() {
         serviceProviderId: '',
       });
     },
+    onError: (e: Error) => setCreateError(e.message),
   });
 
   const deleteBatch = useMutation({
@@ -98,12 +101,18 @@ export function FobSettlementListPage() {
   };
 
   const setTab = (next: TabKey) => {
-    if (next === 'batches') {
-      searchParams.delete('tab');
-      setSearchParams(searchParams, { replace: true });
-    } else {
-      setSearchParams({ tab: next }, { replace: true });
-    }
+    setSearchParams(
+      (prev) => {
+        const params = new URLSearchParams(prev);
+        if (next === 'batches') {
+          params.delete('tab');
+        } else {
+          params.set('tab', next);
+        }
+        return params;
+      },
+      { replace: true },
+    );
   };
 
   if (tab === 'batches' && isLoading) return <p className="text-text-sub">加载中...</p>;
@@ -112,7 +121,14 @@ export function FobSettlementListPage() {
     <div className="space-y-6">
       <PageHeader title="FOB 分账">
         {tab === 'batches' && (
-          <Button onClick={() => setShowForm(!showForm)}>{showForm ? '取消' : '新建批次'}</Button>
+          <Button
+            onClick={() => {
+              setCreateError('');
+              setShowForm(!showForm);
+            }}
+          >
+            {showForm ? '取消' : '新建批次'}
+          </Button>
         )}
       </PageHeader>
 
@@ -148,7 +164,9 @@ export function FobSettlementListPage() {
         <>
           {showForm && (
             <Card>
-              <CardContent className="flex items-center gap-3 pt-6">
+              <CardContent className="flex flex-col gap-3 pt-6">
+                {createError && <p className="text-sm text-destructive">{createError}</p>}
+                <div className="flex items-center gap-3">
                 <Input
                   className="min-w-0 flex-[2]"
                   placeholder="批次名称，如 2026年1月分账"
@@ -203,6 +221,7 @@ export function FobSettlementListPage() {
                 >
                   创建
                 </Button>
+                </div>
               </CardContent>
             </Card>
           )}

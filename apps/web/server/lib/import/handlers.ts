@@ -2,9 +2,11 @@ import { eq, and } from 'drizzle-orm';
 import {
   db,
   skus,
-  spus,
+  merchants,
+  warehouses,
   inventoryRecords,
   salesHistory,
+  salesForecastMonthly,
   safetyStockConfig,
   pmcPlans,
   pmcPlanItems,
@@ -14,31 +16,11 @@ import { nextPlanNo } from '../../routes/procurement.js';
 import { upsertSkuSupplierFromImport } from '../product-master.js';
 import { IN_PRODUCTION_WAREHOUSE } from '../inventory-constants.js';
 import { normalizeReplenishLight, parseReplenishLight } from '../replenish-light.js';
+import { parseMonthlyForecastFromRow } from '../forecast-demand.js';
+import { ensureSpuFromSkuEncoding } from '../spu-from-sku.js';
+import { skuEncodingToColumns } from '../sku-encoding.js';
 
 export type ImportResult = { imported: number; errors: string[] };
-
-async function resolveSpuId(
-  spuCode: string | undefined,
-  skuCode: string,
-  name: string,
-  category?: string,
-  spuMoq?: number,
-): Promise<string | undefined> {
-  const code = spuCode?.trim() || skuCode;
-  const [existing] = await db.select().from(spus).where(eq(spus.code, code)).limit(1);
-  if (existing) {
-    if (spuMoq != null && spuMoq > 0 && existing.moq !== spuMoq) {
-      await db.update(spus).set({ moq: spuMoq, updatedAt: new Date() }).where(eq(spus.id, existing.id));
-    }
-    return existing.id;
-  }
-
-  const [created] = await db
-    .insert(spus)
-    .values({ code, name, category, moq: spuMoq, isActive: true, updatedAt: new Date() })
-    .returning({ id: spus.id });
-  return created?.id;
-}
 
 async function resolveSku(code: string): Promise<{ id: string; unit: string } | null> {
   const [sku] = await db.select().from(skus).where(eq(skus.code, code)).limit(1);
@@ -52,28 +34,36 @@ export async function importSkuRows(
   const errors: string[] = [];
 
   for (const row of rows) {
-    const code = pickField(row, 'sku_code', 'code');
+    const rawCode = pickField(row, 'sku_code', 'code', 'internal_code');
+    const externalCode = pickField(row, 'external_code', 'external_sku', 'sku_external');
     const name = pickField(row, 'name');
     const unit = pickField(row, 'unit') || 'pcs';
-    if (!code || !name) {
+    if ((!rawCode && !externalCode) || !name) {
       errors.push(`Missing code/name: ${JSON.stringify(row)}`);
       continue;
     }
 
-    const spuCode = pickField(row, 'spu_code');
+    const spuCodeManual = pickField(row, 'spu_code');
     const merchantCode = pickField(row, 'merchant_code');
     const merchantName = pickField(row, 'merchant_name');
     const unitCost = pickField(row, 'unit_cost');
     const leadTimeDays = parseInt(pickField(row, 'lead_time_days', 'lead_time'), 10) || undefined;
+    const productionLeadDays =
+      parseInt(pickField(row, 'production_lead_days', 'factory_lead_days'), 10) || undefined;
     const moq = parseInt(pickField(row, 'moq'), 10) || undefined;
     const spuMoq = parseInt(pickField(row, 'spu_moq'), 10) || undefined;
-    const spuId = await resolveSpuId(
-      spuCode,
-      code,
+    const category = pickField(row, 'category') || undefined;
+
+    const { spuId, parse } = await ensureSpuFromSkuEncoding(rawCode || externalCode, externalCode, {
       name,
-      pickField(row, 'category') || undefined,
-      spuMoq,
-    );
+      category,
+      moq: spuMoq,
+      spuCodeOverride: spuCodeManual || undefined,
+    });
+
+    const code = parse.normalizedCode || rawCode || externalCode;
+    const encodingCols = skuEncodingToColumns(parse);
+
     const replenishLightRaw = pickField(row, 'replenish_light', 'replenish_light_code', 'light');
     const parsedLight = parseReplenishLight(replenishLightRaw);
 
@@ -85,11 +75,12 @@ export async function importSkuRows(
           name,
           unit,
           spuId: spuId ?? existing.spuId,
-          category: pickField(row, 'category') || existing.category,
+          category: category || existing.category,
           leadTimeDays: leadTimeDays ?? existing.leadTimeDays,
           moq: moq ?? existing.moq,
           unitCost: unitCost || existing.unitCost,
           replenishLight: parsedLight ?? existing.replenishLight,
+          ...encodingCols,
           updatedAt: new Date(),
         })
         .where(eq(skus.id, existing.id));
@@ -97,9 +88,12 @@ export async function importSkuRows(
       if (merchantCode) {
         await upsertSkuSupplierFromImport(existing.id, merchantCode, merchantName, {
           unitPrice: unitCost || existing.unitCost || undefined,
-          leadTimeDays: leadTimeDays ?? existing.leadTimeDays ?? undefined,
+          leadTimeDays: productionLeadDays ?? leadTimeDays ?? existing.leadTimeDays ?? undefined,
           moq: moq ?? existing.moq ?? undefined,
         });
+        if (productionLeadDays) {
+          await upsertMerchantProductionLead(merchantCode, merchantName, productionLeadDays);
+        }
       }
     } else {
       const [created] = await db
@@ -109,24 +103,230 @@ export async function importSkuRows(
           name,
           unit,
           spuId,
-          category: pickField(row, 'category') || undefined,
+          category,
           leadTimeDays,
           moq,
           unitCost: unitCost || undefined,
           replenishLight: parsedLight ?? 'red',
           isActive: true,
+          ...encodingCols,
         })
         .returning({ id: skus.id });
 
       if (created && merchantCode) {
         await upsertSkuSupplierFromImport(created.id, merchantCode, merchantName, {
           unitPrice: unitCost || undefined,
-          leadTimeDays,
+          leadTimeDays: productionLeadDays ?? leadTimeDays,
           moq,
         });
+        if (productionLeadDays) {
+          await upsertMerchantProductionLead(merchantCode, merchantName, productionLeadDays);
+        }
       }
     }
     imported++;
+  }
+
+  return { imported, errors };
+}
+
+async function upsertMerchantProductionLead(
+  merchantCode: string,
+  merchantName: string | undefined,
+  productionLeadDays: number,
+) {
+  const [existing] = await db
+    .select()
+    .from(merchants)
+    .where(eq(merchants.code, merchantCode))
+    .limit(1);
+  if (existing) {
+    await db
+      .update(merchants)
+      .set({
+        productionLeadDays,
+        name: merchantName?.trim() || existing.name,
+        updatedAt: new Date(),
+      })
+      .where(eq(merchants.id, existing.id));
+    return;
+  }
+  await db.insert(merchants).values({
+    code: merchantCode,
+    name: merchantName?.trim() || merchantCode,
+    productionLeadDays,
+    isActive: true,
+    updatedAt: new Date(),
+  });
+}
+
+export async function importMerchantRows(
+  rows: Array<Record<string, string>>,
+): Promise<ImportResult> {
+  let imported = 0;
+  const errors: string[] = [];
+
+  for (const row of rows) {
+    const code = pickField(row, 'merchant_code', 'code');
+    const name = pickField(row, 'merchant_name', 'name');
+    if (!code) {
+      errors.push(`Missing merchant_code: ${JSON.stringify(row)}`);
+      continue;
+    }
+    const productionLeadDays =
+      parseInt(pickField(row, 'production_lead_days', 'factory_lead_days'), 10) ||
+      undefined;
+
+    const [existing] = await db.select().from(merchants).where(eq(merchants.code, code)).limit(1);
+    if (existing) {
+      await db
+        .update(merchants)
+        .set({
+          name: name || existing.name,
+          contactName: pickField(row, 'contact_name') || existing.contactName,
+          contactPhone: pickField(row, 'contact_phone') || existing.contactPhone,
+          contactEmail: pickField(row, 'contact_email') || existing.contactEmail,
+          paymentTerms: pickField(row, 'payment_terms') || existing.paymentTerms,
+          productionLeadDays: productionLeadDays ?? existing.productionLeadDays,
+          updatedAt: new Date(),
+        })
+        .where(eq(merchants.id, existing.id));
+    } else {
+      await db.insert(merchants).values({
+        code,
+        name: name || code,
+        contactName: pickField(row, 'contact_name') || undefined,
+        contactPhone: pickField(row, 'contact_phone') || undefined,
+        contactEmail: pickField(row, 'contact_email') || undefined,
+        paymentTerms: pickField(row, 'payment_terms') || undefined,
+        productionLeadDays: productionLeadDays ?? 50,
+        isActive: true,
+        updatedAt: new Date(),
+      });
+    }
+    imported++;
+  }
+
+  return { imported, errors };
+}
+
+export async function importWarehouseLeadRows(
+  rows: Array<Record<string, string>>,
+): Promise<ImportResult> {
+  let imported = 0;
+  const errors: string[] = [];
+
+  for (const row of rows) {
+    const code = pickField(row, 'warehouse_code', 'warehouse');
+    if (!code) {
+      errors.push(`Missing warehouse_code: ${JSON.stringify(row)}`);
+      continue;
+    }
+    const shippingLeadDays =
+      parseInt(pickField(row, 'shipping_lead_days', 'sea_lead_days'), 10) || undefined;
+    const inboundBufferDays =
+      parseInt(pickField(row, 'inbound_buffer_days', 'buffer_days'), 10) || undefined;
+
+    const [existing] = await db.select().from(warehouses).where(eq(warehouses.code, code)).limit(1);
+    if (!existing) {
+      errors.push(`Warehouse not found: ${code}`);
+      continue;
+    }
+
+    await db
+      .update(warehouses)
+      .set({
+        shippingLeadDays: shippingLeadDays ?? existing.shippingLeadDays,
+        inboundBufferDays: inboundBufferDays ?? existing.inboundBufferDays,
+      })
+      .where(eq(warehouses.id, existing.id));
+    imported++;
+  }
+
+  return { imported, errors };
+}
+
+export async function importSalesForecastRows(
+  rows: Array<Record<string, string>>,
+  batchId?: string,
+): Promise<ImportResult> {
+  let imported = 0;
+  const errors: string[] = [];
+
+  for (const row of rows) {
+    const code = pickField(row, 'sku_code', 'code', 'sku');
+    const station = (pickField(row, 'station', '站点') || 'US').toUpperCase();
+    const forecastYear =
+      parseInt(pickField(row, 'forecast_year', 'year', '预测年份'), 10) ||
+      new Date().getFullYear();
+    const lifecycle = pickField(row, 'lifecycle', '生命周期') || undefined;
+    const ownerName = pickField(row, 'owner_name', 'owner', '负责人') || undefined;
+    const productionLeadDays =
+      parseInt(pickField(row, 'production_lead_days', '采购周期'), 10) || undefined;
+
+    if (!code) {
+      errors.push(`Missing sku_code: ${JSON.stringify(row)}`);
+      continue;
+    }
+
+    const sku = await resolveSku(code);
+    if (!sku) {
+      errors.push(`SKU not found: ${code}`);
+      continue;
+    }
+
+    if (productionLeadDays) {
+      await db
+        .update(skus)
+        .set({ leadTimeDays: productionLeadDays, updatedAt: new Date() })
+        .where(eq(skus.id, sku.id));
+    }
+
+    const months = parseMonthlyForecastFromRow(row);
+    if (!months.length) {
+      errors.push(`No monthly forecast columns for SKU ${code}`);
+      continue;
+    }
+
+    for (const { month, daily } of months) {
+      const [existing] = await db
+        .select()
+        .from(salesForecastMonthly)
+        .where(
+          and(
+            eq(salesForecastMonthly.skuId, sku.id),
+            eq(salesForecastMonthly.station, station),
+            eq(salesForecastMonthly.forecastYear, forecastYear),
+            eq(salesForecastMonthly.month, month),
+          ),
+        )
+        .limit(1);
+
+      const values = {
+        forecastDailyAvg: String(daily),
+        lifecycle,
+        ownerName,
+        source: 'import' as const,
+        importBatchId: batchId,
+        updatedAt: new Date(),
+      };
+
+      if (existing) {
+        await db
+          .update(salesForecastMonthly)
+          .set(values)
+          .where(eq(salesForecastMonthly.id, existing.id));
+      } else {
+        await db.insert(salesForecastMonthly).values({
+          skuId: sku.id,
+          station,
+          forecastYear,
+          month,
+          ...values,
+        });
+      }
+      imported++;
+    }
   }
 
   return { imported, errors };
@@ -245,6 +445,15 @@ export async function importSafetyStockRows(
       safetyStockQty: parseInt(pickField(row, 'safety_stock_qty', 'safety_stock'), 10) || 0,
       reorderPoint: parseInt(pickField(row, 'reorder_point', 'rop'), 10) || 0,
       reorderQty: parseInt(pickField(row, 'reorder_qty', 'eoq'), 10) || 0,
+      safetyStockDays:
+        parseInt(pickField(row, 'safety_stock_days'), 10) ||
+        undefined,
+      targetCoverageDays:
+        parseInt(pickField(row, 'target_coverage_days'), 10) ||
+        undefined,
+      overstockThresholdDays:
+        parseInt(pickField(row, 'overstock_threshold_days'), 10) ||
+        undefined,
       calcMethod: 'manual' as const,
       updatedAt: new Date(),
     };
@@ -357,7 +566,15 @@ function normalizeImportKey(key: string): string {
   return key.toLowerCase().replace(/\s+/g, '_');
 }
 
-export type ImportType = 'skus' | 'inventory' | 'sales' | 'safety_stock' | 'pmc_plans';
+export type ImportType =
+  | 'skus'
+  | 'inventory'
+  | 'sales'
+  | 'safety_stock'
+  | 'merchants'
+  | 'warehouse_leads'
+  | 'sales_forecast'
+  | 'pmc_plans';
 
 export async function runImport(
   type: ImportType,
@@ -375,6 +592,12 @@ export async function runImport(
       return importSalesRows(rows, batchId);
     case 'safety_stock':
       return importSafetyStockRows(rows);
+    case 'merchants':
+      return importMerchantRows(rows);
+    case 'warehouse_leads':
+      return importWarehouseLeadRows(rows);
+    case 'sales_forecast':
+      return importSalesForecastRows(rows, batchId);
     case 'pmc_plans':
       return importPmcPlanRows(rows, userId, planMeta);
     default:

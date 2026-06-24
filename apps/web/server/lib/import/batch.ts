@@ -28,11 +28,34 @@ export async function validateImportPreview(
     const rowNo = index + 1;
     const skuCode = (row.sku_code || row.code || '').trim();
 
-    if (type === 'inventory' || type === 'sales' || type === 'safety_stock') {
+    if (type === 'inventory' || type === 'sales' || type === 'safety_stock' || type === 'sales_forecast') {
       if (!skuCode) {
         issues.push({ row: rowNo, field: 'sku_code', message: '缺少 sku_code' });
       } else if (!skuCodes.has(skuCode)) {
         issues.push({ row: rowNo, field: 'sku_code', message: `SKU 不存在: ${skuCode}` });
+      }
+    }
+
+    if (type === 'merchants') {
+      const merchantCode = (row.merchant_code || row.code || '').trim();
+      if (!merchantCode) {
+        issues.push({ row: rowNo, field: 'merchant_code', message: '缺少 merchant_code' });
+      }
+    }
+
+    if (type === 'warehouse_leads') {
+      const warehouse = (row.warehouse_code || row.warehouse || '').trim();
+      if (!warehouse) {
+        issues.push({ row: rowNo, field: 'warehouse_code', message: '缺少 warehouse_code' });
+      } else if (!warehouseCodes.has(warehouse)) {
+        issues.push({ row: rowNo, field: 'warehouse_code', message: `仓库编码无效: ${warehouse}` });
+      }
+    }
+
+    if (type === 'safety_stock') {
+      const warehouse = (row.warehouse_code || row.warehouse || 'ALL').trim();
+      if (warehouse !== 'ALL' && !warehouseCodes.has(warehouse)) {
+        issues.push({ row: rowNo, field: 'warehouse_code', message: `仓库编码无效: ${warehouse}` });
       }
     }
 

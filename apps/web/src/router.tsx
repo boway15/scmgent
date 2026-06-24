@@ -20,6 +20,8 @@ import { DashboardPage } from '@/pages/DashboardPage';
 import { SalesHistoryPage } from '@/pages/SalesHistoryPage';
 import { HelpCenterPage } from '@/pages/HelpCenterPage';
 import { RegisterPage } from '@/pages/RegisterPage';
+import { AuditLogsPage } from '@/pages/AuditLogsPage';
+import { HomeRedirect } from '@/components/HomeRedirect';
 import { PlaceholderPage } from '@/pages/PlaceholderPage';
 
 export function AppRouter() {
@@ -29,7 +31,7 @@ export function AppRouter() {
       <Route path="/register" element={<RegisterPage />} />
       <Route element={<RequireAuth />}>
         <Route path="/" element={<AppLayout />}>
-          <Route index element={<Navigate to="/dashboard" replace />} />
+          <Route index element={<HomeRedirect />} />
           <Route path="dashboard" element={<DashboardPage />} />
           <Route path="inventory/overview" element={<InventoryOverviewPage />} />
           <Route path="inventory/safety" element={<SafetyStockPage />} />
@@ -56,6 +58,7 @@ export function AppRouter() {
           <Route path="help" element={<HelpCenterPage />} />
           <Route path="system/users" element={<UsersPage />} />
           <Route path="system/roles" element={<RoleMenusPage />} />
+          <Route path="system/logs" element={<AuditLogsPage />} />
           <Route path="system/menus" element={<Navigate to="/system/roles" replace />} />
           <Route path="*" element={<PlaceholderPage title="404" description="页面不存在或无访问权限。" />} />
         </Route>

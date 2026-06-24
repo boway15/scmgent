@@ -1,11 +1,17 @@
+import { Fragment, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 import { PageHeader } from '@/components/PageHeader';
 
 export function UsersPage() {
   const qc = useQueryClient();
+  const [resetUserId, setResetUserId] = useState<string | null>(null);
+  const [newPassword, setNewPassword] = useState('');
+  const [resetError, setResetError] = useState<string | null>(null);
+
   const { data: users = [], isLoading } = useQuery({
     queryKey: ['users'],
     queryFn: api.getUsers,
@@ -17,6 +23,27 @@ export function UsersPage() {
       api.updateUser(id, { roleId, isActive }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['users'] }),
   });
+
+  const resetPassword = useMutation({
+    mutationFn: ({ id, password }: { id: string; password: string }) => api.resetUserPassword(id, password),
+    onSuccess: () => {
+      setResetUserId(null);
+      setNewPassword('');
+      setResetError(null);
+    },
+    onError: (err: Error) => {
+      setResetError(err.message);
+    },
+  });
+
+  const handleResetSubmit = (userId: string) => {
+    setResetError(null);
+    if (newPassword.length < 8) {
+      setResetError('密码至少 8 位');
+      return;
+    }
+    resetPassword.mutate({ id: userId, password: newPassword });
+  };
 
   if (isLoading) return <p className="text-text-sub">加载中...</p>;
 
@@ -41,34 +68,77 @@ export function UsersPage() {
             </thead>
             <tbody>
               {users.map((u) => (
-                <tr key={u.id} className="border-b border-border/60">
-                  <td className="p-2 text-text-main">{u.name}</td>
-                  <td className="p-2 text-text-sub">{u.email}</td>
-                  <td className="p-2 font-mono text-xs text-text-hint">{u.feishuUserId ?? '-'}</td>
-                  <td className="p-2">
-                    <select
-                      className="h-9 rounded-md border border-input bg-card px-2 text-sm"
-                      value={u.roleId}
-                      onChange={(e) => updateUser.mutate({ id: u.id, roleId: e.target.value })}
-                    >
-                      {roles.map((r) => (
-                        <option key={r.id} value={r.id}>
-                          {r.name}
-                        </option>
-                      ))}
-                    </select>
-                  </td>
-                  <td className="p-2 text-text-main">{u.isActive ? '启用' : '禁用'}</td>
-                  <td className="p-2">
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      onClick={() => updateUser.mutate({ id: u.id, isActive: !u.isActive })}
-                    >
-                      {u.isActive ? '禁用' : '启用'}
-                    </Button>
-                  </td>
-                </tr>
+                <Fragment key={u.id}>
+                  <tr className="border-b border-border/60">
+                    <td className="p-2 text-text-main">{u.name}</td>
+                    <td className="p-2 text-text-sub">{u.email}</td>
+                    <td className="p-2 font-mono text-xs text-text-hint">{u.feishuUserId ?? '-'}</td>
+                    <td className="p-2">
+                      <select
+                        className="h-9 rounded-md border border-input bg-card px-2 text-sm"
+                        value={u.roleId}
+                        onChange={(e) => updateUser.mutate({ id: u.id, roleId: e.target.value })}
+                      >
+                        {roles.map((r) => (
+                          <option key={r.id} value={r.id}>
+                            {r.name}
+                          </option>
+                        ))}
+                      </select>
+                    </td>
+                    <td className="p-2 text-text-main">{u.isActive ? '启用' : '禁用'}</td>
+                    <td className="p-2">
+                      <div className="flex flex-wrap gap-2">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => updateUser.mutate({ id: u.id, isActive: !u.isActive })}
+                        >
+                          {u.isActive ? '禁用' : '启用'}
+                        </Button>
+                        {u.hasPassword && (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => {
+                              setResetUserId(resetUserId === u.id ? null : u.id);
+                              setNewPassword('');
+                              setResetError(null);
+                            }}
+                          >
+                            {resetUserId === u.id ? '取消' : '重置密码'}
+                          </Button>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                  {resetUserId === u.id && (
+                    <tr className="border-b border-border/60 bg-muted/30">
+                      <td colSpan={6} className="p-3">
+                        <div className="flex flex-wrap items-end gap-3">
+                          <div className="space-y-1">
+                            <label className="text-xs text-text-sub">为 {u.email} 设置新密码</label>
+                            <Input
+                              type="password"
+                              value={newPassword}
+                              onChange={(e) => setNewPassword(e.target.value)}
+                              placeholder="至少 8 位"
+                              className="w-64"
+                            />
+                          </div>
+                          <Button
+                            size="sm"
+                            onClick={() => handleResetSubmit(u.id)}
+                            disabled={resetPassword.isPending}
+                          >
+                            {resetPassword.isPending ? '保存中...' : '确认重置'}
+                          </Button>
+                          {resetError && <p className="text-sm text-red-600">{resetError}</p>}
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+                </Fragment>
               ))}
               {!users.length && (
                 <tr>

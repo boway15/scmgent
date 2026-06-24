@@ -43,6 +43,31 @@ function buildMenuTree(items: MenuRow[]): MenuNode[] {
   return roots;
 }
 
+async function expandMenuIdsWithAncestors(ids: string[]): Promise<string[]> {
+  if (!ids.length) return [];
+
+  const allIds = new Set(ids);
+  let frontier = [...ids];
+
+  while (frontier.length) {
+    const rows = await db
+      .select({ id: menus.id, parentId: menus.parentId })
+      .from(menus)
+      .where(inArray(menus.id, frontier));
+
+    const next: string[] = [];
+    for (const row of rows) {
+      if (row.parentId && !allIds.has(row.parentId)) {
+        allIds.add(row.parentId);
+        next.push(row.parentId);
+      }
+    }
+    frontier = next;
+  }
+
+  return [...allIds];
+}
+
 export const menuRoutes = new Hono();
 
 menuRoutes.get('/me/menus', async (c) => {
@@ -73,6 +98,8 @@ menuRoutes.get('/me/menus', async (c) => {
     const ids = roleMenuIds.map((r) => r.menuId);
     if (!ids.length) return c.json([]);
 
+    const expandedIds = await expandMenuIdsWithAncestors(ids);
+
     menuRows = await db
       .select({
         id: menus.id,
@@ -85,7 +112,7 @@ menuRoutes.get('/me/menus', async (c) => {
         isLeaf: menus.isLeaf,
       })
       .from(menus)
-      .where(inArray(menus.id, ids))
+      .where(inArray(menus.id, expandedIds))
       .orderBy(menus.sortOrder);
   }
 

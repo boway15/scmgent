@@ -3,6 +3,8 @@ import { Hono } from 'hono';
 import { db, salesHistory, skus } from '@scm/db';
 import { buildCsv, csvAttachment } from '../lib/csv-export.js';
 
+import { requireMenu } from '../lib/rbac.js';
+
 export const salesRoutes = new Hono();
 
 function parseSalesFilters(c: { req: { query: (k: string) => string | undefined } }) {
@@ -20,7 +22,7 @@ function parseSalesFilters(c: { req: { query: (k: string) => string | undefined 
   return conditions;
 }
 
-salesRoutes.get('/sales/history', async (c) => {
+salesRoutes.get('/sales/history', requireMenu('data.sales'), async (c) => {
   const conditions = parseSalesFilters(c);
   const limit = Math.min(Number(c.req.query('limit') ?? 200), 500);
 
@@ -72,7 +74,7 @@ salesRoutes.get('/sales/history', async (c) => {
   });
 });
 
-salesRoutes.get('/sales/history/export', async (c) => {
+salesRoutes.get('/sales/history/export', requireMenu('data.sales'), async (c) => {
   const conditions = parseSalesFilters(c);
   const base = db
     .select({

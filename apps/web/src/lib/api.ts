@@ -38,6 +38,8 @@ export type Sku = {
 
 export type ReplenishLight = 'red' | 'yellow' | 'green';
 
+export type InventoryHealth = 'red' | 'yellow' | 'green' | 'blue' | 'gray';
+
 export type Spu = {
   id: string;
   code: string;
@@ -58,6 +60,7 @@ export type Merchant = {
   contactEmail?: string | null;
   countryCode?: string | null;
   paymentTerms?: string | null;
+  productionLeadDays?: number | null;
   remark?: string | null;
   isActive: boolean;
 };
@@ -71,6 +74,11 @@ export type SkuOverview = {
   spuId?: string | null;
   spuCode?: string | null;
   spuName?: string | null;
+  externalCode?: string | null;
+  skuKind?: string | null;
+  divisionCode?: string | null;
+  divisionName?: string | null;
+  encodingValid?: boolean;
   merchantCode?: string | null;
   merchantName?: string | null;
   replenishLight?: ReplenishLight;
@@ -100,11 +108,28 @@ export type InventoryOverview = {
   status: 'normal' | 'alert' | 'danger' | 'stockout';
   needsReplenishment?: boolean;
   replenishEligible?: boolean;
+  /** 库存健康五档灯（蓝/绿/黄/红/灰） */
+  inventoryHealth?: InventoryHealth;
 };
 
-export type ImportType = 'skus' | 'inventory' | 'sales' | 'safety_stock' | 'pmc_plans';
+export type ImportType =
+  | 'skus'
+  | 'inventory'
+  | 'sales'
+  | 'safety_stock'
+  | 'merchants'
+  | 'warehouse_leads'
+  | 'sales_forecast'
+  | 'pmc_plans';
 
-export type BitableSyncType = 'skus' | 'inventory' | 'sales';
+export type BitableSyncType =
+  | 'skus'
+  | 'inventory'
+  | 'sales'
+  | 'merchants'
+  | 'warehouse_leads'
+  | 'inventory_policy'
+  | 'sales_forecast';
 
 export type BitableSyncTargetStatus = {
   configured: boolean;
@@ -188,10 +213,41 @@ export const api = {
         roleId: string;
         roleName: string;
         roleCode: string;
+        hasPassword: boolean;
       }>
     >('/api/users'),
   updateUser: (id: string, data: { roleId?: string; isActive?: boolean; name?: string }) =>
     request(`/api/users/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
+  resetUserPassword: (id: string, password: string) =>
+    request<{ ok: boolean }>(`/api/users/${id}/password`, {
+      method: 'PATCH',
+      body: JSON.stringify({ password }),
+    }),
+  getAuditLogs: (params?: { page?: number; pageSize?: number; action?: string; userId?: string }) => {
+    const q = new URLSearchParams();
+    if (params?.page) q.set('page', String(params.page));
+    if (params?.pageSize) q.set('pageSize', String(params.pageSize));
+    if (params?.action) q.set('action', params.action);
+    if (params?.userId) q.set('userId', params.userId);
+    const qs = q.toString();
+    return request<{
+      items: Array<{
+        id: string;
+        userId?: string | null;
+        userName?: string | null;
+        userEmail?: string | null;
+        action: string;
+        resourceType?: string | null;
+        resourceId?: string | null;
+        detail?: string | null;
+        ipAddress?: string | null;
+        createdAt: string;
+      }>;
+      total: number;
+      page: number;
+      pageSize: number;
+    }>(`/api/audit-logs${qs ? `?${qs}` : ''}`);
+  },
   getRoles: () => request<Array<{ id: string; name: string; code: string; isSystem: boolean }>>('/api/roles'),
   createRole: (data: { name: string; code: string; description?: string }) =>
     request('/api/roles', { method: 'POST', body: JSON.stringify(data) }),
@@ -458,6 +514,11 @@ export const api = {
         suggestedQty: number;
         suggestedDate: string;
         reason: string;
+        healthStatus?: InventoryHealth | null;
+        coverageDays?: string | null;
+        totalLeadDays?: number | null;
+        latestOrderDays?: string | null;
+        metrics?: Record<string, unknown> | null;
         status: string;
         planId?: string | null;
       }>

@@ -50,6 +50,37 @@ export async function userHasMenu(user: AuthUser, ...menuCodes: string[]): Promi
   return menuCodes.some((m) => codes.has(m));
 }
 
+/** Block pending users without any menu from reading business APIs. */
+export function requireBusinessRead() {
+  return async (c: Context, next: Next) => {
+    if (!isRbacEnforced()) return next();
+
+    const method = c.req.method;
+    if (method !== 'GET' && method !== 'HEAD') return next();
+
+    const path = c.req.path;
+    if (
+      path.startsWith('/api/auth') ||
+      path === '/api/health' ||
+      path.startsWith('/api/menus') ||
+      path.startsWith('/api/me')
+    ) {
+      return next();
+    }
+
+    const user = await resolveRequestUser(c);
+    if (!user) return c.json({ message: 'Unauthorized' }, 401);
+    c.set('user', user);
+
+    if (user.role.code === 'pending') {
+      const codes = await loadRoleMenuCodes(user);
+      if (codes.size === 0) return c.json({ message: 'Forbidden' }, 403);
+    }
+
+    return next();
+  };
+}
+
 export function requireMenu(...menuCodes: string[]) {
   return async (c: Context, next: Next) => {
     if (!isRbacEnforced()) return next();
@@ -75,8 +106,14 @@ export function requireWrite() {
     if (!user) return c.json({ message: 'Unauthorized' }, 401);
     c.set('user', user);
 
-    if (user.role.code === 'viewer' || user.role.code === 'pending') {
+    if (user.role.code === 'viewer') {
       return c.json({ message: 'Forbidden' }, 403);
+    }
+    if (user.role.code === 'pending') {
+      const codes = await loadRoleMenuCodes(user);
+      if (codes.size === 0) {
+        return c.json({ message: 'Forbidden' }, 403);
+      }
     }
     return next();
   };

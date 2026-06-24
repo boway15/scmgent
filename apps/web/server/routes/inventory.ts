@@ -1,6 +1,6 @@
-import { eq, desc, and } from 'drizzle-orm';
+import { eq, desc, and, inArray } from 'drizzle-orm';
 import { Hono } from 'hono';
-import { db, inventoryRecords, skus, safetyStockConfig, warehouses, channelWarehousePrefs, merchants } from '@scm/db';
+import { db, inventoryRecords, skus, safetyStockConfig, warehouses, channelWarehousePrefs, merchants, salesForecastMonthly } from '@scm/db';
 import { getCurrentUser } from '../lib/auth-context.js';
 import { requireMenu } from '../lib/rbac.js';
 import { buildCsv, csvAttachment } from '../lib/csv-export.js';
@@ -8,15 +8,26 @@ import { IN_PRODUCTION_WAREHOUSE } from '../lib/inventory-constants.js';
 import { getLatestInProductionQty } from '../lib/inventory-snapshot.js';
 import {
   applyReplenishLightToRows,
-  needsReplenishmentByInventory,
   normalizeReplenishLight,
+  needsReplenishmentByInventory,
   type ReplenishLight,
 } from '../lib/replenish-light.js';
+import type { InventoryHealth } from '../lib/inventory-light.js';
+import { getLatestHealthSnapshots } from '../lib/inventory-health-store.js';
+import { writeAuditLog } from '../lib/audit-log.js';
 
 export const inventoryRoutes = new Hono();
 
-inventoryRoutes.get('/inventory/overview', async (c) => {
+inventoryRoutes.get('/inventory/overview', requireMenu('inventory.overview'), async (c) => {
   const warehouseFilter = c.req.query('warehouse');
+
+  const healthSnapshots = await getLatestHealthSnapshots({
+    warehouseCode: warehouseFilter ?? undefined,
+    limit: 5000,
+  });
+  const healthByKey = new Map(
+    healthSnapshots.map((h) => [`${h.skuId}::${h.warehouseCode}`, h]),
+  );
 
   const whList = warehouseFilter
     ? [{ code: warehouseFilter }]
@@ -39,6 +50,23 @@ inventoryRoutes.get('/inventory/overview', async (c) => {
     .where(eq(skus.isActive, true))
     .orderBy(skus.code);
 
+  const skuIds = skuRows.map((s) => s.id);
+  const lifecycleBySku = new Map<string, string>();
+  if (skuIds.length) {
+    const lifecycleRows = await db
+      .select({
+        skuId: salesForecastMonthly.skuId,
+        lifecycle: salesForecastMonthly.lifecycle,
+      })
+      .from(salesForecastMonthly)
+      .where(inArray(salesForecastMonthly.skuId, skuIds));
+    for (const row of lifecycleRows) {
+      if (row.lifecycle && !lifecycleBySku.has(row.skuId)) {
+        lifecycleBySku.set(row.skuId, row.lifecycle);
+      }
+    }
+  }
+
   const draftRows: Array<{
     skuId: string;
     code: string;
@@ -56,6 +84,7 @@ inventoryRoutes.get('/inventory/overview', async (c) => {
     reorderPoint: number | null;
     status: 'normal' | 'alert' | 'danger' | 'stockout';
     needsReplenishment: boolean;
+    inventoryHealth: InventoryHealth;
   }> = [];
 
   for (const sku of skuRows) {
@@ -94,6 +123,11 @@ inventoryRoutes.get('/inventory/overview', async (c) => {
       else if (cfg?.safetyStockQty != null && localEffectiveQty < cfg.safetyStockQty) status = 'danger';
       else if (cfg?.reorderPoint != null && localEffectiveQty < cfg.reorderPoint) status = 'alert';
 
+      const healthSnap = healthByKey.get(`${sku.id}::${wh.code}`);
+      const inventoryHealth: InventoryHealth =
+        (healthSnap?.healthStatus as InventoryHealth) ??
+        (localEffectiveQty <= 0 ? 'red' : 'green');
+
       draftRows.push({
         skuId: sku.id,
         code: sku.code,
@@ -111,11 +145,14 @@ inventoryRoutes.get('/inventory/overview', async (c) => {
         reorderPoint: cfg?.reorderPoint ?? null,
         status,
         needsReplenishment: needsReplenishmentByInventory(localEffectiveQty, cfg?.reorderPoint),
+        inventoryHealth,
       });
     }
   }
 
-  const enriched = applyReplenishLightToRows(draftRows).map((row) => ({
+  const enriched = applyReplenishLightToRows(draftRows).map((row) => {
+    const snapshot = healthByKey.get(`${row.skuId}::${row.warehouseCode}`);
+    return {
     skuId: row.skuId,
     code: row.code,
     name: row.name,
@@ -135,7 +172,11 @@ inventoryRoutes.get('/inventory/overview', async (c) => {
     status: row.status,
     needsReplenishment: row.needsReplenishment,
     replenishEligible: row.replenishEligible,
-  }));
+    inventoryHealth: row.inventoryHealth,
+    coverageDays: snapshot?.coverageDays != null ? Number(snapshot.coverageDays) : null,
+    demandSource: snapshot?.demandSource ?? null,
+  };
+  });
 
   return c.json(enriched);
 });
@@ -273,6 +314,14 @@ inventoryRoutes.post('/inventory/records', requireMenu('inventory.overview'), as
       createdBy: user.id,
     })
     .returning();
+
+  await writeAuditLog(c, {
+    action: 'inventory_record.create',
+    resourceType: 'inventory_record',
+    resourceId: row.id,
+    detail: body,
+    user,
+  });
 
   return c.json(row, 201);
 });

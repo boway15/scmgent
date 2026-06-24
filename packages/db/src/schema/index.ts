@@ -3,6 +3,7 @@ export * from './warehouses';
 export * from './products';
 export * from './inventory';
 export * from './reorder';
+export * from './inventory-health';
 export * from './procurement';
 export * from './pmc';
 export * from './ai';

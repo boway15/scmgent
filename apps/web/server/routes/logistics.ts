@@ -1,4 +1,4 @@
-import { eq, desc, asc, like, and } from 'drizzle-orm';
+import { eq, desc, asc, and } from 'drizzle-orm';
 import { Hono } from 'hono';
 import {
   db,
@@ -66,6 +66,7 @@ import {
   isNonFobMarkerShipment,
   computeMatchFromShipments,
   partitionVolumeShipments,
+  nextFobBatchNo,
 } from '../lib/fob-batch-helpers.js';
 import { requireMenu } from '../lib/rbac.js';
 import { assertRowCount, assertUploadFile } from '../lib/upload-guard.js';
@@ -90,17 +91,6 @@ import { validatePaymentUpdate, type PaymentStatus } from '../lib/fob-payment-st
 const fobMenu = requireMenu('logistics.fob_settlement');
 
 const FOB_TEMPLATE_TYPES = new Set<FobTemplateType>(['volume', 'trucking', 'freight']);
-
-export async function nextFobBatchNo(): Promise<string> {
-  const d = new Date();
-  const prefix = `FOB-${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}`;
-  const rows = await db
-    .select({ batchNo: fobSettlementBatches.batchNo })
-    .from(fobSettlementBatches)
-    .where(like(fobSettlementBatches.batchNo, `${prefix}%`));
-  const seq = rows.length + 1;
-  return `${prefix}${String(seq).padStart(4, '0')}`;
-}
 
 function mapAllocationRow(a: {
   id?: string;
@@ -476,20 +466,29 @@ logisticsRoutes.post('/logistics/fob-settlements', fobMenu, async (c) => {
   }
 
   const batchNo = await nextFobBatchNo();
-  const [batch] = await db
-    .insert(fobSettlementBatches)
-    .values({
-      batchNo,
-      name: body.name.trim(),
-      settlementPeriod: body.settlementPeriod.trim(),
-      settlementType: body.settlementType,
-      serviceProviderId: provider.id,
-      usdToCnyRate: String(body.usdToCnyRate ?? 7.25),
-      remark: body.remark,
-      status: 'draft',
-      createdBy: user.id,
-    })
-    .returning();
+  let batch;
+  try {
+    [batch] = await db
+      .insert(fobSettlementBatches)
+      .values({
+        batchNo,
+        name: body.name.trim(),
+        settlementPeriod: body.settlementPeriod.trim(),
+        settlementType: body.settlementType,
+        serviceProviderId: provider.id,
+        usdToCnyRate: String(body.usdToCnyRate ?? 7.25),
+        remark: body.remark,
+        status: 'draft',
+        createdBy: user.id,
+      })
+      .returning();
+  } catch (err) {
+    const code = (err as { code?: string })?.code;
+    if (code === '23505') {
+      return c.json({ message: '批次编号冲突，请重试' }, 409);
+    }
+    throw err;
+  }
 
   return c.json(batch, 201);
 });

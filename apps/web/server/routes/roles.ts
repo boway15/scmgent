@@ -3,6 +3,7 @@ import { Hono } from 'hono';
 import { db, roles, roleMenus, menus, users } from '@scm/db';
 import { requireSuperAdmin } from '../middleware/auth.js';
 import { clearMenuCache } from '../lib/rbac.js';
+import { writeAuditLog } from '../lib/audit-log.js';
 
 export const roleRoutes = new Hono();
 
@@ -27,6 +28,13 @@ roleRoutes.post('/roles', requireSuperAdmin, async (c) => {
     })
     .returning();
 
+  await writeAuditLog(c, {
+    action: 'role.create',
+    resourceType: 'role',
+    resourceId: row.id,
+    detail: { code: row.code, name: row.name },
+  });
+
   return c.json(row, 201);
 });
 
@@ -39,6 +47,14 @@ roleRoutes.put('/roles/:id', requireSuperAdmin, async (c) => {
     .returning();
 
   if (!row) return c.json({ message: 'Role not found' }, 404);
+
+  await writeAuditLog(c, {
+    action: 'role.update',
+    resourceType: 'role',
+    resourceId: row.id,
+    detail: { name: row.name, description: row.description },
+  });
+
   return c.json(row);
 });
 
@@ -52,6 +68,14 @@ roleRoutes.delete('/roles/:id', requireSuperAdmin, async (c) => {
   if (bound.length) return c.json({ message: 'Role has bound users' }, 400);
 
   await db.delete(roles).where(eq(roles.id, roleId));
+
+  await writeAuditLog(c, {
+    action: 'role.delete',
+    resourceType: 'role',
+    resourceId: roleId,
+    detail: { code: role.code, name: role.name },
+  });
+
   return c.json({ ok: true });
 });
 
@@ -78,5 +102,13 @@ roleRoutes.put('/roles/:id/menus', requireSuperAdmin, async (c) => {
   }
 
   clearMenuCache();
+
+  await writeAuditLog(c, {
+    action: 'role.menus_update',
+    resourceType: 'role',
+    resourceId: roleId,
+    detail: { menuCount: body.menuIds?.length ?? 0 },
+  });
+
   return c.json({ ok: true, count: body.menuIds?.length ?? 0 });
 });

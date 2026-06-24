@@ -127,6 +127,48 @@
       "when": 1780717058157,
       "tag": "0017_email_auth",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "6",
+      "when": 1780717058158,
+      "tag": "0018_audit_logs",
+      "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "6",
+      "when": 1780717058159,
+      "tag": "0019_supply_chain_replenishment",
+      "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "6",
+      "when": 1780717058160,
+      "tag": "0020_sales_forecast_monthly",
+      "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "6",
+      "when": 1780717058161,
+      "tag": "0021_sku_encoding",
+      "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "6",
+      "when": 1780717058162,
+      "tag": "0022_inventory_health_lights",
+      "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "6",
+      "when": 1780717058163,
+      "tag": "0023_inventory_ops_production",
+      "breakpoints": true
     }
   ]
 }

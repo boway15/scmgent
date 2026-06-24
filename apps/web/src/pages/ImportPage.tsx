@@ -12,10 +12,12 @@ type ImportTypeLocal = ImportType;
 const TEMPLATES: Record<ImportTypeLocal, { title: string; hint: string; sample: string }> = {
   skus: {
     title: 'SKU 主数据',
-    hint: '列：sku_code, name, unit, spu_code, spu_moq（主商品起订量）, category, lead_time_days, moq（SKU 起订量）, unit_cost, merchant_code, merchant_name, replenish_light（red/yellow/green）',
-    sample: `sku_code,name,unit,spu_code,spu_moq,category,lead_time_days,moq,unit_cost,merchant_code,merchant_name,replenish_light
-SKU-HM-001,硅胶厨房铲勺五件套,pcs,SPU-KIT-001,500,厨房收纳,25,500,8.5,M-HM-001,顺德家居供应链,red
-SKU-HM-002,硅胶汤勺-薄荷绿,pcs,SPU-KIT-001,500,厨房收纳,25,500,2.8,M-HM-001,顺德家居供应链,yellow`,
+    hint: '列：sku_code（支持标准9位/外部15位，或 legacy 如 DJ502313_34、DJ478585_2P02、DJ485882P01）, external_code, name, unit；标准/DJ legacy 编码可省略 spu_code（自动提炼）。另有 spu_moq, category, lead_time_days 等',
+    sample: `sku_code,name,unit,spu_moq,category,lead_time_days,production_lead_days,moq,unit_cost,merchant_code,merchant_name,replenish_light
+704576101,PETOY款-标准,pcs,500,宠物用品,25,50,100,8.5,M-PET-001,宠物工厂,red
+DJ502313_34,大件款-变参34,pcs,200,大件,30,50,50,12.0,M-DJ-001,大件工厂,red
+DJ478585_2P02,大件款2号-配件02,pcs,,大件,30,50,10,3.5,M-DJ-001,大件工厂,green
+DJ485882P01,大件款-通用配件01,pcs,,大件,30,50,20,2.0,M-DJ-001,大件工厂,green`,
   },
   inventory: {
     title: '库存盘点',
@@ -31,11 +33,32 @@ SKU-HM-003,IN-PRODUCTION,0,0,45,2026-06-01`,
 SKU-HM-001,2026-05-01,120,wayfair,US-WEST
 SKU-HM-003,2026-05-02,8,amazon,US-WEST`,
   },
+  sales_forecast: {
+    title: '销量预测（月度日均）',
+    hint: '宽表：站点, SKU, 采购周期, 生命周期, 负责人, 1月预测日均…12月预测日均；与业务飞书表结构一致',
+    sample: `station,sku_code,production_lead_days,lifecycle,owner_name,1月预测日均,2月预测日均,3月预测日均,4月预测日均,5月预测日均,6月预测日均,7月预测日均,8月预测日均,9月预测日均,10月预测日均
+US,DJ502313_34,50,成熟期,梁素娟,2.5,2.5,2.5,2.5,2.5,2.5,2.5,2.5,2.5,2.5
+US,DJ502952_1,50,成熟期,梁素娟,50,50,50,25,25,34,30,25,20,20`,
+  },
   safety_stock: {
-    title: '安全库存',
-    hint: '列：sku_code, warehouse_code, safety_stock_qty, reorder_point, reorder_qty',
-    sample: `sku_code,warehouse_code,safety_stock_qty,reorder_point,reorder_qty
-SKU-HM-001,US-WEST,200,400,1000`,
+    title: '库存策略',
+    hint: '列：sku_code, warehouse_code, safety_stock_days, target_coverage_days, overstock_threshold_days, safety_stock_qty, reorder_point, reorder_qty',
+    sample: `sku_code,warehouse_code,safety_stock_days,target_coverage_days,overstock_threshold_days,safety_stock_qty,reorder_point,reorder_qty
+SKU-HM-001,US-WEST,14,130,180,200,400,1000`,
+  },
+  merchants: {
+    title: '供应商/工厂',
+    hint: '列：merchant_code, merchant_name, production_lead_days, contact_name, contact_phone, payment_terms',
+    sample: `merchant_code,merchant_name,production_lead_days,contact_name,contact_phone,payment_terms
+M-HM-001,顺德家居供应链,50,张工,13800000000,月结30天`,
+  },
+  warehouse_leads: {
+    title: '航线周期',
+    hint: '列：warehouse_code, shipping_lead_days, inbound_buffer_days',
+    sample: `warehouse_code,shipping_lead_days,inbound_buffer_days
+US-WEST,45,7
+US-EAST,60,7
+DE,80,7`,
   },
   pmc_plans: {
     title: '下单计划',
@@ -51,7 +74,21 @@ function parseImportType(value: string | null): ImportTypeLocal {
   return 'inventory';
 }
 
-const BITABLE_SYNC_TYPES = new Set<BitableSyncType>(['skus', 'inventory', 'sales']);
+const BITABLE_SYNC_TYPES = new Set<BitableSyncType>([
+  'skus',
+  'inventory',
+  'sales',
+  'merchants',
+  'warehouse_leads',
+  'inventory_policy',
+  'sales_forecast',
+]);
+
+function bitableTypeForImport(type: ImportTypeLocal): BitableSyncType | null {
+  if (type === 'safety_stock') return 'inventory_policy';
+  if (isBitableSyncType(type)) return type;
+  return null;
+}
 
 function isBitableSyncType(type: ImportTypeLocal): type is BitableSyncType {
   return BITABLE_SYNC_TYPES.has(type as BitableSyncType);
@@ -95,7 +132,8 @@ export function ImportPage() {
   const [bitablePreviewReady, setBitablePreviewReady] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
-  const bitableEnabled = isBitableSyncType(importType);
+  const bitableType = bitableTypeForImport(importType);
+  const bitableEnabled = bitableType != null;
 
   const { data: bitableStatus } = useQuery({
     queryKey: ['bitable-status'],
@@ -103,7 +141,9 @@ export function ImportPage() {
     enabled: bitableEnabled,
   });
 
-  const bitableConfigured = bitableEnabled ? (bitableStatus?.[importType]?.configured ?? false) : false;
+  const bitableConfigured = bitableType
+    ? (bitableStatus?.[bitableType]?.configured ?? false)
+    : false;
 
   const { data: batches = [] } = useQuery({
     queryKey: ['import-batches', importType],
@@ -161,7 +201,7 @@ export function ImportPage() {
   };
 
   const previewBitable = useMutation({
-    mutationFn: () => api.previewBitableSync(importType as BitableSyncType),
+    mutationFn: () => api.previewBitableSync(bitableType!),
     onSuccess: (r) => {
       setPreview(r);
       setBitablePreviewReady(!r.hasBlockingIssues);
@@ -174,7 +214,7 @@ export function ImportPage() {
   });
 
   const executeBitable = useMutation({
-    mutationFn: () => api.executeBitableSync(importType as BitableSyncType),
+    mutationFn: () => api.executeBitableSync(bitableType!),
     onSuccess: (r) => {
       setResult(
         `多维表格同步 ${r.imported} 条；批次 ${r.batchStatus ?? '-'}；错误：${r.errors.join('; ') || '无'}`,
@@ -252,7 +292,7 @@ export function ImportPage() {
               <p className="text-sm font-medium">飞书多维表格</p>
               <p className="text-xs text-text-sub">
                 {bitableConfigured
-                  ? `已配置表 ID：${bitableStatus?.[importType]?.tableId ?? '-'}`
+                  ? `已配置表 ID：${bitableStatus?.[bitableType!]?.tableId ?? '-'}`
                   : '未配置 FEISHU_BITABLE_APP_TOKEN 或对应 TABLE 环境变量，请在部署环境配置后重试'}
               </p>
               <div className="flex flex-wrap gap-2">

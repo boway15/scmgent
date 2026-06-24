@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { PageHeader } from '@/components/PageHeader';
 import { ReplenishLightBadge } from '@/components/ReplenishLightBadge';
+import { InventoryHealthBadge } from '@/components/InventoryHealthBadge';
 import { useState } from 'react';
 
 const IN_PRODUCTION_WAREHOUSE = 'IN-PRODUCTION';
@@ -100,7 +101,7 @@ export function InventoryOverviewPage() {
         <CardHeader>
           <CardTitle>SKU 列表</CardTitle>
           <p className="text-sm text-text-sub">
-            本仓有效 = 可售 + 在途（在途已指向目的仓）；在产为 SKU 级未分仓池。亮灯：红灯必补、黄灯随 SPU 红灯联动、绿灯不补
+            本仓有效 = 可售 + 在途。健康灯：蓝=超多、绿=健康、黄=有风险、红=必须补货、灰=滞销/停售；补货灯（红/黄/绿）控制是否参与自动补货建议
           </p>
         </CardHeader>
         <CardContent>
@@ -133,7 +134,8 @@ export function InventoryOverviewPage() {
                   <th className="p-2 font-normal">预留</th>
                   <th className="p-2 font-normal">本仓有效</th>
                   <th className="p-2 font-normal">ROP</th>
-                  <th className="p-2 font-normal">亮灯</th>
+                  <th className="p-2 font-normal">健康灯</th>
+                  <th className="p-2 font-normal">补货灯</th>
                   <th className="p-2 font-normal">状态</th>
                   <th className="p-2 font-normal">AI</th>
                 </tr>
@@ -150,6 +152,9 @@ export function InventoryOverviewPage() {
                     <td className="p-2 font-numeric text-text-sub">{item.qtyReserved ?? 0}</td>
                     <td className="p-2 font-numeric font-medium text-primary">{item.localEffectiveQty ?? item.effectiveQty}</td>
                     <td className="p-2 font-numeric text-text-main">{item.reorderPoint ?? '-'}</td>
+                    <td className="p-2">
+                      <InventoryHealthBadge health={item.inventoryHealth} />
+                    </td>
                     <td className="p-2">
                       <ReplenishLightBadge
                         light={item.replenishLight ?? 'red'}
@@ -171,7 +176,7 @@ export function InventoryOverviewPage() {
                 ))}
                 {!items.length && (
                   <tr>
-                    <td colSpan={12} className="p-4 text-center text-text-hint">
+                    <td colSpan={13} className="p-4 text-center text-text-hint">
                       暂无 SKU，请先新建
                     </td>
                   </tr>

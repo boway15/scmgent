@@ -113,6 +113,7 @@ const MENU_SEEDS: MenuSeed[] = [
     children: [
       { code: 'system.users', name: '用户管理', path: '/system/users', sortOrder: 1, isLeaf: true },
       { code: 'system.roles', name: '角色与菜单', path: '/system/roles', sortOrder: 2, isLeaf: true },
+      { code: 'system.logs', name: '操作日志', icon: 'ScrollText', path: '/system/logs', sortOrder: 3, isLeaf: true },
     ],
   },
 ];
@@ -133,7 +134,7 @@ const DEPRECATED_MENU_CODES = [
 ];
 
 const ROLE_MENU_CODES: Record<string, string[]> = {
-  super_admin: ['dashboard', 'inventory', 'inventory.overview', 'inventory.safety', 'inventory.alert', 'pmc', 'pmc.suggestion', 'pmc.list', 'pmc.tracking', 'logistics', 'logistics.fob_settlement', 'data', 'data.products', 'data.import', 'data.sales', 'ai', 'ai.chat', 'help', 'system', 'system.users', 'system.roles'],
+  super_admin: ['dashboard', 'inventory', 'inventory.overview', 'inventory.safety', 'inventory.alert', 'pmc', 'pmc.suggestion', 'pmc.list', 'pmc.tracking', 'logistics', 'logistics.fob_settlement', 'data', 'data.products', 'data.import', 'data.sales', 'ai', 'ai.chat', 'help', 'system', 'system.users', 'system.roles', 'system.logs'],
   pmc_planner: ['dashboard', 'inventory', 'inventory.overview', 'inventory.safety', 'pmc', 'pmc.suggestion', 'pmc.list', 'logistics', 'logistics.fob_settlement', 'data', 'data.products', 'data.import', 'data.sales', 'ai', 'ai.chat', 'help'],
   warehouse: ['dashboard', 'inventory', 'inventory.overview', 'inventory.alert', 'pmc', 'pmc.list', 'logistics', 'logistics.fob_settlement', 'data', 'data.products', 'data.import', 'data.sales', 'ai', 'ai.chat', 'help'],
   purchaser: ['dashboard', 'inventory', 'inventory.overview', 'inventory.safety', 'inventory.alert', 'pmc', 'pmc.list', 'pmc.tracking', 'logistics', 'logistics.fob_settlement', 'data', 'data.products', 'data.import', 'data.sales', 'ai', 'ai.chat', 'help'],

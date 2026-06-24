@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
+import { navigateAfterAuth } from '@/lib/auth-navigation';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -37,8 +38,7 @@ export function LoginPage() {
   const emailLogin = useMutation({
     mutationFn: () => api.login({ email, password }),
     onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ['me'] });
-      navigate('/', { replace: true });
+      await navigateAfterAuth(queryClient, navigate);
     },
     onError: (err: Error) => {
       setFormError(err.message);
@@ -47,9 +47,9 @@ export function LoginPage() {
 
   useEffect(() => {
     if (isSuccess && user) {
-      navigate('/', { replace: true });
+      void navigateAfterAuth(queryClient, navigate);
     }
-  }, [isSuccess, user, navigate]);
+  }, [isSuccess, user, navigate, queryClient]);
 
   const errorMsg: Record<string, string> = {
     invalid_oauth_state: '登录状态无效，请重试',
@@ -75,8 +75,7 @@ export function LoginPage() {
     <div className="flex min-h-screen items-center justify-center bg-layout p-6">
       <Card className="w-full max-w-md">
         <CardHeader>
-          <CardTitle className="text-primary">SCM Agent</CardTitle>
-          <p className="text-sm text-text-sub">跨境电商供应链智能体平台</p>
+          <CardTitle className="text-primary">AJ-Agent</CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
           {(error || formError) && (

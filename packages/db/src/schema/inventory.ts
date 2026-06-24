@@ -21,6 +21,14 @@ export const calcMethodEnum = pgEnum('calc_method', ['manual', 'eoq', 'dify_ai']
 export const dataSourceEnum = pgEnum('data_source', ['manual', 'import', 'pmc_receipt']);
 /** 补货亮灯：red=必补，yellow=同 SPU 有红灯 SKU 需补时才补，green=不补 */
 export const replenishLightEnum = pgEnum('replenish_light', ['red', 'yellow', 'green']);
+/** SKU 编码类型（HJ-IT-STP-2025-001） */
+export const skuKindEnum = pgEnum('sku_kind', [
+  'standard',
+  'accessory',
+  'multi_box',
+  'return',
+  'legacy',
+]);
 
 export const skus = pgTable(
   'skus',
@@ -34,6 +42,20 @@ export const skus = pgTable(
     /** 规格属性，如 { color: "红", size: "L" } */
     specAttrs: jsonb('spec_attrs'),
     barcode: varchar('barcode', { length: 100 }),
+    externalCode: varchar('external_code', { length: 20 }),
+    internalCode: varchar('internal_code', { length: 12 }),
+    skuKind: skuKindEnum('sku_kind').notNull().default('legacy'),
+    divisionCode: varchar('division_code', { length: 1 }),
+    distributionNo: integer('distribution_no'),
+    spuNumericCode: varchar('spu_numeric_code', { length: 5 }),
+    variantNo: varchar('variant_no', { length: 2 }),
+    brandCode: varchar('brand_code', { length: 2 }),
+    categoryCode: varchar('category_code', { length: 3 }),
+    factorySuffix: varchar('factory_suffix', { length: 1 }),
+    accessoryNo: varchar('accessory_no', { length: 3 }),
+    boxNo: varchar('box_no', { length: 1 }),
+    encodingValid: boolean('encoding_valid').notNull().default(false),
+    encodingMeta: jsonb('encoding_meta'),
     leadTimeDays: integer('lead_time_days'),
     moq: integer('moq'),
     unitCost: numeric('unit_cost', { precision: 12, scale: 4 }),
@@ -47,6 +69,8 @@ export const skus = pgTable(
   },
   (table) => ({
     spuIdx: index('skus_spu_id_idx').on(table.spuId),
+    internalCodeIdx: index('skus_internal_code_idx').on(table.internalCode),
+    externalCodeIdx: index('skus_external_code_idx').on(table.externalCode),
   }),
 );
 
@@ -122,6 +146,12 @@ export const safetyStockConfig = pgTable(
     reorderPoint: integer('reorder_point').notNull(),
     reorderQty: integer('reorder_qty').notNull(),
     reviewCycleDays: integer('review_cycle_days'),
+    /** 安全库存天数（覆盖天数模型） */
+    safetyStockDays: integer('safety_stock_days').default(14),
+    /** 目标库存覆盖天数；未设时由总提前期推导 */
+    targetCoverageDays: integer('target_coverage_days'),
+    /** 超备阈值（覆盖天数） */
+    overstockThresholdDays: integer('overstock_threshold_days').default(180),
     serviceLevel: numeric('service_level', { precision: 4, scale: 2 }),
     calcMethod: calcMethodEnum('calc_method').notNull().default('manual'),
     lastCalcAt: timestamp('last_calc_at', { withTimezone: true }),
@@ -135,12 +165,44 @@ export const safetyStockConfig = pgTable(
   }),
 );
 
+/** 业务销量预测：按站点+月份维护预测日均（宽表导入后归一化） */
+export const salesForecastMonthly = pgTable(
+  'sales_forecast_monthly',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    skuId: uuid('sku_id')
+      .notNull()
+      .references(() => skus.id, { onDelete: 'cascade' }),
+    /** 站点，如 US / DE */
+    station: varchar('station', { length: 20 }).notNull(),
+    forecastYear: integer('forecast_year').notNull(),
+    month: integer('month').notNull(),
+    forecastDailyAvg: numeric('forecast_daily_avg', { precision: 12, scale: 4 }).notNull(),
+    lifecycle: varchar('lifecycle', { length: 50 }),
+    ownerName: varchar('owner_name', { length: 100 }),
+    source: dataSourceEnum('source').notNull().default('import'),
+    importBatchId: uuid('import_batch_id'),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    skuStationMonthUnique: uniqueIndex('sales_forecast_monthly_sku_station_month_idx').on(
+      table.skuId,
+      table.station,
+      table.forecastYear,
+      table.month,
+    ),
+    skuStationIdx: index('sales_forecast_monthly_sku_station_idx').on(table.skuId, table.station),
+  }),
+);
+
 export const skusRelations = relations(skus, ({ many, one }) => ({
   spu: one(spus, { fields: [skus.spuId], references: [spus.id] }),
   bomAsFinished: many(bom, { relationName: 'finishedSku' }),
   bomAsMaterial: many(bom, { relationName: 'materialSku' }),
   inventoryRecords: many(inventoryRecords),
   salesHistory: many(salesHistory),
+  salesForecastMonthly: many(salesForecastMonthly),
   safetyStockConfig: one(safetyStockConfig),
 }));
 
@@ -164,6 +226,10 @@ export const inventoryRecordsRelations = relations(inventoryRecords, ({ one }) =
 
 export const salesHistoryRelations = relations(salesHistory, ({ one }) => ({
   sku: one(skus, { fields: [salesHistory.skuId], references: [skus.id] }),
+}));
+
+export const salesForecastMonthlyRelations = relations(salesForecastMonthly, ({ one }) => ({
+  sku: one(skus, { fields: [salesForecastMonthly.skuId], references: [skus.id] }),
 }));
 
 export const safetyStockConfigRelations = relations(safetyStockConfig, ({ one }) => ({

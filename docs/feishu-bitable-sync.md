@@ -1,6 +1,8 @@
-# 飞书多维表格同步（商品 / 库存 / 销量）
+# 飞书多维表格同步（阶段一主数据）
 
-scm-agent 支持在 **数据导入中心**（`/data/import`）从飞书多维表格一键拉取 SKU、库存、销量数据，与 CSV/XLSX 直接导入并存。
+scm-agent 支持在 **数据导入中心**（`/data/import`）从飞书多维表格一键拉取供应链主数据，与 CSV/XLSX 直接导入并存。
+
+详细字段规范见 [phase1-feishu-master-data.md](./prd/phase1-feishu-master-data.md)。
 
 ## 前置条件
 
@@ -17,6 +19,10 @@ FEISHU_BITABLE_APP_TOKEN=      # 多维表格 app_token（URL 中 /base/ 后的 
 FEISHU_BITABLE_TABLE_SKUS=     # 商品表 table_id（tblxxx）
 FEISHU_BITABLE_TABLE_INVENTORY=
 FEISHU_BITABLE_TABLE_SALES=
+FEISHU_BITABLE_TABLE_MERCHANTS=
+FEISHU_BITABLE_TABLE_WAREHOUSE_LEADS=
+FEISHU_BITABLE_TABLE_INVENTORY_POLICY=
+FEISHU_BITABLE_TABLE_SALES_FORECAST=
 ```
 
 获取方式：
@@ -39,6 +45,7 @@ Bitable 列名支持中英文别名，系统会自动映射为导入字段。
 | spu_code | SPU编码 |
 | category | 品类 |
 | lead_time_days | 交期天数 |
+| production_lead_days | 生产周期 |
 | moq | MOQ |
 | unit_cost | 成本 |
 | merchant_code | 工厂编码 |
@@ -65,6 +72,43 @@ Bitable 列名支持中英文别名，系统会自动映射为导入字段。
 | channel | 渠道 |
 | warehouse_code | 发货仓 |
 
+### 工厂（merchants）
+
+| 导入字段 | 推荐 Bitable 列名 |
+|----------|-------------------|
+| merchant_code | 工厂编码 |
+| merchant_name | 工厂名称 |
+| production_lead_days | 生产周期 |
+
+### 航线周期（warehouse_leads）
+
+| 导入字段 | 推荐 Bitable 列名 |
+|----------|-------------------|
+| warehouse_code | 仓库编码 |
+| shipping_lead_days | 海运周期 |
+| inbound_buffer_days | 入仓缓冲 |
+
+### 库存策略（inventory_policy）
+
+| 导入字段 | 推荐 Bitable 列名 |
+|----------|-------------------|
+| sku_code | SKU编码 |
+| warehouse_code | 仓库编码 |
+| safety_stock_days | 安全库存天数 |
+| target_coverage_days | 目标覆盖天数 |
+| overstock_threshold_days | 超备阈值天数 |
+
+### 销量预测（sales_forecast）
+
+| 导入字段 | 推荐 Bitable 列名 |
+|----------|-------------------|
+| station | 站点 |
+| sku_code | SKU |
+| production_lead_days | 采购周期 |
+| lifecycle | 生命周期 |
+| owner_name | 负责人 |
+| 1月预测日均 … | 1月预测日均、2月预测日均…（宽列原样保留） |
+
 日期字段可为 `YYYY-MM-DD` 文本，或 Bitable 日期类型（毫秒时间戳会自动转换）。
 
 ## 使用步骤
@@ -74,7 +118,7 @@ Bitable 列名支持中英文别名，系统会自动映射为导入字段。
 3. 在「飞书多维表格」区域点击 **从多维表格预览**
 4. 确认校验无阻断问题后，点击 **确认从多维表格同步**
 
-导入顺序建议：**SKU → 库存 / 销量**（库存与销量 preview 会校验 SKU 是否已存在）。
+导入顺序建议：**工厂 → 航线周期 → SKU → 销量预测 → 库存策略 → 库存 / 历史销量**。
 
 ## API（供集成参考）
 
@@ -84,7 +128,10 @@ Bitable 列名支持中英文别名，系统会自动映射为导入字段。
 | POST | `/api/bitable/sync/:type/preview` |
 | POST | `/api/bitable/sync/:type` |
 
-`type` 为 `skus` | `inventory` | `sales`。
+`type` 为 `skus` | `inventory` | `sales` | `merchants` | `warehouse_leads` | `inventory_policy` | `sales_forecast`。
+
+补货预测：`POST /api/tasks/replenishment-forecast`  
+采购跟进：`POST /api/tasks/purchase-follow-up`
 
 ## 限制
 

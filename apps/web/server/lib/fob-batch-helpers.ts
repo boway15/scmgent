@@ -1,4 +1,4 @@
-import { eq, and } from 'drizzle-orm';
+import { eq, and, like } from 'drizzle-orm';
 import {
   db,
   fobMerchantShipments,
@@ -6,6 +6,7 @@ import {
   fobFeeAllocationRules,
   fobTruckingBillItems,
   fobFreightBillItems,
+  fobSettlementBatches,
 } from '@scm/db';
 import { buildContainerMerchantStats } from './fob-container-stats.js';
 import { computeContainerMatch } from './fob-container-match.js';
@@ -140,3 +141,22 @@ export async function countPendingExceptions(batchId: string) {
 }
 
 export { effectiveBillAmount };
+
+/** 按月递增批次号；取已有最大序号 +1，避免删除中间批次后 length+1 撞号 */
+export async function nextFobBatchNo(): Promise<string> {
+  const d = new Date();
+  const prefix = `FOB-${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}`;
+  const rows = await db
+    .select({ batchNo: fobSettlementBatches.batchNo })
+    .from(fobSettlementBatches)
+    .where(like(fobSettlementBatches.batchNo, `${prefix}%`));
+
+  let maxSeq = 0;
+  for (const row of rows) {
+    const tail = row.batchNo.slice(prefix.length);
+    const n = parseInt(tail.replace(/\D/g, ''), 10);
+    if (Number.isFinite(n) && n > maxSeq) maxSeq = n;
+  }
+
+  return `${prefix}${String(maxSeq + 1).padStart(4, '0')}`;
+}

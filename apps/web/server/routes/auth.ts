@@ -16,9 +16,11 @@ import {
 import {
   findOrCreateFeishuUser,
   getCurrentUser,
+  getCurrentUserOptional,
   loginEmailUser,
   registerEmailUser,
 } from '../lib/auth-context.js';
+import { writeAuditLog } from '../lib/audit-log.js';
 
 export const authRoutes = new Hono();
 
@@ -71,6 +73,7 @@ authRoutes.post('/auth/register', async (c) => {
   try {
     const user = await registerEmailUser({ email, password, name: body.name });
     await issueSession(c, user);
+    await writeAuditLog(c, { action: 'auth.register', resourceType: 'user', resourceId: user.id, user });
     return c.json({ ok: true, user });
   } catch (err) {
     const msg = err instanceof Error ? err.message : 'Registration failed';
@@ -98,6 +101,7 @@ authRoutes.post('/auth/login', async (c) => {
   try {
     const user = await loginEmailUser(email, password);
     await issueSession(c, user);
+    await writeAuditLog(c, { action: 'auth.login', resourceType: 'user', resourceId: user.id, user });
     return c.json({ ok: true, user });
   } catch {
     return c.json({ message: '邮箱或密码错误' }, 401);
@@ -136,6 +140,7 @@ authRoutes.get('/auth/feishu/callback', async (c) => {
     const feishuUser = await exchangeCodeForUser(code);
     const user = await findOrCreateFeishuUser(feishuUser);
     await issueSession(c, user);
+    await writeAuditLog(c, { action: 'auth.feishu_login', resourceType: 'user', resourceId: user.id, user });
     deleteCookie(c, 'oauth_state', { path: '/' });
     return c.redirect('/');
   } catch (err) {
@@ -144,8 +149,12 @@ authRoutes.get('/auth/feishu/callback', async (c) => {
   }
 });
 
-authRoutes.post('/auth/logout', (c) => {
+authRoutes.post('/auth/logout', async (c) => {
+  const user = await getCurrentUserOptional(c);
   deleteCookie(c, COOKIE_NAME, { path: '/' });
+  if (user) {
+    await writeAuditLog(c, { action: 'auth.logout', resourceType: 'user', resourceId: user.id, user });
+  }
   return c.json({ ok: true });
 });
 

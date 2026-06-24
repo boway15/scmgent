@@ -1,12 +1,14 @@
 import { eq, desc } from 'drizzle-orm';
 import { Hono } from 'hono';
 import { db, stockAlerts, skus } from '@scm/db';
+import { getCurrentUser } from '../lib/auth-context.js';
 import { formatAlertSummaryFromRows } from '../lib/replenishment.js';
 import { requireMenu } from '../lib/rbac.js';
+import { writeAuditLog } from '../lib/audit-log.js';
 
 export const alertRoutes = new Hono();
 
-alertRoutes.get('/alerts', async (c) => {
+alertRoutes.get('/alerts', requireMenu('inventory.alert'), async (c) => {
   const rows = await db
     .select({
       id: stockAlerts.id,
@@ -19,6 +21,8 @@ alertRoutes.get('/alerts', async (c) => {
       safetyQty: stockAlerts.safetyQty,
       notifiedAt: stockAlerts.notifiedAt,
       isResolved: stockAlerts.isResolved,
+      resolvedAt: stockAlerts.resolvedAt,
+      resolvedBy: stockAlerts.resolvedBy,
     })
     .from(stockAlerts)
     .innerJoin(skus, eq(skus.id, stockAlerts.skuId))
@@ -32,12 +36,21 @@ alertRoutes.get('/alerts', async (c) => {
 });
 
 alertRoutes.patch('/alerts/:id/resolve', requireMenu('inventory.alert'), async (c) => {
+  const user = await getCurrentUser(c);
   const [row] = await db
     .update(stockAlerts)
-    .set({ isResolved: true, resolvedAt: new Date() })
+    .set({ isResolved: true, resolvedAt: new Date(), resolvedBy: user.id })
     .where(eq(stockAlerts.id, c.req.param('id')))
     .returning();
 
   if (!row) return c.json({ message: 'Alert not found' }, 404);
+
+  await writeAuditLog(c, {
+    action: 'stock_alert.resolve',
+    resourceType: 'stock_alert',
+    resourceId: row.id,
+    user,
+  });
+
   return c.json(row);
 });

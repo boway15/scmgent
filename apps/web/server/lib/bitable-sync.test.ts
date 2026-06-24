@@ -116,9 +116,12 @@ describe('isEmptyImportRow', () => {
 });
 
 describe('BITABLE_FIELD_MAPS', () => {
-  it('defines maps for skus inventory sales', () => {
+  it('defines maps for core bitable sync types', () => {
     assert.ok(BITABLE_FIELD_MAPS.skus.sku_code.includes('SKU编码'));
     assert.ok(BITABLE_FIELD_MAPS.inventory.warehouse.includes('仓库'));
     assert.ok(BITABLE_FIELD_MAPS.sales.qty_sold.includes('销量'));
+    assert.ok(BITABLE_FIELD_MAPS.merchants.production_lead_days.includes('生产周期'));
+    assert.ok(BITABLE_FIELD_MAPS.warehouse_leads.shipping_lead_days.includes('海运周期'));
+    assert.ok(BITABLE_FIELD_MAPS.inventory_policy.safety_stock_days.includes('安全库存天数'));
   });
 });

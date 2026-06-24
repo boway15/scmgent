@@ -8,6 +8,7 @@ import {
   date,
   timestamp,
   index,
+  uniqueIndex,
 } from 'drizzle-orm/pg-core';
 import { relations } from 'drizzle-orm';
 import { users } from './auth';
@@ -49,7 +50,39 @@ export const purchaseDrafts = pgTable(
   }),
 );
 
-export const purchaseDraftsRelations = relations(purchaseDrafts, ({ one }) => ({
+export const purchaseDraftsRelations = relations(purchaseDrafts, ({ one, many }) => ({
   sku: one(skus, { fields: [purchaseDrafts.skuId], references: [skus.id] }),
   creator: one(users, { fields: [purchaseDrafts.createdBy], references: [users.id] }),
+  followUpReminders: many(purchaseFollowUpReminders),
 }));
+
+export const purchaseFollowUpReminders = pgTable(
+  'purchase_follow_up_reminders',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    draftId: uuid('draft_id')
+      .notNull()
+      .references(() => purchaseDrafts.id, { onDelete: 'cascade' }),
+    milestone: varchar('milestone', { length: 10 }).notNull(),
+    dueDate: date('due_date').notNull(),
+    notifiedAt: timestamp('notified_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    draftMilestoneUnique: uniqueIndex('purchase_follow_up_reminders_draft_milestone_idx').on(
+      table.draftId,
+      table.milestone,
+    ),
+    dueDateIdx: index('purchase_follow_up_reminders_due_date_idx').on(table.dueDate),
+  }),
+);
+
+export const purchaseFollowUpRemindersRelations = relations(
+  purchaseFollowUpReminders,
+  ({ one }) => ({
+    draft: one(purchaseDrafts, {
+      fields: [purchaseFollowUpReminders.draftId],
+      references: [purchaseDrafts.id],
+    }),
+  }),
+);

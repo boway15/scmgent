@@ -1,4 +1,4 @@
-import { eq, and, sql, gte, lte, inArray, desc } from 'drizzle-orm';
+import { eq, and, sql, gte, lte, inArray, desc, isNull } from 'drizzle-orm';
 import { Hono } from 'hono';
 import {
   db,
@@ -11,6 +11,7 @@ import {
   inventoryRecords,
 } from '@scm/db';
 import { getLatestTaskRun } from '../lib/task-runs.js';
+import { requireMenu } from '../lib/rbac.js';
 
 export const dashboardRoutes = new Hono();
 
@@ -22,7 +23,7 @@ type TodoItem = {
   priority: 'high' | 'medium' | 'low';
 };
 
-dashboardRoutes.get('/dashboard', async (c) => {
+dashboardRoutes.get('/dashboard', requireMenu('dashboard'), async (c) => {
   const [openAlerts] = await db
     .select({ count: sql<number>`count(*)::int` })
     .from(stockAlerts)
@@ -31,7 +32,9 @@ dashboardRoutes.get('/dashboard', async (c) => {
   const [pendingReorder] = await db
     .select({ count: sql<number>`count(*)::int` })
     .from(reorderSuggestions)
-    .where(eq(reorderSuggestions.status, 'pending'));
+    .where(
+      and(eq(reorderSuggestions.status, 'pending'), isNull(reorderSuggestions.supersededAt)),
+    );
 
   const [draftPlans] = await db
     .select({ count: sql<number>`count(*)::int` })
@@ -177,10 +180,13 @@ dashboardRoutes.get('/dashboard', async (c) => {
     .orderBy(desc(salesHistory.saleDate), desc(salesHistory.createdAt))
     .limit(1);
 
-  const [stockAlertRun, replenishmentRun] = await Promise.all([
-    getLatestTaskRun('stock_alert'),
-    getLatestTaskRun('replenishment_forecast'),
-  ]);
+  const [stockAlertRun, replenishmentRun, purchaseFollowUpRun, dailyPipelineRun] =
+    await Promise.all([
+      getLatestTaskRun('stock_alert'),
+      getLatestTaskRun('replenishment_forecast'),
+      getLatestTaskRun('purchase_follow_up'),
+      getLatestTaskRun('daily_inventory_pipeline'),
+    ]);
 
   return c.json({
     kpis: {
@@ -206,6 +212,8 @@ dashboardRoutes.get('/dashboard', async (c) => {
     taskRuns: {
       stockAlert: stockAlertRun,
       replenishmentForecast: replenishmentRun,
+      purchaseFollowUp: purchaseFollowUpRun,
+      dailyInventoryPipeline: dailyPipelineRun,
     },
     trends: {
       salesLast7Days: salesTrend7d.map((r) => ({ date: r.date.slice(0, 10), qty: r.qty })),

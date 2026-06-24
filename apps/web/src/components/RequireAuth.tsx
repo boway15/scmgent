@@ -1,7 +1,13 @@
 import { Navigate, Outlet, useLocation } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api';
-import { canAccessPath, flattenMenuPaths } from '@/lib/menu-utils';
+import {
+  canAccessPath,
+  flattenMenuPaths,
+  getDefaultHomePath,
+  hasAnyMenuAccess,
+  normalizePath,
+} from '@/lib/menu-utils';
 import { apiUrl } from '@/lib/base-path';
 import { PlaceholderPage } from '@/pages/PlaceholderPage';
 import { PendingAccessPage } from '@/components/PendingAccessPage';
@@ -28,9 +34,9 @@ export function RequireAuth() {
   });
 
   const { data: menus = [], isLoading: menusLoading } = useQuery({
-    queryKey: ['my-menus'],
+    queryKey: ['my-menus', user?.id, user?.role?.id],
     queryFn: api.getMyMenus,
-    enabled: !!user && user.role.code !== 'pending',
+    enabled: !!user,
   });
 
   if (configLoading) {
@@ -48,7 +54,7 @@ export function RequireAuth() {
     );
   }
 
-  if (userLoading || (user && user.role.code !== 'pending' && menusLoading)) {
+  if (userLoading || (user && menusLoading)) {
     return <p className="flex min-h-screen items-center justify-center text-text-sub">加载中...</p>;
   }
 
@@ -56,17 +62,20 @@ export function RequireAuth() {
     return <Navigate to="/login" state={{ from: location }} replace />;
   }
 
-  if (user.role.code === 'pending') {
+  if (!hasAnyMenuAccess(menus, user.role.code)) {
     return <PendingAccessPage />;
   }
 
-  const pathname = location.pathname;
+  const pathname = normalizePath(location.pathname);
   const allowedPaths = flattenMenuPaths(menus);
+  const homePath = getDefaultHomePath(menus, user.role.code);
+
+  if (pathname === '/' || (pathname === '/dashboard' && !canAccessPath('/dashboard', allowedPaths, user.role.code))) {
+    return <Navigate to={homePath} replace />;
+  }
 
   if (!canAccessPath(pathname, allowedPaths, user.role.code)) {
-    return (
-      <PlaceholderPage title="403" description="您没有访问此页面的权限，请联系管理员。" />
-    );
+    return <Navigate to={homePath} replace />;
   }
 
   return <Outlet />;

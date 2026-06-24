@@ -3,6 +3,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { Sidebar } from '@/components/Sidebar';
 import { useCurrentUser, useMyMenus } from '@/hooks/useAuth';
 import { api } from '@/lib/api';
+import { canAccessPath, flattenMenuPaths } from '@/lib/menu-utils';
 import { Button } from '@/components/ui/button';
 
 export function AppLayout() {
@@ -10,6 +11,8 @@ export function AppLayout() {
   const queryClient = useQueryClient();
   const { data: user } = useCurrentUser();
   const { data: menus = [], isLoading } = useMyMenus();
+  const allowedPaths = flattenMenuPaths(menus);
+  const canOpenHelp = user ? canAccessPath('/help', allowedPaths, user.role.code) : false;
 
   const logout = useMutation({
     mutationFn: api.logout,
@@ -25,12 +28,13 @@ export function AppLayout() {
     <div className="flex min-h-screen bg-layout">
       {!isLoading && <Sidebar menus={menus} />}
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="flex h-14 items-center justify-between border-b border-border/60 bg-card px-6 shadow-card">
-          <span className="text-sm text-text-sub">跨境电商供应链智能体平台</span>
+        <header className="flex h-14 items-center justify-end border-b border-border/60 bg-card px-6 shadow-card">
           <div className="flex items-center gap-3">
-            <Link to="/help" className="text-sm text-text-sub hover:text-primary">
-              帮助中心
-            </Link>
+            {canOpenHelp && (
+              <Link to="/help" className="text-sm text-text-sub hover:text-primary">
+                帮助中心
+              </Link>
+            )}
             {user && (
               <div className="text-sm">
                 <span className="font-medium text-text-main">{user.name}</span>

@@ -20,7 +20,16 @@ import {
 
 export const importRoutes = new Hono();
 
-const VALID_TYPES: ImportType[] = ['skus', 'inventory', 'sales', 'safety_stock', 'pmc_plans'];
+const VALID_TYPES: ImportType[] = [
+  'skus',
+  'inventory',
+  'sales',
+  'safety_stock',
+  'merchants',
+  'warehouse_leads',
+  'sales_forecast',
+  'pmc_plans',
+];
 
 const BATCH_TRACKED_TYPES = BATCH_TRACKED_IMPORT_TYPES;
 

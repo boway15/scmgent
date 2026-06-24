@@ -21,6 +21,10 @@ export const warehouses = pgTable(
     countryCode: varchar('country_code', { length: 10 }),
     allowCrossFulfill: boolean('allow_cross_fulfill').notNull().default(false),
     sortOrder: integer('sort_order').notNull().default(0),
+    /** 目的仓海运周期（天） */
+    shippingLeadDays: integer('shipping_lead_days'),
+    /** 到港后入仓缓冲（天） */
+    inboundBufferDays: integer('inbound_buffer_days').notNull().default(7),
     isActive: boolean('is_active').notNull().default(true),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },

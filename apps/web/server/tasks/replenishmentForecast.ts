@@ -1,6 +1,15 @@
 import { eq, and } from 'drizzle-orm';
-import { db, skus, salesHistory, reorderSuggestions, safetyStockConfig, warehouses, spus } from '@scm/db';
+import {
+  db,
+  skus,
+  salesHistory,
+  reorderSuggestions,
+  safetyStockConfig,
+  warehouses,
+  spus,
+} from '@scm/db';
 import { applyMoq, calcReplenishment, resolveEffectiveMoq } from '../lib/replenishment.js';
+import { formatCoverageReason, type InventoryHealth } from '../lib/replenishment-coverage.js';
 import {
   getLatestInventorySnapshot,
   getRegionPoolSnapshot,
@@ -17,12 +26,14 @@ import {
 } from '../lib/replenish-light.js';
 import { enhanceReplenishmentReasons } from '../integrations/dify-workflows.js';
 import { isReplenishmentWorkflowEnabled } from '../integrations/dify.js';
-
-function addDays(days: number): string {
-  const d = new Date();
-  d.setDate(d.getDate() + days);
-  return d.toISOString().slice(0, 10);
-}
+import {
+  computeSkuWarehouseHealth,
+  type SkuHealthRow,
+} from '../lib/inventory-health-service.js';
+import {
+  saveHealthSnapshots,
+  supersedePendingSuggestions,
+} from '../lib/inventory-health-store.js';
 
 async function upsertSafetyStock(
   skuId: string,
@@ -62,6 +73,14 @@ async function upsertSafetyStock(
   }
 }
 
+async function loadPolicyMap(skuId: string) {
+  const rows = await db
+    .select()
+    .from(safetyStockConfig)
+    .where(eq(safetyStockConfig.skuId, skuId));
+  return new Map(rows.map((row) => [row.warehouseCode, row]));
+}
+
 export async function runReplenishmentForecast() {
   const spuMoqMap = new Map(
     (await db.select({ id: spus.id, moq: spus.moq }).from(spus)).map((s) => [s.id, s.moq]),
@@ -73,6 +92,7 @@ export async function runReplenishmentForecast() {
       code: skus.code,
       spuId: skus.spuId,
       moq: skus.moq,
+      merchantCode: skus.merchantCode,
       replenishLight: skus.replenishLight,
       leadTimeDays: skus.leadTimeDays,
       unitCost: skus.unitCost,
@@ -81,18 +101,28 @@ export async function runReplenishmentForecast() {
     .where(eq(skus.isActive, true));
 
   const whRows = await db
-    .select({ code: warehouses.code, regionGroup: warehouses.regionGroup })
+    .select({
+      code: warehouses.code,
+      regionGroup: warehouses.regionGroup,
+      countryCode: warehouses.countryCode,
+    })
     .from(warehouses)
     .where(eq(warehouses.isActive, true))
     .orderBy(warehouses.sortOrder);
 
   if (!activeSkus.length || !whRows.length) {
-    return { suggestionCount: 0, message: 'No active SKUs or warehouses' };
+    return { suggestionCount: 0, snapshotCount: 0, message: 'No active SKUs or warehouses' };
   }
 
   let count = 0;
-  const results: Array<{ skuCode: string; warehouseCode: string; suggestedQty: number; reason: string }> =
-    [];
+  const healthRows: SkuHealthRow[] = [];
+  const results: Array<{
+    skuCode: string;
+    warehouseCode: string;
+    suggestedQty: number;
+    healthStatus: InventoryHealth;
+    reason: string;
+  }> = [];
   const pending: Array<{
     skuId: string;
     skuCode: string;
@@ -102,15 +132,24 @@ export async function runReplenishmentForecast() {
     suggestedQty: number;
     suggestedDate: string;
     reason: string;
+    healthStatus: InventoryHealth;
+    coverageDays: number;
+    totalLeadDays: number;
+    latestOrderDays: number;
+    metrics: Record<string, unknown>;
   }> = [];
 
   for (const sku of activeSkus) {
-    const leadTime = sku.leadTimeDays ?? 30;
     const replenishLight = normalizeReplenishLight(sku.replenishLight);
     const effectiveMoq = resolveEffectiveMoq(
       sku.moq,
       sku.spuId ? spuMoqMap.get(sku.spuId) : null,
     );
+    const policyMap = await loadPolicyMap(sku.id);
+    const forecastByStation = new Map<
+      string,
+      { map: Map<string, number>; lifecycle?: string }
+    >();
 
     const salesRows = await db
       .select({
@@ -121,62 +160,69 @@ export async function runReplenishmentForecast() {
       .from(salesHistory)
       .where(eq(salesHistory.skuId, sku.id));
 
-    const calcsByWh: Record<string, ReturnType<typeof calcReplenishment>> = {};
     const dailyByWh: Record<string, number> = {};
+    const coverageByWh: Record<string, SkuHealthRow['coverage']> = {};
     const networkRopByRegion: Record<string, number> = {};
 
     for (const wh of whRows) {
-      const whSales = salesRows
-        .filter((s) => s.warehouseCode === wh.code)
-        .map((s) => ({ qtySold: s.qtySold, saleDate: String(s.saleDate) }));
+      const health = await computeSkuWarehouseHealth({
+        sku,
+        warehouse: wh,
+        salesRows,
+        policyMap,
+        forecastByStation,
+        moq: effectiveMoq || undefined,
+      });
+      healthRows.push(health);
+      dailyByWh[wh.code] = health.avgDaily;
+      coverageByWh[wh.code] = health.coverage;
 
-      const calc = calcReplenishment({
-        sales: whSales,
-        leadTimeDays: leadTime,
+      const eoqCalc = calcReplenishment({
+        sales: salesRows
+          .filter((s) => s.warehouseCode === wh.code)
+          .map((s) => ({ qtySold: s.qtySold, saleDate: String(s.saleDate) })),
+        leadTimeDays: health.totalLeadDays,
         unitCost: sku.unitCost ? Number(sku.unitCost) : 1,
       });
-      calcsByWh[wh.code] = calc;
-      dailyByWh[wh.code] = calc.avgDaily;
-      await upsertSafetyStock(sku.id, wh.code, calc);
+      await upsertSafetyStock(sku.id, wh.code, eoqCalc);
       networkRopByRegion[wh.regionGroup] =
-        (networkRopByRegion[wh.regionGroup] ?? 0) + calc.reorderPoint;
+        (networkRopByRegion[wh.regionGroup] ?? 0) + eoqCalc.reorderPoint;
     }
 
     const usPool = await getRegionPoolSnapshot(sku.id, 'US');
     const usNetworkRop = networkRopByRegion.US ?? 0;
+    const usNetworkDaily = US_WAREHOUSE_CODES.reduce(
+      (sum, code) => sum + (dailyByWh[code] ?? 0),
+      0,
+    );
+    const usNetworkCoverage =
+      usNetworkDaily > 0 ? usPool.effectiveQty / usNetworkDaily : Number.POSITIVE_INFINITY;
 
     for (const wh of whRows) {
-      const calc = calcsByWh[wh.code];
+      const health = healthRows.find(
+        (h) => h.skuId === sku.id && h.warehouseCode === wh.code,
+      )!;
+      const coverage = coverageByWh[wh.code];
+      if (!coverage.needsReplenishment) continue;
+
       const snapshot = await getLatestInventorySnapshot(sku.id, wh.code);
+      const eoqRop = (health.metrics.reorderPoint as number) ?? 0;
 
       if (wh.regionGroup === 'US') {
         const defer = shouldDeferReplenishment({
           warehouseEffective: snapshot.effectiveQty,
-          warehouseRop: calc.reorderPoint,
+          warehouseRop: eoqRop,
           networkEffective: usPool.effectiveQty,
           networkRop: usNetworkRop,
         });
-        if (defer) continue;
-      } else if (snapshot.effectiveQty >= calc.reorderPoint) {
-        continue;
+        if (defer && usNetworkCoverage >= coverage.targetCoverageDays) continue;
       }
 
-      let suggestedQty = calc.reorderQty;
+      let suggestedQty = coverage.suggestedQty;
       if (wh.regionGroup === 'US' && usPool.effectiveQty < usNetworkRop) {
-        const usSales = salesRows
-          .filter((s) =>
-            s.warehouseCode
-              ? US_WAREHOUSE_CODES.includes(s.warehouseCode as (typeof US_WAREHOUSE_CODES)[number])
-              : false,
-          )
-          .map((s) => ({ qtySold: s.qtySold, saleDate: String(s.saleDate) }));
-        const networkCalc = calcReplenishment({
-          sales: usSales,
-          leadTimeDays: leadTime,
-          unitCost: sku.unitCost ? Number(sku.unitCost) : 1,
-        });
-        const split = splitQtyByDailyShare(networkCalc.reorderQty, dailyByWh);
-        suggestedQty = split[wh.code] ?? calc.reorderQty;
+        const networkQty = coverage.suggestedQty;
+        const split = splitQtyByDailyShare(networkQty, dailyByWh);
+        suggestedQty = split[wh.code] ?? coverage.suggestedQty;
       }
 
       if (suggestedQty <= 0) continue;
@@ -185,10 +231,23 @@ export async function runReplenishmentForecast() {
       suggestedQty = applyMoq(suggestedQty, effectiveMoq);
 
       const poolNote =
-        wh.regionGroup === 'US' ? `，US仓网合计 ${usPool.effectiveQty}/${usNetworkRop}` : '';
+        wh.regionGroup === 'US'
+          ? `US仓网覆盖 ${Number.isFinite(usNetworkCoverage) ? usNetworkCoverage.toFixed(1) : '∞'} 天`
+          : undefined;
       const moqNote =
-        effectiveMoq > 0 && suggestedQty > rawQty ? `，MOQ ${effectiveMoq}` : '';
-      const reason = `[${wh.code}] 有效 ${snapshot.effectiveQty}，日均 ${calc.avgDaily.toFixed(1)}，ROP ${calc.reorderPoint}${poolNote}${moqNote}`;
+        effectiveMoq > 0 && suggestedQty > rawQty ? `MOQ ${effectiveMoq}` : undefined;
+      const reasonBase = formatCoverageReason({
+        warehouseCode: wh.code,
+        effectiveQty: snapshot.effectiveQty,
+        avgDaily: dailyByWh[wh.code] ?? 0,
+        result: coverage,
+        poolNote,
+        moqNote,
+      });
+      const reason =
+        health.demandSource === 'forecast'
+          ? `${reasonBase}，需求口径：月度预测日均`
+          : reasonBase;
 
       pending.push({
         skuId: sku.id,
@@ -197,11 +256,18 @@ export async function runReplenishmentForecast() {
         replenishLight,
         warehouseCode: wh.code,
         suggestedQty,
-        suggestedDate: addDays(leadTime),
+        suggestedDate: coverage.suggestedDate,
         reason,
+        healthStatus: coverage.healthStatus,
+        coverageDays: coverage.coverageDays,
+        totalLeadDays: coverage.leadTime.totalLeadDays,
+        latestOrderDays: coverage.latestOrderDays,
+        metrics: health.metrics,
       });
     }
   }
+
+  const snapshotCount = await saveHealthSnapshots(healthRows);
 
   const spuRedNeeding = new Set<string>();
   for (const item of pending) {
@@ -238,6 +304,8 @@ export async function runReplenishmentForecast() {
   }
 
   for (const item of eligibleItems) {
+    await supersedePendingSuggestions(item.skuId, item.warehouseCode);
+
     const reasonKey = `${item.skuCode}::${item.warehouseCode}`;
     const reason = enhancedReasons.get(reasonKey) ?? item.reason;
 
@@ -247,6 +315,13 @@ export async function runReplenishmentForecast() {
       suggestedQty: item.suggestedQty,
       suggestedDate: item.suggestedDate,
       reason,
+      healthStatus: item.healthStatus,
+      coverageDays: Number.isFinite(item.coverageDays) ? String(item.coverageDays) : null,
+      totalLeadDays: item.totalLeadDays,
+      latestOrderDays: Number.isFinite(item.latestOrderDays)
+        ? String(item.latestOrderDays)
+        : null,
+      metrics: item.metrics,
       status: 'pending',
     });
 
@@ -254,14 +329,15 @@ export async function runReplenishmentForecast() {
       skuCode: item.skuCode,
       warehouseCode: item.warehouseCode,
       suggestedQty: item.suggestedQty,
+      healthStatus: item.healthStatus,
       reason,
     });
     count++;
   }
 
   const engine = difyEnhanced
-    ? 'local-per-warehouse+dify-enhanced'
-    : 'local-per-warehouse';
+    ? 'coverage-lead-time+dify-enhanced'
+    : 'coverage-lead-time';
 
-  return { suggestionCount: count, engine, difyEnhanced, results };
+  return { suggestionCount: count, snapshotCount, engine, difyEnhanced, results };
 }

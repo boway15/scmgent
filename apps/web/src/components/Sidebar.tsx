@@ -49,7 +49,7 @@ export function Sidebar({ menus }: { menus: MenuNode[] }) {
   return (
     <aside className="flex w-64 flex-col border-r border-border/60 bg-card shadow-card">
       <div className="flex h-14 items-center border-b border-border/60 px-4">
-        <span className="text-lg font-bold text-primary">SCM Agent</span>
+        <span className="text-lg font-bold text-primary">AJ-Agent</span>
       </div>
       <nav className="flex-1 space-y-1 overflow-y-auto p-2">
         {menus.map((menu) => (

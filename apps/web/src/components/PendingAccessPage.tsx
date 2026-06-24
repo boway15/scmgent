@@ -26,7 +26,7 @@ export function PendingAccessPage() {
         </CardHeader>
         <CardContent className="space-y-4">
           <p className="text-sm text-text-sub">
-            您已成功登录，但尚未分配系统权限。请联系管理员在「用户管理」中为您分配角色后再使用。
+            您已成功登录，但当前角色尚未配置任何菜单权限。请联系管理员在「角色与菜单」中分配权限，或在「用户管理」中切换角色。
           </p>
           <Button className="w-full" variant="outline" onClick={() => logout.mutate()} disabled={logout.isPending}>
             {logout.isPending ? '退出中...' : '退出登录'}

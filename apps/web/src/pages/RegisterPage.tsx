@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
+import { navigateAfterAuth } from '@/lib/auth-navigation';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -23,8 +24,7 @@ export function RegisterPage() {
   const register = useMutation({
     mutationFn: () => api.register({ email, password, name: name.trim() || undefined }),
     onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ['me'] });
-      navigate('/', { replace: true });
+      await navigateAfterAuth(queryClient, navigate);
     },
     onError: (err: Error) => {
       setFormError(err.message);

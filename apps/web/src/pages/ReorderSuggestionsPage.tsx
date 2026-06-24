@@ -6,6 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { PageHeader } from '@/components/PageHeader';
+import { InventoryHealthBadge } from '@/components/InventoryHealthBadge';
 
 export function ReorderSuggestionsPage() {
   const [searchParams] = useSearchParams();
@@ -68,7 +69,7 @@ export function ReorderSuggestionsPage() {
       <Card className="border-primary/20 bg-primary/5">
         <CardContent className="pt-6 text-sm text-text-sub">
           <p>
-            <strong className="text-text-main">补货预测</strong>：基于销量与三类库存（可售+在途+在产）运行 EOQ/ROP 算法，更新安全库存参数并生成建议行。
+            <strong className="text-text-main">补货预测</strong>：基于销量、三类库存（可售+在途+在产）与供应链周期（生产+海运+入仓缓冲）计算覆盖天数与健康灯，生成建议行。
           </p>
           <p className="mt-1">
             <strong className="text-text-main">补货建议</strong>：预测产出的待办清单；采纳后合并到同商家草稿计划，在
@@ -91,6 +92,8 @@ export function ReorderSuggestionsPage() {
                 <th className="p-2 font-normal">目标仓</th>
                 <th className="p-2 font-normal">SKU</th>
                 <th className="p-2 font-normal">商家</th>
+                <th className="p-2 font-normal">健康灯</th>
+                <th className="p-2 font-normal">覆盖天数</th>
                 <th className="p-2 font-normal">建议数量</th>
                 <th className="p-2 font-normal">建议日期</th>
                 <th className="p-2 font-normal">原因</th>
@@ -117,6 +120,16 @@ export function ReorderSuggestionsPage() {
                         }
                       />
                     )}
+                  </td>
+                  <td className="p-2">
+                    {item.healthStatus ? (
+                      <InventoryHealthBadge health={item.healthStatus} />
+                    ) : (
+                      '-'
+                    )}
+                  </td>
+                  <td className="p-2 font-numeric text-text-main">
+                    {item.coverageDays ?? '-'}
                   </td>
                   <td className="p-2 font-numeric text-primary">{item.suggestedQty}</td>
                   <td className="p-2 text-text-main">{item.suggestedDate}</td>

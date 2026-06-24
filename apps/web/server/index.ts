@@ -26,7 +26,7 @@ import { roleRoutes } from './routes/roles.js';
 import { importRoutes } from './routes/import.js';
 import { aiRoutes } from './routes/ai.js';
 import { authMiddleware } from './middleware/auth.js';
-import { requireWrite } from './lib/rbac.js';
+import { requireWrite, requireBusinessRead } from './lib/rbac.js';
 import { procurementRoutes } from './routes/procurement.js';
 import { pmcRoutes } from './routes/pmc.js';
 import { logisticsRoutes } from './routes/logistics.js';
@@ -36,6 +36,11 @@ import { taskRoutes } from './routes/tasks.js';
 import { productRoutes } from './routes/products.js';
 import { dashboardRoutes } from './routes/dashboard.js';
 import { salesRoutes } from './routes/sales.js';
+import { auditLogRoutes } from './routes/audit-logs.js';
+import { skuEncodingRoutes } from './routes/sku-encoding.js';
+import { inventoryHealthRoutes } from './routes/inventory-health.js';
+import { salesForecastRoutes } from './routes/sales-forecast.js';
+import { inventoryExceptionRoutes } from './routes/inventory-exceptions.js';
 import { sql } from 'drizzle-orm';
 import { db } from '@scm/db';
 import { getRuntimeConfigSummary } from './lib/runtime-config.js';
@@ -77,6 +82,7 @@ app.get('/api/health', async (c) => {
 });
 
 app.use('/api/*', authMiddleware);
+app.use('/api/*', requireBusinessRead());
 
 app.use('/api/*', async (c, next) => {
   const path = c.req.path;
@@ -105,6 +111,11 @@ app.route('/api', taskRoutes);
 app.route('/api', productRoutes);
 app.route('/api', dashboardRoutes);
 app.route('/api', salesRoutes);
+app.route('/api', auditLogRoutes);
+app.route('/api', skuEncodingRoutes);
+app.route('/api', inventoryHealthRoutes);
+app.route('/api', salesForecastRoutes);
+app.route('/api', inventoryExceptionRoutes);
 
 if (serveStaticFiles) {
   app.use('/*', serveStatic({ root: distRoot }));

@@ -23,6 +23,17 @@ export const spus = pgTable(
     category: varchar('category', { length: 100 }),
     brand: varchar('brand', { length: 100 }),
     description: text('description'),
+    /** 事业部号段 1/3/5/7 */
+    divisionCode: varchar('division_code', { length: 1 }),
+    /** 分销序号 0=原始 1-9=分销 */
+    distributionNo: integer('distribution_no').default(0),
+    /** SPU 五位产品序号（事业部内唯一） */
+    spuNumericCode: varchar('spu_numeric_code', { length: 5 }),
+    brandCode: varchar('brand_code', { length: 2 }),
+    categoryCode: varchar('category_code', { length: 3 }),
+    divisionName: varchar('division_name', { length: 50 }),
+    /** manual | sku_derived */
+    encodingSource: varchar('encoding_source', { length: 20 }).default('manual'),
     /** 款式级最小起订量，补货时 SKU 未单独设置时继承 */
     moq: integer('moq'),
     isActive: boolean('is_active').notNull().default(true),
@@ -31,6 +42,10 @@ export const spus = pgTable(
   },
   (table) => ({
     categoryIdx: index('spus_category_idx').on(table.category),
+    divisionSpuIdx: index('spus_division_spu_numeric_idx').on(
+      table.divisionCode,
+      table.spuNumericCode,
+    ),
   }),
 );
 
@@ -43,6 +58,8 @@ export const merchants = pgTable('merchants', {
   contactEmail: varchar('contact_email', { length: 200 }),
   countryCode: varchar('country_code', { length: 2 }),
   paymentTerms: varchar('payment_terms', { length: 100 }),
+  /** 工厂平均生产周期（天） */
+  productionLeadDays: integer('production_lead_days').notNull().default(50),
   remark: text('remark'),
   isActive: boolean('is_active').notNull().default(true),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),

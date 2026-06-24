@@ -1,6 +1,7 @@
 import { eq, and, desc } from 'drizzle-orm';
 import { db, pmcPlans, pmcPlanItems, skus, reorderSuggestions } from '@scm/db';
 import { nextPlanNo, createPurchaseDraft } from '../routes/procurement.js';
+import { schedulePurchaseFollowUps } from '../tasks/purchaseFollowUp.js';
 
 export async function findDraftPlanForMerchantAndWarehouse(
   merchantCode: string,
@@ -181,6 +182,9 @@ export async function generatePurchaseDraftsFromPlan(planId: string, userId: str
       remark: `计划 ${plan.planNo} / 商家 ${plan.merchantCode} / 仓 ${wh} / ${item.skuCode}`,
       createdBy: userId,
     });
+    if (draft.expectedDate) {
+      await schedulePurchaseFollowUps(draft.id, String(draft.expectedDate));
+    }
     drafts.push(draft);
   }
   return drafts;

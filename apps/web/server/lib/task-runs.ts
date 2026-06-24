@@ -1,7 +1,12 @@
 import { eq, desc } from 'drizzle-orm';
 import { db, taskRuns } from '@scm/db';
 
-export type TaskName = 'stock_alert' | 'replenishment_forecast';
+export type TaskName =
+  | 'stock_alert'
+  | 'replenishment_forecast'
+  | 'purchase_follow_up'
+  | 'inventory_exception_scan'
+  | 'daily_inventory_pipeline';
 
 export async function startTaskRun(taskName: TaskName, triggeredBy: string) {
   const [run] = await db

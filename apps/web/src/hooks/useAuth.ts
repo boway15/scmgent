@@ -9,8 +9,10 @@ export function useCurrentUser() {
 }
 
 export function useMyMenus() {
+  const { data: user } = useCurrentUser();
   return useQuery({
-    queryKey: ['my-menus'],
+    queryKey: ['my-menus', user?.id, user?.role?.id],
     queryFn: api.getMyMenus,
+    enabled: !!user,
   });
 }

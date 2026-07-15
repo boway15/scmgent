@@ -10,3 +10,15 @@ docker/dify/volumes/
 docker/dify/.env
 *.zip
 .turbo
+
+# 业务销量报表（含真实销售数据，勿提交）
+docs/samples/import-fob/产品销售报表-*.csv
+docs/samples/import-fob/产品销售报表-*.xlsx
+
+# 本地回测 / 分析产物（降低 git status 噪音，勿提交）
+apps/web/docs/samples/
+docs/samples/forecast-backtest/
+apps/web/.backtest-out.txt
+apps/web/tmp-hono-test/
+apps/web/scripts/.hono-test/
+apps/web/apps/

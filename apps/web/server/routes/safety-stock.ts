@@ -1,8 +1,9 @@
 import { eq, and } from 'drizzle-orm';
 import { Hono } from 'hono';
-import { db, safetyStockConfig, skus, salesHistory } from '@scm/db';
+import { db, safetyStockConfig, skus } from '@scm/db';
 import { calcReplenishment } from '../lib/replenishment.js';
 import { requireMenu } from '../lib/rbac.js';
+import { loadDailySalesForSku } from '../lib/sales-history-query.js';
 
 export const safetyStockRoutes = new Hono();
 
@@ -82,13 +83,10 @@ safetyStockRoutes.post('/safety-stock/:skuId/calculate', requireMenu('inventory.
   const [sku] = await db.select().from(skus).where(eq(skus.id, skuId)).limit(1);
   if (!sku) return c.json({ message: 'SKU not found' }, 404);
 
-  const sales = await db
-    .select({ qtySold: salesHistory.qtySold, saleDate: salesHistory.saleDate })
-    .from(salesHistory)
-    .where(eq(salesHistory.skuId, skuId));
+  const sales = await loadDailySalesForSku(skuId);
 
   const calc = calcReplenishment({
-    sales: sales.map((s) => ({ qtySold: s.qtySold, saleDate: String(s.saleDate) })),
+    sales: sales.map((s) => ({ qtySold: s.qtySold, saleDate: s.saleDate })),
     leadTimeDays: sku.leadTimeDays ?? 30,
     unitCost: sku.unitCost ? Number(sku.unitCost) : 1,
   });

@@ -1,6 +1,7 @@
 import {
   isAlertWorkflowEnabled,
   isReplenishmentWorkflowEnabled,
+  isSalesForecastWorkflowEnabled,
   runWorkflow,
 } from './dify.js';
 
@@ -124,4 +125,56 @@ export async function generateAlertFeishuMessage(
   });
 
   return parseAlertWorkflowMessage(outputs);
+}
+
+export type DifySingleSkuForecastRow = {
+  monthLabel: string;
+  forecastDailyAvg: number;
+  confidence?: string;
+  rationale?: string;
+};
+
+function parseDifySingleSkuForecastOutput(raw: unknown): DifySingleSkuForecastRow[] {
+  if (!raw) return [];
+  let parsed: unknown = raw;
+  if (typeof raw === 'string') {
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      return [];
+    }
+  }
+  if (!Array.isArray(parsed)) return [];
+  const rows: DifySingleSkuForecastRow[] = [];
+  for (const item of parsed) {
+    if (!item || typeof item !== 'object') continue;
+    const row = item as Record<string, unknown>;
+    const monthLabel = String(row.monthLabel ?? row.month_label ?? '').trim();
+    const forecastDailyAvg = Number(row.forecastDailyAvg ?? row.forecast_daily_avg ?? 0);
+    if (!monthLabel || !Number.isFinite(forecastDailyAvg) || forecastDailyAvg < 0) continue;
+    rows.push({
+      monthLabel,
+      forecastDailyAvg: Math.round(forecastDailyAvg * 10_000) / 10_000,
+      confidence: row.confidence != null ? String(row.confidence) : undefined,
+      rationale: row.rationale != null ? String(row.rationale) : undefined,
+    });
+  }
+  return rows;
+}
+
+/** T99 单条 SKU Dify LLM 预测 */
+export async function runSingleSkuForecastWorkflow(
+  inputs: Record<string, unknown>,
+  userId = 'forecast-dify-single',
+): Promise<{ monthly: DifySingleSkuForecastRow[]; summary: string }> {
+  if (!isSalesForecastWorkflowEnabled()) {
+    throw new Error('DIFY_API_KEY_SALES_FORECAST is not configured');
+  }
+
+  const outputs = await runWorkflow('DIFY_API_KEY_SALES_FORECAST', inputs, userId);
+  const monthly = parseDifySingleSkuForecastOutput(
+    outputs.monthly_forecast_json ?? outputs.forecast_json,
+  );
+  const summary = String(outputs.summary ?? outputs.rationale ?? outputs.text ?? '').trim();
+  return { monthly, summary };
 }

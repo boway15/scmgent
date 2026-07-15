@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "profile": {
+    "continuityMinA": 0.75,
+    "cvMaxA": 1,
+    "continuityMinB": 0.75,
+    "cvMaxC": 1.5,
+    "coreRecent90Min": 7,
+    "coreContinuityMin": 0.8,
+    "declineRecent30Ratio": 0.85
+  },
+  "aCore": {
+    "k0Recent30Weight": 0.75,
+    "k1Recent30Weight": 0.5,
+    "upperHeadroom": [
+      1.04,
+      1.06,
+      1.08,
+      1.1,
+      1.13,
+      1.16
+    ],
+    "declineRecent30Ratio": 0.8
+  }
+}

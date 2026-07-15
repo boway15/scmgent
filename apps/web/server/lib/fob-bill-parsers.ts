@@ -527,12 +527,10 @@ function isNonFobOnlyFactoryType(v: unknown): boolean {
   return /^非FOB$/i.test(s) || /不做FOB/i.test(s);
 }
 
-/** 货柜是否参与分账：含 FOB 行，或存在非「纯非FOB」的有效体积行（如退税/非退税） */
+/** 货柜是否参与分账：柜内至少一行工厂类型含 FOB 关键字（排除「非FOB」「不做FOB」） */
 function containerQualifiesForAllocation(factoryTypes: string[]): boolean {
   if (!factoryTypes.length) return false;
-  if (factoryTypes.some((t) => isFobFactoryType(t))) return true;
-  if (factoryTypes.every((t) => isNonFobOnlyFactoryType(t))) return false;
-  return true;
+  return factoryTypes.some((t) => isFobFactoryType(t));
 }
 
 export function findTransferVolumeHeaderRow(rows: unknown[][]): number {
@@ -556,9 +554,11 @@ export function isTransferVolumeExport(rows: unknown[][]): boolean {
 }
 
 /**
- * 调拨体积明细 → 按 临柜号 + 订舱编号 汇总主体体积
- * - 柜号取临柜号；工厂/主体取订舱编号（无则调拨单号）
- * - 工厂类别取「是否退税」
+ * 调拨截单清单体积明细 → 按柜号 + 订舱编号 汇总主体体积
+ * - 柜号：有「货柜号」且非空时优先，否则「临柜号」
+ * - 工厂/主体：订舱编号（无则调拨单号）
+ * - 工厂类别：优先「工厂类型」，否则「是否退税」
+ * - 备注约定：业务编号/调拨/类别/工厂/目的仓
  */
 export function parseTransferVolumeSheet(rows: unknown[][]): ParseResult<ParsedMerchantShipment> {
   const errors: string[] = [];
@@ -579,15 +579,32 @@ export function parseTransferVolumeSheet(rows: unknown[][]): ParseResult<ParsedM
   }
 
   const header = rows[headerRowIdx] as unknown[];
+  const formalContainerIdx = findHeaderIndex(header, ['货柜号']);
   const tempContainerIdx = findHeaderIndex(header, ['临柜号']);
   const transferIdx = findHeaderIndex(header, ['调拨单号']);
   const bookingIdx = findHeaderIndex(header, ['订舱编号']);
   const skuIdx = findHeaderIndex(header, ['SKU编码', 'Sku', 'sku', 'sku_code']);
   const volumeIdx = findHeaderIndex(header, VOLUME_HEADER_ALIASES);
   const taxIdx = findHeaderIndex(header, ['是否退税']);
+  const factoryTypeColIdx = findHeaderIndex(header, ['工厂类型']);
+  const factoryNameIdx = findHeaderIndex(header, ['工厂名称']);
   const qtyIdx = findHeaderIndex(header, ['数量', '箱数', 'qty']);
   const weightIdx = findHeaderIndex(header, ['货物净重kg', '货物毛重kg', 'weight_kg']);
   const destWarehouseIdx = findHeaderIndex(header, ['目的仓']);
+
+  const resolveContainerNo = (row: unknown[]): string => {
+    const formal =
+      formalContainerIdx >= 0 ? cleanContainerNo(row[formalContainerIdx]) : '';
+    if (formal) return formal;
+    return tempContainerIdx >= 0 ? cleanContainerNo(row[tempContainerIdx]) : '';
+  };
+
+  const resolveFactoryType = (row: unknown[]): string => {
+    const fromType =
+      factoryTypeColIdx >= 0 ? String(row[factoryTypeColIdx] ?? '').trim() : '';
+    if (fromType) return fromType;
+    return taxIdx >= 0 ? String(row[taxIdx] ?? '').trim() : '';
+  };
 
   const factoryTypesByContainer = new Map<string, string[]>();
   const containersInFile = new Set<string>();
@@ -595,10 +612,10 @@ export function parseTransferVolumeSheet(rows: unknown[][]): ParseResult<ParsedM
   for (let r = headerRowIdx + 1; r < rows.length; r++) {
     const row = rows[r] as unknown[];
     if (!row.some((c) => String(c).trim())) continue;
-    const containerNo = cleanContainerNo(row[tempContainerIdx]);
+    const containerNo = resolveContainerNo(row);
     if (!containerNo) continue;
     containersInFile.add(containerNo);
-    const factoryType = String(row[taxIdx] ?? '').trim();
+    const factoryType = resolveFactoryType(row);
     if (!factoryTypesByContainer.has(containerNo)) factoryTypesByContainer.set(containerNo, []);
     factoryTypesByContainer.get(containerNo)!.push(factoryType);
   }
@@ -616,11 +633,11 @@ export function parseTransferVolumeSheet(rows: unknown[][]): ParseResult<ParsedM
       continue;
     }
 
-    const containerNo = cleanContainerNo(row[tempContainerIdx]);
+    const containerNo = resolveContainerNo(row);
     const bookingNo = bookingIdx >= 0 ? String(row[bookingIdx] ?? '').trim() : '';
     const transferNo = transferIdx >= 0 ? String(row[transferIdx] ?? '').trim() : '';
     const merchantCode = bookingNo || transferNo;
-    const factoryType = String(row[taxIdx] ?? '').trim();
+    const factoryType = resolveFactoryType(row);
     const volumeCbm = parseAmount(row[volumeIdx]);
 
     if (!containerNo) {
@@ -639,22 +656,25 @@ export function parseTransferVolumeSheet(rows: unknown[][]): ParseResult<ParsedM
     }
 
     if (!merchantCode) {
-      errors.push(`第 ${r + 1} 行：订舱编号/调拨单号为空（临柜号 ${containerNo}）`);
+      errors.push(`第 ${r + 1} 行：订舱编号/调拨单号为空（柜号 ${containerNo}）`);
       continue;
     }
 
+    const factoryName =
+      factoryNameIdx >= 0 ? String(row[factoryNameIdx] ?? '').trim() : '';
     const destWarehouse =
       destWarehouseIdx >= 0 ? String(row[destWarehouseIdx] ?? '').trim() : '';
     const remarkParts = [
       bookingNo && `业务编号:${bookingNo}`,
       transferNo && `调拨:${transferNo}`,
       factoryType && `类别:${factoryType}`,
+      factoryName && `工厂:${factoryName}`,
       destWarehouse && `目的仓:${destWarehouse}`,
     ].filter(Boolean);
 
     items.push({
       merchantCode,
-      merchantName: destWarehouse || bookingNo || merchantCode,
+      merchantName: factoryName || destWarehouse || bookingNo || merchantCode,
       containerNo,
       skuCode: skuIdx >= 0 ? String(row[skuIdx] ?? '').trim() || undefined : undefined,
       qty: qtyIdx >= 0 ? parseAmount(row[qtyIdx]) || undefined : undefined,
@@ -665,7 +685,7 @@ export function parseTransferVolumeSheet(rows: unknown[][]): ParseResult<ParsedM
   }
 
   if (!items.length && !nonFobContainers.length) {
-    errors.push('未解析到体积行（需有效临柜号、订舱编号与体积 > 0）');
+    errors.push('未解析到体积行（需有效柜号、订舱编号与体积 > 0）');
   }
 
   return { items, errors, skippedRows, nonFobContainers };

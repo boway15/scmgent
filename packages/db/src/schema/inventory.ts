@@ -38,7 +38,17 @@ export const skus = pgTable(
     code: varchar('code', { length: 100 }).notNull().unique(),
     name: varchar('name', { length: 200 }).notNull(),
     unit: varchar('unit', { length: 20 }).notNull(),
-    category: varchar('category', { length: 100 }),
+    category: varchar('category', { length: 500 }),
+    /** C 生命周期（库存周转表） */
+    lifecycle: varchar('lifecycle', { length: 50 }),
+    /** E 销售国家（库存周转表） */
+    salesCountry: varchar('sales_country', { length: 100 }),
+    /** F 产品分类（库存周转表，区别于 A 品类） */
+    productCategory: varchar('product_category', { length: 200 }),
+    /** H 负责人 */
+    ownerName: varchar('owner_name', { length: 100 }),
+    /** I 开发人员 */
+    developerName: varchar('developer_name', { length: 100 }),
     /** 规格属性，如 { color: "红", size: "L" } */
     specAttrs: jsonb('spec_attrs'),
     barcode: varchar('barcode', { length: 100 }),
@@ -47,8 +57,8 @@ export const skus = pgTable(
     skuKind: skuKindEnum('sku_kind').notNull().default('legacy'),
     divisionCode: varchar('division_code', { length: 1 }),
     distributionNo: integer('distribution_no'),
-    spuNumericCode: varchar('spu_numeric_code', { length: 5 }),
-    variantNo: varchar('variant_no', { length: 2 }),
+    spuNumericCode: varchar('spu_numeric_code', { length: 10 }),
+    variantNo: varchar('variant_no', { length: 10 }),
     brandCode: varchar('brand_code', { length: 2 }),
     categoryCode: varchar('category_code', { length: 3 }),
     factorySuffix: varchar('factory_suffix', { length: 1 }),
@@ -63,6 +73,8 @@ export const skus = pgTable(
     merchantCode: varchar('merchant_code', { length: 100 }),
     merchantName: varchar('merchant_name', { length: 200 }),
     replenishLight: replenishLightEnum('replenish_light').notNull().default('red'),
+    /** 强制纳入预测生成（无视销量准入） */
+    forceForecast: boolean('force_forecast').notNull().default(false),
     isActive: boolean('is_active').notNull().default(true),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
@@ -124,6 +136,8 @@ export const salesHistory = pgTable(
     channel: varchar('channel', { length: 100 }),
     /** 实际发货仓 code，如 US-WEST */
     warehouseCode: varchar('warehouse_code', { length: 100 }),
+    /** 品类快照，导入时从 SKU 主数据写入 */
+    category: varchar('category', { length: 200 }),
     source: dataSourceEnum('source').notNull().default('manual'),
     importBatchId: uuid('import_batch_id'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
@@ -131,6 +145,53 @@ export const salesHistory = pgTable(
   (table) => ({
     skuDateIdx: index('sales_history_sku_id_sale_date_idx').on(table.skuId, table.saleDate),
     skuWarehouseIdx: index('sales_history_sku_warehouse_idx').on(table.skuId, table.warehouseCode),
+    categoryIdx: index('sales_history_category_idx').on(table.category),
+    saleDateIdx: index('sales_history_sale_date_idx').on(table.saleDate),
+    importBatchIdx: index('sales_history_import_batch_id_idx').on(table.importBatchId),
+    sourceSkuDateIdx: index('sales_history_source_sku_date_idx').on(
+      table.source,
+      table.skuId,
+      table.saleDate,
+    ),
+    skuDateChannelUnique: uniqueIndex('sales_history_sku_date_channel_unique_idx').on(
+      table.skuId,
+      table.saleDate,
+      table.channel,
+    ),
+  }),
+);
+
+/** SKU 月销量汇总：由日销量聚合或 SKU 月宽表导入，支撑 24～36 月同比与准确率回测 */
+export const salesHistoryMonthly = pgTable(
+  'sales_history_monthly',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    skuId: uuid('sku_id')
+      .notNull()
+      .references(() => skus.id, { onDelete: 'cascade' }),
+    channel: varchar('channel', { length: 100 }).notNull().default('UNKNOWN'),
+    saleYear: integer('sale_year').notNull(),
+    month: integer('month').notNull(),
+    qtySold: integer('qty_sold').notNull(),
+    /** 品类快照，导入时从 SKU 主数据写入 */
+    category: varchar('category', { length: 200 }),
+    source: dataSourceEnum('source').notNull().default('import'),
+    importBatchId: uuid('import_batch_id'),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    skuChannelMonthUnique: uniqueIndex('sales_history_monthly_sku_channel_month_unique_idx').on(
+      table.skuId,
+      table.channel,
+      table.saleYear,
+      table.month,
+    ),
+    skuYearMonthIdx: index('sales_history_monthly_sku_year_month_idx').on(
+      table.skuId,
+      table.saleYear,
+      table.month,
+    ),
   }),
 );
 
@@ -175,10 +236,26 @@ export const salesForecastMonthly = pgTable(
       .references(() => skus.id, { onDelete: 'cascade' }),
     /** 站点，如 US / DE */
     station: varchar('station', { length: 20 }).notNull(),
+    /** 在售平台，如 AMAZON / WALMART / ALL（全平台汇总） */
+    platform: varchar('platform', { length: 50 }).notNull().default('ALL'),
     forecastYear: integer('forecast_year').notNull(),
     month: integer('month').notNull(),
     forecastDailyAvg: numeric('forecast_daily_avg', { precision: 12, scale: 4 }).notNull(),
+    baselineDailyAvg: numeric('baseline_daily_avg', { precision: 12, scale: 4 }),
+    manualDailyAvg: numeric('manual_daily_avg', { precision: 12, scale: 4 }),
+    adjustReason: varchar('adjust_reason', { length: 200 }),
+    confidenceLevel: varchar('confidence_level', { length: 20 }),
+    versionId: uuid('version_id'),
     lifecycle: varchar('lifecycle', { length: 50 }),
+    horizonFactors: jsonb('horizon_factors'),
+    forecastProfileClass: varchar('forecast_profile_class', { length: 1 }),
+    profileSegment: varchar('profile_segment', { length: 20 }),
+    horizonBand: varchar('horizon_band', { length: 20 }),
+    continuity12m: numeric('continuity_12m', { precision: 8, scale: 4 }),
+    cv12m: numeric('cv_12m', { precision: 8, scale: 4 }),
+    forecastDailyP10: numeric('forecast_daily_p10', { precision: 12, scale: 4 }),
+    forecastDailyP90: numeric('forecast_daily_p90', { precision: 12, scale: 4 }),
+    forecastModel: varchar('forecast_model', { length: 50 }),
     ownerName: varchar('owner_name', { length: 100 }),
     source: dataSourceEnum('source').notNull().default('import'),
     importBatchId: uuid('import_batch_id'),
@@ -186,12 +263,15 @@ export const salesForecastMonthly = pgTable(
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => ({
-    skuStationMonthUnique: uniqueIndex('sales_forecast_monthly_sku_station_month_idx').on(
+    skuStationMonthUnique: uniqueIndex('sales_forecast_monthly_version_unique_idx').on(
       table.skuId,
       table.station,
+      table.platform,
       table.forecastYear,
       table.month,
+      table.versionId,
     ),
+    platformIdx: index('sales_forecast_monthly_platform_idx').on(table.platform, table.station),
     skuStationIdx: index('sales_forecast_monthly_sku_station_idx').on(table.skuId, table.station),
   }),
 );
@@ -202,6 +282,7 @@ export const skusRelations = relations(skus, ({ many, one }) => ({
   bomAsMaterial: many(bom, { relationName: 'materialSku' }),
   inventoryRecords: many(inventoryRecords),
   salesHistory: many(salesHistory),
+  salesHistoryMonthly: many(salesHistoryMonthly),
   salesForecastMonthly: many(salesForecastMonthly),
   safetyStockConfig: one(safetyStockConfig),
 }));
@@ -226,6 +307,10 @@ export const inventoryRecordsRelations = relations(inventoryRecords, ({ one }) =
 
 export const salesHistoryRelations = relations(salesHistory, ({ one }) => ({
   sku: one(skus, { fields: [salesHistory.skuId], references: [skus.id] }),
+}));
+
+export const salesHistoryMonthlyRelations = relations(salesHistoryMonthly, ({ one }) => ({
+  sku: one(skus, { fields: [salesHistoryMonthly.skuId], references: [skus.id] }),
 }));
 
 export const salesForecastMonthlyRelations = relations(salesForecastMonthly, ({ one }) => ({

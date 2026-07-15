@@ -3,9 +3,11 @@ import { Link } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Button, buttonVariants } from '@/components/ui/button';
+import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { PageHeader } from '@/components/PageHeader';
+import { ImportDrawer } from '@/components/import/ImportDrawer';
+import { useImportDrawer } from '@/hooks/use-import-drawer';
 
 const STATUS_LABEL: Record<string, string> = {
   draft: '草稿',
@@ -17,6 +19,7 @@ const STATUS_LABEL: Record<string, string> = {
 
 export function PmcListPage() {
   const qc = useQueryClient();
+  const { open: importOpen, openDrawer: openImportDrawer, closeDrawer: closeImportDrawer } = useImportDrawer();
   const { data: plans = [], isLoading } = useQuery({
     queryKey: ['pmc-plans'],
     queryFn: api.getPmcPlans,
@@ -68,9 +71,9 @@ export function PmcListPage() {
     <div className="space-y-6">
       <PageHeader title="下单计划">
         <div className="flex gap-2">
-          <Link to="/data/import?type=pmc_plans" className={buttonVariants({ variant: 'outline' })}>
+          <Button variant="outline" onClick={openImportDrawer}>
             批量导入
-          </Link>
+          </Button>
           <Button onClick={() => setShowForm(!showForm)}>{showForm ? '取消' : '新建计划'}</Button>
         </div>
       </PageHeader>
@@ -196,6 +199,13 @@ export function PmcListPage() {
           </table>
         </CardContent>
       </Card>
+
+      <ImportDrawer
+        open={importOpen}
+        type="pmc_plans"
+        onClose={closeImportDrawer}
+        onSuccess={() => void qc.invalidateQueries({ queryKey: ['pmc-plans'] })}
+      />
     </div>
   );
 }

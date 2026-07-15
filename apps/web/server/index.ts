@@ -1,4 +1,5 @@
 import { config } from 'dotenv';
+import { networkInterfaces } from 'os';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 
@@ -28,9 +29,13 @@ import { aiRoutes } from './routes/ai.js';
 import { authMiddleware } from './middleware/auth.js';
 import { requireWrite, requireBusinessRead } from './lib/rbac.js';
 import { procurementRoutes } from './routes/procurement.js';
+import { procurementListRoutes } from './routes/procurement-lists.js';
 import { pmcRoutes } from './routes/pmc.js';
 import { logisticsRoutes } from './routes/logistics.js';
 import { bitableSyncRoutes } from './routes/bitable-sync.js';
+
+import { newsIntelRoutes } from './routes/news-intel.js';
+import { csReplyQualityRoutes } from './routes/cs-reply-quality.js';
 
 import { taskRoutes } from './routes/tasks.js';
 import { productRoutes } from './routes/products.js';
@@ -53,11 +58,33 @@ const distRoot = join(__dirname, '../dist');
 
 app.use('*', logger());
 
+function isPrivateLanHost(hostname: string): boolean {
+  if (hostname === 'localhost' || hostname === '127.0.0.1') return true;
+  if (/^10\./.test(hostname)) return true;
+  if (/^192\.168\./.test(hostname)) return true;
+  if (/^172\.(1[6-9]|2\d|3[01])\./.test(hostname)) return true;
+  if (/^169\.254\./.test(hostname)) return true;
+  return false;
+}
+
+function isDevFrontendOrigin(origin: string): boolean {
+  try {
+    const { hostname, port } = new URL(origin);
+    if (port !== '5173') return false;
+    return isPrivateLanHost(hostname);
+  } catch {
+    return false;
+  }
+}
+
 if (!serveStaticFiles) {
   app.use(
     '*',
     cors({
-      origin: ['http://localhost:5173', 'http://127.0.0.1:5173'],
+      origin: (origin) => {
+        if (!origin) return origin;
+        return isDevFrontendOrigin(origin) ? origin : null;
+      },
       credentials: true,
     }),
   );
@@ -101,6 +128,7 @@ app.route('/api', safetyStockRoutes);
 app.route('/api', alertRoutes);
 app.route('/api', reorderRoutes);
 app.route('/api', procurementRoutes);
+app.route('/api', procurementListRoutes);
 app.route('/api', pmcRoutes);
 app.route('/api', logisticsRoutes);
 app.route('/api', bitableSyncRoutes);
@@ -116,6 +144,8 @@ app.route('/api', skuEncodingRoutes);
 app.route('/api', inventoryHealthRoutes);
 app.route('/api', salesForecastRoutes);
 app.route('/api', inventoryExceptionRoutes);
+app.route('/api', newsIntelRoutes);
+app.route('/api', csReplyQualityRoutes);
 
 if (serveStaticFiles) {
   app.use('/*', serveStatic({ root: distRoot }));
@@ -140,12 +170,27 @@ export default app;
 const entryScript = process.argv[1]?.replace(/\\/g, '/');
 const isDirectRun = Boolean(entryScript?.endsWith('server/index.ts'));
 
+function listLanIPv4(): string[] {
+  const ips: string[] = [];
+  for (const ifaces of Object.values(networkInterfaces())) {
+    for (const net of ifaces ?? []) {
+      const family = net.family;
+      const isV4 = family === 'IPv4' || family === 4;
+      if (isV4 && !net.internal) ips.push(net.address);
+    }
+  }
+  return [...new Set(ips)];
+}
+
 if (isDirectRun) {
   const port = Number(process.env.PORT ?? 3001);
+  const host = (process.env.HOST ?? '0.0.0.0').trim() || '0.0.0.0';
   const clientBasePath = (process.env.CLIENT_BASE_PATH || '').trim().replace(/\/$/, '');
-  serve({ fetch: app.fetch, port }, () => {
-    console.log(
-      `Server running on http://0.0.0.0:${port}${clientBasePath ? ` (base ${clientBasePath})` : ''}${serveStaticFiles ? ' (API + static)' : ''}`,
-    );
+  serve({ fetch: app.fetch, port, hostname: host }, () => {
+    const suffix = `${clientBasePath ? ` (base ${clientBasePath})` : ''}${serveStaticFiles ? ' (API + static)' : ''}`;
+    console.log(`Server running on http://${host}:${port}${suffix}`);
+    for (const ip of listLanIPv4()) {
+      console.log(`  LAN: http://${ip}:${port}${suffix}`);
+    }
   });
 }

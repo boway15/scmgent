@@ -1,0 +1,1020 @@
+# 销量预测智能体 · Dify Workflow DSL
+# 来源设计稿: docs/samples/xiaoshou/yuce/1.python
+# 导入: Dify 控制台 → 工作室 → 导入 DSL
+# 注意: 预测节点使用 pandas/numpy 实现（无 statsmodels），适配 Dify 代码沙箱
+
+kind: app
+version: 0.6.0
+app:
+  mode: workflow
+  name: 销量预测智能体
+  description: 上传销售月报CSV，自动完成ABCD分类、销量预测、回测评估与备货建议
+  icon: 📊
+  icon_background: '#E6F7FF'
+dependencies:
+  - type: marketplace
+    value:
+      marketplace_plugin_unique_identifier: langgenius/deepseek:0.0.15@bc5b794a1b0b4f7e9c2d8a1e3f5b7c9d
+workflow:
+  environment_variables: []
+  conversation_variables: []
+  features:
+    file_upload:
+      enabled: true
+      allowed_file_types:
+        - document
+      allowed_file_extensions:
+        - .csv
+      allowed_file_upload_methods:
+        - local_file
+      number_limits: 1
+    opening_statement: ''
+    retriever_resource:
+      enabled: false
+    sensitive_word_avoidance:
+      enabled: false
+    speech_to_text:
+      enabled: false
+    suggested_questions: []
+    suggested_questions_after_answer:
+      enabled: false
+    text_to_speech:
+      enabled: false
+  graph:
+    edges:
+      - id: edge-start-extract
+        source: start
+        target: extract_file
+        sourceHandle: source
+        targetHandle: target
+        type: custom
+        data:
+          sourceType: start
+          targetType: code
+          isInIteration: false
+          isInLoop: false
+      - id: edge-extract-parse
+        source: extract_file
+        target: data_parse
+        sourceHandle: source
+        targetHandle: target
+        type: custom
+        data:
+          sourceType: code
+          targetType: code
+          isInIteration: false
+          isInLoop: false
+      - id: edge-parse-classify
+        source: data_parse
+        target: classify
+        sourceHandle: source
+        targetHandle: target
+        type: custom
+        data:
+          sourceType: code
+          targetType: code
+          isInIteration: false
+          isInLoop: false
+      - id: edge-classify-forecast
+        source: classify
+        target: forecast
+        sourceHandle: source
+        targetHandle: target
+        type: custom
+        data:
+          sourceType: code
+          targetType: code
+          isInIteration: false
+          isInLoop: false
+      - id: edge-forecast-accuracy
+        source: forecast
+        target: accuracy_eval
+        sourceHandle: source
+        targetHandle: target
+        type: custom
+        data:
+          sourceType: code
+          targetType: code
+          isInIteration: false
+          isInLoop: false
+      - id: edge-accuracy-stocking
+        source: accuracy_eval
+        target: stocking_plan
+        sourceHandle: source
+        targetHandle: target
+        type: custom
+        data:
+          sourceType: code
+          targetType: code
+          isInIteration: false
+          isInLoop: false
+      - id: edge-stocking-llm
+        source: stocking_plan
+        target: llm_report
+        sourceHandle: source
+        targetHandle: target
+        type: custom
+        data:
+          sourceType: code
+          targetType: llm
+          isInIteration: false
+          isInLoop: false
+      - id: edge-llm-end
+        source: llm_report
+        target: end
+        sourceHandle: source
+        targetHandle: target
+        type: custom
+        data:
+          sourceType: llm
+          targetType: end
+          isInIteration: false
+          isInLoop: false
+    nodes:
+      - id: start
+        type: custom
+        width: 242
+        height: 116
+        position:
+          x: 80
+          y: 280
+        positionAbsolute:
+          x: 80
+          y: 280
+        sourcePosition: right
+        targetPosition: left
+        selected: false
+        data:
+          type: start
+          title: 开始
+          variables:
+            - variable: file
+              label: 销售月报文件
+              type: file
+              required: true
+              max_length: 48
+              options: []
+              allowed_file_types:
+                - document
+              allowed_file_extensions:
+                - .csv
+              allowed_file_upload_methods:
+                - local_file
+            - variable: mode
+              label: 运行模式
+              type: select
+              required: true
+              max_length: 48
+              options:
+                - predict
+                - backtest
+              default: predict
+            - variable: base_yearmonth
+              label: 近1月对应年月
+              type: text-input
+              required: false
+              max_length: 16
+              options: []
+              default: '2026-06'
+            - variable: forecast_months
+              label: 预测月数
+              type: number
+              required: false
+              max_length: 48
+              options: []
+              default: 6
+            - variable: safety_stock_a
+              label: A类安全系数
+              type: number
+              required: false
+              max_length: 48
+              options: []
+              default: 1.15
+            - variable: safety_stock_b
+              label: B类安全系数
+              type: number
+              required: false
+              max_length: 48
+              options: []
+              default: 1.25
+            - variable: safety_stock_c
+              label: C类安全系数
+              type: number
+              required: false
+              max_length: 48
+              options: []
+              default: 1.30
+            - variable: safety_stock_d
+              label: D类安全系数
+              type: number
+              required: false
+              max_length: 48
+              options: []
+              default: 1.50
+
+      - id: extract_file
+        type: custom
+        width: 242
+        height: 90
+        position:
+          x: 380
+          y: 280
+        positionAbsolute:
+          x: 380
+          y: 280
+        sourcePosition: right
+        targetPosition: left
+        selected: false
+        data:
+          type: code
+          title: 读取上传文件
+          code_language: python3
+          error_strategy: fail-branch
+          code: |
+            import urllib.request
+
+            def main(file) -> dict:
+                if not file:
+                    return {"file_content": "", "error": "未上传文件"}
+                f = file[0] if isinstance(file, list) else file
+                url = f.get("url") or f.get("remote_url") or ""
+                if not url:
+                    return {"file_content": "", "error": "无法获取文件URL"}
+                try:
+                    with urllib.request.urlopen(url, timeout=30) as resp:
+                        raw = resp.read()
+                    for enc in ("utf-8-sig", "gb18030", "gbk", "utf-8"):
+                        try:
+                            return {"file_content": raw.decode(enc), "error": ""}
+                        except Exception:
+                            continue
+                    return {"file_content": raw.decode("utf-8", errors="replace"), "error": ""}
+                except Exception as e:
+                    return {"file_content": "", "error": str(e)}
+          outputs:
+            file_content:
+              type: string
+              children: null
+            error:
+              type: string
+              children: null
+          variables:
+            - variable: file
+              value_selector:
+                - start
+                - file
+
+      - id: data_parse
+        type: custom
+        width: 242
+        height: 90
+        position:
+          x: 680
+          y: 280
+        positionAbsolute:
+          x: 680
+          y: 280
+        sourcePosition: right
+        targetPosition: left
+        selected: false
+        data:
+          type: code
+          title: 数据解析
+          code_language: python3
+          error_strategy: fail-branch
+          code: |
+            import io
+            import re
+            import json
+            import pandas as pd
+
+            def main(file_content: str, base_yearmonth: str = "2026-06", error: str = "") -> dict:
+                empty = {
+                    "monthly_sales_json": "[]",
+                    "sku_col": "",
+                    "date_cols_json": "[]",
+                    "quality_report": "",
+                    "base_yearmonth": base_yearmonth,
+                }
+                if error:
+                    empty["quality_report"] = json.dumps({"error": error}, ensure_ascii=False)
+                    return empty
+                if not file_content:
+                    empty["quality_report"] = json.dumps({"error": "文件内容为空"}, ensure_ascii=False)
+                    return empty
+
+                df = pd.read_csv(io.StringIO(file_content))
+                near_cols = {}
+                for c in df.columns:
+                    m = re.search(r"近(\d+)个?月", str(c))
+                    if m and "销量" in str(c):
+                        n = int(m.group(1))
+                        metric = re.sub(r"近\d+个?月", "", str(c)).strip()
+                        if "日均" not in metric and "均" not in metric and "率" not in metric:
+                            near_cols.setdefault(metric, {})[n] = c
+
+                if not near_cols:
+                    empty["quality_report"] = json.dumps({"error": "未找到近X月销量列"}, ensure_ascii=False)
+                    return empty
+
+                best_metric = max(near_cols, key=lambda k: len(near_cols[k]))
+                sales_cols = near_cols[best_metric]
+                months_available = sorted(sales_cols.keys())
+
+                base_cols = [c for c in df.columns if "近" not in str(c)]
+                sku_col = None
+                for c in base_cols:
+                    if df[c].dtype == "object" and df[c].nunique() >= len(df) * 0.8:
+                        sku_col = c
+                        break
+                if not sku_col:
+                    for c in base_cols:
+                        if df[c].dtype == "object":
+                            sku_col = c
+                            break
+                if not sku_col:
+                    df["SKU_ID"] = range(len(df))
+                    sku_col = "SKU_ID"
+
+                by, bm = map(int, base_yearmonth.split("-"))
+                month_map = {}
+                for n in months_available:
+                    y, m = by, bm - (n - 1)
+                    while m <= 0:
+                        m += 12
+                        y -= 1
+                    month_map[n] = f"{y}-{m:02d}"
+
+                monthly = pd.DataFrame()
+                monthly[sku_col] = df[sku_col]
+                if 1 in sales_cols:
+                    monthly[month_map[1]] = pd.to_numeric(df[sales_cols[1]], errors="coerce")
+
+                for n in months_available:
+                    if n == 1:
+                        continue
+                    if (n - 1) in sales_cols:
+                        val_n = pd.to_numeric(df[sales_cols[n]], errors="coerce")
+                        val_n1 = pd.to_numeric(df[sales_cols[n - 1]], errors="coerce")
+                        monthly[month_map[n]] = val_n - val_n1
+
+                date_cols = sorted(
+                    [c for c in monthly.columns if c != sku_col and re.match(r"\d{4}-\d{2}", str(c))]
+                )
+                for c in date_cols:
+                    monthly[c] = monthly[c].fillna(0).clip(lower=0)
+
+                zero_rate = (monthly[date_cols] == 0).sum().sum() / max(len(monthly) * len(date_cols), 1) * 100
+                quality = {
+                    "total_skus": len(monthly),
+                    "total_months": len(date_cols),
+                    "date_range": f"{date_cols[0]} ~ {date_cols[-1]}",
+                    "zero_rate": f"{zero_rate:.1f}%",
+                    "sku_col_name": sku_col,
+                    "sales_metric": best_metric,
+                }
+
+                return {
+                    "monthly_sales_json": monthly.to_json(orient="records", force_ascii=False),
+                    "sku_col": str(sku_col),
+                    "date_cols_json": json.dumps(date_cols),
+                    "quality_report": json.dumps(quality, ensure_ascii=False),
+                    "base_yearmonth": base_yearmonth,
+                }
+          outputs:
+            monthly_sales_json:
+              type: string
+              children: null
+            sku_col:
+              type: string
+              children: null
+            date_cols_json:
+              type: string
+              children: null
+            quality_report:
+              type: string
+              children: null
+            base_yearmonth:
+              type: string
+              children: null
+          variables:
+            - variable: file_content
+              value_selector:
+                - extract_file
+                - file_content
+            - variable: error
+              value_selector:
+                - extract_file
+                - error
+            - variable: base_yearmonth
+              value_selector:
+                - start
+                - base_yearmonth
+
+      - id: classify
+        type: custom
+        width: 242
+        height: 90
+        position:
+          x: 980
+          y: 280
+        positionAbsolute:
+          x: 980
+          y: 280
+        sourcePosition: right
+        targetPosition: left
+        selected: false
+        data:
+          type: code
+          title: 商品分类ABCD
+          code_language: python3
+          error_strategy: fail-branch
+          code: |
+            import json
+            import numpy as np
+            import pandas as pd
+
+            def main(monthly_sales_json: str, sku_col: str, date_cols_json: str) -> dict:
+                monthly = pd.read_json(monthly_sales_json, orient="records")
+                date_cols = json.loads(date_cols_json)
+                recent_12 = sorted(date_cols)[-12:]
+                sm = monthly[recent_12].values
+
+                sdf = pd.DataFrame()
+                sdf[sku_col] = monthly[sku_col]
+                sdf["active_months"] = (sm > 0).sum(axis=1)
+                sdf["continuity"] = sdf["active_months"] / max(len(recent_12), 1)
+                sdf["mean_sales"] = sm.mean(axis=1)
+                sdf["std_sales"] = sm.std(axis=1)
+                sdf["total_sales"] = sm.sum(axis=1)
+                sdf["cv"] = np.where(sdf["mean_sales"] > 0, sdf["std_sales"] / sdf["mean_sales"], 999)
+
+                def classify(row):
+                    if row["total_sales"] == 0:
+                        return "D"
+                    if row["continuity"] >= 0.75 and row["cv"] < 1.0:
+                        return "A"
+                    if row["continuity"] >= 0.75 and row["cv"] >= 1.0:
+                        return "B"
+                    if row["continuity"] < 0.75 and row["cv"] < 1.5:
+                        return "C"
+                    return "D"
+
+                sdf["category"] = sdf.apply(classify, axis=1)
+
+                total_sales = sdf["total_sales"].sum()
+                desc = {"A": "核心常青款", "B": "爆款/趋势品", "C": "长尾品", "D": "问题商品"}
+                lines = []
+                for cat in ["A", "B", "C", "D"]:
+                    cnt = (sdf["category"] == cat).sum()
+                    pct = cnt / max(len(sdf), 1) * 100
+                    spct = (
+                        sdf[sdf["category"] == cat]["total_sales"].sum() / total_sales * 100
+                        if total_sales > 0
+                        else 0
+                    )
+                    avg = sdf[sdf["category"] == cat]["mean_sales"].mean()
+                    lines.append(
+                        f"{cat}类({desc[cat]}): {cnt}个SKU({pct:.1f}%), "
+                        f"销量占比{spct:.1f}%, 月均销量{avg:.0f}"
+                    )
+
+                return {
+                    "classification_json": sdf.to_json(orient="records", force_ascii=False),
+                    "classification_summary": "\n".join(lines),
+                    "sku_col": sku_col,
+                }
+          outputs:
+            classification_json:
+              type: string
+              children: null
+            classification_summary:
+              type: string
+              children: null
+            sku_col:
+              type: string
+              children: null
+          variables:
+            - variable: monthly_sales_json
+              value_selector:
+                - data_parse
+                - monthly_sales_json
+            - variable: sku_col
+              value_selector:
+                - data_parse
+                - sku_col
+            - variable: date_cols_json
+              value_selector:
+                - data_parse
+                - date_cols_json
+
+      - id: forecast
+        type: custom
+        width: 242
+        height: 90
+        position:
+          x: 1280
+          y: 280
+        positionAbsolute:
+          x: 1280
+          y: 280
+        sourcePosition: right
+        targetPosition: left
+        selected: false
+        data:
+          type: code
+          title: 分类建模预测
+          code_language: python3
+          error_strategy: fail-branch
+          code: |
+            import json
+            import numpy as np
+            import pandas as pd
+
+            def ema_forecast(ts, n, alpha=0.3):
+                if len(ts) == 0:
+                    return np.zeros(n)
+                level = float(ts[0])
+                for v in ts[1:]:
+                    level = alpha * float(v) + (1 - alpha) * level
+                return np.full(n, max(0, level))
+
+            def trend_forecast(ts, n):
+                if len(ts) < 2:
+                    return ema_forecast(ts, n)
+                x = np.arange(len(ts))
+                coef = np.polyfit(x, ts, 1)
+                return np.maximum([coef[0] * (len(ts) + i) + coef[1] for i in range(n)], 0)
+
+            def seasonal_naive(ts, n, period=12):
+                if len(ts) < period:
+                    return trend_forecast(ts, n)
+                base = ts[-period:]
+                return np.maximum([base[i % period] for i in range(n)], 0)
+
+            def main(
+                monthly_sales_json: str,
+                classification_json: str,
+                sku_col: str,
+                date_cols_json: str,
+                forecast_months=6,
+                mode="predict",
+            ) -> dict:
+                monthly = pd.read_json(monthly_sales_json, orient="records")
+                clf_df = pd.read_json(classification_json, orient="records")
+                date_cols = json.loads(date_cols_json)
+                n_forecast = int(forecast_months)
+                all_months = sorted(date_cols)
+
+                if str(mode).startswith("backtest"):
+                    train_months = all_months[:-n_forecast]
+                    test_months = all_months[-n_forecast:]
+                else:
+                    train_months = all_months
+                    test_months = []
+
+                cat_map = clf_df.set_index(sku_col)["category"].to_dict()
+                results = []
+                model_info = []
+
+                strategies = {
+                    "A": ("seasonal_naive", lambda ts: seasonal_naive(ts, n_forecast)),
+                    "B": ("damped_trend", lambda ts: trend_forecast(ts, n_forecast)),
+                    "D": ("median_6m", lambda ts: np.full(n_forecast, max(0, float(np.median(ts[-6:]))))),
+                }
+
+                for cat, (method_name, fn) in strategies.items():
+                    skus = [s for s, c in cat_map.items() if c == cat]
+                    for sku in skus:
+                        row = monthly[monthly[sku_col] == sku]
+                        if len(row) == 0:
+                            continue
+                        ts = np.nan_to_num(row[train_months].values.flatten().astype(float), 0)
+                        if ts.sum() == 0:
+                            fc = np.zeros(n_forecast)
+                            method_name = "zero_sales"
+                        else:
+                            fc = fn(ts)
+                        for i in range(n_forecast):
+                            rec = {
+                                "sku": str(sku),
+                                "category": cat,
+                                "horizon": i + 1,
+                                "predicted": round(float(fc[i]), 1),
+                            }
+                            if test_months and i < len(test_months):
+                                rec["month"] = test_months[i]
+                                rec["actual"] = float(np.nan_to_num(row[test_months[i]].values[0], 0))
+                            results.append(rec)
+                        model_info.append({"sku": str(sku), "category": cat, "method": method_name})
+
+                c_skus = [s for s, c in cat_map.items() if c == "C"]
+                c_data = monthly[monthly[sku_col].isin(c_skus)]
+                if len(c_data) > 0:
+                    c_agg = c_data[train_months].sum().values.astype(float)
+                    fc_c = trend_forecast(c_agg, n_forecast)
+                    recent_6 = train_months[-6:]
+                    shares = c_data[recent_6].sum(axis=1)
+                    shares.index = c_data[sku_col]
+                    total_c = shares.sum()
+                    if total_c > 0:
+                        shares = shares / total_c
+                    else:
+                        shares = pd.Series(1 / max(len(c_skus), 1), index=c_skus)
+                    for sku in c_skus:
+                        fc = fc_c * shares.get(sku, 0)
+                        row = monthly[monthly[sku_col] == sku]
+                        for i in range(n_forecast):
+                            rec = {
+                                "sku": str(sku),
+                                "category": "C",
+                                "horizon": i + 1,
+                                "predicted": round(float(max(0, fc[i])), 1),
+                            }
+                            if test_months and i < len(test_months) and len(row) > 0:
+                                rec["month"] = test_months[i]
+                                rec["actual"] = float(np.nan_to_num(row[test_months[i]].values[0], 0))
+                            results.append(rec)
+                        model_info.append({"sku": str(sku), "category": "C", "method": "aggregate_decompose"})
+
+                return {
+                    "predictions_json": json.dumps(results, ensure_ascii=False),
+                    "model_info_json": json.dumps(model_info, ensure_ascii=False),
+                    "mode": str(mode),
+                }
+          outputs:
+            predictions_json:
+              type: string
+              children: null
+            model_info_json:
+              type: string
+              children: null
+            mode:
+              type: string
+              children: null
+          variables:
+            - variable: monthly_sales_json
+              value_selector:
+                - data_parse
+                - monthly_sales_json
+            - variable: classification_json
+              value_selector:
+                - classify
+                - classification_json
+            - variable: sku_col
+              value_selector:
+                - data_parse
+                - sku_col
+            - variable: date_cols_json
+              value_selector:
+                - data_parse
+                - date_cols_json
+            - variable: forecast_months
+              value_selector:
+                - start
+                - forecast_months
+            - variable: mode
+              value_selector:
+                - start
+                - mode
+
+      - id: accuracy_eval
+        type: custom
+        width: 242
+        height: 90
+        position:
+          x: 1580
+          y: 280
+        positionAbsolute:
+          x: 1580
+          y: 280
+        sourcePosition: right
+        targetPosition: left
+        selected: false
+        data:
+          type: code
+          title: 精度评估
+          code_language: python3
+          error_strategy: fail-branch
+          code: |
+            import json
+            import numpy as np
+            import pandas as pd
+
+            def main(predictions_json: str, mode: str) -> dict:
+                if not str(mode).startswith("backtest"):
+                    return {
+                        "accuracy_report": "当前为预测模式，无回测评估。",
+                        "is_pass": "N/A",
+                    }
+
+                preds = pd.DataFrame(json.loads(predictions_json))
+                if "actual" not in preds.columns:
+                    return {
+                        "accuracy_report": "无实际值数据，无法评估。",
+                        "is_pass": "N/A",
+                    }
+
+                preds["abs_err"] = np.abs(preds["predicted"] - preds["actual"])
+
+                def wmape(g):
+                    t = g["actual"].sum()
+                    return round(g["abs_err"].sum() / t * 100, 1) if t > 0 else 0
+
+                lines = ["回测精度评估报告", "=" * 50]
+                pass_all = True
+                desc = {"A": "核心常青款", "B": "爆款", "C": "长尾品", "D": "问题品"}
+
+                for cat in ["A", "B", "C", "D"]:
+                    cp = preds[preds["category"] == cat]
+                    if len(cp) == 0:
+                        continue
+                    w13 = wmape(cp[cp["horizon"].isin([1, 2, 3])])
+                    w46 = wmape(cp[cp["horizon"].isin([4, 5, 6])])
+                    ta = cp["actual"].sum()
+                    tp = cp["predicted"].sum()
+                    bias = round((tp - ta) / ta * 100, 1) if ta > 0 else 0
+                    target_13, target_46 = 15, 25
+                    pass_13 = "达标" if w13 < target_13 else "未达标"
+                    pass_46 = "达标" if w46 < target_46 else "未达标"
+                    if cat == "A" and (w13 >= target_13 or w46 >= target_46):
+                        pass_all = False
+                    lines.extend(
+                        [
+                            "",
+                            f"{cat}类({desc[cat]}): {cp['sku'].nunique()}个SKU",
+                            f"  1-3月WMAPE: {w13}% (目标<{target_13}%) {pass_13}",
+                            f"  4-6月WMAPE: {w46}% (目标<{target_46}%) {pass_46}",
+                            f"  总量偏差: {bias:+.1f}%",
+                        ]
+                    )
+
+                ow13 = wmape(preds[preds["horizon"].isin([1, 2, 3])])
+                ow46 = wmape(preds[preds["horizon"].isin([4, 5, 6])])
+                lines.extend(["", "全部商品:", f"  1-3月WMAPE: {ow13}%", f"  4-6月WMAPE: {ow46}%"])
+                lines.extend(
+                    [
+                        "",
+                        "=" * 50,
+                        (
+                            "结论: A类核心商品达标，当前预测方法可用于实际备货决策。"
+                            if pass_all
+                            else "结论: A类核心商品部分指标未达标，建议补充促销/缺货数据后优化。"
+                        ),
+                    ]
+                )
+
+                return {
+                    "accuracy_report": "\n".join(lines),
+                    "is_pass": "PASS" if pass_all else "FAIL",
+                }
+          outputs:
+            accuracy_report:
+              type: string
+              children: null
+            is_pass:
+              type: string
+              children: null
+          variables:
+            - variable: predictions_json
+              value_selector:
+                - forecast
+                - predictions_json
+            - variable: mode
+              value_selector:
+                - forecast
+                - mode
+
+      - id: stocking_plan
+        type: custom
+        width: 242
+        height: 90
+        position:
+          x: 1880
+          y: 280
+        positionAbsolute:
+          x: 1880
+          y: 280
+        sourcePosition: right
+        targetPosition: left
+        selected: false
+        data:
+          type: code
+          title: 备货建议生成
+          code_language: python3
+          error_strategy: fail-branch
+          code: |
+            import json
+            import pandas as pd
+
+            def main(
+                predictions_json: str,
+                safety_stock_a=1.15,
+                safety_stock_b=1.25,
+                safety_stock_c=1.30,
+                safety_stock_d=1.50,
+            ) -> dict:
+                preds = pd.DataFrame(json.loads(predictions_json))
+                safety_map = {
+                    "A": float(safety_stock_a),
+                    "B": float(safety_stock_b),
+                    "C": float(safety_stock_c),
+                    "D": float(safety_stock_d),
+                }
+                preds["safety_factor"] = preds["category"].map(safety_map)
+                preds["stocking_qty"] = (preds["predicted"] * preds["safety_factor"]).round(0)
+
+                lines = ["备货建议方案", "=" * 50, "", "安全系数设置:"]
+                for cat in ["A", "B", "C", "D"]:
+                    lines.append(f"  {cat}类: ×{safety_map[cat]}")
+
+                lines.append("")
+                lines.append("各类别备货汇总:")
+                total_pred = 0
+                total_stock = 0
+                desc = {"A": "核心常青款", "B": "爆款/趋势品", "C": "长尾品", "D": "问题商品"}
+
+                for cat in ["A", "B", "C", "D"]:
+                    cp = preds[preds["category"] == cat]
+                    if len(cp) == 0:
+                        continue
+                    n_sku = cp["sku"].nunique()
+                    pred_sum = cp["predicted"].sum()
+                    stock_sum = cp["stocking_qty"].sum()
+                    buffer = stock_sum - pred_sum
+                    total_pred += pred_sum
+                    total_stock += stock_sum
+                    lines.extend(
+                        [
+                            "",
+                            f"  {cat}类({desc[cat]}): {n_sku}个SKU",
+                            f"    预测总量: {pred_sum:,.0f}",
+                            f"    建议备货: {stock_sum:,.0f}",
+                            (
+                                f"    安全余量: {buffer:,.0f} ({buffer / pred_sum * 100:.0f}%)"
+                                if pred_sum > 0
+                                else "    安全余量: 0"
+                            ),
+                        ]
+                    )
+
+                lines.extend(
+                    [
+                        "",
+                        "  总计:",
+                        f"    预测总量: {total_pred:,.0f}",
+                        f"    建议备货: {total_stock:,.0f}",
+                        f"    总安全余量: {total_stock - total_pred:,.0f}",
+                        "",
+                        "逐月备货量:",
+                    ]
+                )
+
+                for h in sorted(preds["horizon"].unique()):
+                    hp = preds[preds["horizon"] == h]
+                    pred_h = hp["predicted"].sum()
+                    stock_h = hp["stocking_qty"].sum()
+                    month_label = (
+                        hp["month"].iloc[0]
+                        if "month" in hp.columns and len(hp) > 0 and pd.notna(hp["month"].iloc[0])
+                        else f"第{h}月"
+                    )
+                    lines.append(f"  {month_label}: 预测{pred_h:,.0f} → 备货{stock_h:,.0f}")
+
+                lines.extend(
+                    [
+                        "",
+                        "风险提示:",
+                        "  1. B类爆款波动大，大促月需额外加量",
+                        "  2. C/D类预测精度有限，建议小批量多频次补货",
+                        "  3. 建议每月初用最新数据重新运行预测",
+                    ]
+                )
+
+                return {
+                    "stocking_plan_json": preds[
+                        ["sku", "category", "horizon", "predicted", "stocking_qty"]
+                    ].to_json(orient="records", force_ascii=False),
+                    "stocking_summary": "\n".join(lines),
+                }
+          outputs:
+            stocking_plan_json:
+              type: string
+              children: null
+            stocking_summary:
+              type: string
+              children: null
+          variables:
+            - variable: predictions_json
+              value_selector:
+                - forecast
+                - predictions_json
+            - variable: safety_stock_a
+              value_selector:
+                - start
+                - safety_stock_a
+            - variable: safety_stock_b
+              value_selector:
+                - start
+                - safety_stock_b
+            - variable: safety_stock_c
+              value_selector:
+                - start
+                - safety_stock_c
+            - variable: safety_stock_d
+              value_selector:
+                - start
+                - safety_stock_d
+
+      - id: llm_report
+        type: custom
+        width: 242
+        height: 98
+        position:
+          x: 2180
+          y: 280
+        positionAbsolute:
+          x: 2180
+          y: 280
+        sourcePosition: right
+        targetPosition: left
+        selected: false
+        data:
+          type: llm
+          title: 生成决策报告
+          context:
+            enabled: false
+            variable_selector: []
+          vision:
+            enabled: false
+          model:
+            mode: chat
+            provider: langgenius/deepseek/deepseek
+            name: deepseek-chat
+            completion_params:
+              temperature: 0.3
+              max_tokens: 1500
+          prompt_template:
+            - id: sys-prompt-sales-forecast-001
+              role: system
+              text: 你是跨境电商供应链预测专家，根据结构化分析结果生成简洁专业的备货决策报告。
+            - id: user-prompt-sales-forecast-001
+              role: user
+              text: |
+                【商品分类结果】
+                {{#classify.classification_summary#}}
+
+                【数据质量】
+                {{#data_parse.quality_report#}}
+
+                【精度评估】
+                {{#accuracy_eval.accuracy_report#}}
+
+                【备货建议】
+                {{#stocking_plan.stocking_summary#}}
+
+                请按以下结构输出报告：
+                1. 一句话结论（当前预测是否可用于备货决策）
+                2. 各类商品的备货策略要点（每类2-3句话）
+                3. 本月需要重点关注的事项（3条以内）
+                4. 下一步优化建议（2-3条）
+
+                要求：语言简洁、数字具体、突出A类核心商品结论。
+
+      - id: end
+        type: custom
+        width: 242
+        height: 116
+        position:
+          x: 2480
+          y: 280
+        positionAbsolute:
+          x: 2480
+          y: 280
+        sourcePosition: right
+        targetPosition: left
+        selected: false
+        data:
+          type: end
+          title: 结束
+          outputs:
+            - variable: report
+              value_selector:
+                - llm_report
+                - text
+            - variable: stocking_plan
+              value_selector:
+                - stocking_plan
+                - stocking_plan_json
+            - variable: accuracy
+              value_selector:
+                - accuracy_eval
+                - accuracy_report
+            - variable: is_pass
+              value_selector:
+                - accuracy_eval
+                - is_pass
+            - variable: classification
+              value_selector:
+                - classify
+                - classification_summary

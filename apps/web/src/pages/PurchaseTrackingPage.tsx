@@ -1,27 +1,84 @@
-import { Link } from 'react-router-dom';
+import { useState } from 'react';
+import { Link, useSearchParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { api } from '@/lib/api';
+import { api, type PurchaseDraftStatus } from '@/lib/api';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 import { PageHeader } from '@/components/PageHeader';
 
-const STATUS_LABEL: Record<string, string> = {
-  draft: '待跟进',
-  submitted: '已跟进',
+const STATUS_LABEL: Record<PurchaseDraftStatus, string> = {
+  draft: '待确认',
+  confirmed: '已确认',
+  in_production: '生产中',
+  ready_to_ship: '待发货',
+  in_transit: '在途',
+  partial_received: '部分到货',
+  received: '已收货',
+  exception: '异常',
   cancelled: '已取消',
 };
 
+const NEXT_ACTION: Partial<
+  Record<PurchaseDraftStatus, { label: string; status: PurchaseDraftStatus }[]>
+> = {
+  draft: [{ label: '确认交期', status: 'confirmed' }],
+  confirmed: [{ label: '标记生产中', status: 'in_production' }],
+  in_production: [{ label: '标记待发货', status: 'ready_to_ship' }],
+  ready_to_ship: [{ label: '标记在途', status: 'in_transit' }],
+  in_transit: [],
+  partial_received: [],
+  exception: [{ label: '恢复已确认', status: 'confirmed' }],
+};
+
 export function PurchaseTrackingPage() {
+  const [searchParams] = useSearchParams();
+  const statusFilter = (searchParams.get('status') as PurchaseDraftStatus | null) ?? undefined;
   const qc = useQueryClient();
+  const [receiveQty, setReceiveQty] = useState<Record<string, string>>({});
+  const [exceptionReason, setExceptionReason] = useState<Record<string, string>>({});
+
   const { data: records = [], isLoading } = useQuery({
-    queryKey: ['purchase-tracking'],
-    queryFn: api.getPurchaseTracking,
+    queryKey: ['purchase-tracking', statusFilter],
+    queryFn: () => api.getPurchaseTracking(statusFilter),
   });
 
   const updateStatus = useMutation({
-    mutationFn: ({ id, status }: { id: string; status: 'draft' | 'submitted' | 'cancelled' }) =>
-      api.updatePurchaseTracking(id, { status }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['purchase-tracking'] }),
+    mutationFn: ({
+      id,
+      status,
+      confirmedDeliveryDate,
+      actualShipDate,
+      exceptionReason: reason,
+    }: {
+      id: string;
+      status: PurchaseDraftStatus;
+      confirmedDeliveryDate?: string;
+      actualShipDate?: string;
+      exceptionReason?: string;
+    }) =>
+      api.updatePurchaseTracking(id, {
+        status,
+        confirmedDeliveryDate,
+        actualShipDate,
+        exceptionReason: reason,
+      }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['purchase-tracking'] });
+      qc.invalidateQueries({ queryKey: ['dashboard'] });
+    },
+  });
+
+  const receiveDraft = useMutation({
+    mutationFn: ({ id, qtyReceived }: { id: string; qtyReceived: number }) =>
+      api.receivePurchaseTracking(id, { qtyReceived, idempotencyKey: `${id}:${qtyReceived}:${Date.now()}` }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['purchase-tracking'] });
+      qc.invalidateQueries({ queryKey: ['pmc-plan'] });
+      qc.invalidateQueries({ queryKey: ['inventory-overview'] });
+      qc.invalidateQueries({ queryKey: ['dashboard'] });
+      setReceiveQty({});
+    },
   });
 
   if (isLoading) return <p className="text-text-sub">加载中...</p>;
@@ -33,11 +90,12 @@ export function PurchaseTrackingPage() {
         <CardHeader>
           <CardTitle>跟单列表</CardTitle>
           <p className="text-sm text-text-sub">
-            内部履约台账，非正式采购单。数据来自
-            {' '}
-            <Link to="/pmc/list" className="text-primary hover:underline">计划列表</Link>
-            {' '}
-            中已确认的计划；请在计划详情点击「确认计划并生成采购跟单」后自动生成。导出计划请使用计划列表/详情的 CSV 导出，人工发送给商家。
+            内部履约台账，非正式采购单。确认交期 → 生产 → 发货 → 在途 → 登记到货回写库存。
+            数据来自{' '}
+            <Link to="/pmc/list" className="text-primary hover:underline">
+              计划列表
+            </Link>
+            中已确认的计划。
           </p>
         </CardHeader>
         <CardContent>
@@ -48,52 +106,120 @@ export function PurchaseTrackingPage() {
                 <th className="p-2 font-normal">来源计划</th>
                 <th className="p-2 font-normal">商家</th>
                 <th className="p-2 font-normal">SKU</th>
-                <th className="p-2 font-normal">数量</th>
-                <th className="p-2 font-normal">期望交期</th>
+                <th className="p-2 font-normal">计划/已收</th>
+                <th className="p-2 font-normal">承诺交期</th>
                 <th className="p-2 font-normal">状态</th>
                 <th className="p-2 font-normal">操作</th>
               </tr>
             </thead>
             <tbody>
-              {records.map((d) => (
-                <tr key={d.id} className="border-b border-border/60">
-                  <td className="p-2 font-mono text-text-main">{d.draftNo}</td>
-                  <td className="p-2 font-mono">
-                    {d.planId ? (
-                      <Link to={`/pmc/${d.planId}`} className="text-primary hover:underline">
-                        {d.planNo ?? d.planId.slice(0, 8)}
-                      </Link>
-                    ) : (
-                      d.planNo ?? '-'
-                    )}
-                  </td>
-                  <td className="p-2">{d.merchantName ?? d.merchantCode ?? '-'}</td>
-                  <td className="p-2">{d.skuCode}</td>
-                  <td className="p-2 font-numeric text-primary">{d.qty}</td>
-                  <td className="p-2">{d.expectedDate ?? '-'}</td>
-                  <td className="p-2">{STATUS_LABEL[d.status] ?? d.status}</td>
-                  <td className="space-x-1 p-2">
-                    {d.status === 'draft' && (
-                      <>
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() => updateStatus.mutate({ id: d.id, status: 'submitted' })}
-                        >
-                          标记已跟进
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          onClick={() => updateStatus.mutate({ id: d.id, status: 'cancelled' })}
-                        >
-                          取消
-                        </Button>
-                      </>
-                    )}
-                  </td>
-                </tr>
-              ))}
+              {records.map((d) => {
+                const actions = NEXT_ACTION[d.status] ?? [];
+                const canReceive = ['in_transit', 'partial_received', 'ready_to_ship', 'in_production', 'confirmed'].includes(
+                  d.status,
+                ) && d.remainingQty > 0;
+                return (
+                  <tr key={d.id} className="border-b border-border/60">
+                    <td className="p-2 font-mono text-text-main">{d.draftNo}</td>
+                    <td className="p-2 font-mono">
+                      {d.planId ? (
+                        <Link to={`/pmc/${d.planId}`} className="text-primary hover:underline">
+                          {d.planNo ?? d.planId.slice(0, 8)}
+                        </Link>
+                      ) : (
+                        d.planNo ?? '-'
+                      )}
+                    </td>
+                    <td className="p-2">{d.merchantName ?? d.merchantCode ?? '-'}</td>
+                    <td className="p-2">{d.skuCode}</td>
+                    <td className="p-2 font-numeric">
+                      {d.qty} / {d.receivedQty ?? 0}
+                      {d.remainingQty > 0 && (
+                        <span className="ml-1 text-text-sub">（剩 {d.remainingQty}）</span>
+                      )}
+                    </td>
+                    <td className="p-2">{d.confirmedDeliveryDate ?? d.expectedDate ?? '-'}</td>
+                    <td className="p-2">
+                      {d.statusLabel ?? STATUS_LABEL[d.status] ?? d.status}
+                      {d.exceptionReason && (
+                        <p className="mt-0.5 text-xs text-destructive">{d.exceptionReason}</p>
+                      )}
+                    </td>
+                    <td className="space-y-1 p-2">
+                      <div className="flex flex-wrap gap-1">
+                        {actions.map((a) => (
+                          <Button
+                            key={a.status}
+                            size="sm"
+                            variant="outline"
+                            disabled={updateStatus.isPending}
+                            onClick={() => updateStatus.mutate({ id: d.id, status: a.status })}
+                          >
+                            {a.label}
+                          </Button>
+                        ))}
+                        {!['received', 'cancelled'].includes(d.status) && (
+                          <>
+                            <Input
+                              className="h-8 w-28"
+                              placeholder="异常原因"
+                              value={exceptionReason[d.id] ?? ''}
+                              onChange={(e) =>
+                                setExceptionReason((prev) => ({ ...prev, [d.id]: e.target.value }))
+                              }
+                            />
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              onClick={() =>
+                                updateStatus.mutate({
+                                  id: d.id,
+                                  status: 'exception',
+                                  exceptionReason: exceptionReason[d.id] || '需人工跟进',
+                                })
+                              }
+                            >
+                              标记异常
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              onClick={() => updateStatus.mutate({ id: d.id, status: 'cancelled' })}
+                            >
+                              取消
+                            </Button>
+                          </>
+                        )}
+                      </div>
+                      {canReceive && (
+                        <div className="flex items-center gap-2">
+                          <Input
+                            type="number"
+                            className="h-8 w-20"
+                            placeholder="到货量"
+                            value={receiveQty[d.id] ?? ''}
+                            onChange={(e) =>
+                              setReceiveQty((prev) => ({ ...prev, [d.id]: e.target.value }))
+                            }
+                          />
+                          <Button
+                            size="sm"
+                            disabled={receiveDraft.isPending || !receiveQty[d.id]}
+                            onClick={() =>
+                              receiveDraft.mutate({
+                                id: d.id,
+                                qtyReceived: Number(receiveQty[d.id]),
+                              })
+                            }
+                          >
+                            登记到货
+                          </Button>
+                        </div>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
               {!records.length && (
                 <tr>
                   <td colSpan={8} className="p-4 text-center text-text-hint">
@@ -103,6 +229,9 @@ export function PurchaseTrackingPage() {
               )}
             </tbody>
           </table>
+          {receiveDraft.isError && (
+            <p className="mt-4 text-sm text-destructive">{(receiveDraft.error as Error).message}</p>
+          )}
         </CardContent>
       </Card>
     </div>

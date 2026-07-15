@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseSkuCode, spuFieldsFromParse } from './sku-encoding.js';
+import { parseSkuCode, spuFieldsFromParse, skuEncodingToColumns, type SkuKind } from './sku-encoding.js';
 
 describe('parseSkuCode', () => {
   it('parses standard internal 9-digit code', () => {
@@ -65,6 +65,20 @@ describe('parseSkuCode', () => {
     assert.equal(r.divisionName, '大件');
   });
 
+  it('parses legacy WFDJ standard SKU variants under one SPU', () => {
+    for (const variant of ['1', '2', '3', '4', '5']) {
+      const r = parseSkuCode(`WFDJ505212_${variant}`);
+      assert.equal(r.kind, 'standard', variant);
+      assert.equal(r.valid, true, variant);
+      assert.equal(r.legacyFormat, 'dj_standard', variant);
+      assert.equal(r.spuCode, 'WFDJ505212', variant);
+      assert.equal(r.spuNumericCode, '505212', variant);
+      assert.equal(r.variantNo, variant, variant);
+      assert.equal(r.divisionCode, '1', variant);
+      assert.equal(r.divisionName, '大件', variant);
+    }
+  });
+
   it('parses legacy DJ SKU-level accessory DJ478585_2P02', () => {
     const r = parseSkuCode('DJ478585_2P02');
     assert.equal(r.kind, 'accessory');
@@ -89,6 +103,46 @@ describe('parseSkuCode', () => {
     assert.equal(r.variantNo, null);
   });
 
+  it('parses legacy DJ AB-box SKU DJ505240_2_A / _B', () => {
+    const a = parseSkuCode('DJ505240_2_A');
+    assert.equal(a.kind, 'multi_box');
+    assert.equal(a.valid, true);
+    assert.equal(a.legacyFormat, 'dj_multi_box');
+    assert.equal(a.spuCode, 'DJ505240');
+    assert.equal(a.variantNo, '2');
+    assert.equal(a.boxNo, 'A');
+    assert.equal(a.parentSkuCode, 'DJ505240_2');
+
+    const b = parseSkuCode('DJ505240_2_B');
+    assert.equal(b.boxNo, 'B');
+    assert.equal(b.kind, 'multi_box');
+  });
+
+  it('parses legacy DJR prefix AB-box SKU', () => {
+    const r = parseSkuCode('DJR505229_1_A');
+    assert.equal(r.kind, 'multi_box');
+    assert.equal(r.valid, true);
+    assert.equal(r.spuCode, 'DJR505229');
+    assert.equal(r.boxNo, 'A');
+    assert.equal(r.brandCode, 'DJR');
+  });
+
+  it('parses user-provided legacy SKU samples', () => {
+    const samples: Array<[string, SkuKind, string]> = [
+      ['DJ504649_3P19', 'accessory', 'dj_sku_accessory'],
+      ['DJ505387_2P01', 'accessory', 'dj_sku_accessory'],
+      ['DJ505787_2', 'standard', 'dj_standard'],
+      ['100104703', 'standard', ''],
+      ['DJ506016_1_B', 'multi_box', 'dj_multi_box'],
+    ];
+    for (const [code, kind, fmt] of samples) {
+      const r = parseSkuCode(code);
+      assert.equal(r.kind, kind, code);
+      assert.equal(r.valid, true, code);
+      if (fmt) assert.equal(r.legacyFormat, fmt, code);
+    }
+  });
+
   it('marks unknown legacy codes', () => {
     const r = parseSkuCode('UNKNOWN-CODE-XYZ');
     assert.equal(r.kind, 'legacy');
@@ -104,7 +158,19 @@ describe('spuFieldsFromParse', () => {
     assert.ok(fields);
     assert.equal(fields.code, 'DJ502313');
     assert.equal(fields.spuNumericCode, '502313');
+    assert.equal(fields.spuNumericCode.length, 6);
     assert.equal(fields.divisionName, '大件');
+  });
+  it('maps 6-digit legacy spu numeric into sku columns', () => {
+    const parse = parseSkuCode('DJ502313_34');
+    const cols = skuEncodingToColumns(parse);
+    assert.equal(cols.spuNumericCode, '502313');
+  });
+  it('supports legacy variant longer than 2 digits', () => {
+    const parse = parseSkuCode('DJ502313_342');
+    const cols = skuEncodingToColumns(parse);
+    assert.equal(cols.variantNo, '342');
+    assert.equal(cols.spuNumericCode, '502313');
   });
   it('builds SPU fields from standard SKU', () => {
     const parse = parseSkuCode('704576101');

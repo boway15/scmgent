@@ -2,7 +2,6 @@ import { eq, and } from 'drizzle-orm';
 import {
   db,
   skus,
-  salesHistory,
   reorderSuggestions,
   safetyStockConfig,
   warehouses,
@@ -34,6 +33,7 @@ import {
   saveHealthSnapshots,
   supersedePendingSuggestions,
 } from '../lib/inventory-health-store.js';
+import { loadDailySalesBySkuIds } from '../lib/sales-history-query.js';
 
 async function upsertSafetyStock(
   skuId: string,
@@ -114,6 +114,8 @@ export async function runReplenishmentForecast() {
     return { suggestionCount: 0, snapshotCount: 0, message: 'No active SKUs or warehouses' };
   }
 
+  const salesBySkuId = await loadDailySalesBySkuIds(activeSkus.map((sku) => sku.id));
+
   let count = 0;
   const healthRows: SkuHealthRow[] = [];
   const results: Array<{
@@ -151,14 +153,7 @@ export async function runReplenishmentForecast() {
       { map: Map<string, number>; lifecycle?: string }
     >();
 
-    const salesRows = await db
-      .select({
-        qtySold: salesHistory.qtySold,
-        saleDate: salesHistory.saleDate,
-        warehouseCode: salesHistory.warehouseCode,
-      })
-      .from(salesHistory)
-      .where(eq(salesHistory.skuId, sku.id));
+    const salesRows = salesBySkuId.get(sku.id) ?? [];
 
     const dailyByWh: Record<string, number> = {};
     const coverageByWh: Record<string, SkuHealthRow['coverage']> = {};
@@ -262,7 +257,10 @@ export async function runReplenishmentForecast() {
         coverageDays: coverage.coverageDays,
         totalLeadDays: coverage.leadTime.totalLeadDays,
         latestOrderDays: coverage.latestOrderDays,
-        metrics: health.metrics,
+        metrics: {
+          ...health.metrics,
+          demandSource: health.demandSource,
+        },
       });
     }
   }
@@ -287,7 +285,11 @@ export async function runReplenishmentForecast() {
   let enhancedReasons = new Map<string, string>();
   let difyEnhanced = false;
 
-  if (isReplenishmentWorkflowEnabled() && eligibleItems.length) {
+  const shouldEnhance =
+    eligibleItems.length > 0 &&
+    isReplenishmentWorkflowEnabled();
+
+  if (shouldEnhance) {
     try {
       enhancedReasons = await enhanceReplenishmentReasons(
         eligibleItems.map((item) => ({
@@ -299,7 +301,7 @@ export async function runReplenishmentForecast() {
       );
       difyEnhanced = enhancedReasons.size > 0;
     } catch (err) {
-      console.warn('[replenishmentForecast] Dify workflow skipped:', err);
+      console.warn('[replenishmentForecast] enhancement skipped:', err);
     }
   }
 
@@ -336,7 +338,7 @@ export async function runReplenishmentForecast() {
   }
 
   const engine = difyEnhanced
-    ? 'coverage-lead-time+dify-enhanced'
+    ? 'coverage-lead-time+ai-enhanced'
     : 'coverage-lead-time';
 
   return { suggestionCount: count, snapshotCount, engine, difyEnhanced, results };

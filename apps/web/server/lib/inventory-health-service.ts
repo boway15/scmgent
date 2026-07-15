@@ -1,12 +1,10 @@
 /**
  * 统一库存健康计算服务：库存总览、补货任务、预警任务共用同一口径。
  */
-import { eq, and } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
 import {
   db,
   skus,
-  salesHistory,
-  salesForecastMonthly,
   safetyStockConfig,
   warehouses,
   spus,
@@ -14,14 +12,15 @@ import {
 import { calcReplenishment } from './replenishment.js';
 import {
   calcCoverageReplenishmentFromForecast,
-  buildForecastMap,
   calcForwardAvgDaily,
-  stationForWarehouse,
 } from './forecast-demand.js';
 import { resolveLeadTimeForSkuWarehouse } from './lead-time-resolver.js';
 import { getLatestInventorySnapshot } from './inventory-snapshot.js';
 import { isGrayLifecycle, type InventoryHealth } from './inventory-light.js';
 import type { CoverageReplenishmentResult } from './replenishment-coverage.js';
+import { loadDailySalesBySkuIds } from './sales-history-query.js';
+import { loadMergedPublishedForecastBySkuIds } from './forecast-published-resolve.js';
+import { FORECAST_GLOBAL_STATION } from './forecast-station-scope.js';
 
 export type SkuHealthRow = {
   skuId: string;
@@ -54,29 +53,6 @@ async function loadPolicyMap(skuId: string) {
   return new Map(rows.map((row) => [row.warehouseCode, row]));
 }
 
-async function loadForecastMap(skuId: string, station: string) {
-  const rows = await db
-    .select({
-      forecastYear: salesForecastMonthly.forecastYear,
-      month: salesForecastMonthly.month,
-      forecastDailyAvg: salesForecastMonthly.forecastDailyAvg,
-      lifecycle: salesForecastMonthly.lifecycle,
-    })
-    .from(salesForecastMonthly)
-    .where(
-      and(eq(salesForecastMonthly.skuId, skuId), eq(salesForecastMonthly.station, station)),
-    );
-  const lifecycle = rows.find((r) => r.lifecycle)?.lifecycle ?? undefined;
-  const map = buildForecastMap(
-    rows.map((r) => ({
-      forecastYear: r.forecastYear,
-      month: r.month,
-      forecastDailyAvg: Number(r.forecastDailyAvg),
-    })),
-  );
-  return { map, lifecycle };
-}
-
 export async function computeSkuWarehouseHealth(params: {
   sku: {
     id: string;
@@ -90,6 +66,7 @@ export async function computeSkuWarehouseHealth(params: {
   salesRows: Array<{ qtySold: number; saleDate: string; warehouseCode: string | null }>;
   policyMap: Map<string, (typeof safetyStockConfig.$inferSelect) | undefined>;
   forecastByStation: Map<string, { map: Map<string, number>; lifecycle?: string }>;
+  forecastEntry?: { map: Map<string, number>; lifecycle?: string };
   moq?: number;
 }): Promise<SkuHealthRow> {
   const whSales = params.salesRows
@@ -111,12 +88,24 @@ export async function computeSkuWarehouseHealth(params: {
 
   const policy = params.policyMap.get(params.warehouse.code) ?? params.policyMap.get('ALL');
   const snapshot = await getLatestInventorySnapshot(params.sku.id, params.warehouse.code);
-  const station = stationForWarehouse(params.warehouse.regionGroup, params.warehouse.countryCode);
 
-  if (!params.forecastByStation.has(station)) {
-    params.forecastByStation.set(station, await loadForecastMap(params.sku.id, station));
+  if (!params.forecastEntry) {
+    if (!params.forecastByStation.has(FORECAST_GLOBAL_STATION)) {
+      const merged = await loadMergedPublishedForecastBySkuIds([params.sku.id]);
+      const resolved = merged.get(params.sku.id) ?? {
+        map: new Map<string, number>(),
+        lifecycle: undefined,
+        versionId: null,
+      };
+      params.forecastByStation.set(FORECAST_GLOBAL_STATION, {
+        map: resolved.map,
+        lifecycle: resolved.lifecycle,
+      });
+    }
   }
-  const forecastEntry = params.forecastByStation.get(station)!;
+  const forecastEntry =
+    params.forecastEntry ??
+    params.forecastByStation.get(FORECAST_GLOBAL_STATION) ?? { map: new Map(), lifecycle: undefined };
 
   const coverage = calcCoverageReplenishmentFromForecast({
     effectiveQty: snapshot.effectiveQty,
@@ -200,6 +189,9 @@ export async function computeAllInventoryHealth(): Promise<SkuHealthRow[]> {
 
   const rows: SkuHealthRow[] = [];
 
+  const salesBySkuId = await loadDailySalesBySkuIds(activeSkus.map((sku) => sku.id));
+  const forecastBySkuId = await loadMergedPublishedForecastBySkuIds(activeSkus.map((sku) => sku.id));
+
   for (const sku of activeSkus) {
     const effectiveMoq =
       sku.moq && sku.moq > 0
@@ -209,19 +201,14 @@ export async function computeAllInventoryHealth(): Promise<SkuHealthRow[]> {
           : 0;
 
     const policyMap = await loadPolicyMap(sku.id);
-    const forecastByStation = new Map<
-      string,
-      { map: Map<string, number>; lifecycle?: string }
-    >();
+    const forecastEntry = forecastBySkuId.get(sku.id) ?? {
+      map: new Map<string, number>(),
+      lifecycle: undefined,
+      versionId: null,
+    };
+    const forecastByStation = new Map<string, { map: Map<string, number>; lifecycle?: string }>();
 
-    const salesRows = await db
-      .select({
-        qtySold: salesHistory.qtySold,
-        saleDate: salesHistory.saleDate,
-        warehouseCode: salesHistory.warehouseCode,
-      })
-      .from(salesHistory)
-      .where(eq(salesHistory.skuId, sku.id));
+    const salesRows = salesBySkuId.get(sku.id) ?? [];
 
     for (const wh of whRows) {
       const health = await computeSkuWarehouseHealth({
@@ -230,6 +217,7 @@ export async function computeAllInventoryHealth(): Promise<SkuHealthRow[]> {
         salesRows,
         policyMap,
         forecastByStation,
+        forecastEntry,
         moq: effectiveMoq || undefined,
       });
       rows.push(health);

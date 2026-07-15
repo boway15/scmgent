@@ -26,6 +26,8 @@ function rewriteScmDbImports(content, relativePath) {
   return content
     .replace(/from '@scm\/db\/fee-display-priority'/g, `from '${prefix}_db/fob-fee-display-priority.js'`)
     .replace(/from "@scm\/db\/fee-display-priority"/g, `from "${prefix}_db/fob-fee-display-priority.js"`)
+    .replace(/from '@scm\/db\/password'/g, `from '${prefix}_db/password.js'`)
+    .replace(/from "@scm\/db\/password"/g, `from "${prefix}_db/password.js"`)
     .replace(/from '@scm\/db'/g, `from '${prefix}_db/index.js'`)
     .replace(/from "@scm\/db"/g, `from "${prefix}_db/index.js"`);
 }

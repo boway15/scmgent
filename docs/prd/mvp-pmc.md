@@ -73,7 +73,15 @@
 | expected_date | date | | 期望交期 |
 | source | enum | ✅ | `pmc` / `reorder` / `manual` |
 | source_ref_id | uuid | | 来源计划 id |
-| status | enum | ✅ | `draft` / `submitted` / `cancelled`（展示：待跟进/已跟进/已取消） |
+| status | enum | ✅ | `draft` / `confirmed` / `in_production` / `ready_to_ship` / `in_transit` / `partial_received` / `received` / `exception` / `cancelled` |
+| plan_item_id | uuid FK | | 关联 pmc_plan_items |
+| supplier_confirmed_at | timestamptz | | 供应商确认时间 |
+| confirmed_delivery_date | date | | 供应商承诺交期 |
+| actual_ship_date | date | | 实际发货日期 |
+| actual_received_date | date | | 最近收货日期 |
+| received_qty | int | | 累计收货数量 |
+| exception_reason | text | | 异常原因 |
+| owner_user_id | uuid FK | | 责任人 |
 | remark | text | | |
 | created_by | uuid FK | | |
 
@@ -96,7 +104,8 @@
 ### 采购跟单（`/pmc/tracking`）
 
 - 计划确认后自动生成的内部跟单列表
-- 操作：标记已跟进、取消
+- 操作：确认交期、标记生产中/待发货/在途、登记到货、标记异常、取消
+- 登记到货后回写库存并更新 PMC 计划行进度
 - 数据不可手工新建（403）
 
 ### 导入计划（`/data/import?type=pmc_plans`）

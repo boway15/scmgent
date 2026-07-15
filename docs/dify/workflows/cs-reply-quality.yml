@@ -1,0 +1,409 @@
+# 客服回复质量评估 · Dify Workflow DSL
+# 导入: Dify 控制台 → 工作室 → 导入 DSL
+# 对接: 妙搭 SCM 客服模块 POST /v1/workflows/run
+
+kind: app
+version: 0.6.0
+app:
+  mode: workflow
+  name: 客服回复质量评估
+  description: 评估跨境电商客服邮件回复质量，输出总分、多维度得分与改进建议
+  icon: ✉️
+  icon_background: '#FFF7E6'
+dependencies:
+  - type: marketplace
+    value:
+      marketplace_plugin_unique_identifier: langgenius/deepseek:0.0.15@bc5b794a1b0b4f7e9c2d8a1e3f5b7c9d
+workflow:
+  environment_variables: []
+  conversation_variables: []
+  features:
+    file_upload:
+      enabled: false
+    opening_statement: ''
+    retriever_resource:
+      enabled: false
+    sensitive_word_avoidance:
+      enabled: false
+    speech_to_text:
+      enabled: false
+    suggested_questions: []
+    suggested_questions_after_answer:
+      enabled: false
+    text_to_speech:
+      enabled: false
+  graph:
+    edges:
+      - id: edge-start-llm
+        source: start
+        target: score_reply
+        sourceHandle: source
+        targetHandle: target
+        type: custom
+        data:
+          sourceType: start
+          targetType: llm
+          isInIteration: false
+          isInLoop: false
+      - id: edge-llm-parse
+        source: score_reply
+        target: parse_score_output
+        sourceHandle: source
+        targetHandle: target
+        type: custom
+        data:
+          sourceType: llm
+          targetType: code
+          isInIteration: false
+          isInLoop: false
+      - id: edge-parse-end
+        source: parse_score_output
+        target: end
+        sourceHandle: source
+        targetHandle: target
+        type: custom
+        data:
+          sourceType: code
+          targetType: end
+          isInIteration: false
+          isInLoop: false
+    nodes:
+      - id: start
+        type: custom
+        width: 242
+        height: 116
+        position:
+          x: 80
+          y: 280
+        positionAbsolute:
+          x: 80
+          y: 280
+        sourcePosition: right
+        targetPosition: left
+        selected: false
+        data:
+          type: start
+          title: 开始
+          variables:
+            - variable: buyer_message
+              label: 买家消息
+              type: paragraph
+              required: true
+              max_length: 20000
+              options: []
+            - variable: agent_reply
+              label: 客服回复
+              type: paragraph
+              required: true
+              max_length: 20000
+              options: []
+            - variable: message_type
+              label: 消息类型
+              type: select
+              required: false
+              max_length: 48
+              options:
+                - 售前
+                - 售后
+              default: 售后
+            - variable: order_no
+              label: 订单号
+              type: text-input
+              required: false
+              max_length: 64
+              options: []
+            - variable: agent_name
+              label: 回复人
+              type: text-input
+              required: false
+              max_length: 64
+              options: []
+            - variable: buyer_email
+              label: 买家邮箱
+              type: text-input
+              required: false
+              max_length: 256
+              options: []
+            - variable: pass_threshold
+              label: 及格线
+              type: number
+              required: false
+              max_length: 48
+              options: []
+              default: 70
+
+      - id: score_reply
+        type: custom
+        width: 242
+        height: 98
+        position:
+          x: 380
+          y: 280
+        positionAbsolute:
+          x: 380
+          y: 280
+        sourcePosition: right
+        targetPosition: left
+        selected: false
+        data:
+          type: llm
+          title: 评估回复质量
+          context:
+            enabled: false
+            variable_selector: []
+          vision:
+            enabled: false
+          model:
+            mode: chat
+            provider: langgenius/deepseek/deepseek
+            name: deepseek-chat
+            completion_params:
+              temperature: 0.2
+              max_tokens: 1200
+          prompt_template:
+            - id: sys-prompt-cs-quality-001
+              role: system
+              text: |
+                你是跨境电商（Amazon 等平台）客服质量审核专家。你的任务是评估客服英文邮件回复的质量。
+
+                评分维度（每项 0-100 整数）：
+                1. accuracy（准确性）：是否准确回应买家问题，信息是否正确，有无误导或答非所问
+                2. professionalism（专业性）：语气是否礼貌专业，格式是否得体，有无语法硬伤
+                3. empathy（共情）：是否理解买家处境，表达歉意或关怀是否真诚得体
+                4. resolution（解决度）：是否给出明确可执行的下一步，能否推动问题解决
+
+                评分原则：
+                - 售前侧重产品信息准确、引导下单清晰
+                - 售后侧重问题解决路径、物流/退款/补发指引是否明确
+                - 仅评估客服回复本身，不臆造订单或物流事实
+                - 回复为空或完全无关时，各维度 ≤ 20
+
+                你必须只输出一个 JSON 对象，不要 markdown 代码块，不要额外说明。格式：
+                {
+                  "overall_score": <0-100整数，四维度加权：accuracy 30% + professionalism 20% + empathy 20% + resolution 30%>,
+                  "score_detail": {
+                    "accuracy": <0-100>,
+                    "professionalism": <0-100>,
+                    "empathy": <0-100>,
+                    "resolution": <0-100>
+                  },
+                  "feedback": "<80-200字中文评语：亮点 + 主要问题 + 1条可执行改进建议>",
+                  "highlights": ["<亮点1>", "<亮点2>"],
+                  "issues": ["<问题1>", "<问题2>"]
+                }
+            - id: user-prompt-cs-quality-001
+              role: user
+              text: |
+                【消息类型】{{#start.message_type#}}
+                【订单号】{{#start.order_no#}}
+                【回复人】{{#start.agent_name#}}
+                【买家邮箱】{{#start.buyer_email#}}
+                【及格线】{{#start.pass_threshold#}}
+
+                【买家消息】
+                {{#start.buyer_message#}}
+
+                【客服回复】
+                {{#start.agent_reply#}}
+
+                请按 system 要求输出 JSON。
+
+      - id: parse_score_output
+        type: custom
+        width: 242
+        height: 90
+        position:
+          x: 680
+          y: 280
+        positionAbsolute:
+          x: 680
+          y: 280
+        sourcePosition: right
+        targetPosition: left
+        selected: false
+        data:
+          type: code
+          title: 解析评分结果
+          code_language: python3
+          error_strategy: fail-branch
+          code: |
+            import json
+            import re
+
+            def _extract_json(text: str) -> dict:
+                if not text:
+                    return {}
+                text = text.strip()
+                # 去掉 markdown 代码块
+                m = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", text)
+                if m:
+                    text = m.group(1).strip()
+                # 取第一个 { ... } 对象
+                start = text.find("{")
+                end = text.rfind("}")
+                if start >= 0 and end > start:
+                    text = text[start : end + 1]
+                return json.loads(text)
+
+            def _clamp_score(v) -> int:
+                try:
+                    n = int(round(float(v)))
+                except Exception:
+                    return 0
+                return max(0, min(100, n))
+
+            def main(text: str, pass_threshold: float = 70) -> dict:
+                try:
+                    threshold = int(round(float(pass_threshold or 70)))
+                except Exception:
+                    threshold = 70
+
+                empty_detail = json.dumps(
+                    {
+                        "accuracy": 0,
+                        "professionalism": 0,
+                        "empathy": 0,
+                        "resolution": 0,
+                    },
+                    ensure_ascii=False,
+                )
+
+                try:
+                    raw = _extract_json(text)
+                except Exception as e:
+                    return {
+                        "overall_score": "0",
+                        "score_detail": empty_detail,
+                        "feedback": f"评分解析失败: {e}",
+                        "highlights_json": "[]",
+                        "issues_json": "[]",
+                        "pass": "false",
+                        "parse_ok": "false",
+                    }
+
+                detail = raw.get("score_detail") or raw.get("scoreDetail") or {}
+                if not isinstance(detail, dict):
+                    detail = {}
+
+                accuracy = _clamp_score(detail.get("accuracy", 0))
+                professionalism = _clamp_score(detail.get("professionalism", 0))
+                empathy = _clamp_score(detail.get("empathy", 0))
+                resolution = _clamp_score(detail.get("resolution", 0))
+
+                overall = raw.get("overall_score", raw.get("overallScore"))
+                if overall is None:
+                    overall = round(
+                        accuracy * 0.3
+                        + professionalism * 0.2
+                        + empathy * 0.2
+                        + resolution * 0.3
+                    )
+                overall = _clamp_score(overall)
+
+                feedback = raw.get("feedback") or raw.get("comment") or ""
+                if not isinstance(feedback, str):
+                    feedback = str(feedback)
+
+                highlights = raw.get("highlights") or []
+                issues = raw.get("issues") or []
+                if not isinstance(highlights, list):
+                    highlights = []
+                if not isinstance(issues, list):
+                    issues = []
+
+                score_detail = json.dumps(
+                    {
+                        "accuracy": accuracy,
+                        "professionalism": professionalism,
+                        "empathy": empathy,
+                        "resolution": resolution,
+                    },
+                    ensure_ascii=False,
+                )
+
+                return {
+                    "overall_score": str(overall),
+                    "score_detail": score_detail,
+                    "feedback": feedback.strip()[:2000],
+                    "highlights_json": json.dumps(highlights[:5], ensure_ascii=False),
+                    "issues_json": json.dumps(issues[:5], ensure_ascii=False),
+                    "pass": "true" if overall >= threshold else "false",
+                    "parse_ok": "true",
+                }
+          outputs:
+            overall_score:
+              type: string
+              children: null
+            score_detail:
+              type: string
+              children: null
+            feedback:
+              type: string
+              children: null
+            highlights_json:
+              type: string
+              children: null
+            issues_json:
+              type: string
+              children: null
+            pass:
+              type: string
+              children: null
+            parse_ok:
+              type: string
+              children: null
+          variables:
+            - variable: text
+              value_selector:
+                - score_reply
+                - text
+            - variable: pass_threshold
+              value_selector:
+                - start
+                - pass_threshold
+
+      - id: end
+        type: custom
+        width: 242
+        height: 116
+        position:
+          x: 980
+          y: 280
+        positionAbsolute:
+          x: 980
+          y: 280
+        sourcePosition: right
+        targetPosition: left
+        selected: false
+        data:
+          type: end
+          title: 结束
+          outputs:
+            - variable: overall_score
+              value_selector:
+                - parse_score_output
+                - overall_score
+            - variable: score_detail
+              value_selector:
+                - parse_score_output
+                - score_detail
+            - variable: feedback
+              value_selector:
+                - parse_score_output
+                - feedback
+            - variable: highlights_json
+              value_selector:
+                - parse_score_output
+                - highlights_json
+            - variable: issues_json
+              value_selector:
+                - parse_score_output
+                - issues_json
+            - variable: pass
+              value_selector:
+                - parse_score_output
+                - pass
+            - variable: parse_ok
+              value_selector:
+                - parse_score_output
+                - parse_ok

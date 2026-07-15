@@ -17,7 +17,14 @@
     "docker:rebuild": "docker compose build --no-cache web && docker compose up -d",
     "docker:down": "docker compose down",
     "docker:logs": "docker compose logs -f web",
-    "samples:fob": "pnpm --filter @scm/web exec tsx server/scripts/generate-fob-samples.ts"
+    "samples:fob": "pnpm --filter @scm/web exec tsx server/scripts/generate-fob-samples.ts",
+    "forecast:walkforward": "pnpm --filter @scm/web exec tsx scripts/run-forecast-walkforward-backtest.ts",
+    "forecast:walkforward:abcd": "pnpm forecast:walkforward -- --algo monthly_abcd",
+    "forecast:walkforward:v41-tiers": "pnpm --filter @scm/web exec tsx scripts/analyze-walkforward-v41-tiers.ts",
+    "forecast:analyze:high-wmape": "pnpm --filter @scm/web exec tsx scripts/analyze-high-wmape-skus.ts",
+    "forecast:calibrate:profile": "pnpm --filter @scm/web exec tsx scripts/calibrate-forecast-profile.ts",
+    "forecast:calibrate:algo": "pnpm --filter @scm/web exec tsx scripts/calibrate-forecast-a-class.ts",
+    "forecast:calibrate": "pnpm --filter @scm/web exec tsx scripts/calibrate-forecast-report.ts"
   },
   "engines": {
     "node": ">=20"

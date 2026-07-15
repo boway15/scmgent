@@ -3,8 +3,34 @@
  * API keys stay server-side only; unset keys keep local algorithm / FAQ paths.
  */
 
-const DIFY_BASE_URL = (process.env.DIFY_BASE_URL ?? 'http://localhost:8080/v1').replace(/\/$/, '');
+import { existsSync } from 'fs';
+
 const WORKFLOW_TIMEOUT_MS = Number(process.env.DIFY_WORKFLOW_TIMEOUT_MS ?? 120_000);
+
+function runningInDocker(): boolean {
+  return process.env.RUNNING_IN_DOCKER === 'true' || existsSync('/.dockerenv');
+}
+
+/** Docker 容器内 127.0.0.1 指向容器自身，需改 host.docker.internal 访问宿主机 Dify */
+export function resolveDifyBaseUrl(rawUrl?: string): string {
+  const raw = (rawUrl ?? process.env.DIFY_BASE_URL ?? 'http://localhost:8080/v1').replace(/\/$/, '');
+  if (!runningInDocker()) return raw;
+
+  try {
+    const url = new URL(raw);
+    if (url.hostname === '127.0.0.1' || url.hostname === 'localhost') {
+      url.hostname = process.env.DIFY_DOCKER_HOST?.trim() || 'host.docker.internal';
+      return url.toString().replace(/\/$/, '');
+    }
+  } catch {
+    /* keep raw */
+  }
+  return raw;
+}
+
+export function getDifyBaseUrl(): string {
+  return resolveDifyBaseUrl();
+}
 
 export type DifySource = { document_name: string; content: string };
 
@@ -43,13 +69,28 @@ export function isAlertWorkflowEnabled(): boolean {
   return isDifyKeyConfigured('DIFY_API_KEY_ALERT');
 }
 
+export function isNewsIntelWorkflowEnabled(): boolean {
+  return isDifyKeyConfigured('DIFY_API_KEY_NEWS_INTEL');
+}
+
+export function isCsReplyQualityWorkflowEnabled(): boolean {
+  return isDifyKeyConfigured('DIFY_API_KEY_CS_REPLY_QUALITY');
+}
+
+export function isSalesForecastWorkflowEnabled(): boolean {
+  return isDifyKeyConfigured('DIFY_API_KEY_SALES_FORECAST');
+}
+
 export function getDifyConfigSummary() {
   return {
     mode: isDifyEnabled() ? ('dify' as const) : ('local' as const),
     difyEnabled: isDifyEnabled(),
     replenishmentWorkflow: isReplenishmentWorkflowEnabled(),
     alertWorkflow: isAlertWorkflowEnabled(),
-    baseUrl: DIFY_BASE_URL,
+    newsIntelWorkflow: isNewsIntelWorkflowEnabled(),
+    csReplyQualityWorkflow: isCsReplyQualityWorkflowEnabled(),
+    salesForecastWorkflow: isSalesForecastWorkflowEnabled(),
+    baseUrl: getDifyBaseUrl(),
   };
 }
 
@@ -78,7 +119,7 @@ export async function queryKnowledge(
   const apiKey = process.env.DIFY_API_KEY_KNOWLEDGE!;
   const inputs = options?.inputs ?? {};
 
-  const res = await fetch(`${DIFY_BASE_URL}/chat-messages`, {
+  const res = await fetch(`${getDifyBaseUrl()}/chat-messages`, {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${apiKey}`,
@@ -117,20 +158,37 @@ export async function runWorkflow(
   }
 
   const apiKey = process.env[apiKeyEnv]!;
+  const baseUrl = getDifyBaseUrl();
 
-  const res = await fetch(`${DIFY_BASE_URL}/workflows/run`, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      inputs,
-      response_mode: 'blocking',
-      user: userId,
-    }),
-    signal: AbortSignal.timeout(WORKFLOW_TIMEOUT_MS),
-  });
+  let res: Response;
+  try {
+    res = await fetch(`${baseUrl}/workflows/run`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        inputs,
+        response_mode: 'blocking',
+        user: userId,
+      }),
+      signal: AbortSignal.timeout(WORKFLOW_TIMEOUT_MS),
+    });
+  } catch (error) {
+    const cause = error instanceof Error && 'cause' in error ? error.cause : undefined;
+    const code =
+      (cause && typeof cause === 'object' && 'code' in cause
+        ? String((cause as { code?: string }).code)
+        : undefined) ??
+      (error instanceof Error && 'code' in error ? String((error as { code?: string }).code) : undefined);
+    const timedOut = code === 'ETIMEDOUT' || code === 'UND_ERR_CONNECT_TIMEOUT' || code === 'ECONNREFUSED';
+    const hint = timedOut
+      ? `无法连接 Dify（${baseUrl}），请检查网络/VPN、防火墙，或本地开发改用 127.0.0.1:8090 的本地 Dify`
+      : `Dify 请求失败（${baseUrl}）`;
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new Error(`${hint}: ${detail}`);
+  }
 
   if (!res.ok) {
     const text = await res.text();

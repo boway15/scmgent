@@ -8,7 +8,11 @@
 export type SkuKind = 'standard' | 'accessory' | 'multi_box' | 'return' | 'legacy';
 
 /** 业务 legacy 格式（预测表/ERP 常用） */
-export type LegacyDjFormat = 'dj_standard' | 'dj_sku_accessory' | 'dj_spu_accessory';
+export type LegacyDjFormat =
+  | 'dj_standard'
+  | 'dj_sku_accessory'
+  | 'dj_spu_accessory'
+  | 'dj_multi_box';
 
 export type SkuParseResult = {
   kind: SkuKind;
@@ -51,7 +55,12 @@ const RESERVED_FACTORY = new Set(['B', 'P', 'R']);
 /** legacy 前缀 → 标准事业部（可扩展 HW/JJ 等） */
 const LEGACY_PREFIX_DIVISION: Record<string, { divisionCode: string; divisionName: string }> = {
   DJ: { divisionCode: '1', divisionName: '大件' },
+  DJR: { divisionCode: '1', divisionName: '大件' },
+  WFDJ: { divisionCode: '1', divisionName: '大件' },
 };
+
+/** legacy 编码字母前缀（DJ、DJR、WFDJ 等，2–5 位） */
+const LEGACY_LETTER_PREFIX = '[A-Z]{2,5}';
 
 function legacyDivisionFromPrefix(prefix: string) {
   return LEGACY_PREFIX_DIVISION[prefix] ?? null;
@@ -66,6 +75,7 @@ function buildLegacyDj(
     normalizedCode: string;
     variantNo?: string | null;
     accessoryNo?: string | null;
+    boxNo?: string | null;
     legacyFormat: LegacyDjFormat;
     parentSkuCode?: string | null;
     accessoryScope?: 'sku' | 'spu' | null;
@@ -87,7 +97,7 @@ function buildLegacyDj(
     categoryCode: null,
     factorySuffix: null,
     accessoryNo: extras.accessoryNo ?? null,
-    boxNo: null,
+    boxNo: extras.boxNo ?? null,
     divisionName: div?.divisionName ?? null,
     legacyFormat: extras.legacyFormat,
     parentSkuCode: extras.parentSkuCode ?? null,
@@ -101,13 +111,17 @@ function buildLegacyDj(
  * - DJ502313_34        → SPU=DJ502313, 变参=34
  * - DJ478585_2P02      → SKU=DJ478585_2 的配件 P02
  * - DJ485882P01        → SPU=DJ485882 下全部 SKU 通用配件 P01
+ * - DJ505240_2_A       → AB 箱 A 箱（multi_box），主 SKU=DJ505240_2
+ * - DJ505240_2_B       → AB 箱 B 箱
  */
 function parseLegacyDj(raw: string): SkuParseResult | null {
   const code = raw.trim().toUpperCase();
   if (!code) return null;
 
+  const prefixGroup = `(${LEGACY_LETTER_PREFIX})`;
+
   // 须先于 SPU 通用配件、标准 SKU 匹配
-  const skuAccessory = /^([A-Z]{2})(\d+)_(\d+)P(\d{2,3})$/.exec(code);
+  const skuAccessory = new RegExp(`^${prefixGroup}(\\d+)_(\\d+)P(\\d{2,3})$`).exec(code);
   if (skuAccessory) {
     const [, prefix, spuNum, variant, accNo] = skuAccessory;
     const spuCode = `${prefix}${spuNum}`;
@@ -121,7 +135,21 @@ function parseLegacyDj(raw: string): SkuParseResult | null {
     });
   }
 
-  const spuAccessory = /^([A-Z]{2})(\d+)P(\d{2,3})$/.exec(code);
+  // AB 箱：变参后 _A / _B 表示 A 箱 / B 箱（须先于标准 SKU 匹配）
+  const multiBox = new RegExp(`^${prefixGroup}(\\d+)_(\\d+)_([AB])$`).exec(code);
+  if (multiBox) {
+    const [, prefix, spuNum, variant, boxLabel] = multiBox;
+    const spuCode = `${prefix}${spuNum}`;
+    return buildLegacyDj('multi_box', spuCode, spuNum, prefix, {
+      normalizedCode: code,
+      variantNo: variant,
+      boxNo: boxLabel,
+      legacyFormat: 'dj_multi_box',
+      parentSkuCode: `${spuCode}_${variant}`,
+    });
+  }
+
+  const spuAccessory = new RegExp(`^${prefixGroup}(\\d+)P(\\d{2,3})$`).exec(code);
   if (spuAccessory) {
     const [, prefix, spuNum, accNo] = spuAccessory;
     const spuCode = `${prefix}${spuNum}`;
@@ -133,7 +161,7 @@ function parseLegacyDj(raw: string): SkuParseResult | null {
     });
   }
 
-  const standard = /^([A-Z]{2})(\d+)_(\d+)$/.exec(code);
+  const standard = new RegExp(`^${prefixGroup}(\\d+)_(\\d+)$`).exec(code);
   if (standard) {
     const [, prefix, spuNum, variant] = standard;
     const spuCode = `${prefix}${spuNum}`;
@@ -369,6 +397,36 @@ export function parseSkuCode(input: string, externalInput?: string | null): SkuP
   };
 }
 
+/** 列长度上限，与 schema varchar 对齐 */
+const SPU_NUMERIC_MAX_LEN = 10;
+const VARIANT_NO_MAX_LEN = 10;
+const BRAND_CODE_MAX_LEN = 2;
+const CATEGORY_CODE_MAX_LEN = 3;
+
+function clampSpuNumericCode(value: string | null): string | null {
+  if (!value) return null;
+  if (value.length <= SPU_NUMERIC_MAX_LEN) return value;
+  return value.slice(0, SPU_NUMERIC_MAX_LEN);
+}
+
+function clampVariantNo(value: string | null): string | null {
+  if (!value) return null;
+  if (value.length <= VARIANT_NO_MAX_LEN) return value;
+  return value.slice(0, VARIANT_NO_MAX_LEN);
+}
+
+function clampBrandCode(value: string | null): string | null {
+  if (!value) return null;
+  if (value.length <= BRAND_CODE_MAX_LEN) return value;
+  return value.slice(0, BRAND_CODE_MAX_LEN);
+}
+
+function clampCategoryCode(value: string | null): string | null {
+  if (!value) return null;
+  if (value.length <= CATEGORY_CODE_MAX_LEN) return value;
+  return value.slice(0, CATEGORY_CODE_MAX_LEN);
+}
+
 /** 将解析结果映射为 skus 表可写字段 */
 export function skuEncodingToColumns(parse: SkuParseResult): Record<string, unknown> {
   return {
@@ -377,10 +435,10 @@ export function skuEncodingToColumns(parse: SkuParseResult): Record<string, unkn
     skuKind: parse.kind,
     divisionCode: parse.divisionCode,
     distributionNo: parse.distributionNo,
-    spuNumericCode: parse.spuNumericCode,
-    variantNo: parse.variantNo,
-    brandCode: parse.brandCode,
-    categoryCode: parse.categoryCode,
+    spuNumericCode: clampSpuNumericCode(parse.spuNumericCode),
+    variantNo: clampVariantNo(parse.variantNo),
+    brandCode: clampBrandCode(parse.brandCode),
+    categoryCode: clampCategoryCode(parse.categoryCode),
     factorySuffix: parse.factorySuffix,
     accessoryNo: parse.accessoryNo,
     boxNo: parse.boxNo,
@@ -392,6 +450,7 @@ export function skuEncodingToColumns(parse: SkuParseResult): Record<string, unkn
       legacyFormat: parse.legacyFormat ?? undefined,
       parentSkuCode: parse.parentSkuCode ?? undefined,
       accessoryScope: parse.accessoryScope ?? undefined,
+      boxLabel: parse.boxNo ?? undefined,
     },
   };
 }
@@ -408,11 +467,11 @@ export function spuFieldsFromParse(
     name,
     divisionCode: parse.divisionCode,
     distributionNo: parse.distributionNo ?? 0,
-    spuNumericCode: parse.spuNumericCode,
-    brandCode: parse.brandCode,
-    categoryCode: parse.categoryCode,
+    spuNumericCode: clampSpuNumericCode(parse.spuNumericCode),
+    brandCode: clampBrandCode(parse.brandCode),
+    categoryCode: clampCategoryCode(parse.categoryCode),
     divisionName: parse.divisionName,
-    brand: parse.brandCode ?? undefined,
+    brand: clampBrandCode(parse.brandCode) ?? undefined,
     category: opts?.category ?? parse.categoryCode ?? undefined,
     encodingSource: 'sku_derived',
     moq: opts?.moq,

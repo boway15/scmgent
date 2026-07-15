@@ -182,6 +182,37 @@ export function PmcDetailPage() {
           {receiveItem.isError && (
             <p className="mt-4 text-sm text-destructive">{(receiveItem.error as Error).message}</p>
           )}
+          {plan.purchaseTracking && plan.purchaseTracking.length > 0 && (
+            <div className="mt-6">
+              <h3 className="mb-2 text-sm font-medium text-text-main">关联采购跟单</h3>
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-border text-left text-text-sub">
+                    <th className="p-2 font-normal">跟单单号</th>
+                    <th className="p-2 font-normal">SKU</th>
+                    <th className="p-2 font-normal">计划/已收</th>
+                    <th className="p-2 font-normal">状态</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {plan.purchaseTracking.map((t) => (
+                    <tr key={t.id} className="border-b border-border/60">
+                      <td className="p-2 font-mono">
+                        <Link to="/pmc/tracking" className="text-primary hover:underline">
+                          {t.draftNo}
+                        </Link>
+                      </td>
+                      <td className="p-2">{t.skuCode}</td>
+                      <td className="p-2 font-numeric">
+                        {t.qty} / {t.receivedQty ?? 0}
+                      </td>
+                      <td className="p-2">{t.status}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </CardContent>
       </Card>
     </div>

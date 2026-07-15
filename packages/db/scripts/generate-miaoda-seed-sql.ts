@@ -45,21 +45,34 @@ const MENU_SEEDS: MenuSeed[] = [
     ],
   },
   {
-    code: 'logistics', name: '物流管理', icon: 'Truck', sortOrder: 4, isLeaf: false,
+    code: 'procurement', name: '采购管理', icon: 'ShoppingCart', sortOrder: 3, isLeaf: false,
+    children: [
+      { code: 'procurement.bulk_stock', name: '大件备货申请', path: '/procurement/bulk-stock', sortOrder: 1, isLeaf: true },
+      { code: 'procurement.follow_up', name: '采购跟单', path: '/procurement/follow-up', sortOrder: 2, isLeaf: true },
+    ],
+  },
+  {
+    code: 'cs', name: '客服管理', icon: 'Headphones', sortOrder: 4, isLeaf: false,
+    children: [
+      { code: 'cs.quality', name: '回复评分', path: '/cs/quality', sortOrder: 1, isLeaf: true },
+    ],
+  },
+  {
+    code: 'logistics', name: '物流管理', icon: 'Truck', sortOrder: 5, isLeaf: false,
     children: [
       { code: 'logistics.fob_settlement', name: 'FOB分账', path: '/logistics/fob-settlement', sortOrder: 1, isLeaf: true },
     ],
   },
   {
-    code: 'ai', name: 'AI 知识库', icon: 'Bot', sortOrder: 5, isLeaf: false,
+    code: 'ai', name: 'AI 知识库', icon: 'Bot', sortOrder: 6, isLeaf: false,
     children: [{ code: 'ai.chat', name: '知识问答', path: '/ai/chat', sortOrder: 1, isLeaf: true }],
   },
   {
-    code: 'data', name: '数据中心', icon: 'ClipboardList', sortOrder: 6, isLeaf: false,
+    code: 'data', name: '数据中心', icon: 'ClipboardList', sortOrder: 7, isLeaf: false,
     children: [
       { code: 'data.products', name: '商品主数据', path: '/data/products', sortOrder: 1, isLeaf: true },
-      { code: 'data.import', name: '数据导入', path: '/data/import', sortOrder: 2, isLeaf: true },
-      { code: 'data.sales', name: '销量历史', path: '/data/sales', sortOrder: 3, isLeaf: true },
+      { code: 'data.sales', name: '销量历史', path: '/data/sales', sortOrder: 2, isLeaf: true },
+      { code: 'data.forecast', name: '销售预测', path: '/data/forecast', sortOrder: 3, isLeaf: true },
     ],
   },
   { code: 'help', name: '帮助中心', icon: 'HelpCircle', path: '/help', sortOrder: 98, isLeaf: true },
@@ -73,11 +86,11 @@ const MENU_SEEDS: MenuSeed[] = [
 ];
 
 const ROLE_MENU_CODES: Record<string, string[]> = {
-  super_admin: ['dashboard', 'inventory', 'inventory.overview', 'inventory.safety', 'inventory.alert', 'pmc', 'pmc.suggestion', 'pmc.list', 'pmc.tracking', 'logistics', 'logistics.fob_settlement', 'data', 'data.products', 'data.import', 'data.sales', 'ai', 'ai.chat', 'help', 'system', 'system.users', 'system.roles'],
-  pmc_planner: ['dashboard', 'inventory', 'inventory.overview', 'inventory.safety', 'pmc', 'pmc.suggestion', 'pmc.list', 'logistics', 'logistics.fob_settlement', 'data', 'data.products', 'data.import', 'data.sales', 'ai', 'ai.chat', 'help'],
-  warehouse: ['dashboard', 'inventory', 'inventory.overview', 'inventory.alert', 'pmc', 'pmc.list', 'logistics', 'logistics.fob_settlement', 'data', 'data.products', 'data.import', 'data.sales', 'ai', 'ai.chat', 'help'],
-  purchaser: ['dashboard', 'inventory', 'inventory.overview', 'inventory.safety', 'inventory.alert', 'pmc', 'pmc.list', 'pmc.tracking', 'logistics', 'logistics.fob_settlement', 'data', 'data.products', 'data.import', 'data.sales', 'ai', 'ai.chat', 'help'],
-  viewer: ['dashboard', 'inventory', 'inventory.overview', 'pmc', 'pmc.suggestion', 'pmc.list', 'pmc.tracking', 'logistics', 'logistics.fob_settlement', 'data', 'data.sales', 'ai', 'ai.chat', 'help'],
+  super_admin: ['dashboard', 'inventory', 'inventory.overview', 'inventory.safety', 'inventory.alert', 'pmc', 'pmc.suggestion', 'pmc.list', 'pmc.tracking', 'procurement', 'procurement.bulk_stock', 'procurement.follow_up', 'cs', 'cs.quality', 'logistics', 'logistics.fob_settlement', 'data', 'data.products', 'data.sales', 'data.forecast', 'ai', 'ai.chat', 'help', 'system', 'system.users', 'system.roles'],
+  pmc_planner: ['dashboard', 'inventory', 'inventory.overview', 'inventory.safety', 'pmc', 'pmc.suggestion', 'pmc.list', 'procurement', 'procurement.bulk_stock', 'logistics', 'logistics.fob_settlement', 'cs', 'cs.quality', 'data', 'data.products', 'data.sales', 'data.forecast', 'ai', 'ai.chat', 'help'],
+  warehouse: ['dashboard', 'inventory', 'inventory.overview', 'inventory.alert', 'pmc', 'pmc.list', 'logistics', 'logistics.fob_settlement', 'cs', 'cs.quality', 'data', 'data.products', 'data.sales', 'data.forecast', 'ai', 'ai.chat', 'help'],
+  purchaser: ['dashboard', 'inventory', 'inventory.overview', 'inventory.safety', 'inventory.alert', 'pmc', 'pmc.list', 'pmc.tracking', 'procurement', 'procurement.bulk_stock', 'procurement.follow_up', 'logistics', 'logistics.fob_settlement', 'cs', 'cs.quality', 'data', 'data.products', 'data.sales', 'data.forecast', 'ai', 'ai.chat', 'help'],
+  viewer: ['dashboard', 'inventory', 'inventory.overview', 'pmc', 'pmc.suggestion', 'pmc.list', 'pmc.tracking', 'procurement', 'procurement.bulk_stock', 'procurement.follow_up', 'logistics', 'logistics.fob_settlement', 'cs', 'cs.quality', 'data', 'data.sales', 'data.forecast', 'ai', 'ai.chat', 'help'],
 };
 
 function sqlStr(v: string | null | undefined): string {

@@ -1445,7 +1445,7 @@ export function FobSettlementDetailPage() {
           <div className={cn('grid gap-4', data.settlementType === 'trucking' ? 'md:grid-cols-2' : 'md:grid-cols-2')}>
             <ImportBlock
               label="1. 体积信息"
-              hint="支持调拨 SKU 明细导出、汇总模板或 ED 大件调拨表；按柜+工厂/主体汇总体积，每工厂/主体 1 票"
+              hint="支持截单清单导出（含工厂名称/类型）、汇总模板或 ED 大件调拨表；有货柜号时优先用正式柜号，按柜+工厂/主体汇总体积"
               accept=".csv,.xlsx,.xls"
               pending={importShipments.isPending}
               templatePending={templateLoading === 'volume'}

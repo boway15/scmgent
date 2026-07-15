@@ -5,6 +5,8 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { PageHeader } from '@/components/PageHeader';
+import { ImportDrawer } from '@/components/import/ImportDrawer';
+import { useImportDrawer } from '@/hooks/use-import-drawer';
 
 function rowKey(skuId: string, warehouseCode: string) {
   return `${skuId}::${warehouseCode}`;
@@ -12,6 +14,7 @@ function rowKey(skuId: string, warehouseCode: string) {
 
 export function SafetyStockPage() {
   const qc = useQueryClient();
+  const { open: importOpen, openDrawer: openImportDrawer, closeDrawer: closeImportDrawer } = useImportDrawer();
   const { data: items = [], isLoading } = useQuery({
     queryKey: ['safety-stock'],
     queryFn: api.getSafetyStock,
@@ -44,7 +47,11 @@ export function SafetyStockPage() {
 
   return (
     <div className="space-y-6">
-      <PageHeader title="安全库存设置" />
+      <PageHeader title="安全库存设置">
+        <Button variant="outline" onClick={openImportDrawer}>
+          导入库存策略
+        </Button>
+      </PageHeader>
       <Card>
         <CardHeader>
           <CardTitle>安全库存参数</CardTitle>
@@ -141,6 +148,13 @@ export function SafetyStockPage() {
           </table>
         </CardContent>
       </Card>
+
+      <ImportDrawer
+        open={importOpen}
+        type="safety_stock"
+        onClose={closeImportDrawer}
+        onSuccess={() => void qc.invalidateQueries({ queryKey: ['safety-stock'] })}
+      />
     </div>
   );
 }

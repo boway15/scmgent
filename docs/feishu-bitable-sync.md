@@ -23,6 +23,20 @@ FEISHU_BITABLE_TABLE_MERCHANTS=
 FEISHU_BITABLE_TABLE_WAREHOUSE_LEADS=
 FEISHU_BITABLE_TABLE_INVENTORY_POLICY=
 FEISHU_BITABLE_TABLE_SALES_FORECAST=
+FEISHU_BITABLE_TABLE_BULK_STOCK_REQUEST=   # 大件备货申请 tbl7H8F6rc2xeFGf
+FEISHU_BITABLE_TABLE_PURCHASE_FOLLOW_UP=    # 采购跟单（采购管理）tbl3m7FqgPVr4kmY
+# 若采购表与新闻/主数据不在同一份多维表格，可单独指定：
+# FEISHU_BITABLE_PROCUREMENT_APP_TOKEN=HPJzbHdPea7elSs92T8c31BTnxe
+```
+
+采购管理模块（`/procurement/bulk-stock`、`/procurement/follow-up`）与主数据导入共用 `FEISHU_BITABLE_APP_TOKEN`。本模块每次飞书同步或文件上传会**全量覆盖**对应列表。
+
+示例（同一多维表格 `HPJzbHdPea7elSs92T8c31BTnxe`）：
+
+```env
+FEISHU_BITABLE_APP_TOKEN=HPJzbHdPea7elSs92T8c31BTnxe
+FEISHU_BITABLE_TABLE_BULK_STOCK_REQUEST=tbl7H8F6rc2xeFGf
+FEISHU_BITABLE_TABLE_PURCHASE_FOLLOW_UP=tbl3m7FqgPVr4kmY
 ```
 
 获取方式：
@@ -132,6 +146,22 @@ Bitable 列名支持中英文别名，系统会自动映射为导入字段。
 
 补货预测：`POST /api/tasks/replenishment-forecast`  
 采购跟进：`POST /api/tasks/purchase-follow-up`
+
+### 采购管理列表（全量快照）
+
+| 方法 | 路径 |
+|------|------|
+| GET | `/api/procurement/lists/config` |
+| GET | `/api/procurement/lists/:type` |
+| GET | `/api/procurement/lists/:type/meta` |
+| POST | `/api/procurement/lists/:type/sync/preview` |
+| POST | `/api/procurement/lists/:type/sync` |
+| POST | `/api/procurement/lists/:type/push/preview` |
+| POST | `/api/procurement/lists/:type/push` |
+| POST | `/api/procurement/lists/:type/import/preview` |
+| POST | `/api/procurement/lists/:type/import` |
+
+`type` 为 `bulk_stock_request` | `purchase_follow_up`。
 
 ## 限制
 

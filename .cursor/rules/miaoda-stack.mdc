@@ -1,6 +1,11 @@
 ---
 description: 飞书妙搭对齐技术栈与编码规范（含 NestJS 外壳、server/hono-app、ScmHonoModule、部署避坑）
-alwaysApply: true
+globs:
+  - apps/web/**
+  - packages/db/**
+  - drizzle/**
+  - docs/miaoda/**
+alwaysApply: false
 ---
 
 # 妙搭对齐技术栈

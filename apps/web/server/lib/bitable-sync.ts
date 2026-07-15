@@ -19,18 +19,14 @@ export type BitableSyncType =
   | 'inventory'
   | 'sales'
   | 'merchants'
-  | 'warehouse_leads'
-  | 'inventory_policy'
-  | 'sales_forecast';
+  | 'inventory_policy';
 
 const BITABLE_SYNC_TYPES: BitableSyncType[] = [
   'skus',
   'inventory',
   'sales',
   'merchants',
-  'warehouse_leads',
   'inventory_policy',
-  'sales_forecast',
 ];
 
 const TABLE_ENV_KEYS: Record<BitableSyncType, string> = {
@@ -38,9 +34,7 @@ const TABLE_ENV_KEYS: Record<BitableSyncType, string> = {
   inventory: 'FEISHU_BITABLE_TABLE_INVENTORY',
   sales: 'FEISHU_BITABLE_TABLE_SALES',
   merchants: 'FEISHU_BITABLE_TABLE_MERCHANTS',
-  warehouse_leads: 'FEISHU_BITABLE_TABLE_WAREHOUSE_LEADS',
   inventory_policy: 'FEISHU_BITABLE_TABLE_INVENTORY_POLICY',
-  sales_forecast: 'FEISHU_BITABLE_TABLE_SALES_FORECAST',
 };
 
 /** Bitable column aliases per import field. */
@@ -85,11 +79,6 @@ export const BITABLE_FIELD_MAPS: Record<BitableSyncType, Record<string, string[]
     contact_email: ['联系邮箱', 'contact_email', '邮箱'],
     payment_terms: ['付款条件', 'payment_terms'],
   },
-  warehouse_leads: {
-    warehouse_code: ['仓库编码', 'warehouse_code', 'warehouse', '仓库'],
-    shipping_lead_days: ['海运周期', 'shipping_lead_days', 'sea_lead_days', '海运天数'],
-    inbound_buffer_days: ['入仓缓冲', 'inbound_buffer_days', 'buffer_days'],
-  },
   inventory_policy: {
     sku_code: ['SKU编码', 'sku_code', 'SKU', '编码', 'code'],
     warehouse_code: ['仓库编码', 'warehouse_code', 'warehouse', '仓库'],
@@ -99,14 +88,6 @@ export const BITABLE_FIELD_MAPS: Record<BitableSyncType, Record<string, string[]
     safety_stock_qty: ['安全库存数量', 'safety_stock_qty', 'safety_stock'],
     reorder_point: ['补货触发点', 'reorder_point', 'rop'],
     reorder_qty: ['建议补货量', 'reorder_qty', 'eoq'],
-  },
-  sales_forecast: {
-    sku_code: ['SKU编码', 'sku_code', 'SKU', '编码', 'code'],
-    station: ['站点', 'station'],
-    forecast_year: ['预测年份', 'forecast_year', 'year'],
-    lifecycle: ['生命周期', 'lifecycle'],
-    owner_name: ['负责人', 'owner_name', 'owner'],
-    production_lead_days: ['采购周期', 'production_lead_days', '工厂周期'],
   },
 };
 
@@ -177,15 +158,6 @@ export function mapBitableRecordToRow(
     }
   }
 
-  if (type === 'sales_forecast') {
-    for (const [key, value] of Object.entries(record.fields)) {
-      const extracted = extractFieldValue(value);
-      if (!extracted) continue;
-      row[key] = extracted;
-      row[normalizeBitableKey(key)] = extracted;
-    }
-  }
-
   return row;
 }
 
@@ -212,7 +184,8 @@ export async function fetchMappedRows(type: BitableSyncType): Promise<Array<Reco
     );
   }
 
-  const records = await listAllRecords(appToken, tableId);
+  const importType = type === 'inventory_policy' ? 'safety_stock' : type;
+  const records = await listAllRecords(appToken, tableId, importType);
   return mapBitableRecordsToRows(records, type);
 }
 

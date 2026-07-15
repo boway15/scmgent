@@ -1,5 +1,5 @@
 import { getTenantAccessToken } from './feishu.js';
-import { MAX_ROWS } from '../lib/upload-guard.js';
+import { getMaxRows } from '../lib/upload-guard.js';
 
 const FEISHU_BASE = 'https://open.feishu.cn/open-apis';
 
@@ -66,7 +66,12 @@ function formatTimestampDate(ms: number): string {
   return `${y}-${m}-${day}`;
 }
 
-export async function listAllRecords(appToken: string, tableId: string): Promise<BitableRecord[]> {
+export async function listAllRecords(
+  appToken: string,
+  tableId: string,
+  importType?: string,
+): Promise<BitableRecord[]> {
+  const maxRows = getMaxRows(importType);
   const token = await getTenantAccessToken();
   const records: BitableRecord[] = [];
   let pageToken: string | undefined;
@@ -90,12 +95,141 @@ export async function listAllRecords(appToken: string, tableId: string): Promise
     const items = body.data?.items ?? [];
     records.push(...items);
 
-    if (records.length > MAX_ROWS) {
-      throw new Error(`Too many rows. Maximum is ${MAX_ROWS}`);
+    if (records.length > maxRows) {
+      throw new Error(`Too many rows. Maximum is ${maxRows}`);
     }
 
     pageToken = body.data?.has_more ? body.data.page_token : undefined;
   } while (pageToken);
 
   return records;
+}
+
+type MutateRecordsResponse = {
+  code: number;
+  msg?: string;
+  data?: {
+    record?: { record_id: string };
+    records?: Array<{ record_id: string }>;
+  };
+};
+
+async function bitableFetch(
+  path: string,
+  init?: RequestInit,
+): Promise<MutateRecordsResponse> {
+  const token = await getTenantAccessToken();
+  const res = await fetch(`${FEISHU_BASE}${path}`, {
+    ...init,
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+      ...(init?.headers ?? {}),
+    },
+  });
+  const body = (await res.json()) as MutateRecordsResponse;
+  if (body.code !== 0) {
+    throw new Error(`Feishu Bitable API failed: ${body.msg ?? res.status}`);
+  }
+  return body;
+}
+
+export async function createBitableRecord(
+  appToken: string,
+  tableId: string,
+  fields: Record<string, unknown>,
+): Promise<string> {
+  const body = await bitableFetch(
+    `/bitable/v1/apps/${encodeURIComponent(appToken)}/tables/${encodeURIComponent(tableId)}/records`,
+    {
+      method: 'POST',
+      body: JSON.stringify({ fields }),
+    },
+  );
+  const recordId = body.data?.record?.record_id;
+  if (!recordId) throw new Error('Feishu Bitable create returned no record_id');
+  return recordId;
+}
+
+export async function updateBitableRecord(
+  appToken: string,
+  tableId: string,
+  recordId: string,
+  fields: Record<string, unknown>,
+): Promise<void> {
+  await bitableFetch(
+    `/bitable/v1/apps/${encodeURIComponent(appToken)}/tables/${encodeURIComponent(tableId)}/records/${encodeURIComponent(recordId)}`,
+    {
+      method: 'PUT',
+      body: JSON.stringify({ fields }),
+    },
+  );
+}
+
+export async function batchCreateBitableRecords(
+  appToken: string,
+  tableId: string,
+  records: Array<Record<string, unknown>>,
+): Promise<string[]> {
+  if (!records.length) return [];
+  const ids: string[] = [];
+  const chunkSize = 50;
+  for (let i = 0; i < records.length; i += chunkSize) {
+    const chunk = records.slice(i, i + chunkSize);
+    const body = await bitableFetch(
+      `/bitable/v1/apps/${encodeURIComponent(appToken)}/tables/${encodeURIComponent(tableId)}/records/batch_create`,
+      {
+        method: 'POST',
+        body: JSON.stringify({ records: chunk.map((fields) => ({ fields })) }),
+      },
+    );
+    const created = body.data?.records ?? [];
+    for (const row of created) {
+      if (row.record_id) ids.push(row.record_id);
+    }
+  }
+  return ids;
+}
+
+export async function batchUpdateBitableRecords(
+  appToken: string,
+  tableId: string,
+  records: Array<{ recordId: string; fields: Record<string, unknown> }>,
+): Promise<void> {
+  if (!records.length) return;
+  const chunkSize = 50;
+  for (let i = 0; i < records.length; i += chunkSize) {
+    const chunk = records.slice(i, i + chunkSize);
+    await bitableFetch(
+      `/bitable/v1/apps/${encodeURIComponent(appToken)}/tables/${encodeURIComponent(tableId)}/records/batch_update`,
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          records: chunk.map((row) => ({
+            record_id: row.recordId,
+            fields: row.fields,
+          })),
+        }),
+      },
+    );
+  }
+}
+
+export async function batchDeleteBitableRecords(
+  appToken: string,
+  tableId: string,
+  recordIds: string[],
+): Promise<void> {
+  if (!recordIds.length) return;
+  const chunkSize = 50;
+  for (let i = 0; i < recordIds.length; i += chunkSize) {
+    const chunk = recordIds.slice(i, i + chunkSize);
+    await bitableFetch(
+      `/bitable/v1/apps/${encodeURIComponent(appToken)}/tables/${encodeURIComponent(tableId)}/records/batch_delete`,
+      {
+        method: 'POST',
+        body: JSON.stringify({ records: chunk }),
+      },
+    );
+  }
 }

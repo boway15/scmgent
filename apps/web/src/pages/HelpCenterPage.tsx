@@ -31,8 +31,11 @@ const SECTIONS: HelpSection[] = [
     body: (
       <ol className="list-decimal space-y-2 pl-5">
         <li>
-          <Link to="/data/import" className="text-primary hover:underline">数据导入</Link>
-          ：按序导入 <code className="rounded bg-muted px-1">docs/samples/import/01-skus.csv</code> → 02 库存 → 03 销量 → 04 安全库存 → 05 PMC 计划（家具 Demo 数据）。
+          <Link to="/inventory/overview?import=1" className="text-primary hover:underline">库存总览</Link>
+          导入库存周转 xlsx，再在{' '}
+          <Link to="/data/sales?import=1" className="text-primary hover:underline">销量历史</Link>
+          导入日销量宽表 CSV；样例见 <code className="rounded bg-muted px-1">docs/samples/import-fob/</code> 与{' '}
+          <code className="rounded bg-muted px-1">docs/samples/xiaoshou/</code>。
         </li>
         <li>
           <Link to="/data/products" className="text-primary hover:underline">商品主数据</Link>
@@ -81,7 +84,7 @@ const SECTIONS: HelpSection[] = [
             </tr>
             <tr className="border-b border-border/60">
               <td className="p-2">PMC 计划员</td>
-              <td className="p-2 text-text-sub">补货建议、PMC 计划、数据导入</td>
+              <td className="p-2 text-text-sub">补货建议、PMC 计划、各页导入</td>
             </tr>
             <tr className="border-b border-border/60">
               <td className="p-2">仓库员</td>
@@ -198,13 +201,32 @@ const SECTIONS: HelpSection[] = [
     title: '8. 数据导入',
     body: (
       <>
-        <p>支持 CSV 粘贴或文件上传，导入前可先「预览校验」。主要类型：</p>
+        <p>各业务页右上角「导入」按钮打开右侧抽屉，支持 CSV 粘贴或文件上传，导入前可先「预览校验」：</p>
         <ul className="mt-2 list-disc space-y-1 pl-5 text-text-sub">
-          <li>SKU 主数据（含 spu_code、replenish_light、merchant_code）</li>
-          <li>库存盘点（warehouse 支持 US-WEST、IN-PRODUCTION 等）</li>
-          <li>销量历史（含 warehouse_code 发货仓）</li>
-          <li>安全库存（warehouse_code 分仓）</li>
-          <li>PMC 计划行 + 页面填写计划名称/日期/商家</li>
+          <li>
+            <Link to="/data/products?import=1" className="text-primary hover:underline">商品主数据</Link>
+            ：SKU / 供应商批量导入
+          </li>
+          <li>
+            <Link to="/inventory/overview?import=1" className="text-primary hover:underline">库存总览</Link>
+            ：库存周转 xlsx（大表后台导入）
+          </li>
+          <li>
+            <Link to="/data/sales?import=1" className="text-primary hover:underline">销量历史</Link>
+            ：xiaoshou 日销量宽表
+          </li>
+          <li>
+            <Link to="/data/forecast" className="text-primary hover:underline">销售预测</Link>
+            ：月度日均宽表
+          </li>
+          <li>
+            <Link to="/inventory/safety?import=1" className="text-primary hover:underline">安全库存</Link>
+            ：库存策略 CSV
+          </li>
+          <li>
+            <Link to="/pmc/list?import=1" className="text-primary hover:underline">下单计划</Link>
+            ：PMC 计划行 + 商家/日期
+          </li>
         </ul>
       </>
     ),
@@ -246,7 +268,7 @@ const SECTIONS: HelpSection[] = [
         </p>
         <ul className="mt-2 list-disc space-y-1 pl-5 text-text-sub">
           <li>妙搭：`SERVE_STATIC=false`，执行 `miaoda-init-all.sql`，配置 `CRON_SECRET`</li>
-          <li>数据导入：库存/销量 preview 先校验，再看「最近导入批次」</li>
+          <li>各业务页导入：先 preview 校验；库存/销量大表导入后看抽屉内「最近导入批次」</li>
           <li>PMC：确认计划后使用「确认到货」，不要手工改已完成数量</li>
           <li>看板：关注库存/销量最新日期与任务最近执行时间</li>
         </ul>

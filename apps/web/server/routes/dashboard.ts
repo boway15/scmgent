@@ -12,6 +12,8 @@ import {
 } from '@scm/db';
 import { getLatestTaskRun } from '../lib/task-runs.js';
 import { requireMenu } from '../lib/rbac.js';
+import { getPrimaryPublishedVersionId, getForecastVersionById } from '../lib/forecast-version.js';
+import { listForecastAccuracy } from '../lib/forecast-accuracy.js';
 
 export const dashboardRoutes = new Hono();
 
@@ -46,10 +48,40 @@ dashboardRoutes.get('/dashboard', requireMenu('dashboard'), async (c) => {
     .from(pmcPlans)
     .where(inArray(pmcPlans.status, ['confirmed', 'in_progress']));
 
-  const [trackingPending] = await db
+  const [trackingPendingConfirm] = await db
     .select({ count: sql<number>`count(*)::int` })
     .from(purchaseDrafts)
-    .where(eq(purchaseDrafts.status, 'draft'));
+    .where(and(eq(purchaseDrafts.source, 'pmc'), eq(purchaseDrafts.status, 'draft')));
+
+  const [trackingInFulfillment] = await db
+    .select({ count: sql<number>`count(*)::int` })
+    .from(purchaseDrafts)
+    .where(
+      and(
+        eq(purchaseDrafts.source, 'pmc'),
+        inArray(purchaseDrafts.status, ['confirmed', 'submitted', 'in_production', 'ready_to_ship']),
+      ),
+    );
+
+  const [trackingInTransit] = await db
+    .select({ count: sql<number>`count(*)::int` })
+    .from(purchaseDrafts)
+    .where(
+      and(
+        eq(purchaseDrafts.source, 'pmc'),
+        inArray(purchaseDrafts.status, ['in_transit', 'partial_received']),
+      ),
+    );
+
+  const [trackingException] = await db
+    .select({ count: sql<number>`count(*)::int` })
+    .from(purchaseDrafts)
+    .where(and(eq(purchaseDrafts.source, 'pmc'), eq(purchaseDrafts.status, 'exception')));
+
+  const [trackingReceived] = await db
+    .select({ count: sql<number>`count(*)::int` })
+    .from(purchaseDrafts)
+    .where(and(eq(purchaseDrafts.source, 'pmc'), eq(purchaseDrafts.status, 'received')));
 
   const [activeSkus] = await db
     .select({ count: sql<number>`count(*)::int` })
@@ -99,6 +131,11 @@ dashboardRoutes.get('/dashboard', requireMenu('dashboard'), async (c) => {
       ),
     );
 
+  const publishedVersionId = await getPrimaryPublishedVersionId();
+  const publishedVersion = await getForecastVersionById(publishedVersionId);
+  const accuracyResult = await listForecastAccuracy({ limit: 500 });
+  const highMapeCount = accuracyResult.items.filter((r) => r.mape != null && r.mape > 0.3).length;
+
   const todos: TodoItem[] = [];
 
   if ((openAlerts?.count ?? 0) > 0) {
@@ -125,6 +162,34 @@ dashboardRoutes.get('/dashboard', requireMenu('dashboard'), async (c) => {
       title: `${draftPlans!.count} 个 PMC 草稿计划待确认`,
       subtitle: '确认后可生成采购跟单，并导出 CSV 发给商家',
       href: '/pmc/list',
+      priority: 'medium',
+    });
+  }
+
+  if ((trackingPendingConfirm?.count ?? 0) > 0) {
+    todos.push({
+      type: 'tracking_confirm',
+      title: `${trackingPendingConfirm!.count} 条采购跟单待供应商确认`,
+      href: '/pmc/tracking',
+      priority: 'high',
+    });
+  }
+
+  if ((trackingException?.count ?? 0) > 0) {
+    todos.push({
+      type: 'tracking_exception',
+      title: `${trackingException!.count} 条采购跟单异常待处理`,
+      href: '/pmc/tracking?status=exception',
+      priority: 'high',
+    });
+  }
+
+  if ((trackingInTransit?.count ?? 0) > 0) {
+    todos.push({
+      type: 'tracking_transit',
+      title: `${trackingInTransit!.count} 条跟单在途或部分到货`,
+      subtitle: '请登记到货以回写库存',
+      href: '/pmc/tracking',
       priority: 'medium',
     });
   }
@@ -156,11 +221,14 @@ dashboardRoutes.get('/dashboard', requireMenu('dashboard'), async (c) => {
     });
   }
 
-  if ((trackingPending?.count ?? 0) > 0) {
+  if (highMapeCount > 0) {
     todos.push({
-      type: 'tracking',
-      title: `${trackingPending!.count} 条采购跟单待跟进`,
-      href: '/pmc/tracking',
+      type: 'forecast_risk',
+      title: `${highMapeCount} 个 SKU 预测偏差偏高（MAPE>30%）`,
+      subtitle: publishedVersion
+        ? `当前补货口径：${publishedVersion.versionNo}`
+        : undefined,
+      href: '/data/forecast?tab=accuracy',
       priority: 'low',
     });
   }
@@ -188,13 +256,24 @@ dashboardRoutes.get('/dashboard', requireMenu('dashboard'), async (c) => {
       getLatestTaskRun('daily_inventory_pipeline'),
     ]);
 
+  const loopFunnel = {
+    pendingReorderSuggestions: pendingReorder?.count ?? 0,
+    draftPmcPlans: draftPlans?.count ?? 0,
+    activePmcPlans: activePlans?.count ?? 0,
+    trackingPendingConfirm: trackingPendingConfirm?.count ?? 0,
+    trackingInFulfillment: trackingInFulfillment?.count ?? 0,
+    trackingInTransit: trackingInTransit?.count ?? 0,
+    trackingException: trackingException?.count ?? 0,
+    trackingReceived: trackingReceived?.count ?? 0,
+  };
+
   return c.json({
     kpis: {
       openAlerts: openAlerts?.count ?? 0,
       pendingReorderSuggestions: pendingReorder?.count ?? 0,
       draftPmcPlans: draftPlans?.count ?? 0,
       activePmcPlans: activePlans?.count ?? 0,
-      purchaseTrackingPending: trackingPending?.count ?? 0,
+      purchaseTrackingPending: trackingPendingConfirm?.count ?? 0,
       activeSkus: activeSkus?.count ?? 0,
       salesQtyLast7Days: sales7d?.total ?? 0,
       openAlertsLast7Days: openAlerts7d?.count ?? 0,
@@ -203,6 +282,15 @@ dashboardRoutes.get('/dashboard', requireMenu('dashboard'), async (c) => {
         : null,
       latestSalesDate: latestSale?.saleDate ? String(latestSale.saleDate).slice(0, 10) : null,
     },
+    loopFunnel,
+    forecastContext: publishedVersion
+      ? {
+          versionId: publishedVersion.id,
+          versionNo: publishedVersion.versionNo,
+          publishedAt: publishedVersion.publishedAt,
+          highMapeSkuCount: highMapeCount,
+        }
+      : null,
     dataFreshness: {
       latestInventoryDate: latestInventory?.recordedDate
         ? String(latestInventory.recordedDate).slice(0, 10)

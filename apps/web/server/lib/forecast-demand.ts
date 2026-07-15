@@ -6,11 +6,94 @@ import {
   type CoverageReplenishmentResult,
 } from './replenishment-coverage.js';
 
+export function resolveEffectiveForecastDailyAvg(
+  forecastDailyAvg: number,
+  manualDailyAvg?: number | null,
+): number {
+  if (manualDailyAvg != null && Number.isFinite(manualDailyAvg) && manualDailyAvg >= 0) {
+    return manualDailyAvg;
+  }
+  return forecastDailyAvg;
+}
+
+export function mapForecastDailyFields(input: {
+  forecastDailyAvg: number | string;
+  manualDailyAvg?: number | string | null;
+}) {
+  const systemForecastDailyAvg = Number(input.forecastDailyAvg);
+  const manual =
+    input.manualDailyAvg != null && input.manualDailyAvg !== ''
+      ? Number(input.manualDailyAvg)
+      : null;
+  const manualDailyAvg =
+    manual != null && Number.isFinite(manual) && manual >= 0 ? manual : null;
+  return {
+    forecastDailyAvg: systemForecastDailyAvg,
+    manualDailyAvg,
+    effectiveDailyAvg: resolveEffectiveForecastDailyAvg(systemForecastDailyAvg, manualDailyAvg),
+  };
+}
+
+/** 多平台预测行按日历月汇总生效日均（manual 优先于系统值） */
+export function sumEffectiveForecastDailyAcrossPlatforms(
+  rows: Array<{ forecastDailyAvg: number | string; manualDailyAvg?: number | string | null }>,
+): number {
+  let sum = 0;
+  for (const row of rows) {
+    sum += mapForecastDailyFields(row).effectiveDailyAvg;
+  }
+  return Math.round(sum * 10_000) / 10_000;
+}
+
 export type MonthlyForecastRow = {
   forecastYear: number;
   month: number;
   forecastDailyAvg: number;
+  platform?: string;
 };
+
+const PLATFORM_ALIASES: Record<string, string> = {
+  亚马逊: 'AMAZON',
+  沃尔玛: 'WALMART',
+  独立站: 'DTC',
+  全平台: 'ALL',
+  ALL: 'ALL',
+  AMAZON: 'AMAZON',
+  WALMART: 'WALMART',
+  EBAY: 'EBAY',
+  SHOPIFY: 'SHOPIFY',
+  DTC: 'DTC',
+  TEMU: 'TEMU',
+  TIKTOK: 'TIKTOK',
+};
+
+/** 在售平台编码归一化；空值表示 ALL（全平台汇总行） */
+export function normalizeSalesPlatform(raw?: string | null): string {
+  const trimmed = raw?.trim();
+  if (!trimmed) return 'ALL';
+  const upper = trimmed.toUpperCase();
+  return PLATFORM_ALIASES[trimmed] ?? PLATFORM_ALIASES[upper] ?? upper.replace(/\s+/g, '_');
+}
+
+/**
+ * 将多平台预测行聚合为日历月 Map。
+ * - 若存在分平台行，则按年月求和（同一站点多平台销量叠加）
+ * - 若仅有 ALL 行，则直接使用 ALL
+ * - 禁止 ALL 与分平台混用，混用时只取分平台求和
+ */
+export function aggregateForecastRows(
+  rows: Array<MonthlyForecastRow & { platform?: string }>,
+): Map<string, number> {
+  const specific = rows.filter((r) => normalizeSalesPlatform(r.platform) !== 'ALL');
+  const source = specific.length ? specific : rows;
+
+  const map = new Map<string, number>();
+  for (const row of source) {
+    const key = forecastMonthKey(row.forecastYear, row.month);
+    map.set(key, (map.get(key) ?? 0) + row.forecastDailyAvg);
+  }
+  return map;
+}
 
 export function stationForWarehouse(regionGroup: string, countryCode?: string | null): string {
   const cc = countryCode?.toUpperCase();
@@ -23,6 +106,76 @@ export function stationForWarehouse(regionGroup: string, countryCode?: string | 
 
 export function forecastMonthKey(year: number, month: number): string {
   return `${year}-${String(month).padStart(2, '0')}`;
+}
+
+export function resolveHorizonConsumptionDaily(input: {
+  forecastDailyAvg: number;
+  effectiveDailyAvg?: number;
+  forecastDailyP90?: number | null;
+  horizonMonthIndex: number;
+  profileClass?: string | null;
+  useP90ForVolatile?: boolean;
+}): number {
+  const k = Math.max(0, Math.floor(input.horizonMonthIndex));
+  const base =
+    k <= 2 && input.effectiveDailyAvg != null && input.effectiveDailyAvg > 0
+      ? input.effectiveDailyAvg
+      : input.forecastDailyAvg;
+
+  if (
+    input.useP90ForVolatile !== false &&
+    input.profileClass === 'B' &&
+    input.forecastDailyP90 != null &&
+    input.forecastDailyP90 > 0
+  ) {
+    return input.forecastDailyP90;
+  }
+
+  return base;
+}
+
+export function horizonMonthIndexFromDate(forecastDate: Date, asOf = new Date()): number {
+  const asOfYear = asOf.getUTCFullYear();
+  const asOfMonth = asOf.getUTCMonth() + 1;
+  const y = forecastDate.getUTCFullYear();
+  const m = forecastDate.getUTCMonth() + 1;
+  return (y - asOfYear) * 12 + (m - asOfMonth);
+}
+
+export function getForecastDailyForHorizon(
+  forecasts: Map<string, number>,
+  date: Date,
+  fallbackDaily: number,
+  opts?: {
+    p90Forecasts?: Map<string, number>;
+    profileClass?: string | null;
+    asOf?: Date;
+  },
+): number {
+  const key = forecastMonthKey(date.getFullYear(), date.getMonth() + 1);
+  const daily = forecasts.get(key) ?? fallbackDaily;
+  const k = horizonMonthIndexFromDate(date, opts?.asOf ?? new Date());
+  const p90 = opts?.p90Forecasts?.get(key);
+  return resolveHorizonConsumptionDaily({
+    forecastDailyAvg: daily,
+    forecastDailyP90: p90,
+    horizonMonthIndex: k,
+    profileClass: opts?.profileClass,
+  });
+}
+
+/** API/页面展示用预测月份 */
+export function formatForecastMonth(year: number, month: number): string {
+  return forecastMonthKey(year, month);
+}
+
+export function parseForecastMonth(value: string): { year: number; month: number } | null {
+  const m = value.trim().match(/^(\d{4})-(\d{1,2})$/);
+  if (!m) return null;
+  const year = parseInt(m[1], 10);
+  const month = parseInt(m[2], 10);
+  if (month < 1 || month > 12) return null;
+  return { year, month };
 }
 
 export function buildForecastMap(rows: MonthlyForecastRow[]): Map<string, number> {
@@ -40,7 +193,21 @@ export function getForecastDailyForDate(
 ): number {
   const key = forecastMonthKey(date.getFullYear(), date.getMonth() + 1);
   const value = forecasts.get(key);
-  return value != null && value > 0 ? value : fallbackDaily;
+  if (value != null && value > 0) return value;
+
+  // 跨年兜底：若未维护下一年同月预测，复用已有年份的同月日均（季节性近似）
+  const month = date.getMonth() + 1;
+  const monthSuffix = `-${String(month).padStart(2, '0')}`;
+  let seasonalFallback: number | null = null;
+  for (const [k, v] of forecasts) {
+    if (k.endsWith(monthSuffix) && v > 0) {
+      seasonalFallback = v;
+      break;
+    }
+  }
+  if (seasonalFallback != null) return seasonalFallback;
+
+  return fallbackDaily;
 }
 
 /** 未来 N 天按月度预测日均的加权平均 */

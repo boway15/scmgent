@@ -14,7 +14,7 @@
 | 后端 | Node.js + Hono + TypeScript |
 | 数据库 | PostgreSQL + Drizzle ORM |
 | 包管理 | pnpm |
-| AI 引擎 | **本地 FAQ 助手（Dify RAG 预留）** |
+| AI 引擎 | **本地 FAQ + 可选 Dify RAG/Workflow** |
 
 ### MVP 架构
 

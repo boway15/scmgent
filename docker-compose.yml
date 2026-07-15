@@ -22,18 +22,25 @@ services:
       dockerfile: Dockerfile
     image: scm-agent-web:latest
     ports:
-      - "8081:8080"
+      - "0.0.0.0:8081:8080"
+    env_file:
+      - .env
     environment:
       DATABASE_URL: postgresql://scm:scm_dev_pass@postgres:5432/scm_dev
       DB_HOST: postgres
       DB_USER: scm
       DB_NAME: scm_dev
       PORT: 8080
-      APP_BASE_URL: http://localhost:8081
+      HOST: 0.0.0.0
+      # 局域网访问：同网段设备用 http://<本机IP>:8081；启用飞书登录时 APP_BASE_URL 须与访问地址一致
+      APP_BASE_URL: http://127.0.0.1:8081
       NODE_ENV: production
+      # 本地 Docker 走 HTTP，Secure Cookie 会导致局域网 IP 无法保持登录
+      COOKIE_SECURE: "false"
       SERVE_STATIC: "true"
       JWT_SECRET: local-docker-jwt-secret-scm-agent-dev
-      # 登录策略：开发环境仅邮箱登录，不启用飞书
+      # 登录策略：开发环境仅邮箱登录，不启用飞书（覆盖 .env 中的 AUTH_DEV_MODE）
+      AUTH_DEV_MODE: "false"
       AUTH_REQUIRE_LOGIN: "true"
       EMAIL_AUTH_ENABLED: "true"
       FEISHU_AUTH_ENABLED: "false"
@@ -41,6 +48,16 @@ services:
       BOOTSTRAP_ADMIN_PASSWORD_FORCE: "true"
       ENFORCE_RBAC: "true"
       CRON_SECRET: "dev-cron-secret-local"
+      NODE_OPTIONS: "--max-old-space-size=4096"
+      # DIFY_BASE_URL / DIFY_API_KEY_* 由 .env 注入；容器内 127.0.0.1 会在代码中改写为 host.docker.internal
+      RUNNING_IN_DOCKER: "true"
+      # 日表 + 月表双轨（见 apps/web/server/lib/sales-history-config.ts）
+      # 全量初始化完成后启用：仅展开 >= 该日期的宽表列（上线日常人工导入）
+      # SALES_IMPORT_MIN_DATE: "2026-01-01"
+      # 日表滚动保留天数（月表保留全历史），默认 365
+      # SALES_HISTORY_DAILY_RETENTION_DAYS: "365"
+      # 补货/健康读取日表回溯天数，默认 90
+      # REPLENISHMENT_SALES_LOOKBACK_DAYS: "90"
     depends_on:
       postgres:
         condition: service_healthy

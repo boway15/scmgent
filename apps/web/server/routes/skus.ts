@@ -6,6 +6,7 @@ import { requireMenu } from '../lib/rbac.js';
 import { normalizeReplenishLight } from '../lib/replenish-light.js';
 import { ensureSpuFromSkuEncoding } from '../lib/spu-from-sku.js';
 import { skuEncodingToColumns } from '../lib/sku-encoding.js';
+import { markSkuMasterDataManual } from '../lib/ensure-sku-from-import.js';
 
 export const skuRoutes = new Hono();
 
@@ -118,12 +119,16 @@ skuRoutes.put('/skus/:id', requireMenu('data.products'), async (c) => {
 
   const { merchantCode, merchantName, unitCost, leadTimeDays, moq, replenishLight, ...skuFields } = body;
 
+  const [existing] = await db.select().from(skus).where(eq(skus.id, skuId)).limit(1);
+  if (!existing) return c.json({ message: 'SKU not found' }, 404);
+
   const [row] = await db
     .update(skus)
     .set({
       ...skuFields,
       unitCost: skuFields.unitCost?.toString() ?? body.unitCost?.toString(),
       replenishLight: replenishLight ? normalizeReplenishLight(replenishLight) : undefined,
+      encodingMeta: markSkuMasterDataManual(existing.encodingMeta),
       updatedAt: new Date(),
     })
     .where(eq(skus.id, skuId))

@@ -17,6 +17,8 @@
     "@hono/node-server": "^1.13.7",
     "@scm/db": "workspace:*",
     "@tanstack/react-query": "^5.62.8",
+    "@tanstack/react-virtual": "^3.14.4",
+    "archiver": "^7.0.1",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "dotenv": "^16.4.5",
@@ -28,7 +30,6 @@
     "react-dom": "^18.3.1",
     "react-router-dom": "^6.28.0",
     "tailwind-merge": "^2.5.5",
-    "archiver": "^7.0.1",
     "tsx": "^4.19.2",
     "xlsx": "^0.18.5"
   },

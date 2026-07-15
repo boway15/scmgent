@@ -13,10 +13,18 @@ import {
 import { relations } from 'drizzle-orm';
 import { users } from './auth';
 import { skus } from './inventory';
+import { pmcPlanItems } from './pmc';
 
 export const purchaseDraftStatusEnum = pgEnum('purchase_draft_status', [
   'draft',
-  'submitted',
+  'submitted', // legacy, migrated to confirmed
+  'confirmed',
+  'in_production',
+  'ready_to_ship',
+  'in_transit',
+  'partial_received',
+  'received',
+  'exception',
   'cancelled',
 ]);
 
@@ -38,7 +46,15 @@ export const purchaseDrafts = pgTable(
     expectedDate: date('expected_date'),
     source: purchaseDraftSourceEnum('source').notNull().default('manual'),
     sourceRefId: uuid('source_ref_id'),
+    planItemId: uuid('plan_item_id').references(() => pmcPlanItems.id),
     status: purchaseDraftStatusEnum('status').notNull().default('draft'),
+    supplierConfirmedAt: timestamp('supplier_confirmed_at', { withTimezone: true }),
+    confirmedDeliveryDate: date('confirmed_delivery_date'),
+    actualShipDate: date('actual_ship_date'),
+    actualReceivedDate: date('actual_received_date'),
+    receivedQty: integer('received_qty').notNull().default(0),
+    exceptionReason: text('exception_reason'),
+    ownerUserId: uuid('owner_user_id').references(() => users.id),
     remark: text('remark'),
     createdBy: uuid('created_by').references(() => users.id),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
@@ -47,12 +63,18 @@ export const purchaseDrafts = pgTable(
   (table) => ({
     statusIdx: index('purchase_drafts_status_idx').on(table.status),
     skuIdx: index('purchase_drafts_sku_id_idx').on(table.skuId),
+    planItemIdx: index('purchase_drafts_plan_item_id_idx').on(table.planItemId),
   }),
 );
 
 export const purchaseDraftsRelations = relations(purchaseDrafts, ({ one, many }) => ({
   sku: one(skus, { fields: [purchaseDrafts.skuId], references: [skus.id] }),
   creator: one(users, { fields: [purchaseDrafts.createdBy], references: [users.id] }),
+  owner: one(users, { fields: [purchaseDrafts.ownerUserId], references: [users.id] }),
+  planItem: one(pmcPlanItems, {
+    fields: [purchaseDrafts.planItemId],
+    references: [pmcPlanItems.id],
+  }),
   followUpReminders: many(purchaseFollowUpReminders),
 }));
 

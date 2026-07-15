@@ -1,0 +1,187 @@
+[
+  {
+    "code": "cifnews",
+    "name": "雨果跨境",
+    "feed_url": "https://www.cifnews.com/feed",
+    "source_type": "rss",
+    "category_default": "other",
+    "fetch_interval_hours": 12,
+    "config_json": {
+      "channel": "media",
+      "siteDomain": "cifnews.com",
+      "includeKeywords": ["跨境", "亚马逊", "关税", "物流", "合规", "出海", "外贸"]
+    }
+  },
+  {
+    "code": "ebrun",
+    "name": "亿邦动力",
+    "feed_url": "https://www.ebrun.com/feed",
+    "source_type": "rss",
+    "category_default": "other",
+    "fetch_interval_hours": 12,
+    "config_json": {
+      "channel": "media",
+      "siteDomain": "ebrun.com",
+      "includeKeywords": ["跨境", "电商", "出口", "供应链", "零售"]
+    }
+  },
+  {
+    "code": "amz123",
+    "name": "AMZ123",
+    "feed_url": "https://www.amz123.com/feed",
+    "source_type": "rss",
+    "category_default": "other",
+    "fetch_interval_hours": 12,
+    "enabled": true,
+    "config_json": {
+      "channel": "media",
+      "siteDomain": "amz123.com",
+      "includeKeywords": ["亚马逊", "跨境", "卖家", "fba", "物流", "关税"]
+    }
+  },
+  {
+    "code": "36kr_crossborder",
+    "name": "36氪-快讯",
+    "feed_url": "/36kr/newsflashes",
+    "source_type": "rsshub",
+    "category_default": "other",
+    "fetch_interval_hours": 12,
+    "config_json": {
+      "channel": "media",
+      "siteDomain": "36kr.com",
+      "includeKeywords": ["跨境", "出海", "电商", "外贸", "供应链", "关税", "亚马逊"]
+    }
+  },
+  {
+    "code": "toutiao_crossborder",
+    "name": "今日头条-跨境电商",
+    "feed_url": "/toutiao/keyword/跨境电商",
+    "source_type": "rsshub",
+    "category_default": "other",
+    "fetch_interval_hours": 8,
+    "config_json": {
+      "channel": "media",
+      "siteDomain": "toutiao.com",
+      "includeKeywords": ["跨境", "出海", "电商", "外贸", "亚马逊", "关税", "物流"]
+    }
+  },
+  {
+    "code": "toutiao_amazon",
+    "name": "今日头条-亚马逊",
+    "feed_url": "/toutiao/keyword/亚马逊",
+    "source_type": "rsshub",
+    "category_default": "other",
+    "fetch_interval_hours": 8,
+    "config_json": {
+      "channel": "media",
+      "siteDomain": "toutiao.com",
+      "includeKeywords": ["亚马逊", "fba", "卖家", "prime", "关税", "物流"]
+    }
+  },
+  {
+    "code": "toutiao_tariff",
+    "name": "今日头条-关税",
+    "feed_url": "/toutiao/keyword/关税",
+    "source_type": "rsshub",
+    "category_default": "other",
+    "fetch_interval_hours": 12,
+    "config_json": {
+      "channel": "media",
+      "siteDomain": "toutiao.com",
+      "includeKeywords": ["关税", "合规", "报关", "清关", "贸易", "美国", "欧盟"]
+    }
+  },
+  {
+    "code": "toutiao_logistics",
+    "name": "今日头条-跨境物流",
+    "feed_url": "/toutiao/keyword/跨境物流",
+    "source_type": "rsshub",
+    "category_default": "other",
+    "fetch_interval_hours": 12,
+    "config_json": {
+      "channel": "media",
+      "siteDomain": "toutiao.com",
+      "includeKeywords": ["物流", "运费", "海外仓", "fba", "清关", "港口", "航运"]
+    }
+  },
+  {
+    "code": "chuhaibiji_rsshub",
+    "name": "出海笔记",
+    "feed_url": "/chuhaibiji/latest",
+    "source_type": "rsshub",
+    "category_default": "other",
+    "fetch_interval_hours": 12,
+    "enabled": true,
+    "config_json": {
+      "channel": "media",
+      "siteDomain": "chuhaibiji.com",
+      "includeKeywords": ["出海", "跨境", "亚马逊", "独立站", "选品"]
+    }
+  },
+  {
+    "code": "customs_gov_cn",
+    "name": "海关总署",
+    "feed_url": "/gov/customs/rss",
+    "source_type": "rsshub",
+    "category_default": "other",
+    "fetch_interval_hours": 24,
+    "config_json": {
+      "channel": "media",
+      "siteDomain": "customs.gov.cn",
+      "includeKeywords": ["海关", "关税", "进出口", "监管", "报关"]
+    }
+  },
+  {
+    "code": "mofcom_rsshub",
+    "name": "商务部",
+    "feed_url": "/gov/mofcom/rss",
+    "source_type": "rsshub",
+    "category_default": "other",
+    "fetch_interval_hours": 24,
+    "config_json": {
+      "channel": "media",
+      "siteDomain": "mofcom.gov.cn",
+      "includeKeywords": ["贸易", "进出口", "外贸", "制裁", "关税"]
+    }
+  },
+  {
+    "code": "digitalcommerce360",
+    "name": "Digital Commerce 360（已停用）",
+    "feed_url": "https://www.digitalcommerce360.com/feed/",
+    "source_type": "rss",
+    "category_default": "other",
+    "fetch_interval_hours": 24,
+    "enabled": false,
+    "config_json": { "channel": "media", "siteDomain": "digitalcommerce360.com", "note": "英文站已默认停用" }
+  },
+  {
+    "code": "theloadstar",
+    "name": "The Loadstar（已停用）",
+    "feed_url": "https://theloadstar.com/feed/",
+    "source_type": "rss",
+    "category_default": "other",
+    "fetch_interval_hours": 24,
+    "enabled": false,
+    "config_json": { "channel": "media", "siteDomain": "theloadstar.com", "note": "英文站已默认停用" }
+  },
+  {
+    "code": "marketplacepulse",
+    "name": "Marketplace Pulse（已停用）",
+    "feed_url": "https://www.marketplacepulse.com/feed",
+    "source_type": "rss",
+    "category_default": "other",
+    "fetch_interval_hours": 24,
+    "enabled": false,
+    "config_json": { "channel": "media", "siteDomain": "marketplacepulse.com", "note": "英文站已默认停用" }
+  },
+  {
+    "code": "amazon_news",
+    "name": "Amazon News（已停用）",
+    "feed_url": "https://www.aboutamazon.com/news/feed",
+    "source_type": "rss",
+    "category_default": "other",
+    "fetch_interval_hours": 24,
+    "enabled": false,
+    "config_json": { "channel": "media", "siteDomain": "aboutamazon.com", "note": "英文站已默认停用" }
+  }
+]

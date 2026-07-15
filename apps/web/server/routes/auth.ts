@@ -26,10 +26,17 @@ export const authRoutes = new Hono();
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
+function isSecureCookie(): boolean {
+  const raw = process.env.COOKIE_SECURE?.trim().toLowerCase();
+  if (raw === 'true') return true;
+  if (raw === 'false') return false;
+  return process.env.NODE_ENV === 'production';
+}
+
 function setSessionCookie(c: Parameters<typeof setCookie>[0], token: string) {
   setCookie(c, COOKIE_NAME, token, {
     httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
+    secure: isSecureCookie(),
     sameSite: 'Lax',
     maxAge: MAX_AGE_SEC,
     path: '/',
@@ -115,7 +122,7 @@ authRoutes.get('/auth/feishu/url', (c) => {
   const state = randomBytes(16).toString('hex');
   setCookie(c, 'oauth_state', state, {
     httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
+    secure: isSecureCookie(),
     sameSite: 'Lax',
     maxAge: 600,
     path: '/',

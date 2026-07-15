@@ -31,6 +31,10 @@ services:
 
 ## 核心场景
 
+### 0. 独立站智能客服草稿（Workflow DSL）
+
+Workflow 导入结构（节点 id、边、outputs、变量引用）见 [@dify-cs-email-draft](../dify-cs-email-draft/SKILL.md)；该技能**只管 DSL 骨架**，不管 Prompt/Gateway 业务内容。
+
 ### 1. AI 知识库（RAG）
 
 - 上传 SOP、政策 PDF / Word / Excel

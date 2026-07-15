@@ -6,6 +6,7 @@ import { isRbacEnforced } from '../lib/rbac.js';
 const PUBLIC_PREFIXES = [
   '/api/health',
   '/api/auth/',
+  '/api/tasks/',
 ];
 
 export async function authMiddleware(c: Context, next: Next) {

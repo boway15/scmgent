@@ -56,33 +56,106 @@ const samplesDir = join(__dirname, '../../../../docs/samples/import-fob');
 }
 
 {
+  // 纯退税 / 纯非FOB 柜不参与分账
   const rows = [
     ['临柜号', '调拨单号', '订舱编号', 'SKU编码', '体积', '是否退税', '目的仓'],
     ['H001', 'DB001', 'WJH001', 'SKU-A', '3', '退税', '美西仓'],
     ['H001', 'DB002', 'WJH001', 'SKU-B', '2', '退税', '美西仓'],
     ['H002', 'DB003', 'WJH002', 'SKU-C', '5', '非FOB', '美东仓'],
   ];
-  const { items, errors, skippedRows } = parseVolumeSheetRows(rows);
+  const { items, errors, skippedRows, nonFobContainers } = parseVolumeSheetRows(rows);
   assert.deepEqual(errors, []);
-  assert.equal(skippedRows, 1);
-  assert.equal(items.length, 2);
-  assert.equal(items[0].containerNo, 'H001');
-  assert.equal(items[0].merchantCode, 'WJH001');
-  assert.equal(items[0].remark, '业务编号:WJH001；调拨:DB001；类别:退税；目的仓:美西仓');
+  assert.equal(items.length, 0);
+  assert.equal(skippedRows, 3);
+  assert.deepEqual(nonFobContainers, ['H001', 'H002']);
 }
 
 {
+  // 混柜：含 FOB 行则整柜（含退税行）参与分账；纯非FOB 柜跳过
+  const rows = [
+    [
+      '货柜号',
+      '临柜号',
+      '调拨单号',
+      '订舱编号',
+      'SKU编码',
+      '体积',
+      '是否退税',
+      '工厂名称',
+      '工厂类型',
+      '目的仓',
+    ],
+    [
+      'OOCU8469000',
+      'H26070300023',
+      'DB001',
+      'WJH001',
+      'SKU-A',
+      '3.78',
+      '退税',
+      '广州宏龙办公家具有限公司',
+      'FOB',
+      '美东仓',
+    ],
+    [
+      'OOCU8469000',
+      'H26070300023',
+      'DB003',
+      'WJH003',
+      'SKU-C',
+      '1.2',
+      '退税',
+      '广州宏龙办公家具有限公司',
+      '退税',
+      '美东仓',
+    ],
+    [
+      '',
+      'H999',
+      'DB002',
+      'WJH002',
+      'SKU-B',
+      '2',
+      '不退税',
+      '厦门迈尔斯贸易有限公司',
+      '非退税',
+      '美西仓',
+    ],
+  ];
+  const { items, errors, nonFobContainers } = parseVolumeSheetRows(rows);
+  assert.deepEqual(errors, []);
+  assert.equal(items.length, 2);
+  assert.equal(items[0].containerNo, 'OOCU8469000');
+  assert.equal(items[0].merchantName, '广州宏龙办公家具有限公司');
+  assert.equal(
+    items[0].remark,
+    '业务编号:WJH001；调拨:DB001；类别:FOB；工厂:广州宏龙办公家具有限公司；目的仓:美东仓',
+  );
+  assert.equal(items[1].containerNo, 'OOCU8469000');
+  assert.match(items[1].remark ?? '', /类别:退税/);
+  assert.ok(Math.abs(items[0].volumeCbm + items[1].volumeCbm - 4.98) < 0.01);
+  assert.deepEqual(nonFobContainers, ['H999']);
+}
+
+{
+  // 样例体积文件全为退税类别 → 全部标为非 FOB 柜，不产生分摊体积行
   const buf = readFileSync(join(samplesDir, '体积信息_202606181444.xlsx'));
   const rows = await sheetRowsFromBuffer(buf);
-  const { items, errors } = parseVolumeSheetRows(rows);
+  const { items, errors, nonFobContainers } = parseVolumeSheetRows(rows);
   assert.deepEqual(errors, []);
-  assert.equal(items.length, 15);
-  const volByContainer = new Map<string, number>();
-  for (const item of items) {
-    volByContainer.set(item.containerNo, (volByContainer.get(item.containerNo) ?? 0) + item.volumeCbm);
-  }
-  assert.ok(Math.abs((volByContainer.get('H26060200014') ?? 0) - 68) < 0.01);
-  assert.ok(Math.abs((volByContainer.get('H26060300010') ?? 0) - 66.71) < 0.01);
+  assert.equal(items.length, 0);
+  assert.ok((nonFobContainers?.length ?? 0) >= 1);
+  assert.ok(nonFobContainers?.includes('TLLU8925555'));
+  assert.ok(nonFobContainers?.includes('WHSU8817230'));
+}
+
+{
+  const buf = readFileSync(join(samplesDir, '导出截单清单数据导出_202607150908.xlsx'));
+  const rows = await sheetRowsFromBuffer(buf);
+  const { items, errors, nonFobContainers } = parseVolumeSheetRows(rows);
+  assert.deepEqual(errors, []);
+  assert.equal(items.length, 0);
+  assert.deepEqual(nonFobContainers, ['OOCU8469000']);
 }
 
 console.log('fob-bill-parsers.test.ts: all passed');

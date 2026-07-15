@@ -1,7 +1,0 @@
-sku_code,name,unit,spu_code,category,lead_time_days,moq,unit_cost,merchant_code,merchant_name,replenish_light
-SKU-HG-001,北欧布艺单人沙发-深灰,pcs,SKU-HG-001,客厅家具,45,50,189.00,M-HM-002,泉州软体家具厂,red
-SKU-001,北欧布艺单人沙发-米白,pcs,SKU-HG-001,客厅家具,45,50,189.00,M-HM-002,泉州软体家具厂,yellow
-SKU-HG-004,实木茶几-橡木色,pcs,SKU-HG-004,客厅家具,35,30,268.00,M-HM-002,泉州软体家具厂,red
-SKU-EL-002,可升降书桌-白色,pcs,SKU-EL-002,书房家具,30,40,320.00,M-HM-001,顺德家具供应链,red
-SKU-AP-003,记忆棉床垫 Queen,pcs,SKU-AP-003,卧室家具,40,20,156.00,M-HM-003,南通家纺制造,red
-SKU-EL-005,落地阅读灯-黑色,pcs,SKU-EL-005,灯饰家具,25,100,89.00,M-HM-001,顺德家具供应链,green

@@ -32,15 +32,17 @@ globs:
 
 | 格式 | 识别 | 关键列 |
 |------|------|--------|
-| **调拨 SKU 明细** | `临柜号`+`调拨单号`+`订舱编号`+`SKU编码`+`是否退税` | 柜=临柜号；主体=订舱编号（无则调拨单号）；类别=是否退税 |
+| **截单清单/调拨明细** | `临柜号`+`调拨单号`+`SKU编码`+`是否退税`+体积 | 柜=**货柜号优先**否则临柜号；主体=订舱编号（无则调拨单号）；类别=**工厂类型优先**否则是否退税 |
 | **ED/汇总模板** | `工厂类别`+主体+体积+柜号 | 主体=法人主体/主体/工厂/主体；类别=工厂类别 |
 | **简易 CSV** | 首行表头映射 | 同汇总模板 |
 
-**柜参与分账**：含 FOB 行，或含退税/非退税等有效体积（非纯「非FOB」柜）。`非FOB` 不能被 `/FOB/i` 误判（已修）。
+下载模板表头对齐 `docs/samples/import-fob/导出截单清单数据导出_*.xlsx`（首列 `货柜号`，末列 `工厂名称`/`工厂类型`；亦兼容无货柜号的旧导出）。
+
+**柜参与分账**：柜内至少一行工厂类型含 FOB 关键字（`/FOB/i`，且排除「非FOB」「不做FOB」）。纯退税/非退税/非FOB 柜不参与。混柜含 FOB 时整柜（含非 FOB 行）进分摊基数。
 
 **SKU**：存 `fob_merchant_shipments.sku_code`；分摊基数按柜+主体聚合 `skuCodes`（逗号分隔）。
 
-**备注约定**（供 `fob-allocation-base-meta` 解析）：`业务编号:…；类别:…；调拨:…；目的仓:…`
+**备注约定**（供 `fob-allocation-base-meta` 解析）：`业务编号:…；调拨:…；类别:…；工厂:…；目的仓:…`
 
 ## 分摊基数展示列（`ImportedVolumeStatsList`）
 
@@ -76,7 +78,7 @@ globs:
 
 1. **`logistics.ts` GET detail**：局部变量勿命名 `fobMerchantShipments`（与 Drizzle 表 import 冲突 → 500 + 前端永久「加载中」）。用 `fobShipmentRows`。
 2. **`loadReconcileExportData`**：`getBatchWithProvider()` 返回扁平 `{ ...batch, serviceProvider }`，不是 `{ batch, provider }`。
-3. **临柜号 vs 正式柜号**：调拨导出用 H 开头临柜号，账单常为 WHSU…；不匹配则 `containerMatch` 失败，需业务确认映射。
+3. **临柜号 vs 正式柜号**：截单清单若有「货柜号」列则优先用正式柜号；仅临柜号（H 开头）时与账单 WHSU… 可能不匹配，需业务确认映射。
 4. **汇总模板无 SKU 列**：分摊基数 SKU 列为空；调拨明细或 ED 带 Sku 才有值。
 5. **Docker 改代码后**：`pnpm docker:build && pnpm docker:start`，浏览器 Ctrl+F5。
 
@@ -91,7 +93,7 @@ globs:
 | 详情页 | `apps/web/src/pages/FobSettlementDetailPage.tsx` |
 | 平账矩阵 | `apps/web/src/components/FobContainerMatrixPanel.tsx` |
 | 列表/创建 | `apps/web/src/pages/FobSettlementListPage.tsx` |
-| 样例 | `docs/samples/import-fob/`（含 `体积信息_202606181444.xlsx`） |
+| 样例 | `docs/samples/import-fob/`（体积：`1.体积导入-导出截单清单数据导出_*.xlsx`） |
 
 ## 测试
 

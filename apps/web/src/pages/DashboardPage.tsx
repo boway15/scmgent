@@ -4,7 +4,7 @@ import { api } from '@/lib/api';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { PageHeader } from '@/components/PageHeader';
 import { QueryErrorFallback } from '@/components/QueryErrorFallback';
-import { cn } from '@/lib/utils';
+import { cn, formatDateTimeCst } from '@/lib/utils';
 
 const PRIORITY_STYLE = {
   high: 'border-l-4 border-l-primary',
@@ -31,12 +31,12 @@ export function DashboardPage() {
 
   if (!data) return <p className="text-text-sub">加载中...</p>;
 
-  const { kpis, todos, trends, dataFreshness, taskRuns } = data;
+  const { kpis, todos, trends, dataFreshness, taskRuns, loopFunnel, forecastContext } = data;
   const maxQty = Math.max(...(trends?.salesLast7Days.map((d) => d.qty) ?? [1]), 1);
 
   const formatTaskRun = (label: string, run?: { finishedAt?: string | null; startedAt: string; status: string; resultSummary?: string | null; errorMessage?: string | null } | null) => {
     if (!run) return `${label}：暂无执行记录`;
-    const time = String(run.finishedAt ?? run.startedAt).slice(0, 19).replace('T', ' ');
+    const time = formatDateTimeCst(run.finishedAt ?? run.startedAt);
     const detail = run.errorMessage || run.resultSummary || run.status;
     return `${label}：${time} · ${detail}`;
   };
@@ -46,7 +46,7 @@ export function DashboardPage() {
     { label: '待采纳补货建议', value: kpis.pendingReorderSuggestions, href: '/pmc/suggestions', highlight: kpis.pendingReorderSuggestions > 0 },
     { label: 'PMC 草稿计划', value: kpis.draftPmcPlans, href: '/pmc/list', highlight: kpis.draftPmcPlans > 0 },
     { label: '进行中计划', value: kpis.activePmcPlans, href: '/pmc/list' },
-    { label: '采购跟单待跟进', value: kpis.purchaseTrackingPending, href: '/pmc/tracking' },
+    { label: '待供应商确认', value: kpis.purchaseTrackingPending, href: '/pmc/tracking' },
     { label: '近 7 天销量', value: kpis.salesQtyLast7Days, href: '/data/sales' },
     { label: '启用 SKU 数', value: kpis.activeSkus, href: '/data/products' },
   ];
@@ -55,13 +55,49 @@ export function DashboardPage() {
     <div className="space-y-6">
       <PageHeader title="经营看板" description="今日待办与关键指标一览" />
 
-      {(dataFreshness?.latestInventoryDate || dataFreshness?.latestSalesDate || taskRuns) && (
+      {(dataFreshness?.latestInventoryDate || dataFreshness?.latestSalesDate || taskRuns || forecastContext) && (
         <Card>
           <CardContent className="grid gap-2 pt-6 text-sm text-text-sub md:grid-cols-2">
             <p>库存最新日期：{dataFreshness?.latestInventoryDate ?? '暂无'}</p>
             <p>销量最新日期：{dataFreshness?.latestSalesDate ?? '暂无'}</p>
+            {forecastContext && (
+              <p className="md:col-span-2">
+                补货口径：{forecastContext.versionNo}
+                {forecastContext.highMapeSkuCount > 0 && (
+                  <span className="ml-2 text-amber-700">
+                    · {forecastContext.highMapeSkuCount} 个 SKU 预测偏差偏高
+                  </span>
+                )}
+              </p>
+            )}
             <p>{formatTaskRun('补货预测', taskRuns?.replenishmentForecast)}</p>
             <p>{formatTaskRun('缺货预警', taskRuns?.stockAlert)}</p>
+          </CardContent>
+        </Card>
+      )}
+
+      {loopFunnel && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">业务闭环漏斗</CardTitle>
+            <p className="text-sm text-text-sub">预测 → 补货 → 计划 → 跟单 → 入库</p>
+          </CardHeader>
+          <CardContent className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            {[
+              { label: '待采纳补货', value: loopFunnel.pendingReorderSuggestions, href: '/pmc/suggestions' },
+              { label: 'PMC 草稿', value: loopFunnel.draftPmcPlans, href: '/pmc/list' },
+              { label: '进行中计划', value: loopFunnel.activePmcPlans, href: '/pmc/list' },
+              { label: '待供应商确认', value: loopFunnel.trackingPendingConfirm, href: '/pmc/tracking' },
+              { label: '履约中', value: loopFunnel.trackingInFulfillment, href: '/pmc/tracking' },
+              { label: '在途/部分到货', value: loopFunnel.trackingInTransit, href: '/pmc/tracking' },
+              { label: '异常跟单', value: loopFunnel.trackingException, href: '/pmc/tracking?status=exception' },
+              { label: '已收货', value: loopFunnel.trackingReceived, href: '/pmc/tracking?status=received' },
+            ].map((item) => (
+              <Link key={item.label} to={item.href} className="rounded-md border border-border px-3 py-2 hover:bg-muted/50">
+                <p className="text-xs text-text-sub">{item.label}</p>
+                <p className="text-xl font-semibold text-text-main">{item.value}</p>
+              </Link>
+            ))}
           </CardContent>
         </Card>
       )}
@@ -139,7 +175,7 @@ export function DashboardPage() {
           <CardContent className="space-y-1 text-sm">
             <Link to="/pmc/suggestions" className="block text-primary hover:underline">补货建议</Link>
             <Link to="/pmc/list" className="block text-primary hover:underline">PMC 计划列表</Link>
-            <Link to="/data/import?type=sales" className="block text-primary hover:underline">导入销量数据</Link>
+            <Link to="/data/sales?import=1" className="block text-primary hover:underline">导入销量数据</Link>
           </CardContent>
         </Card>
         <Card>
@@ -148,6 +184,9 @@ export function DashboardPage() {
           </CardHeader>
           <CardContent className="text-sm text-text-sub">
             <p>本地 FAQ 模式，可解答安全库存、PMC 流程等问题。</p>
+            <Link to="/ai/chat?q=%E4%BB%8A%E6%97%A5%E9%A3%8E%E9%99%A9" className="mt-2 mr-3 inline-block text-primary hover:underline">
+              今日风险摘要
+            </Link>
             <Link to="/ai/chat" className="mt-2 inline-block text-primary hover:underline">
               打开知识问答
             </Link>

@@ -96,6 +96,7 @@ export function ReorderSuggestionsPage() {
                 <th className="p-2 font-normal">覆盖天数</th>
                 <th className="p-2 font-normal">建议数量</th>
                 <th className="p-2 font-normal">建议日期</th>
+                <th className="p-2 font-normal">需求口径</th>
                 <th className="p-2 font-normal">原因</th>
                 <th className="p-2 font-normal">状态</th>
                 <th className="p-2 font-normal">操作</th>
@@ -132,7 +133,10 @@ export function ReorderSuggestionsPage() {
                     {item.coverageDays ?? '-'}
                   </td>
                   <td className="p-2 font-numeric text-primary">{item.suggestedQty}</td>
-                  <td className="p-2 text-text-main">{item.suggestedDate}</td>
+                  <td className="p-2 font-numeric text-text-main">{item.suggestedDate}</td>
+                  <td className="p-2 text-xs text-text-sub">
+                    {(item.metrics?.demandSource as string) === 'forecast' ? '销售预测' : '历史销量'}
+                  </td>
                   <td className="max-w-md p-2 text-text-sub">
                     <button
                       type="button"

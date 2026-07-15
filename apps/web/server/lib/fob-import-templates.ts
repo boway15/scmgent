@@ -28,8 +28,13 @@ function buildTemplateRows(type: FobTemplateType): unknown[][] {
   return buildFreightTemplateRows();
 }
 
-/** 调拨 SKU 明细导出表头，对齐 docs/samples/import-fob/体积信息_202606181444.xlsx */
+/**
+ * 调拨截单清单导出表头，对齐
+ * docs/samples/import-fob/导出截单清单数据导出_202607150908.xlsx
+ *（首列货柜号；亦兼容无货柜号的旧导出）
+ */
 export const TRANSFER_VOLUME_TEMPLATE_HEADERS = [
+  '货柜号',
   '临柜号',
   '调拨单号',
   '订舱编号',
@@ -65,46 +70,51 @@ export const TRANSFER_VOLUME_TEMPLATE_HEADERS = [
   '税号',
   '清关号',
   'WSKU',
+  '工厂名称',
+  '工厂类型',
 ] as const;
 
-/** 1. 体积信息：调拨 SKU 明细表头 + 示例行（亦兼容 ED 汇总模板原表导入） */
+/** 1. 体积信息：截单清单表头 + 示例行（亦兼容 ED 汇总模板原表导入） */
 function buildVolumeTemplateRows(): unknown[][] {
   const sample: unknown[] = [
-    'TLLU8925555',
-    'DB2606020000095',
-    'WJH2606020011',
-    'DJ502313_34',
-    '衣帽柜',
-    'Hall tree',
-    '',
-    '',
-    '50',
-    '50',
-    '',
-    '',
-    '',
-    '4.99',
-    '',
-    '',
-    '1575',
-    '1725',
-    '',
-    '',
-    '',
+    'OOCU8469000',
+    'H26070300023',
+    'DB2607030000104',
+    'WJH2607030019',
+    'DJ504015_4',
+    '电脑桌',
+    'Computer desk',
+    '9403609990',
+    '9403608093',
+    '30',
+    '30',
+    '111.5',
+    '56.5',
+    '20',
+    '3.78',
+    '无',
+    '刨花板+铁',
+    '1250',
+    '1355',
+    '普货',
+    '334.54',
+    '10036.2',
     '退税',
+    'Particle board+Iron',
+    '家用',
+    'Household',
+    'HK-德威美东新泽西仓-001-自发货',
+    '',
+    '',
+    '是',
+    '否',
     '',
     '',
     '',
-    'HK-德威美西洛杉矶仓-001-自发货',
     '',
-    '',
-    '',
-    '',
-    '',
-    '',
-    '',
-    '',
-    'DJ502313_34',
+    'DJ504015_4',
+    '广州宏龙办公家具有限公司',
+    'FOB',
   ];
   return [[...TRANSFER_VOLUME_TEMPLATE_HEADERS], sample];
 }

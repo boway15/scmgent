@@ -1,8 +1,10 @@
-# 阶段一 MVP 闭环：补货 → PMC → 采购跟进
+# 阶段一 MVP 闭环：预测 → 补货 → PMC → 采购跟单 → 到货入库
 
 ## 目标
 
-在 0-3 个月内跑通「AI 建议 + 人工确认」的最小供应链闭环，不自动下单、不对接销售平台 API。
+在 0-3 个月内跑通「预测驱动 + AI 建议 + 人工确认 + 到货回写」的最小供应链闭环，不自动下单、不对接销售平台 API。
+
+完整 PRD 见 [mvp-business-loop.md](mvp-business-loop.md)。
 
 ## 流程
 
@@ -15,8 +17,10 @@ flowchart LR
   pmcReview --> pmcPlan[PmcPlanDraft]
   pmcPlan --> confirm[PlanConfirmed]
   confirm --> purchaseDraft[PurchaseDraft]
-  purchaseDraft --> followUp[PurchaseFollowUp]
-  followUp --> feishuMsg[FeishuNotification]
+  purchaseDraft --> supplierConfirm[SupplierConfirm]
+  supplierConfirm --> inboundReceipt[InboundReceipt]
+  inboundReceipt --> inventoryUpdate[InventoryUpdate]
+  inventoryUpdate --> dashboard[ClosedLoopDashboard]
 ```
 
 ## 步骤说明
@@ -56,12 +60,28 @@ flowchart LR
 - 确认后自动生成 `purchase_drafts`（source=pmc）
 - API：`PATCH /api/pmc/plans/:id/status`
 
-### 5. 采购跟进提醒
+### 5. 销售预测发布（人工）
 
-- 计划确认时为每条采购草稿创建 T-30 / T-14 / T-7 提醒节点
+- 页面：`/data/forecast`
+- 发布前校验 + 影响预览（影响 SKU 数、红黄灯变化）
+- 补货预测任务使用已发布版本作为需求口径
+
+### 6. 采购跟单履约
+
+- 页面：`/pmc/tracking`
+- 状态：待确认 → 已确认 → 生产中 → 待发货 → 在途 → 部分到货 → 已收货
+- 支持供应商确认交期、标记异常、登记到货
+
+### 7. 到货入库回写
+
+- 入口：PMC 详情或采购跟单「登记到货」
+- API：`POST /api/pmc/plans/:id/items/:itemId/receive` 或 `POST /api/purchase-drafts/:id/receive`
+- 回写 `inventory_records`（source=pmc_receipt），更新 PMC 行完成量
+
+### 8. 采购跟进提醒（可选）
+
+- 计划确认时为每条采购跟单创建 T-30 / T-14 / T-7 提醒节点
 - 任务：`POST /api/tasks/purchase-follow-up`（建议每日 08:00）
-- 到期且未处理时推送飞书群消息（`FEISHU_ALERT_CHAT_ID`）
-- 页面：`/pmc/tracking` 人工更新跟进状态
 
 ## 阶段一明确不做
 

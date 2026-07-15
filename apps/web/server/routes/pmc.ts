@@ -1,6 +1,6 @@
 import { eq, desc, and } from 'drizzle-orm';
 import { Hono } from 'hono';
-import { db, pmcPlans, pmcPlanItems, skus } from '@scm/db';
+import { db, pmcPlans, pmcPlanItems, skus, purchaseDrafts } from '@scm/db';
 import { getCurrentUser } from '../lib/auth-context.js';
 import { nextPlanNo } from './procurement.js';
 import { generatePurchaseDraftsFromPlan } from '../lib/pmc-plan.js';
@@ -47,7 +47,24 @@ pmcRoutes.get('/pmc/plans/:id', async (c) => {
     .where(eq(pmcPlanItems.planId, planId))
     .orderBy(pmcPlanItems.sortOrder);
 
-  return c.json({ ...plan, items });
+  const tracking = await db
+    .select({
+      id: purchaseDrafts.id,
+      draftNo: purchaseDrafts.draftNo,
+      skuCode: skus.code,
+      qty: purchaseDrafts.qty,
+      receivedQty: purchaseDrafts.receivedQty,
+      status: purchaseDrafts.status,
+      planItemId: purchaseDrafts.planItemId,
+      confirmedDeliveryDate: purchaseDrafts.confirmedDeliveryDate,
+      exceptionReason: purchaseDrafts.exceptionReason,
+    })
+    .from(purchaseDrafts)
+    .innerJoin(skus, eq(skus.id, purchaseDrafts.skuId))
+    .where(eq(purchaseDrafts.sourceRefId, planId))
+    .orderBy(desc(purchaseDrafts.createdAt));
+
+  return c.json({ ...plan, items, purchaseTracking: tracking });
 });
 
 pmcRoutes.get('/pmc/plans/:id/export', async (c) => {

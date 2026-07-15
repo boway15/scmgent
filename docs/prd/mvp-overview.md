@@ -1,7 +1,7 @@
 # MVP 总体规划
 
-**版本**：v1.1（2026-06-06 修订）  
-**目标**：最小可用的供应链业务系统，运行于飞书妙搭
+**版本**：v1.2（2026-06-25 修订）  
+**目标**：预测驱动的补货履约闭环，运行于飞书妙搭
 
 ## 模块清单
 
@@ -11,7 +11,7 @@
 | 2 | 商品主数据（SPU/SKU/商家） | [mvp-product-master-data.md](mvp-product-master-data.md) | 妙搭本地 | P0 |
 | 3 | 库存录入 + 表格导入 | [mvp-inventory-replenishment.md](mvp-inventory-replenishment.md) | 妙搭本地 | P0 |
 | 4 | 安全库存 + 补货预测 + 缺货预警 | 同上 | 妙搭本地算法 | P0 |
-| 5 | PMC 需求计划 + 采购跟单 | [mvp-pmc.md](mvp-pmc.md) | 妙搭本地 | P1 |
+| 5 | PMC 需求计划 + 采购跟单履约闭环 | [mvp-pmc.md](mvp-pmc.md) / [mvp-business-loop.md](mvp-business-loop.md) | 妙搭本地 | P0 |
 | 6 | 跨境合规主数据 | [mvp-compliance.md](mvp-compliance.md) | 妙搭本地 | P1 |
 | 7 | AI 助手（本地 FAQ + 业务嵌入） | [mvp-ai-knowledge.md](mvp-ai-knowledge.md) | 本地（Dify 预留） | P1 |
 | 8 | FOB 分账 | — | 妙搭本地 | P1 |

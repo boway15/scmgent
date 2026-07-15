@@ -3,6 +3,18 @@
 项目根目录：`d:\Docker\project\scm-agent`  
 访问地址：http://localhost:8081（需邮箱登录，默认超管 `admin@scm.local` / `admin123456`）
 
+### 局域网访问
+
+同网段其他设备可用 **本机局域网 IP** 访问，例如 `http://172.16.5.11:8081`（IP 以 `ipconfig` 中「以太网 / WLAN」的 IPv4 为准）。
+
+| 项 | 说明 |
+|----|------|
+| 端口 | 宿主机 `8081` → 容器 `8080`，已绑定 `0.0.0.0` |
+| 登录 | 邮箱登录可用；`COOKIE_SECURE=false` 已适配 HTTP 局域网 |
+| 飞书登录 | 若启用，须把 `APP_BASE_URL` 改为 `http://<本机IP>:8081` 并重建 web 容器 |
+| 防火墙 | Win11 需放行入站 TCP 8081（可用 `netsh advfirewall firewall add rule name="scm-agent 8081" dir=in action=allow protocol=TCP localport=8081`） |
+| 开发模式 | `pnpm dev` 时 Vite 已 `host: true`，局域网访问 `http://<本机IP>:5173` |
+
 > **本地服务器版发布 SOP（日常更新/回滚/备份）**：见 [docs/local-server-release-sop.md](docs/local-server-release-sop.md)  
 > **全新专用机安装与迁移（Win11 + Docker + cloudflared + al6s.cn）**：见 [docs/dedicated-host-setup-migration.md](docs/dedicated-host-setup-migration.md)  
 > **服务器本地部署清单（推荐，不依赖 SSH）**：见 [docs/dedicated-host-server-checklist.md](docs/dedicated-host-server-checklist.md)  

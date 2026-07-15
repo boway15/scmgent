@@ -1,0 +1,268 @@
+# T99 单条 SKU Dify 预测工作流
+# 导入: Dify 控制台 → 工作室 → 导入 DSL
+# 环境变量: DIFY_API_KEY_SALES_FORECAST=app-xxxx
+# 结构规范见 .cursor/skills/dify-cs-email-draft/SKILL.md
+
+kind: app
+version: 0.6.0
+app:
+  mode: workflow
+  name: T99单条销量预测
+  description: 接收 24 月销、品类趋势、预测周期与外生因素 JSON，由 LLM 输出逐月预测
+  icon: 📈
+  icon_background: '#FFF7E6'
+dependencies:
+  - type: marketplace
+    value:
+      marketplace_plugin_unique_identifier: langgenius/deepseek:0.0.15@bc5b794a1b0b4f7e9c2d8a1e3f5b7c9d
+workflow:
+  environment_variables: []
+  conversation_variables: []
+  features:
+    file_upload:
+      enabled: false
+    opening_statement: ''
+    retriever_resource:
+      enabled: false
+    sensitive_word_avoidance:
+      enabled: false
+    speech_to_text:
+      enabled: false
+    suggested_questions: []
+    suggested_questions_after_answer:
+      enabled: false
+    text_to_speech:
+      enabled: false
+  graph:
+    edges:
+      - id: edge-start-llm
+        source: start
+        target: llm_forecast
+        sourceHandle: source
+        targetHandle: target
+        type: custom
+        data:
+          sourceType: start
+          targetType: llm
+          isInIteration: false
+          isInLoop: false
+      - id: edge-llm-code
+        source: llm_forecast
+        target: format_json
+        sourceHandle: source
+        targetHandle: target
+        type: custom
+        data:
+          sourceType: llm
+          targetType: code
+          isInIteration: false
+          isInLoop: false
+      - id: edge-code-end
+        source: format_json
+        target: end
+        sourceHandle: source
+        targetHandle: target
+        type: custom
+        data:
+          sourceType: code
+          targetType: end
+          isInIteration: false
+          isInLoop: false
+    nodes:
+      - id: start
+        type: custom
+        width: 242
+        height: 200
+        position:
+          x: 80
+          y: 280
+        positionAbsolute:
+          x: 80
+          y: 280
+        sourcePosition: right
+        targetPosition: left
+        selected: false
+        data:
+          type: start
+          title: 开始
+          variables:
+            - variable: sku_code
+              label: SKU编码
+              type: text-input
+              required: true
+              max_length: 100
+              options: []
+            - variable: sku_name
+              label: SKU名称
+              type: text-input
+              required: false
+              max_length: 200
+              options: []
+            - variable: category
+              label: 品类
+              type: text-input
+              required: false
+              max_length: 500
+              options: []
+            - variable: sales_history_json
+              label: 24月销JSON
+              type: paragraph
+              required: true
+              max_length: 50000
+              options: []
+            - variable: category_trend_json
+              label: 品类趋势JSON
+              type: paragraph
+              required: true
+              max_length: 10000
+              options: []
+            - variable: forecast_horizon_json
+              label: 预测周期JSON
+              type: paragraph
+              required: true
+              max_length: 5000
+              options: []
+            - variable: context_json
+              label: 上下文JSON
+              type: paragraph
+              required: false
+              max_length: 5000
+              options: []
+            - variable: exogenous_json
+              label: 外生因素JSON
+              type: paragraph
+              required: false
+              max_length: 10000
+              options: []
+
+      - id: llm_forecast
+        type: custom
+        width: 242
+        height: 98
+        position:
+          x: 420
+          y: 280
+        positionAbsolute:
+          x: 420
+          y: 280
+        sourcePosition: right
+        targetPosition: left
+        selected: false
+        data:
+          type: llm
+          title: LLM预测分析
+          context:
+            enabled: false
+            variable_selector: []
+          vision:
+            enabled: false
+          model:
+            mode: chat
+            provider: langgenius/deepseek/deepseek
+            name: deepseek-chat
+            completion_params:
+              temperature: 0.2
+              max_tokens: 2000
+          prompt_template:
+            - id: sys-prompt-t99-forecast-001
+              role: system
+              text: |
+                你是跨境电商供应链销量预测专家。T99 类商品系统不做自动预测，需你基于历史与品类趋势做保守人工辅助预测。
+                请为 forecast_horizon_json 中的每一个 monthLabel 各输出一条记录，不得遗漏或新增月份。
+                输出必须为合法 JSON 数组，每项含 monthLabel、forecastDailyAvg、confidence（high/medium/low）、rationale。
+                原则：保守测算，避免冲高；参考品类 combinedFactor 但不超过历史近期水平的 1.15 倍。
+                若 exogenous_json 含 factors（调价 price_change、投广告 ad、促销 promo 等），须在 rationale 说明如何调整：
+                - 降价/促销：可适度上调预测但偏保守，不超过近期水平 1.15 倍；
+                - 涨价：可适度下调；
+                - 加投广告 ad（intensity 为倍数）：可上调对应月份，但单月不超过近期水平 1.25 倍；
+                - factors 为空或未提供时，按纯历史+品类趋势保守预测。
+            - id: user-prompt-t99-forecast-001
+              role: user
+              text: |
+                SKU: {{#start.sku_code#}} {{#start.sku_name#}}
+                品类: {{#start.category#}}
+                上下文: {{#start.context_json#}}
+                近24月销量: {{#start.sales_history_json#}}
+                品类趋势: {{#start.category_trend_json#}}
+                预测周期: {{#start.forecast_horizon_json#}}
+                外生因素: {{#start.exogenous_json#}}
+
+                请输出 JSON 数组（字段 monthLabel、forecastDailyAvg、confidence、rationale），monthLabel 必须与预测周期 JSON 完全一致且覆盖全部月份，并在数组前用一行 summary: 开头给出整体结论。
+
+      - id: format_json
+        type: custom
+        width: 242
+        height: 90
+        position:
+          x: 760
+          y: 280
+        positionAbsolute:
+          x: 760
+          y: 280
+        sourcePosition: right
+        targetPosition: left
+        selected: false
+        data:
+          type: code
+          title: 格式化输出
+          code_language: python3
+          error_strategy: fail-branch
+          code: |
+            import json
+            import re
+
+            def main(llm_text: str) -> dict:
+                text = llm_text or ""
+                summary = text[:500]
+                arr = []
+                m = re.search(r'\[[\s\S]*\]', text)
+                if m:
+                    try:
+                        arr = json.loads(m.group(0))
+                    except Exception:
+                        arr = []
+                sm = re.search(r'summary\s*[:：]\s*(.+)', text, re.I)
+                if sm:
+                    summary = sm.group(1).strip()[:500]
+                return {
+                    "monthly_forecast_json": json.dumps(arr, ensure_ascii=False),
+                    "summary": summary
+                }
+          outputs:
+            monthly_forecast_json:
+              type: string
+              children: null
+            summary:
+              type: string
+              children: null
+          variables:
+            - variable: llm_text
+              value_selector:
+                - llm_forecast
+                - text
+
+      - id: end
+        type: custom
+        width: 242
+        height: 116
+        position:
+          x: 1100
+          y: 280
+        positionAbsolute:
+          x: 1100
+          y: 280
+        sourcePosition: right
+        targetPosition: left
+        selected: false
+        data:
+          type: end
+          title: 结束
+          outputs:
+            - variable: monthly_forecast_json
+              value_selector:
+                - format_json
+                - monthly_forecast_json
+            - variable: summary
+              value_selector:
+                - format_json
+                - summary

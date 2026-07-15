@@ -1,0 +1,37 @@
+﻿# Cursor 索引与 AI 上下文排除（降低 token 消耗）
+# 语法同 .gitignore
+
+# 依赖与构建产物
+node_modules/
+dist/
+.turbo/
+pgdata/
+*.zip
+
+# 本地环境与日志
+.env
+.env.*
+*.log
+
+# 回测 / 分析样本与脚本输出（非日常开发）
+apps/web/docs/samples/
+apps/web/.backtest-out.txt
+**/.backtest-out.txt
+**/*-backtest*.csv
+**/walkforward-*.csv
+
+# 临时与测试目录
+apps/web/tmp-hono-test/
+apps/web/scripts/.hono-test/
+apps/web/apps/
+
+# 妙搭 zip 迁移参考包（仅迁移时 @ 引用，勿常驻索引）
+docs/code (1)/
+
+# Dify Docker 数据卷
+docker/dify/volumes/
+
+# 含真实销售数据的导入样本
+docs/samples/import-fob/
+
+docs/samples/forecast-backtest/

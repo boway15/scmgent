@@ -3,6 +3,40 @@ import { db, pmcPlans, pmcPlanItems, skus, reorderSuggestions } from '@scm/db';
 import { nextPlanNo, createPurchaseDraft } from '../routes/procurement.js';
 import { schedulePurchaseFollowUps } from '../tasks/purchaseFollowUp.js';
 
+import {
+  forecastMonthKey,
+  resolveHorizonConsumptionDaily,
+} from './forecast-demand.js';
+
+/** PMC 3–6 月窗口：A 类 ×1.1 缓冲，B 类取 P90 */
+export function resolvePmcHorizonForecastDaily(input: {
+  forecastDailyAvg: number;
+  forecastDailyP90?: number | null;
+  horizonMonthIndex: number;
+  profileClass?: string | null;
+}): number {
+  const k = Math.max(0, Math.floor(input.horizonMonthIndex));
+  if (k < 3 || k > 5) {
+    return input.forecastDailyAvg;
+  }
+  if (input.profileClass === 'B' && input.forecastDailyP90 != null && input.forecastDailyP90 > 0) {
+    return input.forecastDailyP90;
+  }
+  if (input.profileClass === 'A') {
+    return Math.round(input.forecastDailyAvg * 1.1 * 10_000) / 10_000;
+  }
+  return resolveHorizonConsumptionDaily({
+    forecastDailyAvg: input.forecastDailyAvg,
+    forecastDailyP90: input.forecastDailyP90,
+    horizonMonthIndex: k,
+    profileClass: input.profileClass,
+  });
+}
+
+export function buildPmcForecastMonthKey(year: number, month: number): string {
+  return forecastMonthKey(year, month);
+}
+
 export async function findDraftPlanForMerchantAndWarehouse(
   merchantCode: string,
   warehouseCode: string,
@@ -161,6 +195,7 @@ export async function generatePurchaseDraftsFromPlan(planId: string, userId: str
 
   const items = await db
     .select({
+      id: pmcPlanItems.id,
       skuId: pmcPlanItems.skuId,
       plannedQty: pmcPlanItems.plannedQty,
       warehouseCode: pmcPlanItems.warehouseCode,
@@ -179,6 +214,7 @@ export async function generatePurchaseDraftsFromPlan(planId: string, userId: str
       expectedDate: String(plan.deliveryDate).slice(0, 10),
       source: 'pmc',
       sourceRefId: plan.id,
+      planItemId: item.id,
       remark: `计划 ${plan.planNo} / 商家 ${plan.merchantCode} / 仓 ${wh} / ${item.skuCode}`,
       createdBy: userId,
     });

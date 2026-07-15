@@ -17,7 +17,7 @@ bitableSyncRoutes.get('/bitable/status', async (c) => {
 bitableSyncRoutes.post('/bitable/sync/:type/preview', requireImportAccess(), async (c) => {
   const type = c.req.param('type');
   if (!isBitableSyncType(type)) {
-    return c.json({ message: 'Invalid sync type. Use: skus, inventory, sales, merchants, warehouse_leads, inventory_policy, sales_forecast' }, 400);
+    return c.json({ message: 'Invalid sync type. Use: skus, inventory, sales, merchants, inventory_policy' }, 400);
   }
 
   const config = getBitableSyncConfig()[type];
@@ -45,7 +45,7 @@ bitableSyncRoutes.post('/bitable/sync/:type', requireImportAccess(), async (c) =
   const type = c.req.param('type');
 
   if (!isBitableSyncType(type)) {
-    return c.json({ message: 'Invalid sync type. Use: skus, inventory, sales, merchants, warehouse_leads, inventory_policy, sales_forecast' }, 400);
+    return c.json({ message: 'Invalid sync type. Use: skus, inventory, sales, merchants, inventory_policy' }, 400);
   }
 
   const config = getBitableSyncConfig()[type];

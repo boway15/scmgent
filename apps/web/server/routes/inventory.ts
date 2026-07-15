@@ -13,172 +13,74 @@ import {
   type ReplenishLight,
 } from '../lib/replenish-light.js';
 import type { InventoryHealth } from '../lib/inventory-light.js';
-import { getLatestHealthSnapshots } from '../lib/inventory-health-store.js';
 import { writeAuditLog } from '../lib/audit-log.js';
+import { buildInventoryOverviewRows, buildInventoryOverviewItemBySkuId, buildInventoryOverviewExportItems } from '../lib/inventory-overview-service.js';
+import { parseListPagination } from '../lib/list-pagination.js';
+import { getViewColumnIds, resolveOverviewColumnIds } from '../lib/inventory-overview-views.js';
+import { getOverviewCellValue } from '../lib/inventory-overview-cell-value.js';
+import { INVENTORY_OVERVIEW_COLUMN_BY_ID } from '../lib/inventory-turnover-snapshot.js';
 
 export const inventoryRoutes = new Hono();
 
-inventoryRoutes.get('/inventory/overview', requireMenu('inventory.overview'), async (c) => {
-  const warehouseFilter = c.req.query('warehouse');
+function parseOverviewFilters(c: { req: { query: (k: string) => string | undefined } }) {
+  const columnsRaw = c.req.query('columns')?.trim();
+  const columns = columnsRaw
+    ? columnsRaw.split(',').map((s) => decodeURIComponent(s.trim())).filter(Boolean)
+    : undefined;
+  return {
+    q: c.req.query('q')?.trim() || undefined,
+    category: c.req.query('category')?.trim() || undefined,
+    lifecycle: c.req.query('lifecycle')?.trim() || undefined,
+    salesCountry: c.req.query('salesCountry')?.trim() || undefined,
+    merchantCode: c.req.query('merchantCode')?.trim() || undefined,
+    ownerName: c.req.query('ownerName')?.trim() || undefined,
+    developerName: c.req.query('developerName')?.trim() || undefined,
+    view: c.req.query('view')?.trim() || undefined,
+    columns,
+  };
+}
 
-  const healthSnapshots = await getLatestHealthSnapshots({
-    warehouseCode: warehouseFilter ?? undefined,
-    limit: 5000,
-  });
-  const healthByKey = new Map(
-    healthSnapshots.map((h) => [`${h.skuId}::${h.warehouseCode}`, h]),
+inventoryRoutes.get('/inventory/overview/export', requireMenu('inventory.overview'), async (c) => {
+  const filters = parseOverviewFilters(c);
+  const full = c.req.query('full') === 'true';
+  const columnIds =
+    full
+      ? getViewColumnIds('excel_full')
+      : resolveOverviewColumnIds({ view: filters.view, columns: filters.columns }) ??
+        getViewColumnIds('replenish');
+
+  const items = await buildInventoryOverviewExportItems(filters, { fullColumns: full });
+  const headers = columnIds.map((id) => INVENTORY_OVERVIEW_COLUMN_BY_ID.get(id)?.label ?? id);
+  const rows = items.map((item) => columnIds.map((colId) => getOverviewCellValue(item, colId)));
+
+  const csv = buildCsv(headers, rows);
+  return csvAttachment(`inventory-turnover-${new Date().toISOString().slice(0, 10)}.csv`, csv);
+});
+
+inventoryRoutes.get('/inventory/overview/:skuId', requireMenu('inventory.overview'), async (c) => {
+  const skuId = c.req.param('skuId');
+  const item = await buildInventoryOverviewItemBySkuId(skuId);
+  if (!item) return c.json({ message: 'SKU not found' }, 404);
+  return c.json(item);
+});
+
+inventoryRoutes.get('/inventory/overview', requireMenu('inventory.overview'), async (c) => {
+  const { page, pageSize, offset } = parseListPagination(
+    c.req.query('page')?.trim(),
+    c.req.query('pageSize')?.trim(),
+    20,
   );
 
-  const whList = warehouseFilter
-    ? [{ code: warehouseFilter }]
-    : await db
-        .select({ code: warehouses.code })
-        .from(warehouses)
-        .where(eq(warehouses.isActive, true))
-        .orderBy(warehouses.sortOrder);
+  const filters = parseOverviewFilters(c);
 
-  const skuRows = await db
-    .select({
-      id: skus.id,
-      code: skus.code,
-      name: skus.name,
-      unit: skus.unit,
-      spuId: skus.spuId,
-      replenishLight: skus.replenishLight,
-    })
-    .from(skus)
-    .where(eq(skus.isActive, true))
-    .orderBy(skus.code);
-
-  const skuIds = skuRows.map((s) => s.id);
-  const lifecycleBySku = new Map<string, string>();
-  if (skuIds.length) {
-    const lifecycleRows = await db
-      .select({
-        skuId: salesForecastMonthly.skuId,
-        lifecycle: salesForecastMonthly.lifecycle,
-      })
-      .from(salesForecastMonthly)
-      .where(inArray(salesForecastMonthly.skuId, skuIds));
-    for (const row of lifecycleRows) {
-      if (row.lifecycle && !lifecycleBySku.has(row.skuId)) {
-        lifecycleBySku.set(row.skuId, row.lifecycle);
-      }
-    }
-  }
-
-  const draftRows: Array<{
-    skuId: string;
-    code: string;
-    name: string;
-    unit: string;
-    spuId: string | null;
-    replenishLight: ReplenishLight;
-    warehouseCode: string;
-    qtyAvailable: number;
-    qtyInTransit: number;
-    qtyInProduction: number;
-    qtyReserved: number;
-    localEffectiveQty: number;
-    safetyStockQty: number | null;
-    reorderPoint: number | null;
-    status: 'normal' | 'alert' | 'danger' | 'stockout';
-    needsReplenishment: boolean;
-    inventoryHealth: InventoryHealth;
-  }> = [];
-
-  for (const sku of skuRows) {
-    const qtyInProduction = await getLatestInProductionQty(sku.id);
-
-    for (const wh of whList) {
-      const [record] = await db
-        .select({
-          qtyAvailable: inventoryRecords.qtyAvailable,
-          qtyInTransit: inventoryRecords.qtyInTransit,
-          qtyReserved: inventoryRecords.qtyReserved,
-        })
-        .from(inventoryRecords)
-        .where(and(eq(inventoryRecords.skuId, sku.id), eq(inventoryRecords.warehouse, wh.code)))
-        .orderBy(desc(inventoryRecords.recordedDate), desc(inventoryRecords.createdAt))
-        .limit(1);
-
-      const [cfg] = await db
-        .select({
-          safetyStockQty: safetyStockConfig.safetyStockQty,
-          reorderPoint: safetyStockConfig.reorderPoint,
-        })
-        .from(safetyStockConfig)
-        .where(
-          and(eq(safetyStockConfig.skuId, sku.id), eq(safetyStockConfig.warehouseCode, wh.code)),
-        )
-        .limit(1);
-
-      const qtyAvailable = record?.qtyAvailable ?? 0;
-      const qtyInTransit = record?.qtyInTransit ?? 0;
-      const qtyReserved = record?.qtyReserved ?? 0;
-      const localEffectiveQty = qtyAvailable + qtyInTransit;
-
-      let status: 'normal' | 'alert' | 'danger' | 'stockout' = 'normal';
-      if (localEffectiveQty <= 0) status = 'stockout';
-      else if (cfg?.safetyStockQty != null && localEffectiveQty < cfg.safetyStockQty) status = 'danger';
-      else if (cfg?.reorderPoint != null && localEffectiveQty < cfg.reorderPoint) status = 'alert';
-
-      const healthSnap = healthByKey.get(`${sku.id}::${wh.code}`);
-      const inventoryHealth: InventoryHealth =
-        (healthSnap?.healthStatus as InventoryHealth) ??
-        (localEffectiveQty <= 0 ? 'red' : 'green');
-
-      draftRows.push({
-        skuId: sku.id,
-        code: sku.code,
-        name: sku.name,
-        unit: sku.unit,
-        spuId: sku.spuId,
-        replenishLight: normalizeReplenishLight(sku.replenishLight),
-        warehouseCode: wh.code,
-        qtyAvailable,
-        qtyInTransit,
-        qtyInProduction,
-        qtyReserved,
-        localEffectiveQty,
-        safetyStockQty: cfg?.safetyStockQty ?? null,
-        reorderPoint: cfg?.reorderPoint ?? null,
-        status,
-        needsReplenishment: needsReplenishmentByInventory(localEffectiveQty, cfg?.reorderPoint),
-        inventoryHealth,
-      });
-    }
-  }
-
-  const enriched = applyReplenishLightToRows(draftRows).map((row) => {
-    const snapshot = healthByKey.get(`${row.skuId}::${row.warehouseCode}`);
-    return {
-    skuId: row.skuId,
-    code: row.code,
-    name: row.name,
-    unit: row.unit,
-    spuId: row.spuId,
-    replenishLight: row.replenishLight,
-    warehouseCode: row.warehouseCode,
-    qtyAvailable: row.qtyAvailable,
-    qtyInTransit: row.qtyInTransit,
-    qtyInProduction: row.qtyInProduction,
-    qtyReserved: row.qtyReserved,
-    localEffectiveQty: row.localEffectiveQty,
-    effectiveQty: row.localEffectiveQty,
-    currentQty: row.localEffectiveQty,
-    safetyStockQty: row.safetyStockQty,
-    reorderPoint: row.reorderPoint,
-    status: row.status,
-    needsReplenishment: row.needsReplenishment,
-    replenishEligible: row.replenishEligible,
-    inventoryHealth: row.inventoryHealth,
-    coverageDays: snapshot?.coverageDays != null ? Number(snapshot.coverageDays) : null,
-    demandSource: snapshot?.demandSource ?? null,
-  };
-  });
-
-  return c.json(enriched);
+  return c.json(
+    await buildInventoryOverviewRows({
+      page,
+      pageSize,
+      offset,
+      ...filters,
+    }),
+  );
 });
 
 inventoryRoutes.get('/inventory/export', async (c) => {

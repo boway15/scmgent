@@ -2,8 +2,9 @@ import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
 import { PageHeader } from '@/components/PageHeader';
+import { ListPagination } from '@/components/ListPagination';
+import { formatDateTimeCst } from '@/lib/utils';
 
 const ACTION_LABELS: Record<string, string> = {
   'auth.login': '邮箱登录',
@@ -31,7 +32,7 @@ function formatDetail(detail?: string | null): string {
 }
 
 function formatTime(value: string): string {
-  return new Date(value).toLocaleString('zh-CN', { hour12: false });
+  return formatDateTimeCst(value);
 }
 
 export function AuditLogsPage() {
@@ -45,7 +46,6 @@ export function AuditLogsPage() {
 
   const items = data?.items ?? [];
   const total = data?.total ?? 0;
-  const totalPages = Math.max(1, Math.ceil(total / pageSize));
 
   return (
     <div className="space-y-6">
@@ -92,29 +92,7 @@ export function AuditLogsPage() {
                   )}
                 </tbody>
               </table>
-              {totalPages > 1 && (
-                <div className="mt-4 flex items-center justify-end gap-2">
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    disabled={page <= 1}
-                    onClick={() => setPage((p) => Math.max(1, p - 1))}
-                  >
-                    上一页
-                  </Button>
-                  <span className="text-sm text-text-sub">
-                    {page} / {totalPages}
-                  </span>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    disabled={page >= totalPages}
-                    onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-                  >
-                    下一页
-                  </Button>
-                </div>
-              )}
+              <ListPagination page={page} pageSize={pageSize} total={total} onPageChange={setPage} />
             </>
           )}
         </CardContent>

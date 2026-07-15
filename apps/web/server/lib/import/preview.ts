@@ -29,6 +29,6 @@ export async function buildImportPreviewResponse(
     headers,
     preview: rows.slice(0, 10),
     validationIssues,
-    hasBlockingIssues: validationIssues.length > 0,
+    hasBlockingIssues: BATCH_TRACKED_IMPORT_TYPES.has(type) && validationIssues.length > 0,
   };
 }

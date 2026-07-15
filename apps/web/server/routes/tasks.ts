@@ -5,6 +5,9 @@ import { runReplenishmentForecast } from '../tasks/replenishmentForecast.js';
 import { runPurchaseFollowUp } from '../tasks/purchaseFollowUp.js';
 import { runInventoryExceptionScan } from '../tasks/inventoryExceptionScan.js';
 import { runDailyInventoryPipeline } from '../tasks/dailyInventoryPipeline.js';
+import { runForecastAccuracy } from '../tasks/forecastAccuracy.js';
+import { runNewsIngestTask } from '../tasks/newsIngest.js';
+import { runSalesHistoryMaintenance } from '../tasks/salesHistoryMaintenance.js';
 import { isAuthBypassLogin } from '../lib/auth-policy.js';
 import { resolveRequestUser } from '../lib/rbac.js';
 import { finishTaskRun, getLatestTaskRuns, startTaskRun } from '../lib/task-runs.js';
@@ -119,6 +122,57 @@ taskRoutes.post('/tasks/daily-inventory-pipeline', requireCronSecret, async (c) 
     return c.json({ ...result, taskRunId: run.id });
   } catch (err) {
     const message = err instanceof Error ? err.message : 'daily pipeline failed';
+    await finishTaskRun(run.id, { success: false, errorMessage: message });
+    return c.json({ message, taskRunId: run.id }, 500);
+  }
+});
+
+taskRoutes.post('/tasks/forecast-accuracy', requireCronSecret, async (c) => {
+  const triggeredBy = resolveTriggeredBy(c);
+  const run = await startTaskRun('forecast_accuracy', triggeredBy);
+  try {
+    const result = await runForecastAccuracy();
+    await finishTaskRun(run.id, {
+      success: true,
+      resultSummary: `upserted=${result.upserted}; month=${result.targetMonth}`,
+    });
+    return c.json({ ...result, taskRunId: run.id });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'forecast accuracy failed';
+    await finishTaskRun(run.id, { success: false, errorMessage: message });
+    return c.json({ message, taskRunId: run.id }, 500);
+  }
+});
+
+taskRoutes.post('/tasks/sales-history-maintenance', requireCronSecret, async (c) => {
+  const triggeredBy = resolveTriggeredBy(c);
+  const run = await startTaskRun('sales_history_maintenance', triggeredBy);
+  try {
+    const result = await runSalesHistoryMaintenance();
+    await finishTaskRun(run.id, {
+      success: true,
+      resultSummary: `monthly=${result.monthlyUpserted}; pruned=${result.prunedDailyRows}; cutoff=${result.dailyRetentionCutoff}`,
+    });
+    return c.json({ ...result, taskRunId: run.id });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'sales history maintenance failed';
+    await finishTaskRun(run.id, { success: false, errorMessage: message });
+    return c.json({ message, taskRunId: run.id }, 500);
+  }
+});
+
+taskRoutes.post('/tasks/news-ingest', requireCronSecret, async (c) => {
+  const triggeredBy = resolveTriggeredBy(c);
+  const run = await startTaskRun('news_ingest', triggeredBy);
+  try {
+    const result = await runNewsIngestTask(run.id);
+    await finishTaskRun(run.id, {
+      success: true,
+      resultSummary: `sources=${result.sourcesProcessed}; new=${result.totalNew}; dup=${result.totalSkippedDup}; filtered=${result.totalSkippedFiltered}; low=${result.totalSkippedLowRelevance}; bitable=${result.bitableSynced}`,
+    });
+    return c.json({ ...result, taskRunId: run.id });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'news ingest failed';
     await finishTaskRun(run.id, { success: false, errorMessage: message });
     return c.json({ message, taskRunId: run.id }, 500);
   }

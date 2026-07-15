@@ -1,4 +1,4 @@
-import { eq, desc, and, sql } from 'drizzle-orm';
+import { eq, desc, and, or, sql, ilike, type SQL } from 'drizzle-orm';
 import { Hono } from 'hono';
 import {
   db,
@@ -12,16 +12,105 @@ import {
   syncSkuDefaultMerchant,
   upsertSkuSupplierFromImport,
 } from '../lib/product-master.js';
+import { parseListPagination } from '../lib/list-pagination.js';
 import { requireMenu } from '../lib/rbac.js';
 import { normalizeReplenishLight } from '../lib/replenish-light.js';
+import { readSkuPackagingFromEncodingMeta, readTurnoverSnapshotAt } from '../lib/inventory-turnover-snapshot.js';
+import { pickLatestIso } from '../lib/pick-latest-iso.js';
 
 export const productRoutes = new Hono();
+
+function ilikeContains(raw: string): string {
+  return `%${raw.trim().replace(/[%_\\]/g, '\\$&')}%`;
+}
+
+function buildSpuWhere(query: { q?: string; category?: string; brand?: string }): SQL | undefined {
+  const parts: SQL[] = [];
+  if (query.q?.trim()) {
+    const pattern = ilikeContains(query.q);
+    parts.push(or(ilike(spus.code, pattern), ilike(spus.name, pattern))!);
+  }
+  if (query.category?.trim()) {
+    parts.push(ilike(spus.category, ilikeContains(query.category)));
+  }
+  if (query.brand?.trim()) {
+    parts.push(ilike(spus.brand, ilikeContains(query.brand)));
+  }
+  return parts.length ? and(...parts) : undefined;
+}
+
+function buildMerchantWhere(query: { q?: string }): SQL | undefined {
+  if (!query.q?.trim()) return undefined;
+  const pattern = ilikeContains(query.q);
+  return or(ilike(merchants.code, pattern), ilike(merchants.name, pattern));
+}
+
+function buildSkuOverviewWhere(query: {
+  q?: string;
+  category?: string;
+  lifecycle?: string;
+  salesCountry?: string;
+  merchantCode?: string;
+  ownerName?: string;
+  developerName?: string;
+}): SQL | undefined {
+  const parts: SQL[] = [];
+  if (query.q?.trim()) {
+    const pattern = ilikeContains(query.q);
+    parts.push(or(ilike(skus.code, pattern), ilike(skus.name, pattern))!);
+  }
+  if (query.category?.trim()) {
+    parts.push(ilike(skus.category, ilikeContains(query.category)));
+  }
+  if (query.lifecycle?.trim()) {
+    parts.push(ilike(skus.lifecycle, ilikeContains(query.lifecycle)));
+  }
+  if (query.salesCountry?.trim()) {
+    parts.push(ilike(skus.salesCountry, ilikeContains(query.salesCountry)));
+  }
+  if (query.merchantCode?.trim()) {
+    parts.push(ilike(skus.merchantCode, ilikeContains(query.merchantCode)));
+  }
+  if (query.ownerName?.trim()) {
+    parts.push(ilike(skus.ownerName, ilikeContains(query.ownerName)));
+  }
+  if (query.developerName?.trim()) {
+    parts.push(ilike(skus.developerName, ilikeContains(query.developerName)));
+  }
+  return parts.length ? and(...parts) : undefined;
+}
 
 // --- SPU ---
 
 productRoutes.get('/spus', async (c) => {
-  const rows = await db.select().from(spus).orderBy(desc(spus.createdAt)).limit(500);
-  return c.json(rows);
+  const { page, pageSize, offset } = parseListPagination(
+    c.req.query('page')?.trim(),
+    c.req.query('pageSize')?.trim(),
+  );
+  const where = buildSpuWhere({
+    q: c.req.query('q')?.trim(),
+    category: c.req.query('category')?.trim(),
+    brand: c.req.query('brand')?.trim(),
+  });
+  const [rows, countRow] = await Promise.all([
+    db
+      .select()
+      .from(spus)
+      .where(where)
+      .orderBy(desc(spus.createdAt))
+      .limit(pageSize)
+      .offset(offset),
+    db
+      .select({ count: sql<number>`count(*)::int` })
+      .from(spus)
+      .where(where),
+  ]);
+  return c.json({
+    items: rows,
+    total: countRow[0]?.count ?? 0,
+    page,
+    pageSize,
+  });
 });
 
 productRoutes.get('/spus/:id', async (c) => {
@@ -91,8 +180,30 @@ productRoutes.put('/spus/:id', requireMenu('data.products'), async (c) => {
 // --- Merchants ---
 
 productRoutes.get('/merchants/master', async (c) => {
-  const rows = await db.select().from(merchants).orderBy(merchants.code).limit(500);
-  return c.json(rows);
+  const { page, pageSize, offset } = parseListPagination(
+    c.req.query('page')?.trim(),
+    c.req.query('pageSize')?.trim(),
+  );
+  const where = buildMerchantWhere({ q: c.req.query('q')?.trim() });
+  const [rows, countRow] = await Promise.all([
+    db
+      .select()
+      .from(merchants)
+      .where(where)
+      .orderBy(merchants.code)
+      .limit(pageSize)
+      .offset(offset),
+    db
+      .select({ count: sql<number>`count(*)::int` })
+      .from(merchants)
+      .where(where),
+  ]);
+  return c.json({
+    items: rows,
+    total: countRow[0]?.count ?? 0,
+    page,
+    pageSize,
+  });
 });
 
 productRoutes.post('/merchants', requireMenu('data.products'), async (c) => {
@@ -274,13 +385,32 @@ productRoutes.put('/sku-suppliers/:id/default', requireMenu('data.products'), as
 // --- Enriched SKU list for product master page ---
 
 productRoutes.get('/products/sku-overview', async (c) => {
-  const rows = await db
+  const { page, pageSize, offset } = parseListPagination(
+    c.req.query('page')?.trim(),
+    c.req.query('pageSize')?.trim(),
+  );
+  const where = buildSkuOverviewWhere({
+    q: c.req.query('q')?.trim(),
+    category: c.req.query('category')?.trim(),
+    lifecycle: c.req.query('lifecycle')?.trim(),
+    salesCountry: c.req.query('salesCountry')?.trim(),
+    merchantCode: c.req.query('merchantCode')?.trim(),
+    ownerName: c.req.query('ownerName')?.trim(),
+    developerName: c.req.query('developerName')?.trim(),
+  });
+
+  const base = db
     .select({
       id: skus.id,
       code: skus.code,
       name: skus.name,
       unit: skus.unit,
       category: skus.category,
+      lifecycle: skus.lifecycle,
+      salesCountry: skus.salesCountry,
+      productCategory: skus.productCategory,
+      ownerName: skus.ownerName,
+      developerName: skus.developerName,
       spuId: skus.spuId,
       spuCode: spus.code,
       spuName: spus.name,
@@ -291,7 +421,15 @@ productRoutes.get('/products/sku-overview', async (c) => {
       encodingValid: skus.encodingValid,
       merchantCode: skus.merchantCode,
       merchantName: skus.merchantName,
+      leadTimeDays: skus.leadTimeDays,
+      moq: skus.moq,
+      unitCost: skus.unitCost,
       replenishLight: skus.replenishLight,
+      encodingMeta: skus.encodingMeta,
+      skuUpdatedAt: skus.updatedAt,
+      inventoryUpdatedAt: sql<Date | null>`(
+        (SELECT max(created_at) FROM inventory_records ir WHERE ir.sku_id = ${skus.id})
+      )`,
       supplierCount: sql<number>`(
         SELECT count(*)::int FROM sku_suppliers ss
         WHERE ss.sku_id = ${skus.id} AND ss.is_active = true
@@ -300,16 +438,29 @@ productRoutes.get('/products/sku-overview', async (c) => {
     })
     .from(skus)
     .leftJoin(spus, eq(spus.id, skus.spuId))
-    .orderBy(desc(skus.updatedAt))
-    .limit(500);
+    .where(where)
+    .$dynamic();
 
-  return c.json(
-    rows.map((row) => ({
+  const [rows, countRow] = await Promise.all([
+    base.orderBy(desc(skus.updatedAt)).limit(pageSize).offset(offset),
+    db
+      .select({ count: sql<number>`count(*)::int` })
+      .from(skus)
+      .where(where),
+  ]);
+
+  return c.json({
+    items: rows.map((row) => ({
       id: row.id,
       code: row.code,
       name: row.name,
       unit: row.unit,
       category: row.category,
+      lifecycle: row.lifecycle,
+      salesCountry: row.salesCountry,
+      productCategory: row.productCategory,
+      ownerName: row.ownerName,
+      developerName: row.developerName,
       spuId: row.spuId,
       spuCode: row.spuCode,
       spuName: row.spuName,
@@ -320,9 +471,21 @@ productRoutes.get('/products/sku-overview', async (c) => {
       encodingValid: row.encodingValid,
       merchantCode: row.merchantCode,
       merchantName: row.merchantName,
+      leadTimeDays: row.leadTimeDays,
+      moq: row.moq,
+      unitCost: row.unitCost,
       replenishLight: normalizeReplenishLight(row.replenishLight),
+      ...readSkuPackagingFromEncodingMeta(row.encodingMeta),
+      updatedAt: pickLatestIso(
+        row.skuUpdatedAt,
+        row.inventoryUpdatedAt,
+        readTurnoverSnapshotAt(row.encodingMeta),
+      ),
       supplierCount: row.supplierCount,
       isActive: row.isActive,
     })),
-  );
+    total: countRow[0]?.count ?? 0,
+    page,
+    pageSize,
+  });
 });

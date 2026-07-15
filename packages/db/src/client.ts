@@ -29,7 +29,7 @@ export function resolveDatabaseUrl(): string {
   if (process.env.NODE_ENV === 'production') {
     console.warn('[db] DATABASE_URL not set; API will fail until platform PG env is injected');
   }
-  return 'postgresql://scm:scm_dev_pass@localhost:5432/scm_dev';
+  return 'postgresql://scm:scm_dev_pass@127.0.0.1:5432/scm_dev';
 }
 
 /** 妙搭 Serverless PG 兼容：prepare:false 适配连接池，生产环境限制连接数 */

@@ -2,6 +2,10 @@ import { eq, and, desc } from 'drizzle-orm';
 import { db, skus, stockAlerts, reorderSuggestions, inventoryRecords } from '@scm/db';
 import { getLatestInventorySnapshot, getLatestInProductionQty } from './inventory-snapshot.js';
 import { IN_PRODUCTION_WAREHOUSE, isPhysicalWarehouse } from './inventory-constants.js';
+import {
+  getExceptionPurchaseTracking,
+  buildTrackingExceptionAdvice,
+} from '../ai/tools/purchase-tracking.js';
 
 type FaqEntry = {
   keywords: string[];
@@ -35,9 +39,19 @@ const FAQ: FaqEntry[] = [
       'PMC 需求计划是平台向商家下发的 SKU×数量×交期计划（不含 BOM）。\n草稿计划可按商家+目标仓合并；确认前可导出 CSV 人工发给商家；确认后生成内部采购跟单台账。',
   },
   {
-    keywords: ['采购跟单', '跟单'],
+    keywords: ['采购跟单', '跟单', '履约', '到货'],
     answer:
-      '采购跟单是计划确认后的内部履约台账，不是正式采购单。\n用于标记是否已跟进商家，可在「下单计划 > 采购跟单」查看。',
+      '采购跟单是计划确认后的内部履约台账，不是正式采购单。\n状态：待确认 → 已确认 → 生产中 → 待发货 → 在途 → 部分到货 → 已收货。\n可在「下单计划 > 采购跟单」确认交期、推进状态、登记到货；到货后自动回写库存并更新 PMC 计划进度。',
+  },
+  {
+    keywords: ['销售预测', '预测版本', 'forecast'],
+    answer:
+      '销售预测按版本管理：导入草稿 → 校验 → 发布。补货预测任务使用已发布版本作为需求口径（优先于历史销量）。\n发布前可查看影响预览；看板展示当前补货口径版本与预测偏差风险。',
+  },
+  {
+    keywords: ['闭环', '今日风险', '风险摘要', '看板'],
+    answer:
+      '经营看板展示闭环漏斗：补货建议 → PMC 草稿 → 已确认计划 → 采购跟单各状态 → 已收货。\n关注待供应商确认、异常跟单、在途/部分到货等待登记项。可提问「采购跟单异常」获取处理建议。',
   },
   {
     keywords: ['缺货预警', '预警', 'alert', 'stockout'],
@@ -47,7 +61,7 @@ const FAQ: FaqEntry[] = [
   {
     keywords: ['销量', '导入', 'csv', '数据导入'],
     answer:
-      '销量历史通过「数据中心 > 数据导入」录入，用于安全库存与补货算法。\n支持 SKU、库存、销量、安全库存、PMC 计划等类型。',
+      '销量历史在「销量历史」页点击「导入销量」上传 xiaoshou **日销量**宽表 CSV，系统自动聚合月表，用于安全库存、销售预测基线与补货算法。',
   },
   {
     keywords: ['亮灯', '红灯', '黄灯', '绿灯', 'replenish light'],
@@ -173,6 +187,10 @@ export async function queryLocalAssistant(
   const faq = matchFaq(query);
   if (faq) {
     let answer = faq.answer;
+    if (/异常|风险|今日/.test(query)) {
+      const tracking = await getExceptionPurchaseTracking(8);
+      answer = `${buildTrackingExceptionAdvice(tracking)}\n\n---\n\n${answer}`;
+    }
     if (skuBlock) {
       answer = `${skuBlock}\n\n---\n\n${answer}`;
     }

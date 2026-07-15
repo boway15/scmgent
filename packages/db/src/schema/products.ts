@@ -28,7 +28,7 @@ export const spus = pgTable(
     /** 分销序号 0=原始 1-9=分销 */
     distributionNo: integer('distribution_no').default(0),
     /** SPU 五位产品序号（事业部内唯一） */
-    spuNumericCode: varchar('spu_numeric_code', { length: 5 }),
+    spuNumericCode: varchar('spu_numeric_code', { length: 10 }),
     brandCode: varchar('brand_code', { length: 2 }),
     categoryCode: varchar('category_code', { length: 3 }),
     divisionName: varchar('division_name', { length: 50 }),

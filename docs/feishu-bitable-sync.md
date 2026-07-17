@@ -29,7 +29,7 @@ FEISHU_BITABLE_TABLE_PURCHASE_FOLLOW_UP=    # 采购跟单（采购管理）tbl3
 # FEISHU_BITABLE_PROCUREMENT_APP_TOKEN=HPJzbHdPea7elSs92T8c31BTnxe
 ```
 
-采购管理模块（`/procurement/bulk-stock`、`/procurement/follow-up`）与主数据导入共用 `FEISHU_BITABLE_APP_TOKEN`。本模块每次飞书同步或文件上传会**全量覆盖**对应列表。
+采购管理模块（`/procurement/bulk-stock`、`/procurement/follow-up`）与主数据导入共用 `FEISHU_BITABLE_APP_TOKEN`。本模块每次飞书同步或文件上传会**全量覆盖**对应列表；**同步到飞书**时也会先清空飞书表再写入本地全部行。
 
 示例（同一多维表格 `HPJzbHdPea7elSs92T8c31BTnxe`）：
 

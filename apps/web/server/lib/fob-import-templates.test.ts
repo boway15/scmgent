@@ -39,9 +39,10 @@ const legacySamplePath = join(samplesDir, '体积信息_202606181444.xlsx');
   assert.deepEqual(errors, []);
   assert.equal(items.length, 1);
   assert.equal(items[0].containerNo, 'OOCU8469000');
-  assert.equal(items[0].merchantCode, 'WJH2607030019');
+  assert.equal(items[0].merchantCode, '广州宏龙办公家具有限公司');
   assert.equal(items[0].skuCode, 'DJ504015_4');
   assert.equal(items[0].merchantName, '广州宏龙办公家具有限公司');
+  assert.match(items[0].remark ?? '', /业务编号:WJH2607030019/);
   assert.match(items[0].remark ?? '', /类别:FOB/);
   assert.match(items[0].remark ?? '', /工厂:广州宏龙办公家具有限公司/);
 }
@@ -63,6 +64,7 @@ const legacySamplePath = join(samplesDir, '体积信息_202606181444.xlsx');
   assert.deepEqual(errors, []);
   assert.equal(items.length, 6);
   assert.equal(items[0].containerNo, 'H26061200007');
+  assert.equal(items[0].merchantCode, '漳州广思五金制品有限公司');
   assert.equal(items[0].merchantName, '漳州广思五金制品有限公司');
   assert.match(items[0].remark ?? '', /类别:FOB/);
 }

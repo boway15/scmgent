@@ -126,15 +126,71 @@ const samplesDir = join(__dirname, '../../../../docs/samples/import-fob');
   assert.deepEqual(errors, []);
   assert.equal(items.length, 2);
   assert.equal(items[0].containerNo, 'OOCU8469000');
+  assert.equal(items[0].merchantCode, '广州宏龙办公家具有限公司');
   assert.equal(items[0].merchantName, '广州宏龙办公家具有限公司');
   assert.equal(
     items[0].remark,
     '业务编号:WJH001；调拨:DB001；类别:FOB；工厂:广州宏龙办公家具有限公司；目的仓:美东仓',
   );
   assert.equal(items[1].containerNo, 'OOCU8469000');
+  assert.equal(items[1].merchantCode, '广州宏龙办公家具有限公司');
   assert.match(items[1].remark ?? '', /类别:退税/);
   assert.ok(Math.abs(items[0].volumeCbm + items[1].volumeCbm - 4.98) < 0.01);
   assert.deepEqual(nonFobContainers, ['H999']);
+}
+
+{
+  // 同订舱多工厂：主体按工厂名称拆分（非订舱编号）
+  const rows = [
+    [
+      '货柜号',
+      '临柜号',
+      '调拨单号',
+      '订舱编号',
+      'SKU编码',
+      '体积',
+      '是否退税',
+      '工厂名称',
+      '工厂类型',
+      '目的仓',
+    ],
+    ['CSNU8685863', 'H1', 'DB1', 'ZKX2604290075', 'SKU-A', '37.7', '退税', '漳州贝德家具有限公司', 'FOB', '美西仓'],
+    ['CSNU8685863', 'H1', 'DB2', 'ZKX2604290075', 'SKU-B', '31.29', '退税', '漳州悦淳工贸有限公司', 'FOB', '美西仓'],
+    ['CSNU8685863', 'H1', 'DB3', 'ZKX2604290075', 'SKU-C', '0.23', '退税', '贝德家具有限公司', 'FOB', '美西仓'],
+  ];
+  const { items, errors } = parseVolumeSheetRows(rows);
+  assert.deepEqual(errors, []);
+  assert.equal(items.length, 3);
+  const codes = new Set(items.map((i) => i.merchantCode));
+  assert.equal(codes.size, 3);
+  assert.ok(codes.has('漳州贝德家具有限公司'));
+  assert.ok(codes.has('漳州悦淳工贸有限公司'));
+  assert.ok(codes.has('贝德家具有限公司'));
+  assert.ok(items.every((i) => i.merchantCode === i.merchantName));
+  assert.ok(items.every((i) => (i.remark ?? '').includes('业务编号:ZKX2604290075')));
+  assert.ok(Math.abs(items.reduce((s, i) => s + i.volumeCbm, 0) - 69.22) < 0.01);
+}
+
+{
+  // 工厂名称为空：报错，不回退订舱编号
+  const rows = [
+    [
+      '货柜号',
+      '临柜号',
+      '调拨单号',
+      '订舱编号',
+      'SKU编码',
+      '体积',
+      '是否退税',
+      '工厂名称',
+      '工厂类型',
+      '目的仓',
+    ],
+    ['CSNU8685863', 'H1', 'DB1', 'ZKX2604290075', 'SKU-A', '10', '退税', '', 'FOB', '美西仓'],
+  ];
+  const { items, errors } = parseVolumeSheetRows(rows);
+  assert.equal(items.length, 0);
+  assert.ok(errors.some((e) => /工厂名称/.test(e)));
 }
 
 {

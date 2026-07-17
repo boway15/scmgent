@@ -89,6 +89,7 @@ export function ForecastHorizonPanel({ active, filters, pageSize = 20, onSkuClic
   const [monthCount, setMonthCount] = useState(6);
   const [page, setPage] = useState(1);
   const [pageSizeState, setPageSizeState] = useState(pageSize);
+  const [exporting, setExporting] = useState<'wide' | 'detail' | null>(null);
 
   const { data: horizon, isLoading } = useQuery({
     queryKey: [
@@ -116,6 +117,28 @@ export function ForecastHorizonPanel({ active, filters, pageSize = 20, onSkuClic
     staleTime: 0,
     refetchOnMount: 'always',
   });
+
+  const handleExport = async (mode: 'wide' | 'detail') => {
+    if (!filters.versionId) return;
+    setExporting(mode);
+    try {
+      await api.exportSalesForecastHorizon({
+        versionId: filters.versionId,
+        mode,
+        skuCode: filters.skuCode || undefined,
+        platform: resolveHorizonPlatformScope(filters.platform),
+        category: filters.category || undefined,
+        profileSegment: filters.profileSegment || undefined,
+        pendingCalibration: filters.pendingCalibration || undefined,
+        monthCount,
+        historyMonthCount: mode === 'wide' ? 0 : monthCount,
+      });
+    } catch (err) {
+      window.alert(err instanceof Error ? err.message : '导出失败');
+    } finally {
+      setExporting(null);
+    }
+  };
 
   const renderSkuCell = (row: ForecastHorizonRow) => {
     if (onSkuClick) {
@@ -149,6 +172,7 @@ export function ForecastHorizonPanel({ active, filters, pageSize = 20, onSkuClic
   );
   const detailFactorColCount = useV41DetailColumns ? 4 : 7;
   const historyPadding = Array.from({ length: detailFactorColCount + 2 }, () => '-');
+  const canExport = Boolean(filters.versionId) && (horizon?.total ?? 0) > 0;
 
   return (
     <div className="space-y-4">
@@ -195,6 +219,24 @@ export function ForecastHorizonPanel({ active, filters, pageSize = 20, onSkuClic
             onClick={() => setViewMode('detail')}
           >
             明细
+          </Button>
+        </div>
+        <div className="ml-auto flex gap-2">
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={!canExport || exporting != null}
+            onClick={() => void handleExport('wide')}
+          >
+            {exporting === 'wide' ? '导出中…' : '导出宽表'}
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={!canExport || exporting != null}
+            onClick={() => void handleExport('detail')}
+          >
+            {exporting === 'detail' ? '导出中…' : '导出明细'}
           </Button>
         </div>
       </div>

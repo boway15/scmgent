@@ -16,6 +16,7 @@ import {
   previewProcurementFeishuPush,
   previewProcurementUpload,
   executeProcurementFeishuPush,
+  clearProcurementListData,
   type ProcurementListKey,
 } from '../lib/procurement-bitable-list.js';
 
@@ -221,6 +222,21 @@ procurementListRoutes.post('/procurement/lists/:type/import', async (c) => {
     return c.json(result);
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Import failed';
+    return c.json({ message }, 400);
+  }
+});
+
+procurementListRoutes.post('/procurement/lists/:type/clear', async (c) => {
+  const access = await assertProcurementListAccess(c, c.req.param('type'), { write: true });
+  if ('response' in access) return access.response;
+
+  const user = await getCurrentUser(c);
+
+  try {
+    const result = await clearProcurementListData(access.type, user.id);
+    return c.json(result);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Clear failed';
     return c.json({ message }, 400);
   }
 });

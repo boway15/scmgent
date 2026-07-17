@@ -138,16 +138,34 @@ function formatContainerBusinessNos(businessNos: string | undefined): string {
   return businessNos?.trim() || '—';
 }
 
+function formatFactoryNames(merchants: MerchantRow[]): string {
+  const names = merchants
+    .map((m) => (m.name?.trim() || m.code).trim())
+    .filter(Boolean);
+  return names.length ? names.join('、') : '—';
+}
+
 function buildContainerHoverTip(
   containerNo: string,
-  merchantCount: number,
+  merchants: MerchantRow[],
   businessNos: string | undefined,
 ): string {
   return [
     `柜号：${containerNo}`,
+    `工厂/主体：${formatFactoryNames(merchants)}`,
     `业务编号：${formatContainerBusinessNos(businessNos)}`,
-    `${merchantCount} 个工厂/主体`,
+    `${merchants.length} 个工厂/主体`,
   ].join('\n');
+}
+
+function buildContainerSubline(
+  merchantCount: number,
+  businessNos: string | undefined,
+): string {
+  const nos = businessNos?.trim();
+  if (!nos) return `${merchantCount} 工厂/主体`;
+  const truncated = nos.length > 28 ? `${nos.slice(0, 28)}…` : nos;
+  return `${merchantCount} 工厂/主体 · 业务编号 ${truncated}`;
 }
 
 const BILL_LABEL: Record<string, string> = {
@@ -582,10 +600,10 @@ export function FobContainerMatrixPanel({
                 const businessNos = businessNosByContainer.get(group.containerNo);
                 const containerHoverTip = buildContainerHoverTip(
                   group.containerNo,
-                  merchants.length,
+                  merchants,
                   businessNos,
                 );
-                const containerSubline = `${merchants.length} 工厂/主体 · ${formatContainerBusinessNos(businessNos)}`;
+                const containerSubline = buildContainerSubline(merchants.length, businessNos);
 
                 return (
                   <Fragment key={group.containerNo}>

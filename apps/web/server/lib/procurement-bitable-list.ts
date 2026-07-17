@@ -9,9 +9,11 @@ import {
 import {
   extractFieldValue,
   listAllRecords,
+  listBitableFields,
   batchCreateBitableRecords,
   batchDeleteBitableRecords,
-  batchUpdateBitableRecords,
+  ensureBitableTextFields,
+  missingBitableFieldNames,
   type BitableRecord,
 } from '../integrations/feishu-bitable.js';
 import { getBitableAppToken } from './bitable-sync.js';
@@ -42,6 +44,104 @@ const LIST_LABELS: Record<ProcurementListKey, string> = {
   bulk_stock_request: '大件备货申请',
   purchase_follow_up: '采购跟单',
 };
+
+/**
+ * 固定列表字段（顺序锁定）。导入/飞书同步只映射数据，不再改列结构。
+ * 来源：当前生产库 procurement_list_meta.column_order 快照。
+ */
+export const FIXED_PROCUREMENT_COLUMNS: Record<ProcurementListKey, string[]> = {
+  bulk_stock_request: [
+    '需求单号',
+    'SKU',
+    'SKU名称',
+    'WSKU',
+    '需求平台',
+    '区域',
+    '亚马逊备货数量',
+    '全链库存总数（含预下单，备货审批）',
+    '非亚备货数量',
+    '总备货数量',
+    '采购成本(CNY)',
+    '备货金额',
+    '订单确认状态',
+    '确认交期',
+    '目的仓',
+    '供应商编号',
+    '供应商简称',
+    '运输方式',
+    '合同期望交付日期',
+    '是否可发起验货申请',
+    '产品状态',
+    '产品类别',
+    '备注',
+    '初审备注',
+    '近15天销量',
+    '近30天销量',
+    '近60天销量',
+    '近30天毛利率',
+    '近90天毛利率',
+    '近30天综合毛利率',
+    '长库龄占比',
+    '近3月退款率',
+    '近30天日均销量',
+    '全链条周转(备货前)',
+    '全链条周转(备货后)',
+    '终审备注',
+    '拆单备注',
+    '预下单审核状态',
+    '是否含税',
+    '创建人',
+    '创建时间',
+    '推送时间',
+  ],
+  purchase_follow_up: [
+    '需求单号',
+    'SKU',
+    'WSKU',
+    'SKU名称',
+    '品类',
+    '开发人员',
+    '首次下单',
+    '供应商编号',
+    '供应商简称',
+    '采购数量',
+    '采购成本（CNY）',
+    '是否现货',
+    '状态',
+    '采购人员',
+    '采购单号',
+    '合同编号',
+    '推送时间',
+    '确认交期',
+    '交货日期',
+    '采购类型',
+    '预计货好时间',
+    '合同期望交付时间',
+    '未调拨数量',
+    '未入库数量',
+    '跟单说明',
+    '延期分类',
+    '延期原因',
+    '单据状态',
+  ],
+};
+
+export function fixedColumnsForProcurementList(listType: ProcurementListKey): string[] {
+  return FIXED_PROCUREMENT_COLUMNS[listType];
+}
+
+function projectRowsToColumns(
+  rows: ProcurementListInputRow[],
+  columnOrder: string[],
+): ProcurementListInputRow[] {
+  const allowed = new Set(columnOrder);
+  return rows.map((row) => ({
+    ...row,
+    rowData: Object.fromEntries(
+      Object.entries(row.rowData).filter(([key]) => allowed.has(key)),
+    ),
+  }));
+}
 
 export function isProcurementListType(value: string): value is ProcurementListKey {
   return (PROCUREMENT_LIST_TYPES as string[]).includes(value);
@@ -136,23 +236,30 @@ export type ProcurementListInputRow = {
   bitableRecordId?: string;
 };
 
-function normalizeInputRows(
+/** 归一化行数据；传入 columnOrder 时严格按该表头顺序，并丢弃超出字段。 */
+export function normalizeInputRows(
   rows: ProcurementListInputRow[],
+  columnOrder?: string[],
 ): { rows: ProcurementListInputRow[]; columnOrder: string[] } {
+  const allowed = columnOrder?.map((key) => key.trim()).filter(Boolean);
+  const allowedSet = allowed?.length ? new Set(allowed) : null;
+
   const filtered = rows
-    .map((row) => ({
-      rowData: Object.fromEntries(
-        Object.entries(row.rowData)
-          .map(([key, value]) => [key.trim(), value.trim()] as const)
-          .filter(([key, value]) => key && value),
-      ),
-      bitableRecordId: row.bitableRecordId,
-    }))
+    .map((row) => {
+      const entries = Object.entries(row.rowData)
+        .map(([key, value]) => [key.trim(), value.trim()] as const)
+        .filter(([key, value]) => key && value)
+        .filter(([key]) => !allowedSet || allowedSet.has(key));
+      return {
+        rowData: Object.fromEntries(entries),
+        bitableRecordId: row.bitableRecordId,
+      };
+    })
     .filter((row) => !isEmptyRow(row.rowData));
 
   return {
     rows: filtered,
-    columnOrder: collectColumnOrder(filtered.map((row) => row.rowData)),
+    columnOrder: allowed?.length ? allowed : collectColumnOrder(filtered.map((row) => row.rowData)),
   };
 }
 
@@ -161,8 +268,12 @@ export async function replaceProcurementListData(params: {
   rows: ProcurementListInputRow[];
   source: 'feishu' | 'upload';
   userId: string;
+  /** @deprecated 列结构已固定，忽略调用方传入的表头 */
+  columnOrder?: string[];
 }) {
-  const { rows, columnOrder } = normalizeInputRows(params.rows);
+  const columnOrder = fixedColumnsForProcurementList(params.listType);
+  const normalized = normalizeInputRows(params.rows, columnOrder);
+  const rows = projectRowsToColumns(normalized.rows, columnOrder);
   assertRowCount(rows, `procurement-${params.listType}`);
 
   await db.transaction(async (tx) => {
@@ -229,13 +340,15 @@ export async function fetchProcurementRowsFromFeishu(
   }));
 }
 
+/** 固定列：飞书拉取只映射到固定字段，不增删列。 */
 export async function previewProcurementFeishuSync(listType: ProcurementListKey) {
   const rows = await fetchProcurementRowsFromFeishu(listType);
-  const normalized = normalizeInputRows(rows);
+  const columnOrder = fixedColumnsForProcurementList(listType);
+  const normalized = normalizeInputRows(rows, columnOrder);
   return {
     source: 'feishu' as const,
     totalRows: normalized.rows.length,
-    columnOrder: normalized.columnOrder,
+    columnOrder,
     sample: normalized.rows.slice(0, 5).map((row) => row.rowData),
   };
 }
@@ -258,12 +371,14 @@ export type ProcurementLocalRow = {
 };
 
 export type FeishuPushPlan = {
+  /** 固定为全量覆盖：先删飞书全部行，再写入本地全部行 */
+  mode: 'full_replace';
   localRowCount: number;
   feishuRowCount: number;
-  toUpdate: number;
-  toCreate: number;
+  /** 将写入飞书的本地行数（非空行） */
+  toWrite: number;
+  /** 将删除的飞书现有行数 */
   toDelete: number;
-  updates: Array<{ localRowId: string; recordId: string; fields: Record<string, unknown> }>;
   creates: Array<{ localRowId: string; fields: Record<string, unknown> }>;
   deleteRecordIds: string[];
 };
@@ -277,46 +392,29 @@ function rowDataToBitableFields(rowData: Record<string, string>): Record<string,
   return fields;
 }
 
-export function buildFeishuPushPlan(
+/** 全量覆盖推送计划：删除飞书全部记录后，按本地顺序重建。 */
+export function buildFeishuFullReplacePlan(
   localRows: ProcurementLocalRow[],
   feishuRecordIds: string[],
 ): FeishuPushPlan {
-  const feishuIdSet = new Set(feishuRecordIds);
-  const keptFeishuIds = new Set<string>();
-  const updates: FeishuPushPlan['updates'] = [];
   const creates: FeishuPushPlan['creates'] = [];
 
   for (const row of localRows) {
     const fields = rowDataToBitableFields(row.rowData);
     if (!Object.keys(fields).length) continue;
-
-    if (row.bitableRecordId && feishuIdSet.has(row.bitableRecordId)) {
-      updates.push({
-        localRowId: row.id,
-        recordId: row.bitableRecordId,
-        fields,
-      });
-      keptFeishuIds.add(row.bitableRecordId);
-      continue;
-    }
-
     creates.push({ localRowId: row.id, fields });
   }
 
-  const deleteRecordIds = feishuRecordIds.filter((id) => !keptFeishuIds.has(id));
-
   return {
+    mode: 'full_replace',
     localRowCount: localRows.length,
     feishuRowCount: feishuRecordIds.length,
-    toUpdate: updates.length,
-    toCreate: creates.length,
-    toDelete: deleteRecordIds.length,
-    updates,
+    toWrite: creates.length,
+    toDelete: feishuRecordIds.length,
     creates,
-    deleteRecordIds,
+    deleteRecordIds: [...feishuRecordIds],
   };
 }
-
 async function loadAllProcurementLocalRows(listType: ProcurementListKey): Promise<ProcurementLocalRow[]> {
   return db
     .select({
@@ -343,7 +441,7 @@ function assertProcurementBitableConfigured(listType: ProcurementListKey) {
 
 async function markProcurementListPushed(listType: ProcurementListKey, userId: string) {
   const localRows = await loadAllProcurementLocalRows(listType);
-  const columnOrder = collectColumnOrder(localRows.map((row) => row.rowData));
+  const columnOrder = fixedColumnsForProcurementList(listType);
   await db
     .insert(procurementListMeta)
     .values({
@@ -358,6 +456,8 @@ async function markProcurementListPushed(listType: ProcurementListKey, userId: s
     .onConflictDoUpdate({
       target: procurementListMeta.listType,
       set: {
+        columnOrder,
+        rowCount: localRows.length,
         lastSyncAt: new Date(),
         lastSyncSource: 'feishu_push',
         lastSyncBy: userId,
@@ -368,21 +468,29 @@ async function markProcurementListPushed(listType: ProcurementListKey, userId: s
 
 export async function previewProcurementFeishuPush(listType: ProcurementListKey) {
   const { appToken, tableId } = assertProcurementBitableConfigured(listType);
-  const [localRows, feishuRecords] = await Promise.all([
+  const columnOrder = fixedColumnsForProcurementList(listType);
+  const [localRows, feishuRecords, feishuFields] = await Promise.all([
     loadAllProcurementLocalRows(listType),
     listAllRecords(appToken, tableId, `procurement-${listType}`),
+    listBitableFields(appToken, tableId),
   ]);
 
-  const plan = buildFeishuPushPlan(localRows, feishuRecords.map((row) => row.record_id));
+  const missingFeishuFields = missingBitableFieldNames(
+    columnOrder,
+    feishuFields.map((f) => f.field_name),
+  );
+  const plan = buildFeishuFullReplacePlan(localRows, feishuRecords.map((row) => row.record_id));
   const meta = await getProcurementListMeta(listType);
 
   return {
     direction: 'to_feishu' as const,
+    mode: plan.mode,
     localRowCount: plan.localRowCount,
     feishuRowCount: plan.feishuRowCount,
-    toUpdate: plan.toUpdate,
-    toCreate: plan.toCreate,
+    toWrite: plan.toWrite,
     toDelete: plan.toDelete,
+    missingFeishuFields,
+    willCreateFeishuFields: missingFeishuFields.length,
     columnOrder: meta.columnOrder,
     sample: localRows.slice(0, 5).map((row) => row.rowData),
   };
@@ -390,6 +498,11 @@ export async function previewProcurementFeishuPush(listType: ProcurementListKey)
 
 export async function executeProcurementFeishuPush(listType: ProcurementListKey, userId: string) {
   const { appToken, tableId } = assertProcurementBitableConfigured(listType);
+  const columnOrder = fixedColumnsForProcurementList(listType);
+
+  // Push uses fixed local columns as field names; recreate any deleted Feishu columns first.
+  const ensured = await ensureBitableTextFields(appToken, tableId, columnOrder);
+
   const [localRows, feishuRecords] = await Promise.all([
     loadAllProcurementLocalRows(listType),
     listAllRecords(appToken, tableId, `procurement-${listType}`),
@@ -397,14 +510,10 @@ export async function executeProcurementFeishuPush(listType: ProcurementListKey,
 
   assertRowCount(localRows, `procurement-${listType}`);
 
-  const plan = buildFeishuPushPlan(localRows, feishuRecords.map((row) => row.record_id));
+  const plan = buildFeishuFullReplacePlan(localRows, feishuRecords.map((row) => row.record_id));
 
-  if (plan.updates.length) {
-    await batchUpdateBitableRecords(
-      appToken,
-      tableId,
-      plan.updates.map((row) => ({ recordId: row.recordId, fields: row.fields })),
-    );
+  if (plan.deleteRecordIds.length) {
+    await batchDeleteBitableRecords(appToken, tableId, plan.deleteRecordIds);
   }
 
   if (plan.creates.length) {
@@ -413,6 +522,12 @@ export async function executeProcurementFeishuPush(listType: ProcurementListKey,
       tableId,
       plan.creates.map((row) => row.fields),
     );
+
+    await db
+      .update(procurementListRows)
+      .set({ bitableRecordId: null })
+      .where(eq(procurementListRows.listType, listType));
+
     for (let i = 0; i < plan.creates.length; i++) {
       const recordId = createdIds[i];
       if (!recordId) continue;
@@ -421,63 +536,79 @@ export async function executeProcurementFeishuPush(listType: ProcurementListKey,
         .set({ bitableRecordId: recordId })
         .where(eq(procurementListRows.id, plan.creates[i]!.localRowId));
     }
-  }
-
-  if (plan.deleteRecordIds.length) {
-    await batchDeleteBitableRecords(appToken, tableId, plan.deleteRecordIds);
+  } else {
+    await db
+      .update(procurementListRows)
+      .set({ bitableRecordId: null })
+      .where(eq(procurementListRows.listType, listType));
   }
 
   await markProcurementListPushed(listType, userId);
 
   return {
     direction: 'to_feishu' as const,
-    pushed: plan.toUpdate + plan.toCreate,
-    updated: plan.toUpdate,
-    created: plan.toCreate,
+    mode: plan.mode,
+    pushed: plan.toWrite,
     deleted: plan.toDelete,
+    created: plan.toWrite,
+    fieldsCreated: ensured.created.length,
   };
 }
 
-function rowsToObjectsPreserveHeaders(rows: string[][]): Array<Record<string, string>> {
-  if (rows.length < 2) return [];
-  const headers = rows[0].map((header) => header.trim()).filter(Boolean);
-  return rows
+function rowsToObjectsPreserveHeaders(rows: string[][]): {
+  rows: Array<Record<string, string>>;
+  columnOrder: string[];
+} {
+  if (rows.length < 2) return { rows: [], columnOrder: [] };
+  const columnOrder = rows[0].map((header) => header.trim()).filter(Boolean);
+  const parsed = rows
     .slice(1)
     .map((line) => {
       const obj: Record<string, string> = {};
-      headers.forEach((key, index) => {
+      columnOrder.forEach((key, index) => {
         const value = (line[index] ?? '').trim();
         if (value) obj[key] = value;
       });
       return obj;
     })
     .filter((row) => !isEmptyRow(row));
+  return { rows: parsed, columnOrder };
 }
+
+export type ProcurementUploadParseResult = {
+  rows: Array<Record<string, string>>;
+  columnOrder: string[];
+};
 
 export async function parseProcurementUploadBuffer(
   buffer: ArrayBuffer,
   fileName: string,
-): Promise<Array<Record<string, string>>> {
+): Promise<ProcurementUploadParseResult> {
   const lower = fileName.toLowerCase();
   if (lower.endsWith('.xlsx') || lower.endsWith('.xls')) {
     const XLSX = await import('xlsx');
     const wb = XLSX.read(buffer, { type: 'array' });
     const sheetName = wb.SheetNames[0];
-    if (!sheetName) return [];
+    if (!sheetName) return { rows: [], columnOrder: [] };
     const sheet = wb.Sheets[sheetName];
-    const json = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: '' });
-    return json
-      .map((row) => {
-        const out: Record<string, string> = {};
-        for (const [key, value] of Object.entries(row)) {
-          const trimmedKey = key.trim();
-          if (!trimmedKey) continue;
-          const formatted = formatXlsxCellValue(trimmedKey, value).trim();
-          if (formatted) out[trimmedKey] = formatted;
-        }
-        return out;
-      })
-      .filter((row) => !isEmptyRow(row));
+    const matrix = XLSX.utils.sheet_to_json<(string | number | boolean | Date | null | undefined)[]>(
+      sheet,
+      { header: 1, defval: '', raw: false },
+    );
+    if (!matrix.length) return { rows: [], columnOrder: [] };
+    const headerRow = (Array.isArray(matrix[0]) ? matrix[0] : []).map((cell) =>
+      String(cell ?? '').trim(),
+    );
+    const stringRows = matrix.map((line, rowIndex) => {
+      const cells = Array.isArray(line) ? line : [];
+      return headerRow.map((header, colIndex) => {
+        const cell = cells[colIndex];
+        if (cell == null) return '';
+        if (rowIndex === 0) return header;
+        return formatXlsxCellValue(header, cell);
+      });
+    });
+    return rowsToObjectsPreserveHeaders(stringRows);
   }
 
   return rowsToObjectsPreserveHeaders(parseDelimitedText(decodeCsvBytes(buffer)));
@@ -489,11 +620,15 @@ export async function previewProcurementUpload(
   fileName: string,
 ) {
   const parsed = await parseProcurementUploadBuffer(buffer, fileName);
-  const normalized = normalizeInputRows(parsed.map((rowData) => ({ rowData })));
+  const columnOrder = fixedColumnsForProcurementList(listType);
+  const normalized = normalizeInputRows(
+    parsed.rows.map((rowData) => ({ rowData })),
+    columnOrder,
+  );
   return {
     source: 'upload' as const,
     totalRows: normalized.rows.length,
-    columnOrder: normalized.columnOrder,
+    columnOrder,
     sample: normalized.rows.slice(0, 5).map((row) => row.rowData),
   };
 }
@@ -507,9 +642,45 @@ export async function executeProcurementUpload(params: {
   const parsed = await parseProcurementUploadBuffer(params.buffer, params.fileName);
   return replaceProcurementListData({
     listType: params.listType,
-    rows: parsed.map((rowData) => ({ rowData })),
+    rows: parsed.rows.map((rowData) => ({ rowData })),
     source: 'upload',
     userId: params.userId,
+  });
+}
+
+/** 仅清空本地行数据，保留固定字段列。 */
+export async function clearProcurementListData(listType: ProcurementListKey, userId: string) {
+  const columnOrder = fixedColumnsForProcurementList(listType);
+  return db.transaction(async (tx) => {
+    const deleted = await tx
+      .delete(procurementListRows)
+      .where(eq(procurementListRows.listType, listType))
+      .returning({ id: procurementListRows.id });
+
+    await tx
+      .insert(procurementListMeta)
+      .values({
+        listType,
+        columnOrder,
+        rowCount: 0,
+        lastSyncAt: new Date(),
+        lastSyncSource: 'clear',
+        lastSyncBy: userId,
+        updatedAt: new Date(),
+      })
+      .onConflictDoUpdate({
+        target: procurementListMeta.listType,
+        set: {
+          columnOrder,
+          rowCount: 0,
+          lastSyncAt: new Date(),
+          lastSyncSource: 'clear',
+          lastSyncBy: userId,
+          updatedAt: new Date(),
+        },
+      });
+
+    return { deleted: deleted.length };
   });
 }
 
@@ -536,7 +707,7 @@ export async function getProcurementListMeta(listType: ProcurementListKey) {
     label: config.label,
     configured: config.configured,
     tableId: config.tableId,
-    columnOrder: meta?.columnOrder ?? [],
+    columnOrder: fixedColumnsForProcurementList(listType),
     rowCount: meta?.rowCount ?? 0,
     lastSyncAt: meta?.lastSyncAt ?? null,
     lastSyncSource: meta?.lastSyncSource ?? null,

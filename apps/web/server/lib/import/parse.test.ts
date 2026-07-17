@@ -10,6 +10,23 @@ describe('parseDelimitedText', () => {
     );
     assert.deepEqual(rows[1], ['DJ1', 'US Desk, black', 'Office']);
   });
+
+  it('keeps quoted cells that span multiple lines (RFC4180)', () => {
+    const rows = parseDelimitedText(
+      [
+        '需求单号,SKU,跟单说明,单据状态',
+        'SPO1,DJ1,"壁炉产前样寄到贝诺，7/3开发已看',
+        '碳块需要开模,周期大概20-25天左右货好；",待入库',
+      ].join('\n'),
+    );
+    assert.equal(rows.length, 2);
+    assert.deepEqual(rows[1], [
+      'SPO1',
+      'DJ1',
+      '壁炉产前样寄到贝诺，7/3开发已看\n碳块需要开模,周期大概20-25天左右货好；',
+      '待入库',
+    ]);
+  });
 });
 
 describe('sanitizeCsvText', () => {
@@ -26,6 +43,23 @@ describe('decodeCsvBytes', () => {
     assert.equal(text.includes('\0'), false);
     const rows = parseDelimitedText(text);
     assert.equal(rows[1][1], 'abc');
+  });
+
+  it('decodes Excel UTF-16LE CSV with BOM', () => {
+    const csv = '需求单号,SKU,单据状态\nSPO1,DJ1,待入库\n';
+    const utf16 = Buffer.from(`\uFEFF${csv}`, 'utf16le');
+    const text = decodeCsvBytes(utf16);
+    assert.match(text, /^需求单号,SKU,单据状态/);
+    const rows = parseDelimitedText(text);
+    assert.equal(rows[1]?.[0], 'SPO1');
+    assert.equal(rows[1]?.[2], '待入库');
+  });
+
+  it('keeps UTF-8 Chinese headers that are not FOB markers', () => {
+    const csv = '需求单号,SKU,单据状态\nSPO1,DJ1,待入库\n';
+    const text = decodeCsvBytes(Buffer.from(csv, 'utf8'));
+    assert.match(text, /^需求单号,SKU,单据状态/);
+    assert.equal(parseDelimitedText(text)[1]?.[0], 'SPO1');
   });
 });
 

@@ -554,11 +554,11 @@ export function isTransferVolumeExport(rows: unknown[][]): boolean {
 }
 
 /**
- * 调拨截单清单体积明细 → 按柜号 + 订舱编号 汇总主体体积
+ * 调拨截单清单体积明细 → 按柜号 + 工厂名称 汇总主体体积
  * - 柜号：有「货柜号」且非空时优先，否则「临柜号」
- * - 工厂/主体：订舱编号（无则调拨单号）
+ * - 工厂/主体：工厂名称（必填；不做别名合并）
  * - 工厂类别：优先「工厂类型」，否则「是否退税」
- * - 备注约定：业务编号/调拨/类别/工厂/目的仓
+ * - 备注约定：业务编号/调拨/类别/工厂/目的仓（订舱编号仍进 remark，供柜级业务编号展示）
  */
 export function parseTransferVolumeSheet(rows: unknown[][]): ParseResult<ParsedMerchantShipment> {
   const errors: string[] = [];
@@ -636,7 +636,8 @@ export function parseTransferVolumeSheet(rows: unknown[][]): ParseResult<ParsedM
     const containerNo = resolveContainerNo(row);
     const bookingNo = bookingIdx >= 0 ? String(row[bookingIdx] ?? '').trim() : '';
     const transferNo = transferIdx >= 0 ? String(row[transferIdx] ?? '').trim() : '';
-    const merchantCode = bookingNo || transferNo;
+    const factoryName =
+      factoryNameIdx >= 0 ? String(row[factoryNameIdx] ?? '').trim() : '';
     const factoryType = resolveFactoryType(row);
     const volumeCbm = parseAmount(row[volumeIdx]);
 
@@ -655,26 +656,24 @@ export function parseTransferVolumeSheet(rows: unknown[][]): ParseResult<ParsedM
       continue;
     }
 
-    if (!merchantCode) {
-      errors.push(`第 ${r + 1} 行：订舱编号/调拨单号为空（柜号 ${containerNo}）`);
+    if (!factoryName) {
+      errors.push(`第 ${r + 1} 行：工厂名称为空（柜号 ${containerNo}）`);
       continue;
     }
 
-    const factoryName =
-      factoryNameIdx >= 0 ? String(row[factoryNameIdx] ?? '').trim() : '';
     const destWarehouse =
       destWarehouseIdx >= 0 ? String(row[destWarehouseIdx] ?? '').trim() : '';
     const remarkParts = [
       bookingNo && `业务编号:${bookingNo}`,
       transferNo && `调拨:${transferNo}`,
       factoryType && `类别:${factoryType}`,
-      factoryName && `工厂:${factoryName}`,
+      `工厂:${factoryName}`,
       destWarehouse && `目的仓:${destWarehouse}`,
     ].filter(Boolean);
 
     items.push({
-      merchantCode,
-      merchantName: factoryName || destWarehouse || bookingNo || merchantCode,
+      merchantCode: factoryName,
+      merchantName: factoryName,
       containerNo,
       skuCode: skuIdx >= 0 ? String(row[skuIdx] ?? '').trim() || undefined : undefined,
       qty: qtyIdx >= 0 ? parseAmount(row[qtyIdx]) || undefined : undefined,
@@ -685,7 +684,7 @@ export function parseTransferVolumeSheet(rows: unknown[][]): ParseResult<ParsedM
   }
 
   if (!items.length && !nonFobContainers.length) {
-    errors.push('未解析到体积行（需有效柜号、订舱编号与体积 > 0）');
+    errors.push('未解析到体积行（需有效柜号、工厂名称与体积 > 0）');
   }
 
   return { items, errors, skippedRows, nonFobContainers };

@@ -70,7 +70,7 @@ export type ProcurementListMeta = {
   columnOrder: string[];
   rowCount: number;
   lastSyncAt: string | null;
-  lastSyncSource: 'feishu' | 'upload' | 'feishu_push' | null;
+  lastSyncSource: 'feishu' | 'upload' | 'feishu_push' | 'clear' | null;
   lastSyncByName: string | null;
   updatedAt: string | null;
 };
@@ -1484,10 +1484,10 @@ export const api = {
   previewProcurementFeishuPush: (type: ProcurementListType) =>
     request<{
       direction: 'to_feishu';
+      mode: 'full_replace';
       localRowCount: number;
       feishuRowCount: number;
-      toUpdate: number;
-      toCreate: number;
+      toWrite: number;
       toDelete: number;
       columnOrder: string[];
       sample: Array<Record<string, string>>;
@@ -1495,8 +1495,8 @@ export const api = {
   executeProcurementFeishuPush: (type: ProcurementListType) =>
     request<{
       direction: 'to_feishu';
+      mode: 'full_replace';
       pushed: number;
-      updated: number;
       created: number;
       deleted: number;
     }>(`/api/procurement/lists/${type}/push`, { method: 'POST' }),
@@ -1535,6 +1535,8 @@ export const api = {
       source: 'upload';
     };
   },
+  clearProcurementList: (type: ProcurementListType) =>
+    request<{ deleted: number }>(`/api/procurement/lists/${type}/clear`, { method: 'POST' }),
   getPmcPlans: () =>
     request<
       Array<{
@@ -2606,6 +2608,35 @@ export const api = {
       } | null;
     }>(`/api/sales-forecasts/horizon${query ? `?${query}` : ''}`);
   },
+  exportSalesForecastHorizon: async (params: {
+    versionId: string;
+    mode: 'wide' | 'detail';
+    station?: string;
+    platform?: string;
+    skuCode?: string;
+    category?: string;
+    profileSegment?: string;
+    pendingCalibration?: boolean;
+    monthCount?: number;
+    historyMonthCount?: number;
+  }) => {
+    const qs = new URLSearchParams();
+    qs.set('versionId', params.versionId);
+    qs.set('mode', params.mode);
+    if (params.station) qs.set('station', params.station);
+    if (params.platform != null && params.platform !== '') qs.set('platform', params.platform);
+    if (params.skuCode) qs.set('skuCode', params.skuCode);
+    if (params.category) qs.set('category', params.category);
+    if (params.profileSegment) qs.set('profileSegment', params.profileSegment);
+    if (params.pendingCalibration) qs.set('pendingCalibration', 'true');
+    if (params.monthCount != null) qs.set('monthCount', String(params.monthCount));
+    if (params.historyMonthCount != null) qs.set('historyMonthCount', String(params.historyMonthCount));
+    const res = await apiFetch(apiUrl(`/api/sales-forecasts/horizon/export?${qs}`));
+    await downloadAttachment(
+      res,
+      params.mode === 'detail' ? 'forecast-horizon-detail.csv' : 'forecast-horizon-wide.csv',
+    );
+  },
   resetAllSalesForecastData: () =>
     request<{
       deleted: {
@@ -3151,6 +3182,9 @@ async function downloadAttachment(res: Response, fallbackName: string) {
     throw new Error(body.message ?? '下载失败');
   }
   const blob = await res.blob();
+  if (blob.size === 0) {
+    throw new Error('导出文件为空，请重试或检查筛选条件');
+  }
   const disposition = res.headers.get('Content-Disposition') ?? '';
   const utf8Match = disposition.match(/filename\*=UTF-8''([^;]+)/i);
   const plainMatch = disposition.match(/filename="([^"]+)"/i);
@@ -3163,8 +3197,12 @@ async function downloadAttachment(res: Response, fallbackName: string) {
   const anchor = document.createElement('a');
   anchor.href = url;
   anchor.download = filename;
+  anchor.style.display = 'none';
+  document.body.appendChild(anchor);
   anchor.click();
-  URL.revokeObjectURL(url);
+  anchor.remove();
+  // 延迟 revoke，避免部分浏览器在下载开始前打断
+  window.setTimeout(() => URL.revokeObjectURL(url), 1_000);
 }
 
 

@@ -111,8 +111,35 @@ type MutateRecordsResponse = {
   data?: {
     record?: { record_id: string };
     records?: Array<{ record_id: string }>;
+    field?: { field_id: string; field_name: string; type: number };
   };
 };
+
+export type BitableFieldMeta = {
+  field_id: string;
+  field_name: string;
+  type: number;
+  ui_type?: string;
+};
+
+/** Pure helper: which required names are absent from an existing field-name set. */
+export function missingBitableFieldNames(
+  requiredNames: string[],
+  existingNames: Iterable<string>,
+): string[] {
+  const existing = new Set(
+    [...existingNames].map((name) => name.trim()).filter(Boolean),
+  );
+  const missing: string[] = [];
+  const seen = new Set<string>();
+  for (const name of requiredNames) {
+    const trimmed = name.trim();
+    if (!trimmed || seen.has(trimmed) || existing.has(trimmed)) continue;
+    seen.add(trimmed);
+    missing.push(trimmed);
+  }
+  return missing;
+}
 
 async function bitableFetch(
   path: string,
@@ -132,6 +159,82 @@ async function bitableFetch(
     throw new Error(`Feishu Bitable API failed: ${body.msg ?? res.status}`);
   }
   return body;
+}
+
+export async function listBitableFields(
+  appToken: string,
+  tableId: string,
+): Promise<BitableFieldMeta[]> {
+  const token = await getTenantAccessToken();
+  const fields: BitableFieldMeta[] = [];
+  let pageToken: string | undefined;
+
+  do {
+    const url = new URL(
+      `${FEISHU_BASE}/bitable/v1/apps/${encodeURIComponent(appToken)}/tables/${encodeURIComponent(tableId)}/fields`,
+    );
+    url.searchParams.set('page_size', '100');
+    if (pageToken) url.searchParams.set('page_token', pageToken);
+
+    const res = await fetch(url.toString(), {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    const body = (await res.json()) as {
+      code: number;
+      msg?: string;
+      data?: {
+        items?: BitableFieldMeta[];
+        has_more?: boolean;
+        page_token?: string;
+      };
+    };
+    if (body.code !== 0) {
+      throw new Error(`Feishu Bitable list fields failed: ${body.msg ?? res.status}`);
+    }
+
+    fields.push(...(body.data?.items ?? []));
+    pageToken = body.data?.has_more ? body.data.page_token : undefined;
+  } while (pageToken);
+
+  return fields;
+}
+
+export async function createBitableTextField(
+  appToken: string,
+  tableId: string,
+  fieldName: string,
+): Promise<void> {
+  await bitableFetch(
+    `/bitable/v1/apps/${encodeURIComponent(appToken)}/tables/${encodeURIComponent(tableId)}/fields`,
+    {
+      method: 'POST',
+      body: JSON.stringify({ field_name: fieldName, type: 1 }),
+    },
+  );
+}
+
+/**
+ * Ensure every required field name exists as a Text column on the Feishu table.
+ * Creates missing fields (rate-limited); does not rename or change existing types.
+ */
+export async function ensureBitableTextFields(
+  appToken: string,
+  tableId: string,
+  requiredNames: string[],
+): Promise<{ existing: string[]; created: string[] }> {
+  const current = await listBitableFields(appToken, tableId);
+  const existing = current.map((f) => f.field_name);
+  const toCreate = missingBitableFieldNames(requiredNames, existing);
+  const created: string[] = [];
+
+  for (const name of toCreate) {
+    await createBitableTextField(appToken, tableId, name);
+    created.push(name);
+    // Feishu create-field limit is ~10 QPS; keep a small gap for safety.
+    await new Promise((resolve) => setTimeout(resolve, 120));
+  }
+
+  return { existing, created };
 }
 
 export async function createBitableRecord(

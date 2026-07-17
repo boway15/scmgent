@@ -1,5 +1,6 @@
 {
   "name": "scm-agent",
+  "version": "0.9.0",
   "private": true,
   "scripts": {
     "dev": "pnpm --filter @scm/web dev",

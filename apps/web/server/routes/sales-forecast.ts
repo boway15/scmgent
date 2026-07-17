@@ -38,6 +38,7 @@ import {
   buildForecastAccuracyDiagnostics,
   createForecastAccuracyReviewQueue,
 } from '../lib/forecast-accuracy-diagnostics.js';
+import { buildForecastHorizonExportCsv, type ForecastHorizonExportMode } from '../lib/forecast-horizon-export.js';
 import { runWalkForwardAccuracyBacktest } from '../lib/forecast-walkforward-backtest.js';
 import { csvAttachment } from '../lib/csv-export.js';
 import {
@@ -1049,6 +1050,44 @@ salesForecastRoutes.get('/sales-forecasts/horizon', requireMenu('data.forecast')
     historyMonthCount,
   });
   return c.json(result);
+});
+
+salesForecastRoutes.get('/sales-forecasts/horizon/export', requireMenu('data.forecast'), async (c) => {
+  const versionId = c.req.query('versionId')?.trim();
+  if (!versionId) {
+    return c.json({ message: 'versionId is required' }, 400);
+  }
+
+  const modeRaw = c.req.query('mode')?.trim().toLowerCase();
+  const mode: ForecastHorizonExportMode = modeRaw === 'detail' ? 'detail' : 'wide';
+  const version = await getForecastVersionById(versionId);
+  if (!version) {
+    return c.json({ message: 'Forecast version not found' }, 404);
+  }
+
+  const monthCountRaw = Number(c.req.query('monthCount')?.trim());
+  const monthCount = Number.isFinite(monthCountRaw) ? monthCountRaw : undefined;
+  const historyMonthCountRaw = Number(c.req.query('historyMonthCount')?.trim());
+  const historyMonthCount = Number.isFinite(historyMonthCountRaw) ? historyMonthCountRaw : undefined;
+  const pendingCalibration = c.req.query('pendingCalibration')?.trim() === 'true';
+
+  const { csv } = await buildForecastHorizonExportCsv({
+    mode,
+    versionId,
+    station: c.req.query('station')?.trim() || undefined,
+    platform: c.req.query('platform')?.trim() || undefined,
+    skuCode: c.req.query('skuCode')?.trim() || undefined,
+    category: c.req.query('category')?.trim() || undefined,
+    profileSegment: c.req.query('profileSegment')?.trim() || undefined,
+    pendingCalibration: pendingCalibration || undefined,
+    monthCount,
+    historyMonthCount,
+  });
+
+  const stamp = new Date().toISOString().slice(0, 10);
+  const safeName = version.versionNo.replace(/[^\w\u4e00-\u9fff-]+/g, '_').slice(0, 48);
+  const suffix = mode === 'detail' ? 'detail' : 'wide';
+  return csvAttachment(`forecast-horizon-${suffix}-${safeName}-${stamp}.csv`, csv);
 });
 
 salesForecastRoutes.post(

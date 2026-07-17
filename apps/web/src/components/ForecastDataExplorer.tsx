@@ -40,7 +40,7 @@ export function ForecastDataExplorer({
   onSkuClick,
   headerExtra,
   title = '预测数据',
-  description = '未来矩阵为预测日均，历史矩阵为销量折算实际日均，明细可同时查看历史与未来。点击 SKU 查看因子与逐月详情。',
+  description = '列表按商品分层（T1→T99）再按 SKU 编码排序。未来矩阵为预测日均，历史矩阵为销量折算实际日均，明细可同时查看历史与未来。支持导出宽表 / 明细 CSV。点击 SKU 查看因子与逐月详情。',
   topSection,
   showPendingCalibrationShortcut = false,
 }: Props) {

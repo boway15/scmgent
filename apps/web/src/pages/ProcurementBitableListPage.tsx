@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react';
+import { useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   api,
@@ -22,6 +22,7 @@ const SOURCE_LABELS: Record<string, string> = {
   feishu: '从飞书同步',
   upload: '文件上传',
   feishu_push: '同步到飞书',
+  clear: '清空当前数据',
 };
 
 type PullPreview = {
@@ -35,8 +36,7 @@ type PushPreview = {
   mode: 'push';
   localRowCount: number;
   feishuRowCount: number;
-  toUpdate: number;
-  toCreate: number;
+  toWrite: number;
   toDelete: number;
   columnOrder: string[];
   sample: Array<Record<string, string>>;
@@ -59,7 +59,7 @@ export function ProcurementBitableListPage({ listType, title, description }: Pro
   const queryClient = useQueryClient();
   const fileRef = useRef<HTMLInputElement>(null);
   const [page, setPage] = useState(1);
-  const [pageSize] = useState(20);
+  const [pageSize, setPageSize] = useState(20);
   const [keyword, setKeyword] = useState('');
   const [appliedKeyword, setAppliedKeyword] = useState('');
   const [importFile, setImportFile] = useState<File | null>(null);
@@ -124,8 +124,7 @@ export function ProcurementBitableListPage({ listType, title, description }: Pro
         mode: 'push',
         localRowCount: result.localRowCount,
         feishuRowCount: result.feishuRowCount,
-        toUpdate: result.toUpdate,
-        toCreate: result.toCreate,
+        toWrite: result.toWrite,
         toDelete: result.toDelete,
         columnOrder: result.columnOrder,
         sample: result.sample,
@@ -139,9 +138,7 @@ export function ProcurementBitableListPage({ listType, title, description }: Pro
     mutationFn: () => api.executeProcurementFeishuPush(listType),
     onSuccess: (result) => {
       setPreview(null);
-      setMessage(
-        `同步到飞书完成：更新 ${result.updated} 行，新增 ${result.created} 行，删除飞书多余 ${result.deleted} 行。`,
-      );
+      setMessage(`同步到飞书完成：已全量覆盖 ${result.created} 行（删除飞书原有 ${result.deleted} 行）。`);
       invalidate();
     },
     onError: (err: Error) => setMessage(err.message),
@@ -167,21 +164,32 @@ export function ProcurementBitableListPage({ listType, title, description }: Pro
       setPreview(null);
       setImportFile(null);
       if (fileRef.current) fileRef.current.value = '';
-      setMessage(`上传完成，已全量更新 ${result.imported} 行。`);
+      setMessage(`上传完成：已全量覆盖 ${result.imported} 行（字段列保持固定）。`);
       invalidate();
     },
     onError: (err: Error) => setMessage(err.message),
   });
 
-  const displayColumns = useMemo(() => {
-    if (!columns.length && data?.items?.length) {
-      return Object.keys(data.items[0]?.rowData ?? {});
-    }
-    return columns;
-  }, [columns, data?.items]);
+  const clearLocal = useMutation({
+    mutationFn: () => api.clearProcurementList(listType),
+    onSuccess: (result) => {
+      setPreview(null);
+      setMessage(`已清空本地 ${result.deleted} 行。`);
+      setPage(1);
+      invalidate();
+    },
+    onError: (err: Error) => setMessage(err.message),
+  });
+
+  const displayColumns = columns;
 
   const handleSearch = () => {
     setAppliedKeyword(keyword.trim());
+    setPage(1);
+  };
+
+  const handlePageSizeChange = (next: number) => {
+    setPageSize(next);
     setPage(1);
   };
 
@@ -204,7 +212,7 @@ export function ProcurementBitableListPage({ listType, title, description }: Pro
     if (preview.mode === 'push') {
       if (
         !window.confirm(
-          `将把本地 ${preview.localRowCount} 行同步到飞书（更新 ${preview.toUpdate}、新增 ${preview.toCreate}、删除飞书多余 ${preview.toDelete} 行），是否继续？`,
+          `将把本地 ${preview.localRowCount} 行全量覆盖到飞书（先删除飞书现有 ${preview.feishuRowCount} 行，再写入 ${preview.toWrite} 行），是否继续？`,
         )
       ) {
         return;
@@ -247,7 +255,7 @@ export function ProcurementBitableListPage({ listType, title, description }: Pro
           <Button
             disabled={!listConfig?.configured || pushSync.isPending || (meta?.rowCount ?? 0) === 0}
             onClick={() => {
-              if (window.confirm('将把本地列表全量同步到飞书多维表格，是否继续？')) {
+              if (window.confirm('将把本地列表全量覆盖到飞书多维表格（先清空飞书表再写入），是否继续？')) {
                 pushSync.mutate();
               }
             }}
@@ -255,7 +263,7 @@ export function ProcurementBitableListPage({ listType, title, description }: Pro
             {pushSync.isPending ? '推送中…' : '同步到飞书'}
           </Button>
           <Button variant="outline" onClick={() => fileRef.current?.click()}>
-            选择文件
+            {importFile ? `已选：${importFile.name}` : '选择 CSV/Excel'}
           </Button>
           <Button
             disabled={!importFile || uploadPreview.isPending}
@@ -263,6 +271,24 @@ export function ProcurementBitableListPage({ listType, title, description }: Pro
             onClick={() => importFile && uploadPreview.mutate(importFile)}
           >
             {uploadPreview.isPending ? '预览中…' : '上传预览'}
+          </Button>
+          <Button
+            variant="outline"
+            className="text-destructive hover:text-destructive"
+            disabled={clearLocal.isPending || (meta?.rowCount ?? 0) === 0}
+            onClick={() => {
+              const n = meta?.rowCount ?? 0;
+              if (
+                !window.confirm(
+                  `将删除本地全部 ${n} 行数据，飞书多维表格不受影响。此操作不可恢复。确定清空？`,
+                )
+              ) {
+                return;
+              }
+              clearLocal.mutate();
+            }}
+          >
+            {clearLocal.isPending ? '清空中…' : '清空当前数据'}
           </Button>
           <input
             ref={fileRef}
@@ -273,6 +299,8 @@ export function ProcurementBitableListPage({ listType, title, description }: Pro
               const file = event.target.files?.[0] ?? null;
               setImportFile(file);
               setPreview(null);
+              setMessage('');
+              if (file) uploadPreview.mutate(file);
             }}
           />
         </div>
@@ -345,8 +373,7 @@ export function ProcurementBitableListPage({ listType, title, description }: Pro
           <CardContent className="space-y-3">
             {preview.mode === 'push' ? (
               <p className="text-sm text-text-sub">
-                本地 {preview.localRowCount} 行 · 飞书当前 {preview.feishuRowCount} 行 · 将更新{' '}
-                {preview.toUpdate} · 新增 {preview.toCreate} · 删除飞书多余 {preview.toDelete}
+                全量覆盖：先删除飞书现有 {preview.feishuRowCount} 行，再写入本地 {preview.toWrite} 行
               </p>
             ) : (
               <p className="text-sm text-text-sub">
@@ -442,6 +469,7 @@ export function ProcurementBitableListPage({ listType, title, description }: Pro
               pageSize={pageSize}
               total={data.total}
               onPageChange={setPage}
+              onPageSizeChange={handlePageSizeChange}
             />
           ) : null}
         </CardContent>

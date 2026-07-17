@@ -39,13 +39,88 @@ export function parseDelimitedLine(line: string): string[] {
   return cells.map((cell) => cell.replace(/^"|"$/g, ''));
 }
 
-/** Parse CSV or TSV text into rows (first row = header) */
+function detectDelimiter(text: string): ',' | '\t' {
+  // Scan first logical header line without breaking on newlines inside quotes.
+  let inQuotes = false;
+  let sawComma = false;
+  let sawTab = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i]!;
+    if (inQuotes) {
+      if (ch === '"') {
+        if (text[i + 1] === '"') i++;
+        else inQuotes = false;
+      }
+      continue;
+    }
+    if (ch === '"') {
+      inQuotes = true;
+      continue;
+    }
+    if (ch === ',') sawComma = true;
+    if (ch === '\t') sawTab = true;
+    if (ch === '\n' || ch === '\r') break;
+  }
+  return sawTab && !sawComma ? '\t' : ',';
+}
+
+/**
+ * Parse CSV/TSV text into rows (first row = header).
+ * Supports RFC4180 quoted fields that contain commas and newlines.
+ */
 export function parseDelimitedText(text: string): string[][] {
-  return text
-    .trim()
-    .split(/\r?\n/)
-    .filter((line) => line.trim())
-    .map((line) => parseDelimitedLine(line));
+  const input = text.replace(/^\uFEFF/, '');
+  if (!input.trim()) return [];
+
+  const delimiter = detectDelimiter(input);
+  const rows: string[][] = [];
+  let row: string[] = [];
+  let current = '';
+  let inQuotes = false;
+
+  for (let i = 0; i < input.length; i++) {
+    const ch = input[i]!;
+
+    if (inQuotes) {
+      if (ch === '"') {
+        if (input[i + 1] === '"') {
+          current += '"';
+          i++;
+        } else {
+          inQuotes = false;
+        }
+      } else {
+        current += ch;
+      }
+      continue;
+    }
+
+    if (ch === '"') {
+      inQuotes = true;
+      continue;
+    }
+
+    if (ch === delimiter) {
+      row.push(current.trim());
+      current = '';
+      continue;
+    }
+
+    if (ch === '\r' || ch === '\n') {
+      if (ch === '\r' && input[i + 1] === '\n') i++;
+      row.push(current.trim());
+      if (row.some((cell) => cell.length > 0)) rows.push(row);
+      row = [];
+      current = '';
+      continue;
+    }
+
+    current += ch;
+  }
+
+  row.push(current.trim());
+  if (row.some((cell) => cell.length > 0)) rows.push(row);
+  return rows;
 }
 
 export function rowsToObjects(rows: string[][]): Array<Record<string, string>> {
@@ -86,19 +161,38 @@ export function sanitizeCsvText(text: string): string {
 /** @alias sanitizeCsvText — strip NUL before any DB text write */
 export const sanitizeDbText = sanitizeCsvText;
 
-/** Decode CSV bytes: UTF-8 BOM first, then UTF-8 if header looks valid, else GBK (FOB 导出常见). */
+function headerLooksValid(header: string): boolean {
+  if (FOB_HEADER_MARKERS.test(header)) return true;
+  // Reject replacement chars / common GBK-mojibake markers; trailing `|` in a regex
+  // would match empty string and incorrectly invalidate every header.
+  if (/[\uFFFD]/.test(header) || header.includes('Ʒ')) return false;
+  return /[\u4e00-\u9fff]/.test(header);
+}
+
+/** Decode CSV bytes: UTF-16 BOM / UTF-8 BOM / UTF-8 / GBK（Excel 中文导出常见）. */
 export function decodeCsvBytes(buffer: Buffer | ArrayBuffer | Uint8Array): string {
   const bytes = Buffer.isBuffer(buffer) ? buffer : Buffer.from(buffer);
+
+  // Excel "Unicode CSV" / UTF-16 LE
+  if (bytes.length >= 2 && bytes[0] === 0xff && bytes[1] === 0xfe) {
+    return sanitizeCsvText(bytes.subarray(2).toString('utf16le'));
+  }
+  // UTF-16 BE
+  if (bytes.length >= 2 && bytes[0] === 0xfe && bytes[1] === 0xff) {
+    return sanitizeCsvText(new TextDecoder('utf-16be').decode(bytes.subarray(2)));
+  }
+
   let offset = 0;
   if (bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf) offset = 3;
   const body = bytes.subarray(offset);
   const utf8 = sanitizeCsvText(body.toString('utf8'));
   const header = firstCsvLine(utf8);
-  if (FOB_HEADER_MARKERS.test(header)) return utf8;
-  if (/[\u4e00-\u9fff]/.test(header) && !/[\uFFFD]|Ʒ|/.test(header)) return utf8;
+  if (headerLooksValid(header)) return utf8;
   try {
     const gbk = sanitizeCsvText(new TextDecoder('gbk').decode(body));
-    if (FOB_HEADER_MARKERS.test(firstCsvLine(gbk))) return gbk;
+    if (headerLooksValid(firstCsvLine(gbk)) || FOB_HEADER_MARKERS.test(firstCsvLine(gbk))) {
+      return gbk;
+    }
     return gbk;
   } catch {
     return utf8;

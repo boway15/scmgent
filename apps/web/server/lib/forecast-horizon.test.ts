@@ -9,6 +9,7 @@ import {
   resolveAnchorProfileSegment,
   findFirstForecastMonth,
   pickPrimaryTierRow,
+  profileSegmentSortRank,
 } from './forecast-horizon.js';
 
 describe('forecast-horizon', () => {
@@ -110,5 +111,15 @@ describe('forecast-horizon', () => {
     const picked = pickPrimaryTierRow(rows);
     assert.equal(picked?.profileSegment, 'T2');
     assert.equal(resolveAnchorProfileSegment(rows), 'T2');
+  });
+
+  it('profileSegmentSortRank orders T1 through T99 then unknown', () => {
+    assert.equal(profileSegmentSortRank('T1'), 1);
+    assert.equal(profileSegmentSortRank('T3P'), 4);
+    assert.equal(profileSegmentSortRank('T99'), 7);
+    assert.ok(profileSegmentSortRank('T1') < profileSegmentSortRank('T2'));
+    assert.ok(profileSegmentSortRank('T4B') < profileSegmentSortRank('T99'));
+    assert.ok(profileSegmentSortRank('T99') < profileSegmentSortRank(null));
+    assert.ok(profileSegmentSortRank('AI') > profileSegmentSortRank('T99'));
   });
 });

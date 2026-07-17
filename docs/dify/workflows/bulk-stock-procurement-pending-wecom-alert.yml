@@ -1,0 +1,757 @@
+app:
+  description: 从飞书多维表格读取大件备货申请，筛选推送日历超期（默认超 1 天、不计今天，即前天及之前）且待采购确认的记录，按供应商汇总条数（不展示 SKU）后以 Markdown 推送企业微信（超长拆条带续标）。
+  icon: 🧾
+  icon_background: '#FFF7E6'
+  icon_type: emoji
+  mode: workflow
+  name: 大件备货申请·待采购确认超时提醒
+  use_icon_as_answer_icon: false
+dependencies: []
+kind: app
+version: 0.6.0
+workflow:
+  conversation_variables: []
+  environment_variables:
+  - description: 飞书自建应用 App ID
+    id: a1b2c3d4-e5f6-7890-abcd-ef1234567890
+    name: FEISHU_APP_ID
+    selector:
+    - env
+    - FEISHU_APP_ID
+    value: ''
+    value_type: string
+  - description: 飞书自建应用 App Secret（请在 Dify 中填写）
+    id: b2c3d4e5-f6a7-8901-bcde-f12345678901
+    name: FEISHU_APP_SECRET
+    selector:
+    - env
+    - FEISHU_APP_SECRET
+    value: ''
+    value_type: secret
+  - description: 采购多维表格 app_token
+    id: c3d4e5f6-a7b8-9012-cdef-123456789012
+    name: FEISHU_APP_TOKEN
+    selector:
+    - env
+    - FEISHU_APP_TOKEN
+    value: HPJzbHdPea7elSs92T8c31BTnxe
+    value_type: string
+  - description: 大件备货申请 table_id
+    id: d4e5f6a7-b8c9-0123-def0-234567890123
+    name: FEISHU_TABLE_ID
+    selector:
+    - env
+    - FEISHU_TABLE_ID
+    value: tbl7H8F6rc2xeFGf
+    value_type: string
+  - description: 企业微信群机器人 Webhook Key（URL 中 key= 后的 UUID）
+    id: e5f6a7b8-c9d0-1234-ef01-345678901234
+    name: WECOM_HOOK_KEY
+    selector:
+    - env
+    - WECOM_HOOK_KEY
+    value: 1bd8d81d-148f-409f-bf7e-b4511be3471f
+    value_type: secret
+  - description: 推送日历超期天数（不计今天），默认 1。例：今天 7/17 → 统计 7/15 及之前（前天及之前）
+    id: f6a7b8c9-d0e1-2345-f012-456789012345
+    name: DAYS_THRESHOLD
+    selector:
+    - env
+    - DAYS_THRESHOLD
+    value: '1'
+    value_type: string
+  features:
+    file_upload:
+      allowed_file_extensions:
+      - .JPG
+      - .JPEG
+      - .PNG
+      - .GIF
+      - .WEBP
+      - .SVG
+      allowed_file_types:
+      - image
+      allowed_file_upload_methods:
+      - local_file
+      - remote_url
+      enabled: false
+      fileUploadConfig:
+        attachment_image_file_size_limit: 2
+        audio_file_size_limit: 50
+        batch_count_limit: 5
+        file_size_limit: 15
+        file_upload_limit: 20
+        image_file_batch_limit: 10
+        image_file_size_limit: 10
+        single_chunk_attachment_limit: 10
+        video_file_size_limit: 100
+        workflow_file_upload_limit: 10
+      image:
+        enabled: false
+        number_limits: 3
+        transfer_methods:
+        - local_file
+        - remote_url
+      number_limits: 3
+    opening_statement: ''
+    retriever_resource:
+      enabled: false
+    sensitive_word_avoidance:
+      enabled: false
+    speech_to_text:
+      enabled: false
+    suggested_questions: []
+    suggested_questions_after_answer:
+      enabled: false
+    text_to_speech:
+      enabled: false
+      language: ''
+      voice: ''
+  graph:
+    edges:
+    - data:
+        isInIteration: false
+        isInLoop: false
+        sourceType: trigger-schedule
+        targetType: code
+      id: edge-trigger-parse
+      source: trigger_schedule
+      sourceHandle: source
+      target: parse_threshold
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        isInLoop: false
+        sourceType: code
+        targetType: code
+      id: edge-parse-token
+      source: parse_threshold
+      sourceHandle: source
+      target: fetch_feishu_token
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        isInLoop: false
+        sourceType: code
+        targetType: code
+      id: edge-token-build-search
+      source: fetch_feishu_token
+      sourceHandle: source
+      target: build_search_body
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        isInLoop: false
+        sourceType: code
+        targetType: http-request
+      id: edge-build-records
+      source: build_search_body
+      sourceHandle: source
+      target: feishu_list_records
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        isInLoop: false
+        sourceType: http-request
+        targetType: code
+      id: edge-records-filter
+      source: feishu_list_records
+      sourceHandle: source
+      target: filter_overdue_rows
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        isInLoop: false
+        sourceType: code
+        targetType: if-else
+      id: edge-filter-judge
+      source: filter_overdue_rows
+      sourceHandle: source
+      target: judge_has_rows
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        isInLoop: false
+        sourceType: if-else
+        targetType: code
+      id: edge-judge-prepare
+      source: judge_has_rows
+      sourceHandle: 'true'
+      target: prepare_supplier_messages
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        isInLoop: false
+        sourceType: if-else
+        targetType: end
+      id: edge-judge-empty
+      source: judge_has_rows
+      sourceHandle: 'false'
+      target: end_empty
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        isInLoop: false
+        sourceType: code
+        targetType: code
+      id: edge-prepare-push
+      source: prepare_supplier_messages
+      sourceHandle: source
+      target: push_wecom_all
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    - data:
+        isInIteration: false
+        isInLoop: false
+        sourceType: code
+        targetType: end
+      id: edge-push-end
+      source: push_wecom_all
+      sourceHandle: source
+      target: end_success
+      targetHandle: target
+      type: custom
+      zIndex: 0
+    nodes:
+    - data:
+        config:
+          frequency: daily
+          mode: visual
+          timezone: Asia/Shanghai
+          visual_config:
+            monthly_days:
+            - 1
+            on_minute: 0
+            time: 9:00 AM
+            weekdays:
+            - mon
+            - tue
+            - wed
+            - thu
+            - fri
+        frequency: daily
+        mode: visual
+        selected: false
+        timezone: Asia/Shanghai
+        title: 定时触发器
+        type: trigger-schedule
+        visual_config:
+          monthly_days:
+          - 1
+          on_minute: 0
+          time: 9:00 AM
+          weekdays:
+          - mon
+          - tue
+          - wed
+          - thu
+          - fri
+      height: 130
+      id: trigger_schedule
+      position:
+        x: 0
+        y: 60
+      positionAbsolute:
+        x: 0
+        y: 60
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        code: "from datetime import datetime, timedelta, time\nfrom zoneinfo import ZoneInfo\n\nTZ = ZoneInfo(\"Asia/Shanghai\")\n\n\ndef main(days_threshold: str = \"1\") -> dict:\n    \"\"\"日历超期：不计今天，超过 N 天。\n\n    例：今天 7/17、N=1 → 7/16 不算超期；统计 7/15 及之前（前天及之前）。\n    cutoff_ms = 上海「今天 − N 天」00:00:00（不含），推送时间 < cutoff 即命中。\n    \"\"\"\n    try:\n        days = int(float((days_threshold or \"1\").strip()))\n    except Exception:\n        days = 1\n    if days < 0:\n        days = 1\n    now = datetime.now(TZ)\n    today = now.date()\n    cutoff_date = today - timedelta(days=days)  # 7/17, N=1 → 7/16\n    cutoff = datetime.combine(cutoff_date, time.min, tzinfo=TZ)\n    latest_overdue = cutoff_date - timedelta(days=1)  # 7/15\n    return {\n        \"days_threshold\": days,\n        \"cutoff_ms\": int(cutoff.timestamp() * 1000),\n        \"cutoff_date_text\": latest_overdue.isoformat(),\n        \"now_text\": now.strftime(\"%Y-%m-%d %H:%M:%S\"),\n    }"
+        code_language: python3
+        desc: 日历超期：不计今天，超过 N 天（默认 1）；cutoff=今天−N 日 00:00（不含）
+        outputs:
+          cutoff_date_text:
+            children: null
+            type: string
+          cutoff_ms:
+            children: null
+            type: number
+          days_threshold:
+            children: null
+            type: number
+          now_text:
+            children: null
+            type: string
+        selected: false
+        title: 解析超时阈值
+        type: code
+        variables:
+        - value_selector:
+          - env
+          - DAYS_THRESHOLD
+          variable: days_threshold
+      height: 112
+      id: parse_threshold
+      position:
+        x: 342
+        y: 67
+      positionAbsolute:
+        x: 342
+        y: 67
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        code: "import json\nimport ssl\nimport urllib.error\nimport urllib.request\n\
+          \nSSL_CONTEXT = ssl.create_default_context()\nSSL_CONTEXT.check_hostname\
+          \ = False\nSSL_CONTEXT.verify_mode = ssl.CERT_NONE\n\ndef main(feishu_app_id:\
+          \ str = \"\", feishu_app_secret: str = \"\") -> dict:\n    app_id = (feishu_app_id\
+          \ or \"\").strip()\n    app_secret = (feishu_app_secret or \"\").strip()\n\
+          \    if not app_id:\n        raise Exception(\n            \"FEISHU_APP_ID\
+          \ 未配置或为空。请在 Dify 工作流「环境变量」填写飞书 App ID（cli_ 开头），保存并重新发布。\"\n\
+          \        )\n    if not app_secret:\n        raise Exception(\n         \
+          \   \"FEISHU_APP_SECRET 未配置或为空。请在 Dify 工作流「环境变量」填写飞书 App Secret，保存并重新发布。\"\
+          \n        )\n    payload = json.dumps({\"app_id\": app_id, \"app_secret\"\
+          : app_secret}).encode(\"utf-8\")\n    req = urllib.request.Request(\n  \
+          \      \"https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal\"\
+          ,\n        data=payload,\n        headers={\"Content-Type\": \"application/json\"\
+          },\n        method=\"POST\",\n    )\n    try:\n        with urllib.request.urlopen(req,\
+          \ timeout=30, context=SSL_CONTEXT) as resp:\n            raw = resp.read().decode(\"\
+          utf-8\")\n    except urllib.error.HTTPError as e:\n        raw = e.read().decode(\"\
+          utf-8\")\n        raise Exception(f\"飞书鉴权 HTTP {e.code}: {raw}\")\n   \
+          \ data = json.loads(raw or \"{}\")\n    token = data.get(\"tenant_access_token\"\
+          , \"\")\n    if not token:\n        code = data.get(\"code\")\n        msg\
+          \ = data.get(\"msg\", \"\")\n        if code == 10003:\n            raise\
+          \ Exception(\n                \"飞书返回 invalid param(10003)：App ID / App Secret\
+          \ 为空或格式错误。\"\n                f\"请检查环境变量 FEISHU_APP_ID、FEISHU_APP_SECRET（当前\
+          \ app_id 长度={len(app_id)}）。\"\n            )\n        if code == 10014:\n\
+          \            raise Exception(\n                \"飞书返回 app secret invalid(10014)：App\
+          \ Secret 不正确，请到飞书开放平台重新复制最新 Secret。\"\n            )\n        raise Exception(f\"\
+          飞书鉴权失败: code={code}, msg={msg}\")\n    return {\"tenant_access_token\":\
+          \ token}\n"
+        code_language: python3
+        desc: Code 节点从环境变量读取凭证并请求 Token（避免 HTTP 节点 env 变量未注入导致 10003）
+        outputs:
+          tenant_access_token:
+            children: null
+            type: string
+        selected: false
+        title: 获取飞书 Token
+        type: code
+        variables:
+        - value_selector:
+          - env
+          - FEISHU_APP_ID
+          variable: feishu_app_id
+        - value_selector:
+          - env
+          - FEISHU_APP_SECRET
+          variable: feishu_app_secret
+      height: 112
+      id: fetch_feishu_token
+      position:
+        x: 684
+        y: 67
+      positionAbsolute:
+        x: 684
+        y: 67
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        code: "import json\n\ndef main(cutoff_ms: float) -> dict:\n    # 推送时间是文本列(fieldType=1)，飞书不支持 isLess；仅筛状态，按推送时间升序，本地按日历超期比较\n    # 例：今天 7/17、N=1 → cutoff=7/16 00:00，下游取推送时间早于 cutoff（即 7/15 及之前）\n    cutoff = int(cutoff_ms or 0)\n    body = {\n        \"filter\": {\n            \"conjunction\": \"and\",\n            \"conditions\": [{\n                \"field_name\": \"订单确认状态\",\n                \"operator\": \"is\",\n                \"value\": [\"待采购确认\"],\n            }],\n        },\n        \"sort\": [{\"field_name\": \"推送时间\", \"desc\": False}],\n        \"field_names\": [\"订单确认状态\", \"推送时间\", \"供应商简称\", \"SKU\", \"需求单号\"],\n        \"page_size\": 500,\n        \"automatic_fields\": False,\n    }\n    return {\n        \"search_body\": json.dumps(body, ensure_ascii=False),\n        \"cutoff_ms\": cutoff,\n    }"
+        code_language: python3
+        desc: 仅筛待采购确认（推送时间为文本列不可 isLess）；升序后下游本地按日历超期筛选
+        outputs:
+          cutoff_ms:
+            children: null
+            type: number
+          search_body:
+            children: null
+            type: string
+        selected: false
+        title: 构建查表条件
+        type: code
+        variables:
+        - value_selector:
+          - parse_threshold
+          - cutoff_ms
+          variable: cutoff_ms
+      height: 96
+      id: build_search_body
+      position:
+        x: 1368
+        y: 75
+      positionAbsolute:
+        x: 1368
+        y: 75
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        authorization:
+          type: no-auth
+        body:
+          data: '{{#build_search_body.search_body#}}'
+          type: raw-text
+        desc: HTTP search 单页最多 500 条；超时 60s，避开 Code 沙箱 15s 限制。推送时间升序保证超期旧单优先
+        headers: 'Content-Type: application/json
+
+          Authorization: Bearer {{#fetch_feishu_token.tenant_access_token#}}
+
+          '
+        method: post
+        params: ''
+        retry_config:
+          max_retries: 2
+          retry_enabled: true
+          retry_interval: 1000
+        selected: false
+        ssl_verify: true
+        timeout:
+          max_connect_timeout: 10
+          max_read_timeout: 60
+          max_write_timeout: 30
+        title: 查询飞书多维表格
+        type: http-request
+        url: https://open.feishu.cn/open-apis/bitable/v1/apps/HPJzbHdPea7elSs92T8c31BTnxe/tables/tbl7H8F6rc2xeFGf/records/search
+        variables: []
+      height: 246
+      id: feishu_list_records
+      position:
+        x: 1710
+        y: 0
+      positionAbsolute:
+        x: 1710
+        y: 0
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        code: "import json\nimport re\nfrom datetime import datetime\nfrom zoneinfo import ZoneInfo\n\nSTATUS_PENDING = \"待采购确认\"\nFIELD_PUSH_TIME = \"推送时间\"\nFIELD_STATUS = \"订单确认状态\"\nFIELD_SUPPLIER = \"供应商简称\"\nFIELD_SKU = \"SKU\"\nTZ = ZoneInfo(\"Asia/Shanghai\")\n\n\ndef text_value(value):\n    if value is None:\n        return \"\"\n    if isinstance(value, str):\n        return value.strip()\n    if isinstance(value, bool):\n        return \"true\" if value else \"false\"\n    if isinstance(value, (int, float)):\n        if value > 100000000000:\n            return datetime.fromtimestamp(value / 1000, TZ).strftime(\"%Y-%m-%d %H:%M:%S\")\n        return str(value).strip()\n    if isinstance(value, list):\n        parts = []\n        for item in value:\n            if isinstance(item, dict):\n                parts.append(str(item.get(\"text\") or item.get(\"name\") or item.get(\"value\") or \"\").strip())\n            else:\n                parts.append(str(item).strip())\n        return \"\".join([p for p in parts if p])\n    if isinstance(value, dict):\n        for key in (\"text\", \"name\", \"value\"):\n            if key in value and value.get(key) is not None:\n                nested = text_value(value.get(key))\n                if nested:\n                    return nested\n        return \"\"\n    return str(value).strip()\n\n\ndef parse_push_time_ms(value):\n    if value is None:\n        return None\n    if isinstance(value, (int, float)):\n        n = int(value)\n        if n > 100000000000:\n            return n\n        if n > 1000000000:\n            return n * 1000\n        return None\n    if isinstance(value, str):\n        text = value.strip()\n        if not text:\n            return None\n        if re.fullmatch(r\"\\d{13}\", text):\n            return int(text)\n        if re.fullmatch(r\"\\d{10}\", text):\n            return int(text) * 1000\n        for fmt in (\n            \"%Y-%m-%d %H:%M:%S\", \"%Y/%m/%d %H:%M:%S\",\n            \"%Y-%m-%d %H:%M\", \"%Y/%m/%d %H:%M\",\n            \"%Y-%m-%d\", \"%Y/%m/%d\", \"%Y.%m.%d\",\n        ):\n            try:\n                sample = text[:19] if \":\" in fmt else text[:10]\n                dt = datetime.strptime(sample, fmt).replace(tzinfo=TZ)\n                return int(dt.timestamp() * 1000)\n            except Exception:\n                pass\n        m = re.match(r\"(\\d{4})[-/.](\\d{1,2})[-/.](\\d{1,2})\", text)\n        if m:\n            try:\n                dt = datetime(int(m.group(1)), int(m.group(2)), int(m.group(3)), tzinfo=TZ)\n                return int(dt.timestamp() * 1000)\n            except Exception:\n                pass\n        return None\n    if isinstance(value, list):\n        for item in value:\n            ms = parse_push_time_ms(item)\n            if ms is not None:\n                return ms\n        return None\n    if isinstance(value, dict):\n        for key in (\"value\", \"text\", \"name\", \"date\"):\n            if key in value:\n                ms = parse_push_time_ms(value.get(key))\n                if ms is not None:\n                    return ms\n        return None\n    return None\n\n\ndef main(records_body, cutoff_ms: float, days_threshold: float, now_text: str = \"\") -> dict:\n    if isinstance(records_body, dict):\n        payload = records_body\n    elif isinstance(records_body, str) and records_body.strip():\n        payload = json.loads(records_body)\n    else:\n        payload = {}\n    if payload.get(\"code\") not in (0, None):\n        raise Exception(f\"查询飞书表格失败: {payload}\")\n    records = payload.get(\"data\", {}).get(\"items\", []) or []\n    has_more = bool(payload.get(\"data\", {}).get(\"has_more\"))\n    cutoff_ms = int(cutoff_ms or 0)\n    cutoff_dt = datetime.fromtimestamp(cutoff_ms / 1000, TZ)\n    matched = []\n    skipped = {\"status\": 0, \"time_parse_fail\": 0, \"time_too_recent\": 0, \"sku\": 0}\n    debug_samples = []\n\n    for record in records:\n        fields = record.get(\"fields\", {})\n        status = text_value(fields.get(FIELD_STATUS))\n        if status != STATUS_PENDING:\n            skipped[\"status\"] += 1\n            continue\n        push_field = fields.get(FIELD_PUSH_TIME)\n        push_ms = parse_push_time_ms(push_field)\n        push_raw = text_value(push_field)\n        if len(debug_samples) < 3:\n            debug_samples.append({\n                \"push_raw\": push_raw,\n                \"push_ms\": push_ms,\n                \"field_type\": type(push_field).__name__,\n            })\n        if push_ms is None:\n            skipped[\"time_parse_fail\"] += 1\n            continue\n        # cutoff = 今天−N 日 00:00（不含）；推送时间 >= cutoff 视为未超期\n        if push_ms >= cutoff_ms:\n            skipped[\"time_too_recent\"] += 1\n            continue\n        sku = text_value(fields.get(FIELD_SKU))\n        if not sku:\n            skipped[\"sku\"] += 1\n            continue\n        matched.append({\n            \"供应商简称\": text_value(fields.get(FIELD_SUPPLIER)) or \"未知供应商\",\n            \"SKU\": sku,\n            \"推送时间\": push_raw,\n            \"需求单号\": text_value(fields.get(\"需求单号\")),\n        })\n\n    matched.sort(key=lambda x: (x.get(\"供应商简称\", \"\"), x.get(\"SKU\", \"\")))\n\n    return {\n        \"has_rows\": len(matched) > 0,\n        \"matched_count\": len(matched),\n        \"rows_json\": json.dumps(matched, ensure_ascii=False),\n        \"days_threshold\": int(days_threshold or 1),\n        \"cutoff_text\": cutoff_dt.strftime(\"%Y-%m-%d %H:%M:%S\"),\n        \"now_text\": now_text or \"\",\n        \"scanned_count\": len(records),\n        \"total_fetched\": len(records),\n        \"has_more\": has_more,\n        \"skipped_json\": json.dumps(skipped, ensure_ascii=False),\n        \"debug_sample\": json.dumps(debug_samples, ensure_ascii=False),\n    }"
+        code_language: python3
+        desc: 解析 HTTP search；按日历 cutoff（今天−N 日 00:00 不含）筛选超期
+        outputs:
+          cutoff_text:
+            children: null
+            type: string
+          debug_sample:
+            children: null
+            type: string
+          has_more:
+            children: null
+            type: boolean
+          has_rows:
+            children: null
+            type: boolean
+          days_threshold:
+            children: null
+            type: number
+          matched_count:
+            children: null
+            type: number
+          now_text:
+            children: null
+            type: string
+          rows_json:
+            children: null
+            type: string
+          scanned_count:
+            children: null
+            type: number
+          skipped_json:
+            children: null
+            type: string
+          total_fetched:
+            children: null
+            type: number
+        selected: false
+        title: 筛选超时待确认
+        type: code
+        variables:
+        - value_selector:
+          - feishu_list_records
+          - body
+          variable: records_body
+        - value_selector:
+          - parse_threshold
+          - cutoff_ms
+          variable: cutoff_ms
+        - value_selector:
+          - parse_threshold
+          - days_threshold
+          variable: days_threshold
+        - value_selector:
+          - parse_threshold
+          - now_text
+          variable: now_text
+      height: 96
+      id: filter_overdue_rows
+      position:
+        x: 2052
+        y: 75
+      positionAbsolute:
+        x: 2052
+        y: 75
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        cases:
+        - case_id: 'true'
+          conditions:
+          - comparison_operator: is
+            id: f1a2b3c4-d5e6-7890-abcd-ef1234567890
+            value: true
+            varType: boolean
+            variable_selector:
+            - filter_overdue_rows
+            - has_rows
+          id: 'true'
+          logical_operator: and
+        desc: 判断是否有待推送记录
+        selected: false
+        title: 是否有待推送
+        type: if-else
+      height: 176
+      id: judge_has_rows
+      position:
+        x: 2394
+        y: 35
+      positionAbsolute:
+        x: 2394
+        y: 35
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        code: "import json\nfrom collections import defaultdict\n\nMAX_CHARS = 1300\nBITABLE_URL = \"https://chinabestwo.feishu.cn/base/HPJzbHdPea7elSs92T8c31BTnxe?table=tbl7H8F6rc2xeFGf&view=vewLM617rt\"\nFOOTER = f\"\\n\\n[查看明细]({BITABLE_URL})\"\n\n\ndef build_supplier_block(supplier: str, count: int) -> str:\n    return f\"**{supplier}** {count}条\"\n\n\ndef make_header(\n    days_threshold: float,\n    matched_count: int,\n    supplier_count: int,\n    now_text: str,\n    part_index: int,\n) -> str:\n    title = f\"大件备货申请·待采购确认超{int(days_threshold or 1)}天\"\n    if part_index > 1:\n        title = f\"{title} (续{part_index})\"\n    meta = f\"> 共 {matched_count} 条 / {supplier_count} 家供应商\"\n    if now_text:\n        meta += f\"，生成时间：{now_text.strip()}\"\n    return f\"**{title}**\\n{meta}\"\n\n\ndef split_messages(blocks: list, make_hdr, max_chars: int = MAX_CHARS):\n    if not blocks:\n        return []\n    body_limit = max_chars - len(FOOTER)\n    if body_limit < 200:\n        body_limit = max_chars\n\n    messages = []\n    part_index = 1\n    header = make_hdr(part_index)\n    current = header\n\n    def finalize():\n        nonlocal current, part_index, header\n        messages.append((current + FOOTER).strip())\n        part_index += 1\n        header = make_hdr(part_index)\n        current = header\n\n    for block in blocks:\n        candidate = f\"{current}\\n\\n{block}\"\n        if len(candidate) <= body_limit:\n            current = candidate\n            continue\n        if current != header:\n            finalize()\n        current = f\"{header}\\n\\n{block}\"\n    if current and current != header:\n        messages.append((current + FOOTER).strip())\n    return messages\n\n\ndef main(rows_json: str, days_threshold: float, now_text: str = \"\") -> dict:\n    rows = json.loads(rows_json or \"[]\")\n    groups = defaultdict(int)\n    order = []\n    for row in rows:\n        supplier = (row.get(\"供应商简称\") or \"未知供应商\").strip()\n        if supplier not in groups:\n            groups[supplier] = 0\n            order.append(supplier)\n        groups[supplier] += 1\n\n    blocks = [build_supplier_block(s, groups[s]) for s in order if groups[s]]\n    matched_count = len(rows)\n    supplier_count = len([s for s in order if groups[s]])\n\n    def make_hdr(part_index: int) -> str:\n        return make_header(\n            days_threshold, matched_count, supplier_count, now_text, part_index\n        )\n\n    messages = split_messages(blocks, make_hdr, MAX_CHARS)\n    push_meta = [{\"supplier\": s, \"count\": groups[s]} for s in order if groups[s]]\n\n    return {\n        \"push_messages_json\": json.dumps(messages, ensure_ascii=False),\n        \"push_meta\": json.dumps(push_meta, ensure_ascii=False),\n        \"supplier_count\": supplier_count,\n        \"message_count\": len(messages),\n        \"matched_count\": matched_count,\n    }"
+        code_language: python3
+        desc: Markdown 按供应商汇总条数（不展示 SKU）；拆条标题带(续N)；附明细链接
+        outputs:
+          matched_count:
+            children: null
+            type: number
+          message_count:
+            children: null
+            type: number
+          push_messages_json:
+            children: null
+            type: string
+          push_meta:
+            children: null
+            type: string
+          supplier_count:
+            children: null
+            type: number
+        selected: false
+        title: 按供应商生成推送内容
+        type: code
+        variables:
+        - value_selector:
+          - filter_overdue_rows
+          - rows_json
+          variable: rows_json
+        - value_selector:
+          - filter_overdue_rows
+          - days_threshold
+          variable: days_threshold
+        - value_selector:
+          - filter_overdue_rows
+          - now_text
+          variable: now_text
+      height: 96
+      id: prepare_supplier_messages
+      position:
+        x: 2756
+        y: 93
+      positionAbsolute:
+        x: 2756
+        y: 93
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        code: "import json\nimport ssl\nimport urllib.error\nimport urllib.request\n\nDEFAULT_HOOK_KEY = \"1bd8d81d-148f-409f-bf7e-b4511be3471f\"\nWECOM_MAX_CHARS = 1300\nSSL_CONTEXT = ssl.create_default_context()\nSSL_CONTEXT.check_hostname = False\nSSL_CONTEXT.verify_mode = ssl.CERT_NONE\n\n\ndef char_len(text):\n    return len(text or \"\")\n\n\ndef split_for_wecom(text: str, max_chars: int = WECOM_MAX_CHARS):\n    text = (text or \"\").strip()\n    if not text:\n        return []\n    if char_len(text) <= max_chars:\n        return [text]\n    parts = []\n    start = 0\n    while start < len(text):\n        end = min(start + max_chars, len(text))\n        parts.append(text[start:end])\n        start = end\n    return [p for p in parts if p.strip()]\n\n\ndef send_markdown(webhook_url: str, content: str) -> dict:\n    if char_len(content) > WECOM_MAX_CHARS:\n        raise Exception(\n            f\"单条消息 {char_len(content)} 字，超过企业微信 {WECOM_MAX_CHARS} 字上限\"\n        )\n    payload = json.dumps(\n        {\n            \"msgtype\": \"markdown\",\n            \"markdown\": {\"content\": content},\n        },\n        ensure_ascii=False,\n    ).encode(\"utf-8\")\n    req = urllib.request.Request(\n        webhook_url,\n        data=payload,\n        headers={\"Content-Type\": \"application/json; charset=utf-8\"},\n        method=\"POST\",\n    )\n    try:\n        with urllib.request.urlopen(req, timeout=30, context=SSL_CONTEXT) as resp:\n            raw = resp.read().decode(\"utf-8\")\n    except urllib.error.HTTPError as e:\n        raw = e.read().decode(\"utf-8\")\n        raise Exception(f\"HTTP {e.code}: {raw}\")\n    data = json.loads(raw or \"{}\")\n    if data.get(\"errcode\") != 0:\n        raise Exception(\n            f\"企业微信 errcode={data.get('errcode')} errmsg={data.get('errmsg')}\"\n        )\n    return data\n\n\ndef main(push_messages_json: str, hook_key: str = \"\") -> dict:\n    key = (hook_key or \"\").strip() or DEFAULT_HOOK_KEY\n    webhook_url = f\"https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key={key}\"\n    try:\n        messages = json.loads(push_messages_json or \"[]\")\n    except Exception as e:\n        raise Exception(f\"push_messages_json 解析失败: {e}\")\n    if not messages:\n        raise Exception(\"push_messages_json 为空，请检查「按供应商生成推送内容」\")\n\n    results = []\n    send_index = 0\n    for msg in messages:\n        text = (msg or \"\").strip()\n        if not text:\n            continue\n        for part in split_for_wecom(text):\n            send_index += 1\n            response = send_markdown(webhook_url, part)\n            results.append(\n                {\n                    \"index\": send_index,\n                    \"length\": char_len(part),\n                    \"errcode\": response.get(\"errcode\"),\n                    \"errmsg\": response.get(\"errmsg\", \"ok\"),\n                }\n            )\n\n    return {\n        \"push_count\": len(results),\n        \"push_results\": json.dumps(results, ensure_ascii=False),\n    }\n"
+        code_language: python3
+        desc: 逐条推送企业微信 markdown 消息（单条≤1300字）
+        outputs:
+          push_count:
+            children: null
+            type: number
+          push_results:
+            children: null
+            type: string
+        selected: false
+        title: 推送企业微信
+        type: code
+        variables:
+        - value_selector:
+          - prepare_supplier_messages
+          - push_messages_json
+          variable: push_messages_json
+        - value_selector:
+          - env
+          - WECOM_HOOK_KEY
+          variable: hook_key
+      height: 96
+      id: push_wecom_all
+      position:
+        x: 3098
+        y: 93
+      positionAbsolute:
+        x: 3098
+        y: 93
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        desc: 输出推送结果
+        outputs:
+        - value_selector:
+          - filter_overdue_rows
+          - now_text
+          value_type: string
+          variable: now_text
+        - value_selector:
+          - filter_overdue_rows
+          - days_threshold
+          value_type: number
+          variable: days_threshold
+        - value_selector:
+          - prepare_supplier_messages
+          - matched_count
+          value_type: number
+          variable: matched_count
+        - value_selector:
+          - prepare_supplier_messages
+          - supplier_count
+          value_type: number
+          variable: supplier_count
+        - value_selector:
+          - prepare_supplier_messages
+          - message_count
+          value_type: number
+          variable: message_count
+        - value_selector:
+          - prepare_supplier_messages
+          - push_meta
+          value_type: string
+          variable: push_meta
+        - value_selector:
+          - push_wecom_all
+          - push_count
+          value_type: number
+          variable: push_count
+        - value_selector:
+          - push_wecom_all
+          - push_results
+          value_type: string
+          variable: push_results
+        selected: false
+        title: 推送完成
+        type: end
+      height: 272
+      id: end_success
+      position:
+        x: 3440
+        y: 5
+      positionAbsolute:
+        x: 3440
+        y: 5
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    - data:
+        desc: 无待推送记录时直接结束
+        outputs:
+        - value_selector:
+          - filter_overdue_rows
+          - now_text
+          value_type: string
+          variable: now_text
+        - value_selector:
+          - filter_overdue_rows
+          - days_threshold
+          value_type: number
+          variable: days_threshold
+        - value_selector:
+          - filter_overdue_rows
+          - matched_count
+          value_type: number
+          variable: matched_count
+        - value_selector:
+          - filter_overdue_rows
+          - scanned_count
+          value_type: number
+          variable: scanned_count
+        - value_selector:
+          - filter_overdue_rows
+          - skipped_json
+          value_type: string
+          variable: skipped_json
+        - value_selector:
+          - filter_overdue_rows
+          - cutoff_text
+          value_type: string
+          variable: cutoff_text
+        - value_selector:
+          - filter_overdue_rows
+          - debug_sample
+          value_type: string
+          variable: debug_sample
+        - value_selector:
+          - filter_overdue_rows
+          - total_fetched
+          value_type: number
+          variable: total_fetched
+        selected: false
+        title: 无待推送
+        type: end
+      height: 194
+      id: end_empty
+      position:
+        x: 2756
+        y: 269
+      positionAbsolute:
+        x: 2756
+        y: 269
+      selected: false
+      sourcePosition: right
+      targetPosition: left
+      type: custom
+      width: 242
+    viewport:
+      x: 0
+      y: 100
+      zoom: 0.75
+  rag_pipeline_variables: []

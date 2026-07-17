@@ -25,10 +25,36 @@ import { MAX_FORECAST_MONTH_COUNT } from './forecast-limits.js';
 
 const ALLCAT_V41_PROFILE_SEGMENTS = new Set(['T1', 'T2', 'T3', 'T3P', 'T4A', 'T4B', 'T99']);
 
+/** 列表展示排序：T1 → T99；未知/空分层靠后 */
+export const ALLCAT_V41_TIER_SORT_ORDER = ['T1', 'T2', 'T3', 'T3P', 'T4A', 'T4B', 'T99'] as const;
+
 /** AI 辅助标记，不是商品分层；展示与筛选时应忽略 */
 export function isPersistedProfileSegment(segment: string | null | undefined): boolean {
   const normalized = segment?.trim().toUpperCase();
   return Boolean(normalized && normalized !== 'AI');
+}
+
+/** 商品分层列表排序权重（越小越靠前） */
+export function profileSegmentSortRank(segment?: string | null): number {
+  const normalized = segment?.trim().toUpperCase() ?? '';
+  const idx = (ALLCAT_V41_TIER_SORT_ORDER as readonly string[]).indexOf(normalized);
+  return idx >= 0 ? idx + 1 : ALLCAT_V41_TIER_SORT_ORDER.length + 1;
+}
+
+/** SQL：分层排序权重，与 profileSegmentSortRank 对齐 */
+export function profileSegmentSortRankSql(segmentExpr: ReturnType<typeof sql>): ReturnType<typeof sql> {
+  return sql`
+    CASE UPPER(COALESCE(${segmentExpr}, ''))
+      WHEN 'T1' THEN 1
+      WHEN 'T2' THEN 2
+      WHEN 'T3' THEN 3
+      WHEN 'T3P' THEN 4
+      WHEN 'T4A' THEN 5
+      WHEN 'T4B' THEN 6
+      WHEN 'T99' THEN 7
+      ELSE 8
+    END
+  `;
 }
 
 /** 列表筛选生效的分层（待校准 ≡ T99） */
@@ -95,6 +121,60 @@ const PRIMARY_TIER_PICK_ORDER_SQL = sql`
   END,
   CASE WHEN platform = 'AMAZON' THEN 0 ELSE 1 END
 `;
+
+/** 全渠道锚点分层：首月 + 主渠道优先（与 resolveAnchorProfileSegment 一致） */
+function buildAggregatedAnchorSegmentSql(input: {
+  versionId: string;
+  stationFilter: string;
+  skuIdExpr: ReturnType<typeof sql>;
+}) {
+  return sql`(
+    SELECT sfm_anchor.profile_segment
+    FROM ${salesForecastMonthly} sfm_anchor
+    WHERE sfm_anchor.version_id = ${input.versionId}
+      AND sfm_anchor.sku_id = ${input.skuIdExpr}
+      AND sfm_anchor.station = ${input.stationFilter}
+      AND sfm_anchor.platform IN (${v41PlatformCodesSql})
+      AND (sfm_anchor.forecast_year, sfm_anchor.month) = (
+        SELECT sfm_min.forecast_year, sfm_min.month
+        FROM ${salesForecastMonthly} sfm_min
+        WHERE sfm_min.version_id = ${input.versionId}
+          AND sfm_min.sku_id = ${input.skuIdExpr}
+          AND sfm_min.station = ${input.stationFilter}
+          AND sfm_min.platform IN (${v41PlatformCodesSql})
+        ORDER BY sfm_min.forecast_year ASC, sfm_min.month ASC
+        LIMIT 1
+      )
+    ORDER BY
+      CASE
+        WHEN sfm_anchor.profile_segment IS NOT NULL
+          AND sfm_anchor.profile_segment NOT IN ('T99', 'AI') THEN 0
+        ELSE 1
+      END ASC,
+      CASE WHEN sfm_anchor.platform = 'AMAZON' THEN 0 ELSE 1 END ASC,
+      sfm_anchor.platform ASC
+    LIMIT 1
+  )`;
+}
+
+/** 单渠道锚点分层：该渠道首月 profile_segment */
+function buildPlatformAnchorSegmentSql(input: {
+  versionId: string;
+  stationFilter: string;
+  platform: string;
+  skuIdExpr: ReturnType<typeof sql>;
+}) {
+  return sql`(
+    SELECT sfm_anchor.profile_segment
+    FROM ${salesForecastMonthly} sfm_anchor
+    WHERE sfm_anchor.version_id = ${input.versionId}
+      AND sfm_anchor.sku_id = ${input.skuIdExpr}
+      AND sfm_anchor.station = ${input.stationFilter}
+      AND sfm_anchor.platform = ${input.platform}
+    ORDER BY sfm_anchor.forecast_year ASC, sfm_anchor.month ASC
+    LIMIT 1
+  )`;
+}
 
 const earlierThanSfmSql = sql`(
   earlier.forecast_year < sfm.forecast_year
@@ -759,19 +839,40 @@ async function listForecastHorizonAggregated(input: {
 
   const where = and(...conditions);
 
-  const identityRows = await db
-    .selectDistinct({
-      skuId: salesForecastMonthly.skuId,
-      skuCode: skus.code,
-      skuName: skus.name,
-      category: skus.category,
-    })
-    .from(salesForecastMonthly)
-    .innerJoin(skus, eq(skus.id, salesForecastMonthly.skuId))
-    .where(where)
-    .orderBy(asc(skus.code))
-    .limit(input.pageSize)
-    .offset(input.offset);
+  const identityResult = await db.execute<{
+    skuId: string;
+    skuCode: string;
+    skuName: string;
+    category: string | null;
+  }>(sql`
+    SELECT
+      matched.sku_id AS "skuId",
+      matched.sku_code AS "skuCode",
+      matched.sku_name AS "skuName",
+      matched.category AS "category"
+    FROM (
+      SELECT DISTINCT
+        ${salesForecastMonthly.skuId} AS sku_id,
+        ${skus.code} AS sku_code,
+        ${skus.name} AS sku_name,
+        ${skus.category} AS category
+      FROM ${salesForecastMonthly}
+      INNER JOIN ${skus} ON ${eq(skus.id, salesForecastMonthly.skuId)}
+      WHERE ${where}
+    ) matched
+    ORDER BY
+      ${profileSegmentSortRankSql(
+        buildAggregatedAnchorSegmentSql({
+          versionId: input.versionId,
+          stationFilter,
+          skuIdExpr: sql`matched.sku_id`,
+        }),
+      )} ASC,
+      matched.sku_code ASC
+    LIMIT ${input.pageSize}
+    OFFSET ${input.offset}
+  `);
+  const identityRows = Array.from(identityResult);
 
   const [countRow, monthLabelRows, seasonalityLookup] = await Promise.all([
     db
@@ -1023,20 +1124,45 @@ export async function listForecastHorizon(input: {
 
   const where = and(...conditions);
 
-  const identityRows = await db
-    .selectDistinct({
-      skuId: salesForecastMonthly.skuId,
-      skuCode: skus.code,
-      skuName: skus.name,
-      category: skus.category,
-      platform: salesForecastMonthly.platform,
-    })
-    .from(salesForecastMonthly)
-    .innerJoin(skus, eq(skus.id, salesForecastMonthly.skuId))
-    .where(where)
-    .orderBy(asc(skus.code), asc(salesForecastMonthly.platform))
-    .limit(pageSize)
-    .offset(offset);
+  const identityResult = await db.execute<{
+    skuId: string;
+    skuCode: string;
+    skuName: string;
+    category: string | null;
+    platform: string;
+  }>(sql`
+    SELECT
+      matched.sku_id AS "skuId",
+      matched.sku_code AS "skuCode",
+      matched.sku_name AS "skuName",
+      matched.category AS "category",
+      matched.platform AS "platform"
+    FROM (
+      SELECT DISTINCT
+        ${salesForecastMonthly.skuId} AS sku_id,
+        ${skus.code} AS sku_code,
+        ${skus.name} AS sku_name,
+        ${skus.category} AS category,
+        ${salesForecastMonthly.platform} AS platform
+      FROM ${salesForecastMonthly}
+      INNER JOIN ${skus} ON ${eq(skus.id, salesForecastMonthly.skuId)}
+      WHERE ${where}
+    ) matched
+    ORDER BY
+      ${profileSegmentSortRankSql(
+        buildPlatformAnchorSegmentSql({
+          versionId,
+          stationFilter,
+          platform: platformNormalized,
+          skuIdExpr: sql`matched.sku_id`,
+        }),
+      )} ASC,
+      matched.sku_code ASC,
+      matched.platform ASC
+    LIMIT ${pageSize}
+    OFFSET ${offset}
+  `);
+  const identityRows = Array.from(identityResult);
 
   const [countRow, monthLabelRows, seasonalityLookup] = await Promise.all([
     db

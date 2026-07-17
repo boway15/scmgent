@@ -1,7 +1,7 @@
 # FOB 分账主体改为工厂名称 · 设计说明
 
 **日期**：2026-07-17  
-**状态**：已确认待实现  
+**状态**：已实现  
 **关联**：`docs/prd/fob-settlement-split-v2.md`、`.cursor/rules/fob-settlement-dev.mdc`  
 **触发案例**：柜号 `CSNU8685863` — 同订舱多工厂 FOB，平账仅显示 1 个主体
 

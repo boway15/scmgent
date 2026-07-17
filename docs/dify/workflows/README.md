@@ -1,5 +1,24 @@
 # Dify Workflow DSL
 
+## 大件备货申请 · 企业微信超时提醒
+
+| 文件 | 说明 |
+|------|------|
+| `bulk-stock-wecom-alert.yml` | 待供应商确认 · 日历超 2 天（不计今天）→ 企微 Markdown |
+| `bulk-stock-wecom-alert-setup.md` | 上项环境变量与节点说明 |
+| `bulk-stock-procurement-pending-wecom-alert.yml` | 待采购确认 · 日历超 1 天（不计今天，前天及之前）→ 企微 Markdown |
+| `bulk-stock-procurement-pending-wecom-alert-setup.md` | 上项环境变量与节点说明 |
+
+结构对齐 `飞书新闻-企业微信分类推送.yml`：HTTP 取 Token → search 查表 → Code 筛选 → if-else → 分组生成 → 推送企微。
+
+### 导入步骤
+
+1. Dify 控制台 → **工作室** → **导入 DSL** → 选择对应 `.yml`
+2. 配置环境变量：`FEISHU_APP_ID`、`FEISHU_APP_SECRET`、`FEISHU_APP_TOKEN`、`FEISHU_TABLE_ID`、`WECOM_HOOK_KEY`、`DAYS_THRESHOLD`
+3. 发布；默认定时工作日 09:00 自动执行
+
+---
+
 ## 客服回复质量评估
 
 | 文件 | 说明 |

@@ -14,6 +14,7 @@ import {
   batchDeleteBitableRecords,
   ensureBitableTextFields,
   missingBitableFieldNames,
+  pickExistingBitableFields,
   type BitableRecord,
 } from '../integrations/feishu-bitable.js';
 import { getBitableAppToken } from './bitable-sync.js';
@@ -383,24 +384,32 @@ export type FeishuPushPlan = {
   deleteRecordIds: string[];
 };
 
-function rowDataToBitableFields(rowData: Record<string, string>): Record<string, unknown> {
+function rowDataToBitableFields(
+  rowData: Record<string, string>,
+  allowedFieldNames?: Iterable<string>,
+): Record<string, unknown> {
   const fields: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(rowData)) {
     const trimmed = value.trim();
     if (trimmed) fields[key] = trimmed;
   }
-  return fields;
+  if (!allowedFieldNames) return fields;
+  return pickExistingBitableFields(fields, allowedFieldNames);
 }
 
-/** 全量覆盖推送计划：删除飞书全部记录后，按本地顺序重建。 */
+/**
+ * 全量覆盖推送计划：删除飞书全部记录后，按本地顺序重建。
+ * @param allowedFieldNames 仅写入飞书已存在的字段；飞书多出的列忽略，本地未知列丢弃（避免 FieldNameNotFound）
+ */
 export function buildFeishuFullReplacePlan(
   localRows: ProcurementLocalRow[],
   feishuRecordIds: string[],
+  allowedFieldNames?: Iterable<string>,
 ): FeishuPushPlan {
   const creates: FeishuPushPlan['creates'] = [];
 
   for (const row of localRows) {
-    const fields = rowDataToBitableFields(row.rowData);
+    const fields = rowDataToBitableFields(row.rowData, allowedFieldNames);
     if (!Object.keys(fields).length) continue;
     creates.push({ localRowId: row.id, fields });
   }
@@ -466,6 +475,17 @@ async function markProcurementListPushed(listType: ProcurementListKey, userId: s
     });
 }
 
+/** 推送可写字段 = 本地固定列 ∩ 飞书已有列；飞书多出的列（如公式列）一律忽略。 */
+export function writableProcurementFieldNames(
+  columnOrder: string[],
+  feishuFieldNames: Iterable<string>,
+): string[] {
+  const existing = new Set(
+    [...feishuFieldNames].map((name) => name.trim()).filter(Boolean),
+  );
+  return columnOrder.filter((name) => existing.has(name));
+}
+
 export async function previewProcurementFeishuPush(listType: ProcurementListKey) {
   const { appToken, tableId } = assertProcurementBitableConfigured(listType);
   const columnOrder = fixedColumnsForProcurementList(listType);
@@ -475,11 +495,14 @@ export async function previewProcurementFeishuPush(listType: ProcurementListKey)
     listBitableFields(appToken, tableId),
   ]);
 
-  const missingFeishuFields = missingBitableFieldNames(
-    columnOrder,
-    feishuFields.map((f) => f.field_name),
+  const feishuFieldNames = feishuFields.map((f) => f.field_name);
+  const missingFeishuFields = missingBitableFieldNames(columnOrder, feishuFieldNames);
+  const allowedFieldNames = writableProcurementFieldNames(columnOrder, feishuFieldNames);
+  const plan = buildFeishuFullReplacePlan(
+    localRows,
+    feishuRecords.map((row) => row.record_id),
+    allowedFieldNames,
   );
-  const plan = buildFeishuFullReplacePlan(localRows, feishuRecords.map((row) => row.record_id));
   const meta = await getProcurementListMeta(listType);
 
   return {
@@ -491,6 +514,7 @@ export async function previewProcurementFeishuPush(listType: ProcurementListKey)
     toDelete: plan.toDelete,
     missingFeishuFields,
     willCreateFeishuFields: missingFeishuFields.length,
+    ignoredFeishuExtraFields: feishuFieldNames.filter((name) => !columnOrder.includes(name)),
     columnOrder: meta.columnOrder,
     sample: localRows.slice(0, 5).map((row) => row.rowData),
   };
@@ -503,14 +527,24 @@ export async function executeProcurementFeishuPush(listType: ProcurementListKey,
   // Push uses fixed local columns as field names; recreate any deleted Feishu columns first.
   const ensured = await ensureBitableTextFields(appToken, tableId, columnOrder);
 
-  const [localRows, feishuRecords] = await Promise.all([
+  const [localRows, feishuRecords, feishuFields] = await Promise.all([
     loadAllProcurementLocalRows(listType),
     listAllRecords(appToken, tableId, `procurement-${listType}`),
+    listBitableFields(appToken, tableId),
   ]);
 
   assertRowCount(localRows, `procurement-${listType}`);
 
-  const plan = buildFeishuFullReplacePlan(localRows, feishuRecords.map((row) => row.record_id));
+  // Only write fixed columns that exist on Feishu; drop unknown local keys and ignore Feishu extras.
+  const allowedFieldNames = writableProcurementFieldNames(
+    columnOrder,
+    feishuFields.map((f) => f.field_name),
+  );
+  const plan = buildFeishuFullReplacePlan(
+    localRows,
+    feishuRecords.map((row) => row.record_id),
+    allowedFieldNames,
+  );
 
   if (plan.deleteRecordIds.length) {
     await batchDeleteBitableRecords(appToken, tableId, plan.deleteRecordIds);

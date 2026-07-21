@@ -8,8 +8,12 @@ import {
   normalizeInputRows,
   parseProcurementUploadBuffer,
   buildFeishuFullReplacePlan,
+  writableProcurementFieldNames,
 } from './procurement-bitable-list.js';
-import { missingBitableFieldNames } from '../integrations/feishu-bitable.js';
+import {
+  missingBitableFieldNames,
+  pickExistingBitableFields,
+} from '../integrations/feishu-bitable.js';
 
 describe('procurement-bitable-list', () => {
   it('recognizes procurement list types', () => {
@@ -136,5 +140,81 @@ describe('procurement-bitable-list', () => {
     assert.equal(plan.toDelete, 2);
     assert.deepEqual(plan.deleteRecordIds, ['rec-1', 'rec-old']);
     assert.equal(plan.creates.length, 2);
+  });
+
+  it('drops unknown local fields on push to avoid FieldNameNotFound', () => {
+    const allowed = writableProcurementFieldNames(
+      ['需求单号', 'SKU', '推送时间'],
+      ['需求单号', 'SKU', '推送时间', '推送日期（+2天）'],
+    );
+    assert.deepEqual(allowed, ['需求单号', 'SKU', '推送时间']);
+
+    const plan = buildFeishuFullReplacePlan(
+      [
+        {
+          id: 'local-1',
+          rowIndex: 0,
+          bitableRecordId: null,
+          rowData: {
+            需求单号: 'SPO1',
+            SKU: 'DJ1',
+            飞书没有的列: 'boom',
+            '推送日期（+2天）': 'ignored-extra',
+          },
+        },
+      ],
+      [],
+      allowed,
+    );
+
+    assert.equal(plan.toWrite, 1);
+    assert.deepEqual(plan.creates[0]?.fields, {
+      需求单号: 'SPO1',
+      SKU: 'DJ1',
+    });
+    assert.equal(
+      pickExistingBitableFields({ 需求单号: 'a', 幽灵列: 'b' }, ['需求单号'])['幽灵列'],
+      undefined,
+    );
+  });
+
+  it('applies the same writable-field intersection for purchase_follow_up', () => {
+    const columns = fixedColumnsForProcurementList('purchase_follow_up');
+    const feishuNames = [
+      ...columns,
+      '计算交期',
+      '减10天-计算交期',
+      '减15天计算交期',
+      '减去7天计算交期',
+    ];
+    const allowed = writableProcurementFieldNames(columns, feishuNames);
+    assert.deepEqual(allowed, columns);
+
+    const plan = buildFeishuFullReplacePlan(
+      [
+        {
+          id: 'fu-1',
+          rowIndex: 0,
+          bitableRecordId: null,
+          rowData: {
+            需求单号: 'SPO9',
+            SKU: 'DJ9',
+            单据状态: '待入库',
+            计算交期: 'should-ignore',
+            本地多余列: 'boom',
+          },
+        },
+      ],
+      ['rec-old'],
+      allowed,
+    );
+
+    assert.equal(plan.mode, 'full_replace');
+    assert.equal(plan.toDelete, 1);
+    assert.deepEqual(plan.creates[0]?.fields, {
+      需求单号: 'SPO9',
+      SKU: 'DJ9',
+      单据状态: '待入库',
+    });
   });
 });

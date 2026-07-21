@@ -141,6 +141,25 @@ export function missingBitableFieldNames(
   return missing;
 }
 
+/**
+ * Keep only field keys that exist on the Feishu table.
+ * Extra Feishu columns are left untouched; unknown local keys are dropped
+ * to avoid FieldNameNotFound on create/update.
+ */
+export function pickExistingBitableFields(
+  fields: Record<string, unknown>,
+  existingNames: Iterable<string>,
+): Record<string, unknown> {
+  const existing = new Set(
+    [...existingNames].map((name) => name.trim()).filter(Boolean),
+  );
+  const picked: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(fields)) {
+    if (existing.has(key)) picked[key] = value;
+  }
+  return picked;
+}
+
 async function bitableFetch(
   path: string,
   init?: RequestInit,

@@ -615,34 +615,38 @@ export function FobContainerMatrixPanel({
                         )}
                         style={frozenStyle(0, false)}
                       >
-                        <button
-                          type="button"
-                          className="flex w-full min-w-0 items-center gap-1.5 text-left"
-                          onClick={() => toggleExpanded(group.containerNo, !scopeTotals.balanced)}
-                        >
-                          {open ? (
-                            <ChevronDown className="h-4 w-4 shrink-0 text-text-sub" />
-                          ) : (
-                            <ChevronRight className="h-4 w-4 shrink-0 text-text-sub" />
-                          )}
-                          {scopeTotals.balanced ? (
-                            <CheckCircle2
-                              className="h-4 w-4 shrink-0 text-emerald-600"
-                              aria-label="已平账"
-                            />
-                          ) : (
-                            <AlertCircle
-                              className="h-4 w-4 shrink-0 text-primary"
-                              aria-label="未平账"
-                            />
-                          )}
+                        <div className="flex w-full min-w-0 items-center gap-1.5">
+                          <button
+                            type="button"
+                            className="flex shrink-0 items-center gap-1.5 text-left"
+                            aria-expanded={open}
+                            aria-label={open ? '收起货柜明细' : '展开货柜明细'}
+                            onClick={() => toggleExpanded(group.containerNo, !scopeTotals.balanced)}
+                          >
+                            {open ? (
+                              <ChevronDown className="h-4 w-4 shrink-0 text-text-sub" />
+                            ) : (
+                              <ChevronRight className="h-4 w-4 shrink-0 text-text-sub" />
+                            )}
+                            {scopeTotals.balanced ? (
+                              <CheckCircle2
+                                className="h-4 w-4 shrink-0 text-emerald-600"
+                                aria-label="已平账"
+                              />
+                            ) : (
+                              <AlertCircle
+                                className="h-4 w-4 shrink-0 text-primary"
+                                aria-label="未平账"
+                              />
+                            )}
+                          </button>
                           <TruncatedTip
                             tip={containerHoverTip}
-                            className="min-w-0 flex-1 font-mono font-semibold text-text-main"
+                            className="min-w-0 flex-1 select-text font-mono font-semibold text-text-main"
                           >
                             {group.containerNo}
                           </TruncatedTip>
-                        </button>
+                        </div>
                         <div className="mt-0.5 truncate pl-[2.125rem] text-[11px] text-text-hint">
                           <TruncatedTip tip={containerHoverTip} className="w-full">
                             {containerSubline}

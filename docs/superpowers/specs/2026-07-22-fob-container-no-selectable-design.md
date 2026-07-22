@@ -1,7 +1,7 @@
 # FOB 平账结果 · 货柜号可复制 · 设计说明
 
 **日期**：2026-07-22  
-**状态**：待实现  
+**状态**：已实现  
 **关联**：`apps/web/src/components/FobContainerMatrixPanel.tsx`、`.cursor/rules/fob-settlement-dev.mdc`  
 **触发**：平账矩阵「按柜平账与调账」列表中货柜号（如 `BMOU5120438`）无法选中复制
 

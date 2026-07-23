@@ -74,7 +74,19 @@ export function resolveFeedUrl(feedUrl: string, sourceType: string): string {
   if (!base) return feedUrl;
   if (feedUrl.startsWith('http://') || feedUrl.startsWith('https://')) return feedUrl;
   const path = feedUrl.startsWith('/') ? feedUrl : `/${feedUrl}`;
-  return `${base}${path}`;
+  const encodedPath = path
+    .split('/')
+    .map((segment, index) => {
+      if (index === 0) return '';
+      if (!segment) return '';
+      try {
+        return encodeURIComponent(decodeURIComponent(segment));
+      } catch {
+        return encodeURIComponent(segment);
+      }
+    })
+    .join('/');
+  return `${base}${encodedPath}`;
 }
 
 export async function fetchRssFeed(feedUrl: string, sourceType: string): Promise<RssItem[]> {

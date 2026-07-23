@@ -49,3 +49,20 @@ export function buildSummaryFallback(
   const source = bodyText?.trim() || snippet?.trim() || title;
   return source.slice(0, 280);
 }
+
+/**
+ * 相关性硬过滤只用标题 + RSS 摘要/内容，避免 Jina 全文里的「相关推荐」
+ * （如侧栏「物流分拣」）造成误放行。
+ */
+export function buildRelevanceProbeText(params: {
+  title: string;
+  snippet?: string;
+  rssContent?: string;
+}): string {
+  const parts = [
+    params.title,
+    params.snippet?.trim() || '',
+    params.rssContent ? stripHtml(params.rssContent) : '',
+  ].filter(Boolean);
+  return parts.join('\n').slice(0, 2_000);
+}

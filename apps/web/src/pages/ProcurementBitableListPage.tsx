@@ -136,6 +136,9 @@ export function ProcurementBitableListPage({ listType, title, description }: Pro
 
   const pushSync = useMutation({
     mutationFn: () => api.executeProcurementFeishuPush(listType),
+    onMutate: () => {
+      setMessage('正在后台同步到飞书（全量覆盖可能需数分钟），请勿关闭页面…');
+    },
     onSuccess: (result) => {
       setPreview(null);
       setMessage(`同步到飞书完成：已全量覆盖 ${result.created} 行（删除飞书原有 ${result.deleted} 行）。`);

@@ -130,6 +130,16 @@ const MENU_SEEDS: MenuSeed[] = [
     ],
   },
   {
+    code: 'intel',
+    name: '跨境资讯',
+    icon: 'Newspaper',
+    sortOrder: 8,
+    isLeaf: false,
+    children: [
+      { code: 'intel.news', name: '资讯采集', path: '/intel/news', sortOrder: 1, isLeaf: true },
+    ],
+  },
+  {
     code: 'help',
     name: '帮助中心',
     icon: 'HelpCircle',
@@ -169,7 +179,7 @@ const DEPRECATED_MENU_CODES = [
 ];
 
 const ROLE_MENU_CODES: Record<string, string[]> = {
-  super_admin: ['dashboard', 'inventory', 'inventory.overview', 'inventory.safety', 'inventory.alert', 'pmc', 'pmc.suggestion', 'pmc.list', 'pmc.tracking', 'procurement', 'procurement.bulk_stock', 'procurement.follow_up', 'cs', 'cs.quality', 'logistics', 'logistics.fob_settlement', 'data', 'data.products', 'data.sales', 'data.forecast', 'ai', 'ai.chat', 'help', 'system', 'system.users', 'system.roles', 'system.logs'],
+  super_admin: ['dashboard', 'inventory', 'inventory.overview', 'inventory.safety', 'inventory.alert', 'pmc', 'pmc.suggestion', 'pmc.list', 'pmc.tracking', 'procurement', 'procurement.bulk_stock', 'procurement.follow_up', 'cs', 'cs.quality', 'logistics', 'logistics.fob_settlement', 'data', 'data.products', 'data.sales', 'data.forecast', 'intel', 'intel.news', 'ai', 'ai.chat', 'help', 'system', 'system.users', 'system.roles', 'system.logs'],
   pmc_planner: ['dashboard', 'inventory', 'inventory.overview', 'inventory.safety', 'pmc', 'pmc.suggestion', 'pmc.list', 'procurement', 'procurement.bulk_stock', 'logistics', 'logistics.fob_settlement', 'cs', 'cs.quality', 'data', 'data.products', 'data.sales', 'data.forecast', 'ai', 'ai.chat', 'help'],
   warehouse: ['dashboard', 'inventory', 'inventory.overview', 'inventory.alert', 'pmc', 'pmc.list', 'logistics', 'logistics.fob_settlement', 'cs', 'cs.quality', 'data', 'data.products', 'data.sales', 'data.forecast', 'ai', 'ai.chat', 'help'],
   purchaser: ['dashboard', 'inventory', 'inventory.overview', 'inventory.safety', 'inventory.alert', 'pmc', 'pmc.list', 'pmc.tracking', 'procurement', 'procurement.bulk_stock', 'procurement.follow_up', 'logistics', 'logistics.fob_settlement', 'cs', 'cs.quality', 'data', 'data.products', 'data.sales', 'data.forecast', 'ai', 'ai.chat', 'help'],

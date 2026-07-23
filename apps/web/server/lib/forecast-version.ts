@@ -12,6 +12,31 @@ import { parseBaselinePlatformFromVersionName } from './forecast-version-label.j
 
 export type ForecastVersionStatus = 'draft' | 'published' | 'archived';
 
+/** 与 sales_forecast_versions.version_no varchar(50) 对齐 */
+export const FORECAST_VERSION_NO_MAX_LEN = 50;
+/** 与 sales_forecast_versions.version_name varchar(200) 对齐 */
+export const FORECAST_VERSION_NAME_MAX_LEN = 200;
+
+export function isSafeForecastVersionNo(versionNo: string): boolean {
+  return versionNo.trim().length > 0 && versionNo.trim().length <= FORECAST_VERSION_NO_MAX_LEN;
+}
+
+/** 截断展示名；若带唯一性后缀，优先保留后缀尾部 */
+export function clampDraftVersionName(
+  baseName: string,
+  maxLen = FORECAST_VERSION_NAME_MAX_LEN,
+): string {
+  const trimmed = baseName.trim();
+  if (trimmed.length <= maxLen) return trimmed;
+  const suffixMatch = trimmed.match(/ · #\d+$/);
+  if (suffixMatch) {
+    const suffix = suffixMatch[0]!;
+    const headMax = Math.max(0, maxLen - suffix.length);
+    return `${trimmed.slice(0, trimmed.length - suffix.length).trimEnd().slice(0, headMax).trimEnd()}${suffix}`;
+  }
+  return trimmed.slice(0, maxLen).trimEnd();
+}
+
 export async function getPublishedForecastVersionIds(station?: string): Promise<string[]> {
   const rows = await db
     .select({ id: salesForecastVersions.id, station: salesForecastVersions.station })
@@ -50,12 +75,12 @@ export async function getOrCreateDraftVersion(params: {
   return row;
 }
 
-/** 在 version_no 全局唯一约束下分配可用草稿名（同日重复生成时追加 · #N） */
+/** 在 version_name 下分配可用展示名（同日重复生成时追加 · #N）；version_no 仍用短码 */
 export async function allocateUniqueDraftVersionName(
   baseName: string,
   station?: string,
 ): Promise<string> {
-  const trimmed = baseName.trim();
+  const trimmed = clampDraftVersionName(baseName);
   const stationKey = station?.trim().toUpperCase();
   const stationClause = stationKey
     ? eq(salesForecastVersions.station, stationKey)
@@ -65,7 +90,7 @@ export async function allocateUniqueDraftVersionName(
     const [row] = await db
       .select({ id: salesForecastVersions.id })
       .from(salesForecastVersions)
-      .where(and(eq(salesForecastVersions.versionNo, candidate), stationClause))
+      .where(and(eq(salesForecastVersions.versionName, candidate), stationClause))
       .limit(1);
     return Boolean(row);
   };
@@ -73,11 +98,11 @@ export async function allocateUniqueDraftVersionName(
   if (!(await exists(trimmed))) return trimmed;
 
   for (let suffix = 2; suffix <= 99; suffix += 1) {
-    const candidate = `${trimmed} · #${suffix}`;
+    const candidate = clampDraftVersionName(`${trimmed} · #${suffix}`);
     if (!(await exists(candidate))) return candidate;
   }
 
-  return `${trimmed} · ${Date.now()}`;
+  return clampDraftVersionName(`${trimmed} · ${Date.now()}`);
 }
 
 export async function publishForecastVersion(versionId: string, publishedBy: string) {

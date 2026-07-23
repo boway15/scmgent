@@ -15,10 +15,20 @@ import {
   previewProcurementFeishuSync,
   previewProcurementFeishuPush,
   previewProcurementUpload,
-  executeProcurementFeishuPush,
   clearProcurementListData,
   type ProcurementListKey,
 } from '../lib/procurement-bitable-list.js';
+import {
+  assertNoRunningProcurementPush,
+  parseProcurementFeishuPushTaskResult,
+  procurementPushTaskName,
+  runProcurementFeishuPushTask,
+} from '../lib/procurement-feishu-push-task.js';
+import {
+  assertNoRunningProcurementFeishuIo,
+  procurementPullTaskName,
+} from '../lib/procurement-feishu-pull-task.js';
+import { finishTaskRun, getTaskRunById, startTaskRun } from '../lib/task-runs.js';
 
 export const procurementListRoutes = new Hono();
 
@@ -121,8 +131,25 @@ procurementListRoutes.post('/procurement/lists/:type/sync', async (c) => {
   }
 
   try {
-    const result = await executeProcurementFeishuSync(access.type, user.id);
-    return c.json(result);
+    await assertNoRunningProcurementFeishuIo(access.type);
+    const run = await startTaskRun(procurementPullTaskName(access.type), user.id);
+    try {
+      const result = await executeProcurementFeishuSync(access.type, user.id);
+      await finishTaskRun(run.id, {
+        success: true,
+        resultSummary: JSON.stringify({
+          direction: 'from_feishu',
+          mode: 'full_replace',
+          listType: access.type,
+          imported: result.imported,
+        }),
+      });
+      return c.json(result);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Feishu sync failed';
+      await finishTaskRun(run.id, { success: false, errorMessage: message });
+      throw err;
+    }
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Feishu sync failed';
     return c.json({ message }, 400);
@@ -168,12 +195,52 @@ procurementListRoutes.post('/procurement/lists/:type/push', async (c) => {
   }
 
   try {
-    const result = await executeProcurementFeishuPush(access.type, user.id);
-    return c.json(result);
+    // Full-replace push can take minutes for large tables; run in background to avoid gateway 524.
+    await assertNoRunningProcurementPush(access.type);
+    const run = await startTaskRun(procurementPushTaskName(access.type), user.id);
+    void runProcurementFeishuPushTask(run.id, access.type, user.id).catch((err) => {
+      console.error(`[procurement-push] background ${access.type} error:`, err);
+    });
+    return c.json(
+      {
+        async: true as const,
+        taskRunId: run.id,
+        status: 'running' as const,
+        listType: access.type,
+      },
+      202,
+    );
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Feishu push failed';
     return c.json({ message }, 400);
   }
+});
+
+procurementListRoutes.get('/procurement/lists/:type/push/tasks/:taskRunId', async (c) => {
+  const access = await assertProcurementListAccess(c, c.req.param('type'), { write: true });
+  if ('response' in access) return access.response;
+
+  const taskRunId = c.req.param('taskRunId')?.trim();
+  if (!taskRunId) {
+    return c.json({ message: 'taskRunId is required' }, 400);
+  }
+
+  const expectedTaskName = procurementPushTaskName(access.type);
+  const run = await getTaskRunById(taskRunId);
+  if (!run || run.taskName !== expectedTaskName) {
+    return c.json({ message: 'Task run not found' }, 404);
+  }
+
+  const result = run.status === 'success' ? parseProcurementFeishuPushTaskResult(run.resultSummary) : null;
+  return c.json({
+    taskRunId: run.id,
+    listType: access.type,
+    status: run.status,
+    startedAt: run.startedAt,
+    finishedAt: run.finishedAt,
+    errorMessage: run.errorMessage,
+    result,
+  });
 });
 
 procurementListRoutes.post('/procurement/lists/:type/import/preview', async (c) => {

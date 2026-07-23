@@ -88,6 +88,12 @@ walkServerForHonoApp(serverDir, (absPath, relPath) => {
   archive.file(absPath, { name: `server/hono-app/${relPath.replace(/\\/g, '/')}` });
   honoAppTsCount++;
 });
+// news-intel 策略/信源 JSON（walk 只打包 .ts）
+for (const name of ['openclaw-policy.json', 'sources.seed.json']) {
+  archive.file(join(serverDir, 'lib/news-intel', name), {
+    name: `server/hono-app/lib/news-intel/${name}`,
+  });
+}
 archive.file(join(webDir, 'miaoda/hono-app-index.ts'), { name: 'server/hono-app/index.ts' });
 archive.append(bundledIndexJs, { name: 'server/hono-app/index.js' });
 const honoJsArtifacts = generateHonoAppJsArtifacts(serverDir, join(repoRoot, 'packages/db/src'));

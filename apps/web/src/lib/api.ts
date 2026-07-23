@@ -473,6 +473,11 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   if (!res.ok) {
     const contentType = res.headers.get('content-type') ?? '';
     if (contentType.includes('text/html')) {
+      if (res.status === 524 || res.status === 504 || res.status === 502) {
+        throw new Error(
+          `HTTP ${res.status}: 网关超时（收到 HTML 错误页，${url}）。多为后台处理过久；请稍后重试或改用异步任务接口。`,
+        );
+      }
       throw new Error(
         `HTTP ${res.status}: 收到 HTML 而非 JSON（${url}）。Hono 可能未挂载，请运行 miaoda-sync 并重新构建。`,
       );
@@ -567,6 +572,8 @@ export const api = {
       bitableConfigured: boolean;
       bitableAppTokenConfigured: boolean;
       bitableTableId?: string;
+      rsshubConfigured?: boolean;
+      enrichConfigured?: boolean;
       latestRun?: {
         id: string;
         status: string;
@@ -580,6 +587,8 @@ export const api = {
     request<{
       todayNew: number;
       pendingReview: number;
+      pendingSync: number;
+      syncFailed: number;
       highPriorityToday: number;
       sourceTotal: number;
       sourceHealthy: number;
@@ -593,6 +602,9 @@ export const api = {
         feedUrl: string;
         sourceType: string;
         categoryDefault: string;
+        sourceTier?: string;
+        isOfficial?: boolean;
+        sourceLanguage?: string;
         enabled: boolean;
         fetchIntervalHours: number;
         lastFetchedAt?: string | null;
@@ -604,6 +616,9 @@ export const api = {
           excludeKeywords?: string[];
           siteDomain?: string;
           note?: string;
+          sourceTier?: string;
+          isOfficial?: boolean;
+          language?: string;
         } | null;
       }>;
     }>('/api/news-intel/sources'),
@@ -613,10 +628,9 @@ export const api = {
       maxItemsPerSource: number;
       channels: Record<string, { enabled: boolean; label: string }>;
       negativeKeywords: string[];
-      categories: Array<{ bitableValue: string; keywords: string[] }>;
+      topics?: Array<{ value: string; keywords: string[] }>;
+      brandKeywords?: Array<{ name: string; aliases: string[] }>;
     }>('/api/news-intel/policy'),
-  updateNewsIntelPolicy: (policy: Record<string, unknown>) =>
-    request('/api/news-intel/policy', { method: 'PUT', body: JSON.stringify(policy) }),
   createNewsIntelSource: (data: {
     code: string;
     name: string;
@@ -624,6 +638,9 @@ export const api = {
     sourceType?: string;
     categoryDefault?: string;
     fetchIntervalHours?: number;
+    sourceTier?: string;
+    isOfficial?: boolean;
+    sourceLanguage?: string;
     enabled?: boolean;
     configJson?: {
       channel?: string;
@@ -631,6 +648,9 @@ export const api = {
       excludeKeywords?: string[];
       siteDomain?: string;
       note?: string;
+      sourceTier?: string;
+      isOfficial?: boolean;
+      language?: string;
     };
   }) =>
     request('/api/news-intel/sources', { method: 'POST', body: JSON.stringify(data) }),
@@ -642,6 +662,9 @@ export const api = {
       sourceType?: string;
       categoryDefault?: string;
       fetchIntervalHours?: number;
+      sourceTier?: string;
+      isOfficial?: boolean;
+      sourceLanguage?: string;
       enabled?: boolean;
       configJson?: {
         channel?: string;
@@ -649,6 +672,9 @@ export const api = {
         excludeKeywords?: string[];
         siteDomain?: string;
         note?: string;
+        sourceTier?: string;
+        isOfficial?: boolean;
+        language?: string;
       } | null;
     },
   ) => request(`/api/news-intel/sources/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
@@ -658,24 +684,39 @@ export const api = {
     page?: number;
     pageSize?: number;
     category?: string;
+    topicCategory?: string;
     status?: string;
   }) => {
     const q = new URLSearchParams();
     if (params?.page) q.set('page', String(params.page));
     if (params?.pageSize) q.set('pageSize', String(params.pageSize));
     if (params?.category) q.set('category', params.category);
+    if (params?.topicCategory) q.set('topicCategory', params.topicCategory);
     if (params?.status) q.set('status', params.status);
     const qs = q.toString();
     return request<{
       items: Array<{
         id: string;
         title: string;
+        titleZh?: string | null;
+        titleOriginal?: string | null;
         summary?: string | null;
         category: string;
+        topicCategory?: string | null;
         bitableCategory?: string | null;
+        departments?: string[] | null;
+        platformTags?: string[] | null;
+        countryTags?: string[] | null;
+        brandTags?: string[] | null;
+        language?: string | null;
+        sourceTier?: string | null;
+        isOfficialSource?: boolean;
         relevanceScore: number;
         priority: string;
         status: string;
+        bitableSyncStatus?: string | null;
+        bitableSyncError?: string | null;
+        filterHits?: string | null;
         canonicalUrl: string;
         fetchedAt: string;
         sourceName: string;
@@ -688,8 +729,12 @@ export const api = {
   getNewsIntelArticle: (id: string) => request(`/api/news-intel/articles/${id}`),
   updateNewsIntelArticle: (
     id: string,
-    data: { status?: string; priority?: string; category?: string },
+    data: { businessValidity?: 'valid' | 'invalid' | 'misclassified' },
   ) => request(`/api/news-intel/articles/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
+  syncNewsIntelArticleBitable: (id: string) =>
+    request<{ recordId: string | null }>(`/api/news-intel/articles/${id}/sync-bitable`, {
+      method: 'POST',
+    }),
   triggerNewsIngest: (data?: { force?: boolean; sourceId?: string }) =>
     request('/api/news-intel/ingest/trigger', {
       method: 'POST',
@@ -704,6 +749,9 @@ export const api = {
           newCount: number;
           skippedDup: number;
           skippedLowRelevance: number;
+          skippedFiltered?: number;
+          translatedCount?: number;
+          bitableSyncFailedCount?: number;
           errorMessage?: string | null;
           durationMs?: number | null;
           createdAt: string;
@@ -1492,14 +1540,63 @@ export const api = {
       columnOrder: string[];
       sample: Array<Record<string, string>>;
     }>(`/api/procurement/lists/${type}/push/preview`, { method: 'POST' }),
-  executeProcurementFeishuPush: (type: ProcurementListType) =>
-    request<{
+  executeProcurementFeishuPush: async (type: ProcurementListType) => {
+    type SyncResult = {
+      async?: false;
       direction: 'to_feishu';
       mode: 'full_replace';
       pushed: number;
       created: number;
       deleted: number;
-    }>(`/api/procurement/lists/${type}/push`, { method: 'POST' }),
+    };
+    type AsyncStart = {
+      async: true;
+      taskRunId: string;
+      status: 'running';
+      listType: ProcurementListType;
+    };
+
+    const initial = await request<SyncResult | AsyncStart>(
+      `/api/procurement/lists/${type}/push`,
+      { method: 'POST' },
+    );
+    if (!initial.async) return initial;
+
+    const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+    for (let attempt = 0; attempt < 720; attempt++) {
+      await sleep(attempt < 5 ? 2000 : 5000);
+      const task = await request<{
+        taskRunId: string;
+        status: 'running' | 'success' | 'failed';
+        errorMessage?: string | null;
+        result: SyncResult | null;
+      }>(`/api/procurement/lists/${type}/push/tasks/${encodeURIComponent(initial.taskRunId)}`);
+      if (task.status === 'running') continue;
+      if (task.status === 'failed') {
+        throw new Error(task.errorMessage ?? '同步到飞书失败');
+      }
+      if (task.result) return task.result;
+      throw new Error('后台任务已完成但未返回结果');
+    }
+    throw new Error('同步到飞书超时，请稍后刷新列表查看飞书侧是否已更新');
+  },
+  getProcurementFeishuPushTask: (type: ProcurementListType, taskRunId: string) =>
+    request<{
+      taskRunId: string;
+      listType: ProcurementListType;
+      status: 'running' | 'success' | 'failed';
+      startedAt: string;
+      finishedAt: string | null;
+      errorMessage: string | null;
+      result: {
+        direction: 'to_feishu';
+        mode: 'full_replace';
+        pushed: number;
+        created: number;
+        deleted: number;
+        fieldsCreated: number;
+      } | null;
+    }>(`/api/procurement/lists/${type}/push/tasks/${encodeURIComponent(taskRunId)}`),
   previewProcurementUpload: async (type: ProcurementListType, file: File) => {
     const form = new FormData();
     form.append('file', file);

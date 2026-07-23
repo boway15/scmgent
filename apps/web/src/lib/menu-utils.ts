@@ -11,6 +11,7 @@ import {
   ScrollText,
   ShoppingCart,
   Headphones,
+  Newspaper,
   type LucideIcon,
 } from 'lucide-react';
 import type { MenuNode } from '@/lib/api';
@@ -28,6 +29,7 @@ const ICON_MAP: Record<string, LucideIcon> = {
   ScrollText,
   ShoppingCart,
   Headphones,
+  Newspaper,
 };
 
 export function getMenuIcon(icon?: string | null): LucideIcon {

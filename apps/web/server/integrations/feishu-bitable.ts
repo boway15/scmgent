@@ -223,11 +223,26 @@ export async function createBitableTextField(
   tableId: string,
   fieldName: string,
 ): Promise<void> {
+  await createBitableField(appToken, tableId, { field_name: fieldName, type: 1 });
+}
+
+export type BitableFieldCreateInput = {
+  field_name: string;
+  /** Feishu field type: 1 text, 2 number, 3 single, 4 multi, 5 datetime, 7 checkbox, 15 url */
+  type: number;
+  property?: Record<string, unknown>;
+};
+
+export async function createBitableField(
+  appToken: string,
+  tableId: string,
+  input: BitableFieldCreateInput,
+): Promise<void> {
   await bitableFetch(
     `/bitable/v1/apps/${encodeURIComponent(appToken)}/tables/${encodeURIComponent(tableId)}/fields`,
     {
       method: 'POST',
-      body: JSON.stringify({ field_name: fieldName, type: 1 }),
+      body: JSON.stringify(input),
     },
   );
 }
@@ -249,11 +264,40 @@ export async function ensureBitableTextFields(
   for (const name of toCreate) {
     await createBitableTextField(appToken, tableId, name);
     created.push(name);
-    // Feishu create-field limit is ~10 QPS; keep a small gap for safety.
     await new Promise((resolve) => setTimeout(resolve, 120));
   }
 
   return { existing, created };
+}
+
+/**
+ * Ensure typed fields exist. Skips names already present (does not alter type).
+ */
+export async function ensureBitableFields(
+  appToken: string,
+  tableId: string,
+  required: BitableFieldCreateInput[],
+): Promise<{ existing: string[]; created: string[]; skippedExisting: string[] }> {
+  const current = await listBitableFields(appToken, tableId);
+  const existing = current.map((f) => f.field_name);
+  const existingSet = new Set(existing.map((n) => n.trim()));
+  const created: string[] = [];
+  const skippedExisting: string[] = [];
+
+  for (const field of required) {
+    const name = field.field_name.trim();
+    if (!name) continue;
+    if (existingSet.has(name)) {
+      skippedExisting.push(name);
+      continue;
+    }
+    await createBitableField(appToken, tableId, field);
+    created.push(name);
+    existingSet.add(name);
+    await new Promise((resolve) => setTimeout(resolve, 150));
+  }
+
+  return { existing, created, skippedExisting };
 }
 
 export async function createBitableRecord(

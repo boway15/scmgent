@@ -1305,6 +1305,1213 @@ DROP TABLE IF EXISTS "sku_compliance";
 
 
 -- ============================================================
+-- migration: 0017_email_auth.sql
+-- source: /packages/db/drizzle/0017_email_auth.sql
+-- ============================================================
+
+ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "password_hash" varchar(255);
+
+INSERT INTO "roles" ("name", "code", "description", "is_system")
+SELECT '待分配', 'pending', '注册或首次飞书登录默认角色，无菜单权限', true
+WHERE NOT EXISTS (SELECT 1 FROM "roles" WHERE "code" = 'pending');
+
+
+-- ============================================================
+-- migration: 0018_audit_logs.sql
+-- source: /packages/db/drizzle/0018_audit_logs.sql
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS "audit_logs" (
+  "id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+  "user_id" uuid REFERENCES "users"("id"),
+  "user_name" varchar(100),
+  "user_email" varchar(200),
+  "action" varchar(100) NOT NULL,
+  "resource_type" varchar(50),
+  "resource_id" varchar(100),
+  "detail" text,
+  "ip_address" varchar(64),
+  "user_agent" varchar(500),
+  "created_at" timestamp with time zone DEFAULT now() NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS "audit_logs_created_at_idx" ON "audit_logs" ("created_at");
+CREATE INDEX IF NOT EXISTS "audit_logs_user_id_idx" ON "audit_logs" ("user_id");
+CREATE INDEX IF NOT EXISTS "audit_logs_action_idx" ON "audit_logs" ("action");
+
+INSERT INTO "menus" ("code", "name", "icon", "path", "parent_id", "sort_order", "is_leaf")
+SELECT 'system.logs', '操作日志', 'ScrollText', '/system/logs', p."id", 3, true
+FROM "menus" p
+WHERE p."code" = 'system'
+ON CONFLICT ("code") DO NOTHING;
+
+INSERT INTO "role_menus" ("role_id", "menu_id")
+SELECT r."id", m."id"
+FROM "roles" r
+CROSS JOIN "menus" m
+WHERE m."code" = 'system.logs'
+  AND r."code" = 'super_admin'
+ON CONFLICT ("role_id", "menu_id") DO NOTHING;
+
+
+-- ============================================================
+-- migration: 0019_supply_chain_replenishment.sql
+-- source: /packages/db/drizzle/0019_supply_chain_replenishment.sql
+-- ============================================================
+
+-- 供应链周期与补货健康度（阶段一）
+
+DO $$ BEGIN
+  CREATE TYPE "inventory_health" AS ENUM ('red', 'yellow', 'healthy', 'overstock');
+EXCEPTION
+  WHEN duplicate_object THEN null;
+END $$;
+
+ALTER TABLE "merchants" ADD COLUMN IF NOT EXISTS "production_lead_days" integer DEFAULT 50 NOT NULL;
+
+ALTER TABLE "warehouses" ADD COLUMN IF NOT EXISTS "shipping_lead_days" integer;
+ALTER TABLE "warehouses" ADD COLUMN IF NOT EXISTS "inbound_buffer_days" integer DEFAULT 7 NOT NULL;
+
+UPDATE "warehouses" SET "shipping_lead_days" = 45, "inbound_buffer_days" = 7 WHERE "code" = 'US-WEST' AND "shipping_lead_days" IS NULL;
+UPDATE "warehouses" SET "shipping_lead_days" = 60, "inbound_buffer_days" = 7 WHERE "code" IN ('US-EAST', 'US-SOUTH', 'US-SOUTHEAST') AND "shipping_lead_days" IS NULL;
+UPDATE "warehouses" SET "shipping_lead_days" = 80, "inbound_buffer_days" = 7 WHERE "code" = 'DE' AND "shipping_lead_days" IS NULL;
+UPDATE "warehouses" SET "shipping_lead_days" = 75, "inbound_buffer_days" = 7 WHERE "code" = 'UK' AND "shipping_lead_days" IS NULL;
+
+ALTER TABLE "safety_stock_config" ADD COLUMN IF NOT EXISTS "safety_stock_days" integer DEFAULT 14;
+ALTER TABLE "safety_stock_config" ADD COLUMN IF NOT EXISTS "target_coverage_days" integer;
+ALTER TABLE "safety_stock_config" ADD COLUMN IF NOT EXISTS "overstock_threshold_days" integer DEFAULT 180;
+
+ALTER TABLE "reorder_suggestions" ADD COLUMN IF NOT EXISTS "health_status" "inventory_health";
+ALTER TABLE "reorder_suggestions" ADD COLUMN IF NOT EXISTS "coverage_days" numeric(10, 2);
+ALTER TABLE "reorder_suggestions" ADD COLUMN IF NOT EXISTS "total_lead_days" integer;
+ALTER TABLE "reorder_suggestions" ADD COLUMN IF NOT EXISTS "latest_order_days" numeric(10, 2);
+ALTER TABLE "reorder_suggestions" ADD COLUMN IF NOT EXISTS "metrics" jsonb;
+
+CREATE TABLE IF NOT EXISTS "purchase_follow_up_reminders" (
+  "id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+  "draft_id" uuid NOT NULL REFERENCES "purchase_drafts"("id") ON DELETE CASCADE,
+  "milestone" varchar(10) NOT NULL,
+  "due_date" date NOT NULL,
+  "notified_at" timestamptz,
+  "created_at" timestamptz DEFAULT now() NOT NULL
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS "purchase_follow_up_reminders_draft_milestone_idx"
+  ON "purchase_follow_up_reminders" ("draft_id", "milestone");
+
+
+-- ============================================================
+-- migration: 0020_sales_forecast_monthly.sql
+-- source: /packages/db/drizzle/0020_sales_forecast_monthly.sql
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS "sales_forecast_monthly" (
+  "id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+  "sku_id" uuid NOT NULL REFERENCES "skus"("id") ON DELETE CASCADE,
+  "station" varchar(20) NOT NULL,
+  "forecast_year" integer NOT NULL,
+  "month" integer NOT NULL,
+  "forecast_daily_avg" numeric(12, 4) NOT NULL,
+  "lifecycle" varchar(50),
+  "owner_name" varchar(100),
+  "source" "data_source" DEFAULT 'import' NOT NULL,
+  "import_batch_id" uuid,
+  "updated_at" timestamptz DEFAULT now() NOT NULL,
+  "created_at" timestamptz DEFAULT now() NOT NULL
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS "sales_forecast_monthly_sku_station_month_idx"
+  ON "sales_forecast_monthly" ("sku_id", "station", "forecast_year", "month");
+
+CREATE INDEX IF NOT EXISTS "sales_forecast_monthly_sku_station_idx"
+  ON "sales_forecast_monthly" ("sku_id", "station");
+
+
+-- ============================================================
+-- migration: 0021_sku_encoding.sql
+-- source: /packages/db/drizzle/0021_sku_encoding.sql
+-- ============================================================
+
+DO $$ BEGIN
+  CREATE TYPE "sku_kind" AS ENUM ('standard', 'accessory', 'multi_box', 'return', 'legacy');
+EXCEPTION
+  WHEN duplicate_object THEN null;
+END $$;
+
+ALTER TABLE "spus" ADD COLUMN IF NOT EXISTS "division_code" varchar(1);
+ALTER TABLE "spus" ADD COLUMN IF NOT EXISTS "distribution_no" integer DEFAULT 0;
+ALTER TABLE "spus" ADD COLUMN IF NOT EXISTS "spu_numeric_code" varchar(5);
+ALTER TABLE "spus" ADD COLUMN IF NOT EXISTS "brand_code" varchar(2);
+ALTER TABLE "spus" ADD COLUMN IF NOT EXISTS "category_code" varchar(3);
+ALTER TABLE "spus" ADD COLUMN IF NOT EXISTS "division_name" varchar(50);
+ALTER TABLE "spus" ADD COLUMN IF NOT EXISTS "encoding_source" varchar(20) DEFAULT 'manual';
+
+ALTER TABLE "skus" ADD COLUMN IF NOT EXISTS "external_code" varchar(20);
+ALTER TABLE "skus" ADD COLUMN IF NOT EXISTS "internal_code" varchar(12);
+ALTER TABLE "skus" ADD COLUMN IF NOT EXISTS "sku_kind" "sku_kind" DEFAULT 'legacy';
+ALTER TABLE "skus" ADD COLUMN IF NOT EXISTS "division_code" varchar(1);
+ALTER TABLE "skus" ADD COLUMN IF NOT EXISTS "distribution_no" integer;
+ALTER TABLE "skus" ADD COLUMN IF NOT EXISTS "spu_numeric_code" varchar(5);
+ALTER TABLE "skus" ADD COLUMN IF NOT EXISTS "variant_no" varchar(2);
+ALTER TABLE "skus" ADD COLUMN IF NOT EXISTS "brand_code" varchar(2);
+ALTER TABLE "skus" ADD COLUMN IF NOT EXISTS "category_code" varchar(3);
+ALTER TABLE "skus" ADD COLUMN IF NOT EXISTS "factory_suffix" varchar(1);
+ALTER TABLE "skus" ADD COLUMN IF NOT EXISTS "accessory_no" varchar(3);
+ALTER TABLE "skus" ADD COLUMN IF NOT EXISTS "box_no" varchar(1);
+ALTER TABLE "skus" ADD COLUMN IF NOT EXISTS "encoding_valid" boolean DEFAULT false NOT NULL;
+ALTER TABLE "skus" ADD COLUMN IF NOT EXISTS "encoding_meta" jsonb;
+
+CREATE INDEX IF NOT EXISTS "spus_division_spu_numeric_idx" ON "spus" ("division_code", "spu_numeric_code");
+CREATE INDEX IF NOT EXISTS "skus_internal_code_idx" ON "skus" ("internal_code");
+CREATE INDEX IF NOT EXISTS "skus_external_code_idx" ON "skus" ("external_code");
+
+
+-- ============================================================
+-- migration: 0022_inventory_health_lights.sql
+-- source: /packages/db/drizzle/0022_inventory_health_lights.sql
+-- ============================================================
+
+-- 库存健康灯：蓝/绿/黄/红/灰（替换 healthy/overstock）
+CREATE TYPE "inventory_health_new" AS ENUM ('red', 'yellow', 'green', 'blue', 'gray');
+
+ALTER TABLE "reorder_suggestions"
+  ALTER COLUMN "health_status" TYPE "inventory_health_new"
+  USING (
+    CASE "health_status"::text
+      WHEN 'healthy' THEN 'green'::inventory_health_new
+      WHEN 'overstock' THEN 'blue'::inventory_health_new
+      WHEN 'red' THEN 'red'::inventory_health_new
+      WHEN 'yellow' THEN 'yellow'::inventory_health_new
+      ELSE 'green'::inventory_health_new
+    END
+  );
+
+DROP TYPE "inventory_health";
+ALTER TYPE "inventory_health_new" RENAME TO "inventory_health";
+
+
+-- ============================================================
+-- migration: 0023_inventory_ops_production.sql
+-- source: /packages/db/drizzle/0023_inventory_ops_production.sql
+-- ============================================================
+
+-- 库存健康快照、异常处置、补货/预警幂等字段
+
+DO $$ BEGIN
+  CREATE TYPE "inventory_exception_type" AS ENUM('stockout', 'overstock', 'slow_moving', 'lifecycle_eol');
+EXCEPTION
+  WHEN duplicate_object THEN null;
+END $$;
+
+DO $$ BEGIN
+  CREATE TYPE "inventory_exception_status" AS ENUM('open', 'in_progress', 'resolved', 'dismissed');
+EXCEPTION
+  WHEN duplicate_object THEN null;
+END $$;
+
+CREATE TABLE IF NOT EXISTS "inventory_health_snapshots" (
+  "id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+  "sku_id" uuid NOT NULL REFERENCES "skus"("id"),
+  "warehouse_code" varchar(100) NOT NULL,
+  "health_status" "inventory_health" NOT NULL,
+  "coverage_days" numeric(10, 2),
+  "effective_qty" integer NOT NULL DEFAULT 0,
+  "avg_daily" numeric(12, 4) NOT NULL DEFAULT 0,
+  "demand_source" varchar(20) NOT NULL DEFAULT 'historical',
+  "total_lead_days" integer,
+  "latest_order_days" numeric(10, 2),
+  "metrics" jsonb,
+  "computed_at" timestamp with time zone NOT NULL DEFAULT now(),
+  "run_id" uuid
+);
+
+CREATE INDEX IF NOT EXISTS "inventory_health_snapshots_sku_wh_idx"
+  ON "inventory_health_snapshots" ("sku_id", "warehouse_code", "computed_at" DESC);
+
+CREATE INDEX IF NOT EXISTS "inventory_health_snapshots_health_idx"
+  ON "inventory_health_snapshots" ("health_status", "computed_at" DESC);
+
+CREATE TABLE IF NOT EXISTS "inventory_exceptions" (
+  "id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+  "sku_id" uuid NOT NULL REFERENCES "skus"("id"),
+  "warehouse_code" varchar(100) NOT NULL,
+  "exception_type" "inventory_exception_type" NOT NULL,
+  "health_status" "inventory_health" NOT NULL,
+  "recommended_action" text,
+  "status" "inventory_exception_status" NOT NULL DEFAULT 'open',
+  "owner_id" uuid REFERENCES "users"("id"),
+  "due_date" date,
+  "resolved_by" uuid REFERENCES "users"("id"),
+  "resolved_at" timestamp with time zone,
+  "resolution_note" text,
+  "created_at" timestamp with time zone NOT NULL DEFAULT now(),
+  "updated_at" timestamp with time zone NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS "inventory_exceptions_status_idx"
+  ON "inventory_exceptions" ("status", "due_date");
+
+CREATE INDEX IF NOT EXISTS "inventory_exceptions_sku_wh_type_idx"
+  ON "inventory_exceptions" ("sku_id", "warehouse_code", "exception_type", "status");
+
+ALTER TABLE "reorder_suggestions" ADD COLUMN IF NOT EXISTS "superseded_at" timestamp with time zone;
+
+ALTER TABLE "stock_alerts" ADD COLUMN IF NOT EXISTS "resolved_by" uuid REFERENCES "users"("id");
+
+
+-- ============================================================
+-- migration: 0024_sales_forecast_platform.sql
+-- source: /packages/db/drizzle/0024_sales_forecast_platform.sql
+-- ============================================================
+
+-- 销售预测增加在售平台维度
+
+ALTER TABLE "sales_forecast_monthly"
+  ADD COLUMN IF NOT EXISTS "platform" varchar(50) NOT NULL DEFAULT 'ALL';
+
+DROP INDEX IF EXISTS "sales_forecast_monthly_sku_station_month_idx";
+
+CREATE UNIQUE INDEX IF NOT EXISTS "sales_forecast_monthly_sku_station_platform_month_idx"
+  ON "sales_forecast_monthly" ("sku_id", "station", "platform", "forecast_year", "month");
+
+CREATE INDEX IF NOT EXISTS "sales_forecast_monthly_platform_idx"
+  ON "sales_forecast_monthly" ("platform", "station");
+
+
+-- ============================================================
+-- migration: 0025_sales_forecast_management.sql
+-- source: /packages/db/drizzle/0025_sales_forecast_management.sql
+-- ============================================================
+
+-- 销售预测管理：平台字典、版本、调整元数据、准确率
+
+DO $$ BEGIN
+  CREATE TYPE "forecast_version_status" AS ENUM('draft', 'published', 'archived');
+EXCEPTION WHEN duplicate_object THEN null;
+END $$;
+
+DO $$ BEGIN
+  CREATE TYPE "forecast_confidence_level" AS ENUM('high', 'medium', 'low');
+EXCEPTION WHEN duplicate_object THEN null;
+END $$;
+
+CREATE TABLE IF NOT EXISTS "sales_platforms" (
+  "id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+  "code" varchar(50) NOT NULL UNIQUE,
+  "name" varchar(100) NOT NULL,
+  "station" varchar(20),
+  "is_active" boolean NOT NULL DEFAULT true,
+  "sort_order" integer NOT NULL DEFAULT 0,
+  "created_at" timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS "sales_platform_aliases" (
+  "id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+  "alias" varchar(100) NOT NULL UNIQUE,
+  "platform_code" varchar(50) NOT NULL REFERENCES "sales_platforms"("code"),
+  "created_at" timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS "sales_forecast_versions" (
+  "id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+  "version_no" varchar(50) NOT NULL UNIQUE,
+  "version_name" varchar(200) NOT NULL,
+  "station" varchar(20),
+  "status" "forecast_version_status" NOT NULL DEFAULT 'draft',
+  "created_by" uuid REFERENCES "users"("id"),
+  "published_by" uuid REFERENCES "users"("id"),
+  "published_at" timestamptz,
+  "created_at" timestamptz NOT NULL DEFAULT now(),
+  "updated_at" timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS "sales_forecast_versions_status_idx"
+  ON "sales_forecast_versions" ("status", "station");
+
+ALTER TABLE "sales_forecast_monthly" ADD COLUMN IF NOT EXISTS "version_id" uuid REFERENCES "sales_forecast_versions"("id");
+ALTER TABLE "sales_forecast_monthly" ADD COLUMN IF NOT EXISTS "baseline_daily_avg" numeric(12, 4);
+ALTER TABLE "sales_forecast_monthly" ADD COLUMN IF NOT EXISTS "manual_daily_avg" numeric(12, 4);
+ALTER TABLE "sales_forecast_monthly" ADD COLUMN IF NOT EXISTS "adjust_reason" varchar(200);
+ALTER TABLE "sales_forecast_monthly" ADD COLUMN IF NOT EXISTS "confidence_level" "forecast_confidence_level";
+
+DROP INDEX IF EXISTS "sales_forecast_monthly_sku_station_platform_month_idx";
+
+CREATE UNIQUE INDEX IF NOT EXISTS "sales_forecast_monthly_version_unique_idx"
+  ON "sales_forecast_monthly" ("sku_id", "station", "platform", "forecast_year", "month", "version_id");
+
+CREATE TABLE IF NOT EXISTS "forecast_accuracy_monthly" (
+  "id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+  "sku_id" uuid NOT NULL REFERENCES "skus"("id") ON DELETE CASCADE,
+  "station" varchar(20) NOT NULL,
+  "platform" varchar(50) NOT NULL DEFAULT 'ALL',
+  "forecast_year" integer NOT NULL,
+  "month" integer NOT NULL,
+  "forecast_daily_avg" numeric(12, 4) NOT NULL,
+  "actual_daily_avg" numeric(12, 4) NOT NULL,
+  "bias_rate" numeric(10, 4),
+  "mape" numeric(10, 4),
+  "version_id" uuid REFERENCES "sales_forecast_versions"("id"),
+  "computed_at" timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS "forecast_accuracy_monthly_unique_idx"
+  ON "forecast_accuracy_monthly" ("sku_id", "station", "platform", "forecast_year", "month", "version_id");
+
+-- 默认平台与初始发布版本
+INSERT INTO "sales_platforms" ("code", "name", "station", "sort_order")
+VALUES
+  ('ALL', '全平台汇总', NULL, 0),
+  ('AMAZON', '亚马逊', 'US', 10),
+  ('WALMART', '沃尔玛', 'US', 20),
+  ('EBAY', 'eBay', 'US', 30),
+  ('SHOPIFY', '独立站', NULL, 40),
+  ('DTC', '品牌站', NULL, 50),
+  ('TIKTOK', 'TikTok Shop', 'US', 60),
+  ('TEMU', 'Temu', 'US', 70)
+ON CONFLICT ("code") DO NOTHING;
+
+INSERT INTO "sales_platform_aliases" ("alias", "platform_code")
+VALUES
+  ('亚马逊', 'AMAZON'),
+  ('AMZ', 'AMAZON'),
+  ('沃尔玛', 'WALMART'),
+  ('独立站', 'DTC'),
+  ('全平台', 'ALL')
+ON CONFLICT ("alias") DO NOTHING;
+
+INSERT INTO "sales_forecast_versions" ("id", "version_no", "version_name", "status", "published_at")
+SELECT
+  '00000000-0000-0000-0000-000000000001'::uuid,
+  'LEGACY-001',
+  '历史导入默认版本',
+  'published'::"forecast_version_status",
+  now()
+WHERE NOT EXISTS (SELECT 1 FROM "sales_forecast_versions" WHERE "version_no" = 'LEGACY-001');
+
+UPDATE "sales_forecast_monthly"
+SET "version_id" = '00000000-0000-0000-0000-000000000001'::uuid
+WHERE "version_id" IS NULL;
+
+
+-- ============================================================
+-- migration: 0026_widen_spu_numeric_code.sql
+-- source: /packages/db/drizzle/0026_widen_spu_numeric_code.sql
+-- ============================================================
+
+-- Legacy DJ SPU 序号可达 6 位（如 502313），原 varchar(5) 导致 SKU 导入 500
+ALTER TABLE "spus" ALTER COLUMN "spu_numeric_code" TYPE varchar(10);
+ALTER TABLE "skus" ALTER COLUMN "spu_numeric_code" TYPE varchar(10);
+
+
+-- ============================================================
+-- migration: 0027_widen_variant_no.sql
+-- source: /packages/db/drizzle/0027_widen_variant_no.sql
+-- ============================================================
+
+-- Legacy DJ 变参可达 3 位及以上（如 DJ502313_342），原 varchar(2) 导致 SKU 导入失败
+ALTER TABLE "skus" ALTER COLUMN "variant_no" TYPE varchar(10);
+
+
+-- ============================================================
+-- migration: 0028_ai_runs.sql
+-- source: /packages/db/drizzle/0028_ai_runs.sql
+-- ============================================================
+
+DO $$ BEGIN
+  CREATE TYPE "public"."ai_run_status" AS ENUM('running', 'success', 'failed', 'cancelled');
+EXCEPTION
+  WHEN duplicate_object THEN null;
+END $$;
+
+CREATE TABLE IF NOT EXISTS "ai_runs" (
+  "id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+  "graph_name" varchar(100) NOT NULL,
+  "user_id" uuid REFERENCES "users"("id"),
+  "conversation_id" uuid REFERENCES "kb_conversations"("id") ON DELETE SET NULL,
+  "triggered_by" varchar(200),
+  "status" "ai_run_status" DEFAULT 'running' NOT NULL,
+  "input" jsonb,
+  "output" jsonb,
+  "error_message" text,
+  "started_at" timestamp with time zone DEFAULT now() NOT NULL,
+  "finished_at" timestamp with time zone
+);
+
+CREATE TABLE IF NOT EXISTS "ai_run_steps" (
+  "id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+  "run_id" uuid NOT NULL REFERENCES "ai_runs"("id") ON DELETE CASCADE,
+  "node_name" varchar(100) NOT NULL,
+  "status" "ai_run_status" DEFAULT 'running' NOT NULL,
+  "input" jsonb,
+  "output" jsonb,
+  "error_message" text,
+  "duration_ms" integer,
+  "started_at" timestamp with time zone DEFAULT now() NOT NULL,
+  "finished_at" timestamp with time zone
+);
+
+CREATE TABLE IF NOT EXISTS "ai_tool_calls" (
+  "id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+  "run_id" uuid NOT NULL REFERENCES "ai_runs"("id") ON DELETE CASCADE,
+  "step_id" uuid REFERENCES "ai_run_steps"("id") ON DELETE SET NULL,
+  "tool_name" varchar(100) NOT NULL,
+  "input" jsonb,
+  "output" jsonb,
+  "error_message" text,
+  "duration_ms" integer,
+  "created_at" timestamp with time zone DEFAULT now() NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS "ai_runs_graph_started_idx" ON "ai_runs" ("graph_name", "started_at");
+CREATE INDEX IF NOT EXISTS "ai_runs_user_idx" ON "ai_runs" ("user_id");
+CREATE INDEX IF NOT EXISTS "ai_run_steps_run_idx" ON "ai_run_steps" ("run_id");
+CREATE INDEX IF NOT EXISTS "ai_tool_calls_run_idx" ON "ai_tool_calls" ("run_id");
+CREATE INDEX IF NOT EXISTS "ai_tool_calls_tool_idx" ON "ai_tool_calls" ("tool_name");
+
+
+-- ============================================================
+-- migration: 0029_purchase_tracking_lifecycle.sql
+-- source: /packages/db/drizzle/0029_purchase_tracking_lifecycle.sql
+-- ============================================================
+
+-- 采购跟单履约闭环：扩展 status 枚举 + 新字段
+-- 注意：不在此迁移中将 submitted 改为 confirmed（PG 新枚举值须先提交才能 UPDATE 使用）
+-- 应用层 purchase-draft-lifecycle.normalizePurchaseDraftStatus 已将 submitted 视为 confirmed
+
+ALTER TYPE "purchase_draft_status" ADD VALUE IF NOT EXISTS 'confirmed';
+--> statement-breakpoint
+ALTER TYPE "purchase_draft_status" ADD VALUE IF NOT EXISTS 'in_production';
+--> statement-breakpoint
+ALTER TYPE "purchase_draft_status" ADD VALUE IF NOT EXISTS 'ready_to_ship';
+--> statement-breakpoint
+ALTER TYPE "purchase_draft_status" ADD VALUE IF NOT EXISTS 'in_transit';
+--> statement-breakpoint
+ALTER TYPE "purchase_draft_status" ADD VALUE IF NOT EXISTS 'partial_received';
+--> statement-breakpoint
+ALTER TYPE "purchase_draft_status" ADD VALUE IF NOT EXISTS 'received';
+--> statement-breakpoint
+ALTER TYPE "purchase_draft_status" ADD VALUE IF NOT EXISTS 'exception';
+--> statement-breakpoint
+ALTER TABLE "purchase_drafts" ADD COLUMN IF NOT EXISTS "plan_item_id" uuid REFERENCES "pmc_plan_items"("id");
+--> statement-breakpoint
+ALTER TABLE "purchase_drafts" ADD COLUMN IF NOT EXISTS "supplier_confirmed_at" timestamptz;
+--> statement-breakpoint
+ALTER TABLE "purchase_drafts" ADD COLUMN IF NOT EXISTS "confirmed_delivery_date" date;
+--> statement-breakpoint
+ALTER TABLE "purchase_drafts" ADD COLUMN IF NOT EXISTS "actual_ship_date" date;
+--> statement-breakpoint
+ALTER TABLE "purchase_drafts" ADD COLUMN IF NOT EXISTS "actual_received_date" date;
+--> statement-breakpoint
+ALTER TABLE "purchase_drafts" ADD COLUMN IF NOT EXISTS "received_qty" integer NOT NULL DEFAULT 0;
+--> statement-breakpoint
+ALTER TABLE "purchase_drafts" ADD COLUMN IF NOT EXISTS "exception_reason" text;
+--> statement-breakpoint
+ALTER TABLE "purchase_drafts" ADD COLUMN IF NOT EXISTS "owner_user_id" uuid REFERENCES "users"("id");
+--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "purchase_drafts_plan_item_id_idx" ON "purchase_drafts" ("plan_item_id");
+
+
+-- ============================================================
+-- migration: 0030_sales_forecast_collaboration.sql
+-- source: /packages/db/drizzle/0030_sales_forecast_collaboration.sql
+-- ============================================================
+
+DO $$ BEGIN
+  CREATE TYPE "forecast_source_batch_status" AS ENUM ('uploaded', 'parsed', 'generated', 'failed');
+EXCEPTION WHEN duplicate_object THEN null;
+END $$;
+--> statement-breakpoint
+DO $$ BEGIN
+  CREATE TYPE "forecast_review_issue_type" AS ENUM (
+    'high_value',
+    'trend_shift',
+    'stockout_suspected',
+    'category_deviation',
+    'low_accuracy',
+    'missing_history',
+    'platform_mix'
+  );
+EXCEPTION WHEN duplicate_object THEN null;
+END $$;
+--> statement-breakpoint
+DO $$ BEGIN
+  CREATE TYPE "forecast_review_severity" AS ENUM ('critical', 'warning', 'info');
+EXCEPTION WHEN duplicate_object THEN null;
+END $$;
+--> statement-breakpoint
+DO $$ BEGIN
+  CREATE TYPE "forecast_review_status" AS ENUM ('pending', 'reviewed', 'ignored');
+EXCEPTION WHEN duplicate_object THEN null;
+END $$;
+--> statement-breakpoint
+DO $$ BEGIN
+  CREATE TYPE "forecast_seasonality_dimension_type" AS ENUM ('category', 'project_group');
+EXCEPTION WHEN duplicate_object THEN null;
+END $$;
+--> statement-breakpoint
+CREATE TABLE IF NOT EXISTS "sales_forecast_source_batches" (
+  "id" uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  "batch_no" varchar(50) NOT NULL UNIQUE,
+  "daily_file_name" varchar(255),
+  "monthly_file_name" varchar(255),
+  "daily_start_date" date,
+  "daily_end_date" date,
+  "monthly_start_month" varchar(7),
+  "monthly_end_month" varchar(7),
+  "sku_count" integer NOT NULL DEFAULT 0,
+  "row_count" integer NOT NULL DEFAULT 0,
+  "status" "forecast_source_batch_status" NOT NULL DEFAULT 'uploaded',
+  "created_by" uuid REFERENCES "users"("id"),
+  "created_at" timestamptz NOT NULL DEFAULT now()
+);
+--> statement-breakpoint
+CREATE TABLE IF NOT EXISTS "sales_forecast_review_items" (
+  "id" uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  "version_id" uuid NOT NULL REFERENCES "sales_forecast_versions"("id") ON DELETE CASCADE,
+  "sku_id" uuid NOT NULL REFERENCES "skus"("id") ON DELETE CASCADE,
+  "station" varchar(20) NOT NULL,
+  "platform" varchar(50) NOT NULL DEFAULT 'ALL',
+  "issue_type" "forecast_review_issue_type" NOT NULL,
+  "severity" "forecast_review_severity" NOT NULL,
+  "message" text NOT NULL,
+  "suggested_daily_avg" numeric(12, 4),
+  "reviewed_daily_avg" numeric(12, 4),
+  "status" "forecast_review_status" NOT NULL DEFAULT 'pending',
+  "reviewer_id" uuid REFERENCES "users"("id"),
+  "reviewed_at" timestamptz,
+  "created_at" timestamptz NOT NULL DEFAULT now()
+);
+--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "sales_forecast_review_items_version_status_idx"
+  ON "sales_forecast_review_items" ("version_id", "status", "severity");
+--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "sales_forecast_review_items_sku_idx"
+  ON "sales_forecast_review_items" ("sku_id", "station", "platform");
+--> statement-breakpoint
+CREATE UNIQUE INDEX IF NOT EXISTS "sales_forecast_review_items_identity_unique_idx"
+  ON "sales_forecast_review_items" ("version_id", "sku_id", "station", "platform", "issue_type");
+--> statement-breakpoint
+CREATE TABLE IF NOT EXISTS "sales_forecast_seasonality" (
+  "id" uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  "dimension_type" "forecast_seasonality_dimension_type" NOT NULL,
+  "dimension_value" varchar(200) NOT NULL,
+  "month" integer NOT NULL,
+  "seasonality_factor" numeric(10, 4) NOT NULL,
+  "trend_factor" numeric(10, 4),
+  "source_batch_id" uuid REFERENCES "sales_forecast_source_batches"("id") ON DELETE SET NULL,
+  "updated_at" timestamptz NOT NULL DEFAULT now()
+);
+--> statement-breakpoint
+CREATE UNIQUE INDEX IF NOT EXISTS "sales_forecast_seasonality_unique_idx"
+  ON "sales_forecast_seasonality" ("dimension_type", "dimension_value", "month");
+
+
+-- ============================================================
+-- migration: 0031_sales_history_monthly.sql
+-- source: /packages/db/drizzle/0031_sales_history_monthly.sql
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS "sales_history_monthly" (
+  "id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+  "sku_id" uuid NOT NULL REFERENCES "skus"("id") ON DELETE CASCADE,
+  "channel" varchar(100) NOT NULL DEFAULT 'UNKNOWN',
+  "sale_year" integer NOT NULL,
+  "month" integer NOT NULL,
+  "qty_sold" integer NOT NULL,
+  "source" "data_source" NOT NULL DEFAULT 'import',
+  "import_batch_id" uuid,
+  "updated_at" timestamptz NOT NULL DEFAULT now(),
+  "created_at" timestamptz NOT NULL DEFAULT now()
+);
+--> statement-breakpoint
+CREATE UNIQUE INDEX IF NOT EXISTS "sales_history_monthly_sku_channel_month_unique_idx"
+  ON "sales_history_monthly" ("sku_id", "channel", "sale_year", "month");
+--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "sales_history_monthly_sku_year_month_idx"
+  ON "sales_history_monthly" ("sku_id", "sale_year", "month");
+
+
+-- ============================================================
+-- migration: 0032_sku_inventory_master_fields.sql
+-- source: /packages/db/drizzle/0032_sku_inventory_master_fields.sql
+-- ============================================================
+
+-- 库存周转表 A:K → SKU 主数据字段
+ALTER TABLE "skus" ALTER COLUMN "category" TYPE varchar(500);
+
+ALTER TABLE "skus" ADD COLUMN IF NOT EXISTS "lifecycle" varchar(50);
+ALTER TABLE "skus" ADD COLUMN IF NOT EXISTS "sales_country" varchar(100);
+ALTER TABLE "skus" ADD COLUMN IF NOT EXISTS "product_category" varchar(200);
+ALTER TABLE "skus" ADD COLUMN IF NOT EXISTS "owner_name" varchar(100);
+ALTER TABLE "skus" ADD COLUMN IF NOT EXISTS "developer_name" varchar(100);
+
+
+-- ============================================================
+-- migration: 0033_turnover_bucket_warehouses.sql
+-- source: /packages/db/drizzle/0033_turnover_bucket_warehouses.sql
+-- ============================================================
+
+-- 周转表分区仓：美中 / 平台仓（inventory_records 分仓写入，不参与 FOB 合并）
+INSERT INTO "warehouses" ("code", "name", "region_group", "country_code", "allow_cross_fulfill", "sort_order")
+VALUES
+  ('US-CENTRAL', '美中仓', 'US', 'US', true, 7),
+  ('PLATFORM-US', '平台仓(美)', 'US', 'US', true, 8),
+  ('PLATFORM-EU', '平台仓(欧)', 'EU', 'EU', true, 9)
+ON CONFLICT ("code") DO NOTHING;
+
+
+-- ============================================================
+-- migration: 0034_sales_history_category.sql
+-- source: /packages/db/drizzle/0034_sales_history_category.sql
+-- ============================================================
+
+ALTER TABLE "sales_history" ADD COLUMN IF NOT EXISTS "category" varchar(200);
+ALTER TABLE "sales_history_monthly" ADD COLUMN IF NOT EXISTS "category" varchar(200);
+
+CREATE INDEX IF NOT EXISTS "sales_history_category_idx" ON "sales_history" ("category");
+
+UPDATE "sales_history" sh
+SET "category" = s."category"
+FROM "skus" s
+WHERE sh."sku_id" = s."id"
+  AND sh."category" IS NULL
+  AND s."category" IS NOT NULL;
+
+UPDATE "sales_history_monthly" shm
+SET "category" = s."category"
+FROM "skus" s
+WHERE shm."sku_id" = s."id"
+  AND shm."category" IS NULL
+  AND s."category" IS NOT NULL;
+
+
+-- ============================================================
+-- migration: 0035_news_intel.sql
+-- source: /packages/db/drizzle/0035_news_intel.sql
+-- ============================================================
+
+DO $$ BEGIN
+  CREATE TYPE "news_source_type" AS ENUM('rss', 'rsshub', 'manual');
+EXCEPTION
+  WHEN duplicate_object THEN null;
+END $$;
+
+DO $$ BEGIN
+  CREATE TYPE "news_category" AS ENUM(
+    'supply_chain',
+    'logistics',
+    'customs',
+    'platform_policy',
+    'operations',
+    'other'
+  );
+EXCEPTION
+  WHEN duplicate_object THEN null;
+END $$;
+
+DO $$ BEGIN
+  CREATE TYPE "news_priority" AS ENUM('high', 'medium', 'low');
+EXCEPTION
+  WHEN duplicate_object THEN null;
+END $$;
+
+DO $$ BEGIN
+  CREATE TYPE "news_article_status" AS ENUM('pending_review', 'published', 'ignored', 'archived');
+EXCEPTION
+  WHEN duplicate_object THEN null;
+END $$;
+
+CREATE TABLE IF NOT EXISTS "news_sources" (
+  "id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+  "code" varchar(50) NOT NULL,
+  "name" varchar(200) NOT NULL,
+  "feed_url" text NOT NULL,
+  "source_type" "news_source_type" DEFAULT 'rss' NOT NULL,
+  "category_default" "news_category" DEFAULT 'other' NOT NULL,
+  "enabled" boolean DEFAULT true NOT NULL,
+  "fetch_interval_hours" integer DEFAULT 12 NOT NULL,
+  "last_fetched_at" timestamptz,
+  "last_error" text,
+  "consecutive_failures" integer DEFAULT 0 NOT NULL,
+  "config_json" jsonb,
+  "created_at" timestamptz DEFAULT now() NOT NULL,
+  "updated_at" timestamptz DEFAULT now() NOT NULL
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS "news_sources_code_idx" ON "news_sources" ("code");
+CREATE INDEX IF NOT EXISTS "news_sources_enabled_fetched_idx" ON "news_sources" ("enabled", "last_fetched_at");
+
+CREATE TABLE IF NOT EXISTS "news_articles" (
+  "id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+  "source_id" uuid NOT NULL REFERENCES "news_sources"("id") ON DELETE CASCADE,
+  "canonical_url" text NOT NULL,
+  "url_hash" varchar(64) NOT NULL,
+  "title" text NOT NULL,
+  "summary" text,
+  "body_text" text,
+  "key_points" jsonb,
+  "category" "news_category" DEFAULT 'other' NOT NULL,
+  "tags" text[],
+  "relevance_score" integer DEFAULT 0 NOT NULL,
+  "priority" "news_priority" DEFAULT 'low' NOT NULL,
+  "status" "news_article_status" DEFAULT 'pending_review' NOT NULL,
+  "published_at" timestamptz,
+  "fetched_at" timestamptz DEFAULT now() NOT NULL,
+  "content_hash" varchar(64) NOT NULL,
+  "affected_platforms" text[],
+  "affected_regions" text[],
+  "language" varchar(10),
+  "bitable_record_id" varchar(100),
+  "bitable_synced_at" timestamptz,
+  "ingest_run_id" uuid,
+  "created_at" timestamptz DEFAULT now() NOT NULL,
+  "updated_at" timestamptz DEFAULT now() NOT NULL
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS "news_articles_url_hash_idx" ON "news_articles" ("url_hash");
+CREATE INDEX IF NOT EXISTS "news_articles_content_hash_idx" ON "news_articles" ("content_hash");
+CREATE INDEX IF NOT EXISTS "news_articles_status_priority_idx" ON "news_articles" ("status", "priority", "published_at");
+CREATE INDEX IF NOT EXISTS "news_articles_source_fetched_idx" ON "news_articles" ("source_id", "fetched_at");
+
+CREATE TABLE IF NOT EXISTS "news_ingest_logs" (
+  "id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+  "source_id" uuid NOT NULL REFERENCES "news_sources"("id") ON DELETE CASCADE,
+  "task_run_id" uuid,
+  "fetched_count" integer DEFAULT 0 NOT NULL,
+  "new_count" integer DEFAULT 0 NOT NULL,
+  "skipped_dup" integer DEFAULT 0 NOT NULL,
+  "skipped_low_relevance" integer DEFAULT 0 NOT NULL,
+  "error_message" text,
+  "duration_ms" integer,
+  "created_at" timestamptz DEFAULT now() NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS "news_ingest_logs_source_created_idx" ON "news_ingest_logs" ("source_id", "created_at");
+
+
+-- ============================================================
+-- migration: 0036_news_article_bitable_category.sql
+-- source: /packages/db/drizzle/0036_news_article_bitable_category.sql
+-- ============================================================
+
+ALTER TABLE "news_articles" ADD COLUMN IF NOT EXISTS "bitable_category" varchar(50);
+CREATE INDEX IF NOT EXISTS "news_articles_bitable_category_idx" ON "news_articles" ("bitable_category");
+
+
+-- ============================================================
+-- migration: 0037_sales_history_import_perf.sql
+-- source: /packages/db/drizzle/0037_sales_history_import_perf.sql
+-- ============================================================
+
+-- 销量日表：去重约束 + 导入/查询常用索引（支撑千万级写入与按日筛选）
+CREATE UNIQUE INDEX IF NOT EXISTS "sales_history_sku_date_channel_unique_idx"
+  ON "sales_history" ("sku_id", "sale_date", "channel");
+
+CREATE INDEX IF NOT EXISTS "sales_history_sale_date_idx"
+  ON "sales_history" ("sale_date");
+
+CREATE INDEX IF NOT EXISTS "sales_history_import_batch_id_idx"
+  ON "sales_history" ("import_batch_id")
+  WHERE "import_batch_id" IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS "sales_history_source_sku_date_idx"
+  ON "sales_history" ("source", "sku_id", "sale_date");
+
+
+-- ============================================================
+-- migration: 0038_forecast_horizon_factors.sql
+-- source: /packages/db/drizzle/0038_forecast_horizon_factors.sql
+-- ============================================================
+
+ALTER TABLE "sales_forecast_monthly"
+  ADD COLUMN IF NOT EXISTS "horizon_factors" jsonb;
+
+
+-- ============================================================
+-- migration: 0039_forecast_eligibility.sql
+-- source: /packages/db/drizzle/0039_forecast_eligibility.sql
+-- ============================================================
+
+ALTER TYPE forecast_review_issue_type ADD VALUE IF NOT EXISTS 'forecast_skipped';
+--> statement-breakpoint
+ALTER TABLE skus ADD COLUMN IF NOT EXISTS force_forecast boolean NOT NULL DEFAULT false;
+
+
+-- ============================================================
+-- migration: 0040_forecast_profile_horizon.sql
+-- source: /packages/db/drizzle/0040_forecast_profile_horizon.sql
+-- ============================================================
+
+ALTER TYPE "forecast_review_issue_type" ADD VALUE IF NOT EXISTS 'precision_review';
+
+ALTER TABLE "sales_forecast_monthly"
+  ADD COLUMN IF NOT EXISTS "forecast_profile_class" varchar(1),
+  ADD COLUMN IF NOT EXISTS "profile_segment" varchar(20),
+  ADD COLUMN IF NOT EXISTS "horizon_band" varchar(20),
+  ADD COLUMN IF NOT EXISTS "continuity_12m" numeric(8, 4),
+  ADD COLUMN IF NOT EXISTS "cv_12m" numeric(8, 4),
+  ADD COLUMN IF NOT EXISTS "forecast_daily_p10" numeric(12, 4),
+  ADD COLUMN IF NOT EXISTS "forecast_daily_p90" numeric(12, 4),
+  ADD COLUMN IF NOT EXISTS "forecast_model" varchar(50);
+
+CREATE TABLE IF NOT EXISTS "forecast_promo_calendar" (
+  "id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+  "station" varchar(20) NOT NULL,
+  "platform" varchar(50) NOT NULL DEFAULT 'ALL',
+  "promo_year" integer NOT NULL,
+  "promo_month" integer NOT NULL,
+  "intensity" numeric(6, 4) NOT NULL DEFAULT 1,
+  "label" varchar(200),
+  "created_at" timestamp with time zone DEFAULT now() NOT NULL,
+  "updated_at" timestamp with time zone DEFAULT now() NOT NULL
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS "forecast_promo_calendar_unique_idx"
+  ON "forecast_promo_calendar" ("station", "platform", "promo_year", "promo_month");
+
+
+-- ============================================================
+-- migration: 0041_forecast_exogenous_flags.sql
+-- source: /packages/db/drizzle/0041_forecast_exogenous_flags.sql
+-- ============================================================
+
+-- 外生冲击标记：广告/调价等，准确率统计时剔除
+DO $$ BEGIN
+  ALTER TYPE "forecast_review_issue_type" ADD VALUE IF NOT EXISTS 'exogenous_shock';
+EXCEPTION WHEN duplicate_object THEN null;
+END $$;
+--> statement-breakpoint
+DO $$ BEGIN
+  CREATE TYPE "forecast_exogenous_reason" AS ENUM (
+    'ad',
+    'price_change',
+    'promo',
+    'listing_change',
+    'other'
+  );
+EXCEPTION WHEN duplicate_object THEN null;
+END $$;
+--> statement-breakpoint
+CREATE TABLE IF NOT EXISTS "forecast_exogenous_flags" (
+  "id" uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  "sku_id" uuid NOT NULL REFERENCES "skus"("id") ON DELETE CASCADE,
+  "station" varchar(20) NOT NULL DEFAULT 'US',
+  "platform" varchar(50) NOT NULL DEFAULT 'ALL',
+  "flag_year" integer,
+  "flag_month" integer,
+  "reason" "forecast_exogenous_reason" NOT NULL DEFAULT 'other',
+  "note" text,
+  "exclude_from_kpi" boolean NOT NULL DEFAULT true,
+  "created_by" uuid REFERENCES "users"("id"),
+  "created_at" timestamptz NOT NULL DEFAULT now(),
+  "updated_at" timestamptz NOT NULL DEFAULT now()
+);
+--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "forecast_exogenous_flags_sku_station_idx"
+  ON "forecast_exogenous_flags" ("sku_id", "station", "platform");
+--> statement-breakpoint
+CREATE UNIQUE INDEX IF NOT EXISTS "forecast_exogenous_flags_unique_idx"
+  ON "forecast_exogenous_flags" ("sku_id", "station", "platform", "flag_year", "flag_month", "reason");
+
+
+-- ============================================================
+-- migration: 0042_cs_reply_quality.sql
+-- source: /packages/db/drizzle/0042_cs_reply_quality.sql
+-- ============================================================
+
+DO $$ BEGIN
+  CREATE TYPE "cs_reply_batch_status" AS ENUM('importing', 'imported', 'scoring', 'completed', 'failed');
+EXCEPTION
+  WHEN duplicate_object THEN null;
+END $$;
+
+DO $$ BEGIN
+  CREATE TYPE "cs_reply_score_status" AS ENUM('pending', 'scoring', 'scored', 'failed', 'skipped');
+EXCEPTION
+  WHEN duplicate_object THEN null;
+END $$;
+
+CREATE TABLE IF NOT EXISTS "cs_reply_batches" (
+  "id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+  "batch_no" varchar(32) NOT NULL,
+  "name" varchar(200),
+  "status" "cs_reply_batch_status" DEFAULT 'importing' NOT NULL,
+  "total_rows" integer DEFAULT 0 NOT NULL,
+  "imported_rows" integer DEFAULT 0 NOT NULL,
+  "scored_rows" integer DEFAULT 0 NOT NULL,
+  "failed_rows" integer DEFAULT 0 NOT NULL,
+  "pass_threshold" integer DEFAULT 70 NOT NULL,
+  "error_summary" text,
+  "created_by" uuid REFERENCES "users"("id"),
+  "created_at" timestamptz DEFAULT now() NOT NULL,
+  "updated_at" timestamptz DEFAULT now() NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS "cs_reply_batches_status_created_idx" ON "cs_reply_batches" ("status", "created_at");
+CREATE INDEX IF NOT EXISTS "cs_reply_batches_batch_no_idx" ON "cs_reply_batches" ("batch_no");
+
+CREATE TABLE IF NOT EXISTS "cs_reply_records" (
+  "id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+  "batch_id" uuid NOT NULL REFERENCES "cs_reply_batches"("id") ON DELETE CASCADE,
+  "row_no" integer NOT NULL,
+  "buyer_email" varchar(256),
+  "sent_at" timestamptz,
+  "agent_name" varchar(64),
+  "message_type" varchar(32),
+  "order_no" varchar(64),
+  "buyer_message" text NOT NULL,
+  "agent_reply" text NOT NULL,
+  "score_status" "cs_reply_score_status" DEFAULT 'pending' NOT NULL,
+  "overall_score" integer,
+  "score_detail" jsonb,
+  "feedback" text,
+  "highlights" jsonb,
+  "issues" jsonb,
+  "pass" boolean,
+  "error_message" text,
+  "scored_at" timestamptz,
+  "created_at" timestamptz DEFAULT now() NOT NULL,
+  "updated_at" timestamptz DEFAULT now() NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS "cs_reply_records_batch_row_idx" ON "cs_reply_records" ("batch_id", "row_no");
+CREATE INDEX IF NOT EXISTS "cs_reply_records_batch_score_idx" ON "cs_reply_records" ("batch_id", "score_status");
+CREATE INDEX IF NOT EXISTS "cs_reply_records_agent_idx" ON "cs_reply_records" ("agent_name");
+CREATE INDEX IF NOT EXISTS "cs_reply_records_sent_at_idx" ON "cs_reply_records" ("sent_at");
+
+-- 客服管理菜单
+INSERT INTO "menus" ("code", "name", "icon", "path", "sort_order", "is_leaf")
+VALUES ('cs', '客服管理', 'Headphones', NULL, 3, false)
+ON CONFLICT ("code") DO UPDATE SET
+  "name" = EXCLUDED."name",
+  "icon" = EXCLUDED."icon",
+  "sort_order" = EXCLUDED."sort_order",
+  "is_leaf" = EXCLUDED."is_leaf";
+
+INSERT INTO "menus" ("code", "name", "icon", "path", "parent_id", "sort_order", "is_leaf")
+SELECT 'cs.quality', '回复质量评估', 'MailCheck', '/cs/quality', p."id", 1, true
+FROM "menus" p
+WHERE p."code" = 'cs'
+ON CONFLICT ("code") DO UPDATE SET
+  "name" = EXCLUDED."name",
+  "icon" = EXCLUDED."icon",
+  "path" = EXCLUDED."path",
+  "parent_id" = EXCLUDED."parent_id",
+  "sort_order" = EXCLUDED."sort_order",
+  "is_leaf" = EXCLUDED."is_leaf";
+
+INSERT INTO "role_menus" ("role_id", "menu_id")
+SELECT r."id", m."id"
+FROM "roles" r
+CROSS JOIN "menus" m
+WHERE m."code" IN ('cs', 'cs.quality')
+  AND r."code" IN ('super_admin', 'pmc_planner', 'warehouse', 'purchaser', 'viewer')
+ON CONFLICT ("role_id", "menu_id") DO NOTHING;
+
+
+-- ============================================================
+-- migration: 0043_cs_reply_menu_rename.sql
+-- source: /packages/db/drizzle/0043_cs_reply_menu_rename.sql
+-- ============================================================
+
+UPDATE "menus"
+SET "name" = '回复评分'
+WHERE "code" = 'cs.quality';
+
+
+-- ============================================================
+-- migration: 0044_procurement_module.sql
+-- source: /packages/db/drizzle/0044_procurement_module.sql
+-- ============================================================
+
+DO $$ BEGIN
+  CREATE TYPE "public"."procurement_list_type" AS ENUM('bulk_stock_request', 'purchase_follow_up');
+EXCEPTION
+  WHEN duplicate_object THEN null;
+END $$;
+
+CREATE TABLE IF NOT EXISTS "procurement_list_meta" (
+  "list_type" "procurement_list_type" PRIMARY KEY NOT NULL,
+  "column_order" jsonb DEFAULT '[]'::jsonb NOT NULL,
+  "row_count" integer DEFAULT 0 NOT NULL,
+  "last_sync_at" timestamp with time zone,
+  "last_sync_source" varchar(20),
+  "last_sync_by" uuid,
+  "updated_at" timestamp with time zone DEFAULT now() NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS "procurement_list_rows" (
+  "id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+  "list_type" "procurement_list_type" NOT NULL,
+  "row_index" integer NOT NULL,
+  "bitable_record_id" varchar(100),
+  "row_data" jsonb NOT NULL,
+  "created_at" timestamp with time zone DEFAULT now() NOT NULL
+);
+
+DO $$ BEGIN
+  ALTER TABLE "procurement_list_meta"
+    ADD CONSTRAINT "procurement_list_meta_last_sync_by_users_id_fk"
+    FOREIGN KEY ("last_sync_by") REFERENCES "public"."users"("id") ON DELETE no action ON UPDATE no action;
+EXCEPTION
+  WHEN duplicate_object THEN null;
+END $$;
+
+CREATE INDEX IF NOT EXISTS "procurement_list_rows_list_type_idx" ON "procurement_list_rows" ("list_type");
+CREATE INDEX IF NOT EXISTS "procurement_list_rows_list_type_row_index_idx" ON "procurement_list_rows" ("list_type", "row_index");
+
+INSERT INTO "menus" ("name", "code", "icon", "path", "parent_id", "sort_order", "is_leaf")
+SELECT '采购管理', 'procurement', 'ShoppingCart', NULL, NULL, 3, false
+WHERE NOT EXISTS (SELECT 1 FROM "menus" WHERE "code" = 'procurement');
+
+INSERT INTO "menus" ("name", "code", "icon", "path", "parent_id", "sort_order", "is_leaf")
+SELECT '大件备货申请', 'procurement.bulk_stock', NULL, '/procurement/bulk-stock',
+  (SELECT id FROM "menus" WHERE code = 'procurement' LIMIT 1), 1, true
+WHERE NOT EXISTS (SELECT 1 FROM "menus" WHERE "code" = 'procurement.bulk_stock');
+
+INSERT INTO "menus" ("name", "code", "icon", "path", "parent_id", "sort_order", "is_leaf")
+SELECT '采购跟单', 'procurement.follow_up', NULL, '/procurement/follow-up',
+  (SELECT id FROM "menus" WHERE code = 'procurement' LIMIT 1), 2, true
+WHERE NOT EXISTS (SELECT 1 FROM "menus" WHERE "code" = 'procurement.follow_up');
+
+UPDATE "menus" SET "sort_order" = 4 WHERE "code" = 'cs';
+UPDATE "menus" SET "sort_order" = 5 WHERE "code" = 'logistics';
+UPDATE "menus" SET "sort_order" = 6 WHERE "code" = 'ai';
+UPDATE "menus" SET "sort_order" = 7 WHERE "code" = 'data';
+
+INSERT INTO "role_menus" ("role_id", "menu_id")
+SELECT r.id, m.id FROM "roles" r, "menus" m
+WHERE r.code = 'super_admin' AND m.code IN ('procurement', 'procurement.bulk_stock', 'procurement.follow_up')
+  AND NOT EXISTS (
+    SELECT 1 FROM "role_menus" rm WHERE rm.role_id = r.id AND rm.menu_id = m.id
+  );
+
+INSERT INTO "role_menus" ("role_id", "menu_id")
+SELECT r.id, m.id FROM "roles" r, "menus" m
+WHERE r.code = 'purchaser' AND m.code IN ('procurement', 'procurement.bulk_stock', 'procurement.follow_up')
+  AND NOT EXISTS (
+    SELECT 1 FROM "role_menus" rm WHERE rm.role_id = r.id AND rm.menu_id = m.id
+  );
+
+INSERT INTO "role_menus" ("role_id", "menu_id")
+SELECT r.id, m.id FROM "roles" r, "menus" m
+WHERE r.code = 'pmc_planner' AND m.code IN ('procurement', 'procurement.bulk_stock')
+  AND NOT EXISTS (
+    SELECT 1 FROM "role_menus" rm WHERE rm.role_id = r.id AND rm.menu_id = m.id
+  );
+
+INSERT INTO "role_menus" ("role_id", "menu_id")
+SELECT r.id, m.id FROM "roles" r, "menus" m
+WHERE r.code = 'viewer' AND m.code IN ('procurement', 'procurement.bulk_stock', 'procurement.follow_up')
+  AND NOT EXISTS (
+    SELECT 1 FROM "role_menus" rm WHERE rm.role_id = r.id AND rm.menu_id = m.id
+  );
+
+
+-- ============================================================
+-- migration: 0045_news_intel_v2.sql
+-- source: /packages/db/drizzle/0045_news_intel_v2.sql
+-- ============================================================
+
+DO $$ BEGIN
+  CREATE TYPE "news_source_tier" AS ENUM('tier_1', 'tier_2', 'tier_3');
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+--> statement-breakpoint
+DO $$ BEGIN
+  CREATE TYPE "news_bitable_sync_status" AS ENUM('pending', 'synced', 'failed');
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+--> statement-breakpoint
+DO $$ BEGIN
+  CREATE TYPE "news_business_validity" AS ENUM('valid', 'invalid', 'misclassified');
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+--> statement-breakpoint
+ALTER TABLE "news_sources" ADD COLUMN IF NOT EXISTS "source_tier" "news_source_tier" DEFAULT 'tier_2' NOT NULL;
+--> statement-breakpoint
+ALTER TABLE "news_sources" ADD COLUMN IF NOT EXISTS "is_official" boolean DEFAULT false NOT NULL;
+--> statement-breakpoint
+ALTER TABLE "news_sources" ADD COLUMN IF NOT EXISTS "source_language" varchar(10) DEFAULT 'zh' NOT NULL;
+--> statement-breakpoint
+ALTER TABLE "news_sources" ADD COLUMN IF NOT EXISTS "scope_json" jsonb;
+--> statement-breakpoint
+ALTER TABLE "news_articles" ADD COLUMN IF NOT EXISTS "title_zh" text;
+--> statement-breakpoint
+ALTER TABLE "news_articles" ADD COLUMN IF NOT EXISTS "title_original" text;
+--> statement-breakpoint
+ALTER TABLE "news_articles" ADD COLUMN IF NOT EXISTS "topic_category" varchar(80);
+--> statement-breakpoint
+ALTER TABLE "news_articles" ADD COLUMN IF NOT EXISTS "departments" text[];
+--> statement-breakpoint
+ALTER TABLE "news_articles" ADD COLUMN IF NOT EXISTS "platform_tags" text[];
+--> statement-breakpoint
+ALTER TABLE "news_articles" ADD COLUMN IF NOT EXISTS "country_tags" text[];
+--> statement-breakpoint
+ALTER TABLE "news_articles" ADD COLUMN IF NOT EXISTS "business_tags" text[];
+--> statement-breakpoint
+ALTER TABLE "news_articles" ADD COLUMN IF NOT EXISTS "brand_tags" text[];
+--> statement-breakpoint
+ALTER TABLE "news_articles" ADD COLUMN IF NOT EXISTS "source_tier" "news_source_tier";
+--> statement-breakpoint
+ALTER TABLE "news_articles" ADD COLUMN IF NOT EXISTS "is_official_source" boolean DEFAULT false NOT NULL;
+--> statement-breakpoint
+ALTER TABLE "news_articles" ADD COLUMN IF NOT EXISTS "filter_hits" text;
+--> statement-breakpoint
+ALTER TABLE "news_articles" ADD COLUMN IF NOT EXISTS "business_validity" "news_business_validity" DEFAULT 'valid' NOT NULL;
+--> statement-breakpoint
+ALTER TABLE "news_articles" ADD COLUMN IF NOT EXISTS "bitable_sync_status" "news_bitable_sync_status" DEFAULT 'pending' NOT NULL;
+--> statement-breakpoint
+ALTER TABLE "news_articles" ADD COLUMN IF NOT EXISTS "bitable_sync_error" text;
+--> statement-breakpoint
+ALTER TABLE "news_ingest_logs" ADD COLUMN IF NOT EXISTS "skipped_filtered" integer DEFAULT 0 NOT NULL;
+--> statement-breakpoint
+ALTER TABLE "news_ingest_logs" ADD COLUMN IF NOT EXISTS "translated_count" integer DEFAULT 0 NOT NULL;
+--> statement-breakpoint
+ALTER TABLE "news_ingest_logs" ADD COLUMN IF NOT EXISTS "bitable_sync_failed_count" integer DEFAULT 0 NOT NULL;
+--> statement-breakpoint
+UPDATE "news_articles"
+SET "title_zh" = COALESCE("title_zh", "title"),
+    "title_original" = COALESCE("title_original", "title")
+WHERE "title_zh" IS NULL OR "title_original" IS NULL;
+--> statement-breakpoint
+UPDATE "news_articles"
+SET "bitable_sync_status" = 'synced'
+WHERE "bitable_record_id" IS NOT NULL AND "bitable_sync_status" = 'pending';
+--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "news_sources_tier_enabled_idx" ON "news_sources" ("source_tier", "enabled");
+--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "news_articles_sync_status_idx" ON "news_articles" ("bitable_sync_status", "updated_at");
+--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS "news_articles_topic_category_idx" ON "news_articles" ("topic_category");
+
+
+-- ============================================================
+-- migration: 0046_news_intel_menu.sql
+-- source: /packages/db/drizzle/0046_news_intel_menu.sql
+-- ============================================================
+
+-- 跨境资讯管理菜单（仅 super_admin）
+
+INSERT INTO "menus" ("code", "name", "icon", "sort_order", "is_leaf")
+VALUES ('intel', '跨境资讯', 'Newspaper', 8, false)
+ON CONFLICT ("code") DO NOTHING;
+--> statement-breakpoint
+INSERT INTO "menus" ("code", "name", "path", "parent_id", "sort_order", "is_leaf")
+SELECT 'intel.news', '资讯采集', '/intel/news', p."id", 1, true
+FROM "menus" p WHERE p."code" = 'intel'
+ON CONFLICT ("code") DO NOTHING;
+--> statement-breakpoint
+INSERT INTO "role_menus" ("role_id", "menu_id")
+SELECT r."id", m."id"
+FROM "roles" r
+CROSS JOIN "menus" m
+WHERE r."code" = 'super_admin'
+  AND m."code" IN ('intel', 'intel.news')
+ON CONFLICT ("role_id", "menu_id") DO NOTHING;
+
+
+-- ============================================================
 -- seed: miaoda-seed-roles-menus.sql
 -- source: /docs/sql/miaoda-seed-roles-menus.sql
 -- ============================================================
@@ -1328,14 +2535,21 @@ INSERT INTO menus (name, code, icon, path, parent_id, sort_order, is_leaf) SELEC
 INSERT INTO menus (name, code, icon, path, parent_id, sort_order, is_leaf) SELECT '补货建议', 'pmc.suggestion', NULL, '/pmc/suggestions', (SELECT id FROM menus WHERE code = 'pmc' LIMIT 1), 1, true WHERE NOT EXISTS (SELECT 1 FROM menus WHERE code = 'pmc.suggestion');
 INSERT INTO menus (name, code, icon, path, parent_id, sort_order, is_leaf) SELECT '计划列表', 'pmc.list', NULL, '/pmc/list', (SELECT id FROM menus WHERE code = 'pmc' LIMIT 1), 2, true WHERE NOT EXISTS (SELECT 1 FROM menus WHERE code = 'pmc.list');
 INSERT INTO menus (name, code, icon, path, parent_id, sort_order, is_leaf) SELECT '采购跟单', 'pmc.tracking', NULL, '/pmc/tracking', (SELECT id FROM menus WHERE code = 'pmc' LIMIT 1), 3, true WHERE NOT EXISTS (SELECT 1 FROM menus WHERE code = 'pmc.tracking');
-INSERT INTO menus (name, code, icon, path, parent_id, sort_order, is_leaf) SELECT '物流管理', 'logistics', 'Truck', NULL, NULL, 4, false WHERE NOT EXISTS (SELECT 1 FROM menus WHERE code = 'logistics');
+INSERT INTO menus (name, code, icon, path, parent_id, sort_order, is_leaf) SELECT '采购管理', 'procurement', 'ShoppingCart', NULL, NULL, 3, false WHERE NOT EXISTS (SELECT 1 FROM menus WHERE code = 'procurement');
+INSERT INTO menus (name, code, icon, path, parent_id, sort_order, is_leaf) SELECT '大件备货申请', 'procurement.bulk_stock', NULL, '/procurement/bulk-stock', (SELECT id FROM menus WHERE code = 'procurement' LIMIT 1), 1, true WHERE NOT EXISTS (SELECT 1 FROM menus WHERE code = 'procurement.bulk_stock');
+INSERT INTO menus (name, code, icon, path, parent_id, sort_order, is_leaf) SELECT '采购跟单', 'procurement.follow_up', NULL, '/procurement/follow-up', (SELECT id FROM menus WHERE code = 'procurement' LIMIT 1), 2, true WHERE NOT EXISTS (SELECT 1 FROM menus WHERE code = 'procurement.follow_up');
+INSERT INTO menus (name, code, icon, path, parent_id, sort_order, is_leaf) SELECT '客服管理', 'cs', 'Headphones', NULL, NULL, 4, false WHERE NOT EXISTS (SELECT 1 FROM menus WHERE code = 'cs');
+INSERT INTO menus (name, code, icon, path, parent_id, sort_order, is_leaf) SELECT '回复评分', 'cs.quality', NULL, '/cs/quality', (SELECT id FROM menus WHERE code = 'cs' LIMIT 1), 1, true WHERE NOT EXISTS (SELECT 1 FROM menus WHERE code = 'cs.quality');
+INSERT INTO menus (name, code, icon, path, parent_id, sort_order, is_leaf) SELECT '物流管理', 'logistics', 'Truck', NULL, NULL, 5, false WHERE NOT EXISTS (SELECT 1 FROM menus WHERE code = 'logistics');
 INSERT INTO menus (name, code, icon, path, parent_id, sort_order, is_leaf) SELECT 'FOB分账', 'logistics.fob_settlement', NULL, '/logistics/fob-settlement', (SELECT id FROM menus WHERE code = 'logistics' LIMIT 1), 1, true WHERE NOT EXISTS (SELECT 1 FROM menus WHERE code = 'logistics.fob_settlement');
-INSERT INTO menus (name, code, icon, path, parent_id, sort_order, is_leaf) SELECT 'AI 知识库', 'ai', 'Bot', NULL, NULL, 5, false WHERE NOT EXISTS (SELECT 1 FROM menus WHERE code = 'ai');
+INSERT INTO menus (name, code, icon, path, parent_id, sort_order, is_leaf) SELECT 'AI 知识库', 'ai', 'Bot', NULL, NULL, 6, false WHERE NOT EXISTS (SELECT 1 FROM menus WHERE code = 'ai');
 INSERT INTO menus (name, code, icon, path, parent_id, sort_order, is_leaf) SELECT '知识问答', 'ai.chat', NULL, '/ai/chat', (SELECT id FROM menus WHERE code = 'ai' LIMIT 1), 1, true WHERE NOT EXISTS (SELECT 1 FROM menus WHERE code = 'ai.chat');
-INSERT INTO menus (name, code, icon, path, parent_id, sort_order, is_leaf) SELECT '数据中心', 'data', 'ClipboardList', NULL, NULL, 6, false WHERE NOT EXISTS (SELECT 1 FROM menus WHERE code = 'data');
+INSERT INTO menus (name, code, icon, path, parent_id, sort_order, is_leaf) SELECT '数据中心', 'data', 'ClipboardList', NULL, NULL, 7, false WHERE NOT EXISTS (SELECT 1 FROM menus WHERE code = 'data');
 INSERT INTO menus (name, code, icon, path, parent_id, sort_order, is_leaf) SELECT '商品主数据', 'data.products', NULL, '/data/products', (SELECT id FROM menus WHERE code = 'data' LIMIT 1), 1, true WHERE NOT EXISTS (SELECT 1 FROM menus WHERE code = 'data.products');
-INSERT INTO menus (name, code, icon, path, parent_id, sort_order, is_leaf) SELECT '数据导入', 'data.import', NULL, '/data/import', (SELECT id FROM menus WHERE code = 'data' LIMIT 1), 2, true WHERE NOT EXISTS (SELECT 1 FROM menus WHERE code = 'data.import');
-INSERT INTO menus (name, code, icon, path, parent_id, sort_order, is_leaf) SELECT '销量历史', 'data.sales', NULL, '/data/sales', (SELECT id FROM menus WHERE code = 'data' LIMIT 1), 3, true WHERE NOT EXISTS (SELECT 1 FROM menus WHERE code = 'data.sales');
+INSERT INTO menus (name, code, icon, path, parent_id, sort_order, is_leaf) SELECT '销量历史', 'data.sales', NULL, '/data/sales', (SELECT id FROM menus WHERE code = 'data' LIMIT 1), 2, true WHERE NOT EXISTS (SELECT 1 FROM menus WHERE code = 'data.sales');
+INSERT INTO menus (name, code, icon, path, parent_id, sort_order, is_leaf) SELECT '销售预测', 'data.forecast', NULL, '/data/forecast', (SELECT id FROM menus WHERE code = 'data' LIMIT 1), 3, true WHERE NOT EXISTS (SELECT 1 FROM menus WHERE code = 'data.forecast');
+INSERT INTO menus (name, code, icon, path, parent_id, sort_order, is_leaf) SELECT '跨境资讯', 'intel', 'Newspaper', NULL, NULL, 8, false WHERE NOT EXISTS (SELECT 1 FROM menus WHERE code = 'intel');
+INSERT INTO menus (name, code, icon, path, parent_id, sort_order, is_leaf) SELECT '资讯采集', 'intel.news', NULL, '/intel/news', (SELECT id FROM menus WHERE code = 'intel' LIMIT 1), 1, true WHERE NOT EXISTS (SELECT 1 FROM menus WHERE code = 'intel.news');
 INSERT INTO menus (name, code, icon, path, parent_id, sort_order, is_leaf) SELECT '帮助中心', 'help', 'HelpCircle', '/help', NULL, 98, true WHERE NOT EXISTS (SELECT 1 FROM menus WHERE code = 'help');
 INSERT INTO menus (name, code, icon, path, parent_id, sort_order, is_leaf) SELECT '系统设置', 'system', 'Settings', NULL, NULL, 99, false WHERE NOT EXISTS (SELECT 1 FROM menus WHERE code = 'system');
 INSERT INTO menus (name, code, icon, path, parent_id, sort_order, is_leaf) SELECT '用户管理', 'system.users', NULL, '/system/users', (SELECT id FROM menus WHERE code = 'system' LIMIT 1), 1, true WHERE NOT EXISTS (SELECT 1 FROM menus WHERE code = 'system.users');
@@ -1350,12 +2564,19 @@ INSERT INTO role_menus (role_id, menu_id) SELECT r.id, m.id FROM roles r, menus 
 INSERT INTO role_menus (role_id, menu_id) SELECT r.id, m.id FROM roles r, menus m WHERE r.code = 'super_admin' AND m.code = 'pmc.suggestion' AND NOT EXISTS (SELECT 1 FROM role_menus rm WHERE rm.role_id = r.id AND rm.menu_id = m.id);
 INSERT INTO role_menus (role_id, menu_id) SELECT r.id, m.id FROM roles r, menus m WHERE r.code = 'super_admin' AND m.code = 'pmc.list' AND NOT EXISTS (SELECT 1 FROM role_menus rm WHERE rm.role_id = r.id AND rm.menu_id = m.id);
 INSERT INTO role_menus (role_id, menu_id) SELECT r.id, m.id FROM roles r, menus m WHERE r.code = 'super_admin' AND m.code = 'pmc.tracking' AND NOT EXISTS (SELECT 1 FROM role_menus rm WHERE rm.role_id = r.id AND rm.menu_id = m.id);
+INSERT INTO role_menus (role_id, menu_id) SELECT r.id, m.id FROM roles r, menus m WHERE r.code = 'super_admin' AND m.code = 'procurement' AND NOT EXISTS (SELECT 1 FROM role_menus rm WHERE rm.role_id = r.id AND rm.menu_id = m.id);
+INSERT INTO role_menus (role_id, menu_id) SELECT r.id, m.id FROM roles r, menus m WHERE r.code = 'super_admin' AND m.code = 'procurement.bulk_stock' AND NOT EXISTS (SELECT 1 FROM role_menus rm WHERE rm.role_id = r.id AND rm.menu_id = m.id);
+INSERT INTO role_menus (role_id, menu_id) SELECT r.id, m.id FROM roles r, menus m WHERE r.code = 'super_admin' AND m.code = 'procurement.follow_up' AND NOT EXISTS (SELECT 1 FROM role_menus rm WHERE rm.role_id = r.id AND rm.menu_id = m.id);
+INSERT INTO role_menus (role_id, menu_id) SELECT r.id, m.id FROM roles r, menus m WHERE r.code = 'super_admin' AND m.code = 'cs' AND NOT EXISTS (SELECT 1 FROM role_menus rm WHERE rm.role_id = r.id AND rm.menu_id = m.id);
+INSERT INTO role_menus (role_id, menu_id) SELECT r.id, m.id FROM roles r, menus m WHERE r.code = 'super_admin' AND m.code = 'cs.quality' AND NOT EXISTS (SELECT 1 FROM role_menus rm WHERE rm.role_id = r.id AND rm.menu_id = m.id);
 INSERT INTO role_menus (role_id, menu_id) SELECT r.id, m.id FROM roles r, menus m WHERE r.code = 'super_admin' AND m.code = 'logistics' AND NOT EXISTS (SELECT 1 FROM role_menus rm WHERE rm.role_id = r.id AND rm.menu_id = m.id);
 INSERT INTO role_menus (role_id, menu_id) SELECT r.id, m.id FROM roles r, menus m WHERE r.code = 'super_admin' AND m.code = 'logistics.fob_settlement' AND NOT EXISTS (SELECT 1 FROM role_menus rm WHERE rm.role_id = r.id AND rm.menu_id = m.id);
 INSERT INTO role_menus (role_id, menu_id) SELECT r.id, m.id FROM roles r, menus m WHERE r.code = 'super_admin' AND m.code = 'data' AND NOT EXISTS (SELECT 1 FROM role_menus rm WHERE rm.role_id = r.id AND rm.menu_id = m.id);
 INSERT INTO role_menus (role_id, menu_id) SELECT r.id, m.id FROM roles r, menus m WHERE r.code = 'super_admin' AND m.code = 'data.products' AND NOT EXISTS (SELECT 1 FROM role_menus rm WHERE rm.role_id = r.id AND rm.menu_id = m.id);
-INSERT INTO role_menus (role_id, menu_id) SELECT r.id, m.id FROM roles r, menus m WHERE r.code = 'super_admin' AND m.code = 'data.import' AND NOT EXISTS (SELECT 1 FROM role_menus rm WHERE rm.role_id = r.id AND rm.menu_id = m.id);
 INSERT INTO role_menus (role_id, menu_id) SELECT r.id, m.id FROM roles r, menus m WHERE r.code = 'super_admin' AND m.code = 'data.sales' AND NOT EXISTS (SELECT 1 FROM role_menus rm WHERE rm.role_id = r.id AND rm.menu_id = m.id);
+INSERT INTO role_menus (role_id, menu_id) SELECT r.id, m.id FROM roles r, menus m WHERE r.code = 'super_admin' AND m.code = 'data.forecast' AND NOT EXISTS (SELECT 1 FROM role_menus rm WHERE rm.role_id = r.id AND rm.menu_id = m.id);
+INSERT INTO role_menus (role_id, menu_id) SELECT r.id, m.id FROM roles r, menus m WHERE r.code = 'super_admin' AND m.code = 'intel' AND NOT EXISTS (SELECT 1 FROM role_menus rm WHERE rm.role_id = r.id AND rm.menu_id = m.id);
+INSERT INTO role_menus (role_id, menu_id) SELECT r.id, m.id FROM roles r, menus m WHERE r.code = 'super_admin' AND m.code = 'intel.news' AND NOT EXISTS (SELECT 1 FROM role_menus rm WHERE rm.role_id = r.id AND rm.menu_id = m.id);
 INSERT INTO role_menus (role_id, menu_id) SELECT r.id, m.id FROM roles r, menus m WHERE r.code = 'super_admin' AND m.code = 'ai' AND NOT EXISTS (SELECT 1 FROM role_menus rm WHERE rm.role_id = r.id AND rm.menu_id = m.id);
 INSERT INTO role_menus (role_id, menu_id) SELECT r.id, m.id FROM roles r, menus m WHERE r.code = 'super_admin' AND m.code = 'ai.chat' AND NOT EXISTS (SELECT 1 FROM role_menus rm WHERE rm.role_id = r.id AND rm.menu_id = m.id);
 INSERT INTO role_menus (role_id, menu_id) SELECT r.id, m.id FROM roles r, menus m WHERE r.code = 'super_admin' AND m.code = 'help' AND NOT EXISTS (SELECT 1 FROM role_menus rm WHERE rm.role_id = r.id AND rm.menu_id = m.id);
@@ -1369,12 +2590,16 @@ INSERT INTO role_menus (role_id, menu_id) SELECT r.id, m.id FROM roles r, menus 
 INSERT INTO role_menus (role_id, menu_id) SELECT r.id, m.id FROM roles r, menus m WHERE r.code = 'pmc_planner' AND m.code = 'pmc' AND NOT EXISTS (SELECT 1 FROM role_menus rm WHERE rm.role_id = r.id AND rm.menu_id = m.id);
 INSERT INTO role_menus (role_id, menu_id) SELECT r.id, m.id FROM roles r, menus m WHERE r.code = 'pmc_planner' AND m.code = 'pmc.suggestion' AND NOT EXISTS (SELECT 1 FROM role_menus rm WHERE rm.role_id = r.id AND rm.menu_id = m.id);
 INSERT INTO role_menus (role_id, menu_id) SELECT r.id, m.id FROM roles r, menus m WHERE r.code = 'pmc_planner' AND m.code = 'pmc.list' AND NOT EXISTS (SELECT 1 FROM role_menus rm WHERE rm.role_id = r.id AND rm.menu_id = m.id);
+INSERT INTO role_menus (role_id, menu_id) SELECT r.id, m.id FROM roles r, menus m WHERE r.code = 'pmc_planner' AND m.code = 'procurement' AND NOT EXISTS (SELECT 1 FROM role_menus rm WHERE rm.role_id = r.id AND rm.menu_id = m.id);
+INSERT INTO role_menus (role_id, menu_id) SELECT r.id, m.id FROM roles r, menus m WHERE r.code = 'pmc_planner' AND m.code = 'procurement.bulk_stock' AND NOT EXISTS (SELECT 1 FROM role_menus rm WHERE rm.role_id = r.id AND rm.menu_id = m.id);
 INSERT INTO role_menus (role_id, menu_id) SELECT r.id, m.id FROM roles r, menus m WHERE r.code = 'pmc_planner' AND m.code = 'logistics' AND NOT EXISTS (SELECT 1 FROM role_menus rm WHERE rm.role_id = r.id AND rm.menu_id = m.id);
 INSERT INTO role_menus (role_id, menu_id) SELECT r.id, m.id FROM roles r, menus m WHERE r.code = 'pmc_planner' AND m.code = 'logistics.fob_settlement' AND NOT EXISTS (SELECT 1 FROM role_menus rm WHERE rm.role_id = r.id AND rm.menu_id = m.id);
+INSERT INTO role_menus (role_id, menu_id) SELECT r.id, m.id FROM roles r, menus m WHERE r.code = 'pmc_planner' AND m.code = 'cs' AND NOT EXISTS (SELECT 1 FROM role_menus rm WHERE rm.role_id = r.id AND rm.menu_id = m.id);
+INSERT INTO role_menus (role_id, menu_id) SELECT r.id, m.id FROM roles r, menus m WHERE r.code = 'pmc_planner' AND m.code = 'cs.quality' AND NOT EXISTS (SELECT 1 FROM role_menus rm WHERE rm.role_id = r.id AND rm.menu_id = m.id);
 INSERT INTO role_menus (role_id, menu_id) SELECT r.id, m.id FROM roles r, menus m WHERE r.code = 'pmc_planner' AND m.code = 'data' AND NOT EXISTS (SELECT 1 FROM role_menus rm WHERE rm.role_id = r.id AND rm.menu_id = m.id);
 INSERT INTO role_menus (role_id, menu_id) SELECT r.id, m.id FROM roles r, menus m WHERE r.code = 'pmc_planner' AND m.code = 'data.products' AND NOT EXISTS (SELECT 1 FROM role_menus rm WHERE rm.role_id = r.id AND rm.menu_id = m.id);
-INSERT INTO role_menus (role_id, menu_id) SELECT r.id, m.id FROM roles r, menus m WHERE r.code = 'pmc_planner' AND m.code = 'data.import' AND NOT EXISTS (SELECT 1 FROM role_menus rm WHERE rm.role_id = r.id AND rm.menu_id = m.id);
 INSERT INTO role_menus (role_id, menu_id) SELECT r.id, m.id FROM roles r, menus m WHERE r.code = 'pmc_planner' AND m.code = 'data.sales' AND NOT EXISTS (SELECT 1 FROM role_menus rm WHERE rm.role_id = r.id AND rm.menu_id = m.id);
+INSERT INTO role_menus (role_id, menu_id) SELECT r.id, m.id FROM roles r, menus m WHERE r.code = 'pmc_planner' AND m.code = 'data.forecast' AND NOT EXISTS (SELECT 1 FROM role_menus rm WHERE rm.role_id = r.id AND rm.menu_id = m.id);
 INSERT INTO role_menus (role_id, menu_id) SELECT r.id, m.id FROM roles r, menus m WHERE r.code = 'pmc_planner' AND m.code = 'ai' AND NOT EXISTS (SELECT 1 FROM role_menus rm WHERE rm.role_id = r.id AND rm.menu_id = m.id);
 INSERT INTO role_menus (role_id, menu_id) SELECT r.id, m.id FROM roles r, menus m WHERE r.code = 'pmc_planner' AND m.code = 'ai.chat' AND NOT EXISTS (SELECT 1 FROM role_menus rm WHERE rm.role_id = r.id AND rm.menu_id = m.id);
 INSERT INTO role_menus (role_id, menu_id) SELECT r.id, m.id FROM roles r, menus m WHERE r.code = 'pmc_planner' AND m.code = 'help' AND NOT EXISTS (SELECT 1 FROM role_menus rm WHERE rm.role_id = r.id AND rm.menu_id = m.id);
@@ -1386,10 +2611,12 @@ INSERT INTO role_menus (role_id, menu_id) SELECT r.id, m.id FROM roles r, menus 
 INSERT INTO role_menus (role_id, menu_id) SELECT r.id, m.id FROM roles r, menus m WHERE r.code = 'warehouse' AND m.code = 'pmc.list' AND NOT EXISTS (SELECT 1 FROM role_menus rm WHERE rm.role_id = r.id AND rm.menu_id = m.id);
 INSERT INTO role_menus (role_id, menu_id) SELECT r.id, m.id FROM roles r, menus m WHERE r.code = 'warehouse' AND m.code = 'logistics' AND NOT EXISTS (SELECT 1 FROM role_menus rm WHERE rm.role_id = r.id AND rm.menu_id = m.id);
 INSERT INTO role_menus (role_id, menu_id) SELECT r.id, m.id FROM roles r, menus m WHERE r.code = 'warehouse' AND m.code = 'logistics.fob_settlement' AND NOT EXISTS (SELECT 1 FROM role_menus rm WHERE rm.role_id = r.id AND rm.menu_id = m.id);
+INSERT INTO role_menus (role_id, menu_id) SELECT r.id, m.id FROM roles r, menus m WHERE r.code = 'warehouse' AND m.code = 'cs' AND NOT EXISTS (SELECT 1 FROM role_menus rm WHERE rm.role_id = r.id AND rm.menu_id = m.id);
+INSERT INTO role_menus (role_id, menu_id) SELECT r.id, m.id FROM roles r, menus m WHERE r.code = 'warehouse' AND m.code = 'cs.quality' AND NOT EXISTS (SELECT 1 FROM role_menus rm WHERE rm.role_id = r.id AND rm.menu_id = m.id);
 INSERT INTO role_menus (role_id, menu_id) SELECT r.id, m.id FROM roles r, menus m WHERE r.code = 'warehouse' AND m.code = 'data' AND NOT EXISTS (SELECT 1 FROM role_menus rm WHERE rm.role_id = r.id AND rm.menu_id = m.id);
 INSERT INTO role_menus (role_id, menu_id) SELECT r.id, m.id FROM roles r, menus m WHERE r.code = 'warehouse' AND m.code = 'data.products' AND NOT EXISTS (SELECT 1 FROM role_menus rm WHERE rm.role_id = r.id AND rm.menu_id = m.id);
-INSERT INTO role_menus (role_id, menu_id) SELECT r.id, m.id FROM roles r, menus m WHERE r.code = 'warehouse' AND m.code = 'data.import' AND NOT EXISTS (SELECT 1 FROM role_menus rm WHERE rm.role_id = r.id AND rm.menu_id = m.id);
 INSERT INTO role_menus (role_id, menu_id) SELECT r.id, m.id FROM roles r, menus m WHERE r.code = 'warehouse' AND m.code = 'data.sales' AND NOT EXISTS (SELECT 1 FROM role_menus rm WHERE rm.role_id = r.id AND rm.menu_id = m.id);
+INSERT INTO role_menus (role_id, menu_id) SELECT r.id, m.id FROM roles r, menus m WHERE r.code = 'warehouse' AND m.code = 'data.forecast' AND NOT EXISTS (SELECT 1 FROM role_menus rm WHERE rm.role_id = r.id AND rm.menu_id = m.id);
 INSERT INTO role_menus (role_id, menu_id) SELECT r.id, m.id FROM roles r, menus m WHERE r.code = 'warehouse' AND m.code = 'ai' AND NOT EXISTS (SELECT 1 FROM role_menus rm WHERE rm.role_id = r.id AND rm.menu_id = m.id);
 INSERT INTO role_menus (role_id, menu_id) SELECT r.id, m.id FROM roles r, menus m WHERE r.code = 'warehouse' AND m.code = 'ai.chat' AND NOT EXISTS (SELECT 1 FROM role_menus rm WHERE rm.role_id = r.id AND rm.menu_id = m.id);
 INSERT INTO role_menus (role_id, menu_id) SELECT r.id, m.id FROM roles r, menus m WHERE r.code = 'warehouse' AND m.code = 'help' AND NOT EXISTS (SELECT 1 FROM role_menus rm WHERE rm.role_id = r.id AND rm.menu_id = m.id);
@@ -1401,12 +2628,17 @@ INSERT INTO role_menus (role_id, menu_id) SELECT r.id, m.id FROM roles r, menus 
 INSERT INTO role_menus (role_id, menu_id) SELECT r.id, m.id FROM roles r, menus m WHERE r.code = 'purchaser' AND m.code = 'pmc' AND NOT EXISTS (SELECT 1 FROM role_menus rm WHERE rm.role_id = r.id AND rm.menu_id = m.id);
 INSERT INTO role_menus (role_id, menu_id) SELECT r.id, m.id FROM roles r, menus m WHERE r.code = 'purchaser' AND m.code = 'pmc.list' AND NOT EXISTS (SELECT 1 FROM role_menus rm WHERE rm.role_id = r.id AND rm.menu_id = m.id);
 INSERT INTO role_menus (role_id, menu_id) SELECT r.id, m.id FROM roles r, menus m WHERE r.code = 'purchaser' AND m.code = 'pmc.tracking' AND NOT EXISTS (SELECT 1 FROM role_menus rm WHERE rm.role_id = r.id AND rm.menu_id = m.id);
+INSERT INTO role_menus (role_id, menu_id) SELECT r.id, m.id FROM roles r, menus m WHERE r.code = 'purchaser' AND m.code = 'procurement' AND NOT EXISTS (SELECT 1 FROM role_menus rm WHERE rm.role_id = r.id AND rm.menu_id = m.id);
+INSERT INTO role_menus (role_id, menu_id) SELECT r.id, m.id FROM roles r, menus m WHERE r.code = 'purchaser' AND m.code = 'procurement.bulk_stock' AND NOT EXISTS (SELECT 1 FROM role_menus rm WHERE rm.role_id = r.id AND rm.menu_id = m.id);
+INSERT INTO role_menus (role_id, menu_id) SELECT r.id, m.id FROM roles r, menus m WHERE r.code = 'purchaser' AND m.code = 'procurement.follow_up' AND NOT EXISTS (SELECT 1 FROM role_menus rm WHERE rm.role_id = r.id AND rm.menu_id = m.id);
 INSERT INTO role_menus (role_id, menu_id) SELECT r.id, m.id FROM roles r, menus m WHERE r.code = 'purchaser' AND m.code = 'logistics' AND NOT EXISTS (SELECT 1 FROM role_menus rm WHERE rm.role_id = r.id AND rm.menu_id = m.id);
 INSERT INTO role_menus (role_id, menu_id) SELECT r.id, m.id FROM roles r, menus m WHERE r.code = 'purchaser' AND m.code = 'logistics.fob_settlement' AND NOT EXISTS (SELECT 1 FROM role_menus rm WHERE rm.role_id = r.id AND rm.menu_id = m.id);
+INSERT INTO role_menus (role_id, menu_id) SELECT r.id, m.id FROM roles r, menus m WHERE r.code = 'purchaser' AND m.code = 'cs' AND NOT EXISTS (SELECT 1 FROM role_menus rm WHERE rm.role_id = r.id AND rm.menu_id = m.id);
+INSERT INTO role_menus (role_id, menu_id) SELECT r.id, m.id FROM roles r, menus m WHERE r.code = 'purchaser' AND m.code = 'cs.quality' AND NOT EXISTS (SELECT 1 FROM role_menus rm WHERE rm.role_id = r.id AND rm.menu_id = m.id);
 INSERT INTO role_menus (role_id, menu_id) SELECT r.id, m.id FROM roles r, menus m WHERE r.code = 'purchaser' AND m.code = 'data' AND NOT EXISTS (SELECT 1 FROM role_menus rm WHERE rm.role_id = r.id AND rm.menu_id = m.id);
 INSERT INTO role_menus (role_id, menu_id) SELECT r.id, m.id FROM roles r, menus m WHERE r.code = 'purchaser' AND m.code = 'data.products' AND NOT EXISTS (SELECT 1 FROM role_menus rm WHERE rm.role_id = r.id AND rm.menu_id = m.id);
-INSERT INTO role_menus (role_id, menu_id) SELECT r.id, m.id FROM roles r, menus m WHERE r.code = 'purchaser' AND m.code = 'data.import' AND NOT EXISTS (SELECT 1 FROM role_menus rm WHERE rm.role_id = r.id AND rm.menu_id = m.id);
 INSERT INTO role_menus (role_id, menu_id) SELECT r.id, m.id FROM roles r, menus m WHERE r.code = 'purchaser' AND m.code = 'data.sales' AND NOT EXISTS (SELECT 1 FROM role_menus rm WHERE rm.role_id = r.id AND rm.menu_id = m.id);
+INSERT INTO role_menus (role_id, menu_id) SELECT r.id, m.id FROM roles r, menus m WHERE r.code = 'purchaser' AND m.code = 'data.forecast' AND NOT EXISTS (SELECT 1 FROM role_menus rm WHERE rm.role_id = r.id AND rm.menu_id = m.id);
 INSERT INTO role_menus (role_id, menu_id) SELECT r.id, m.id FROM roles r, menus m WHERE r.code = 'purchaser' AND m.code = 'ai' AND NOT EXISTS (SELECT 1 FROM role_menus rm WHERE rm.role_id = r.id AND rm.menu_id = m.id);
 INSERT INTO role_menus (role_id, menu_id) SELECT r.id, m.id FROM roles r, menus m WHERE r.code = 'purchaser' AND m.code = 'ai.chat' AND NOT EXISTS (SELECT 1 FROM role_menus rm WHERE rm.role_id = r.id AND rm.menu_id = m.id);
 INSERT INTO role_menus (role_id, menu_id) SELECT r.id, m.id FROM roles r, menus m WHERE r.code = 'purchaser' AND m.code = 'help' AND NOT EXISTS (SELECT 1 FROM role_menus rm WHERE rm.role_id = r.id AND rm.menu_id = m.id);
@@ -1417,10 +2649,16 @@ INSERT INTO role_menus (role_id, menu_id) SELECT r.id, m.id FROM roles r, menus 
 INSERT INTO role_menus (role_id, menu_id) SELECT r.id, m.id FROM roles r, menus m WHERE r.code = 'viewer' AND m.code = 'pmc.suggestion' AND NOT EXISTS (SELECT 1 FROM role_menus rm WHERE rm.role_id = r.id AND rm.menu_id = m.id);
 INSERT INTO role_menus (role_id, menu_id) SELECT r.id, m.id FROM roles r, menus m WHERE r.code = 'viewer' AND m.code = 'pmc.list' AND NOT EXISTS (SELECT 1 FROM role_menus rm WHERE rm.role_id = r.id AND rm.menu_id = m.id);
 INSERT INTO role_menus (role_id, menu_id) SELECT r.id, m.id FROM roles r, menus m WHERE r.code = 'viewer' AND m.code = 'pmc.tracking' AND NOT EXISTS (SELECT 1 FROM role_menus rm WHERE rm.role_id = r.id AND rm.menu_id = m.id);
+INSERT INTO role_menus (role_id, menu_id) SELECT r.id, m.id FROM roles r, menus m WHERE r.code = 'viewer' AND m.code = 'procurement' AND NOT EXISTS (SELECT 1 FROM role_menus rm WHERE rm.role_id = r.id AND rm.menu_id = m.id);
+INSERT INTO role_menus (role_id, menu_id) SELECT r.id, m.id FROM roles r, menus m WHERE r.code = 'viewer' AND m.code = 'procurement.bulk_stock' AND NOT EXISTS (SELECT 1 FROM role_menus rm WHERE rm.role_id = r.id AND rm.menu_id = m.id);
+INSERT INTO role_menus (role_id, menu_id) SELECT r.id, m.id FROM roles r, menus m WHERE r.code = 'viewer' AND m.code = 'procurement.follow_up' AND NOT EXISTS (SELECT 1 FROM role_menus rm WHERE rm.role_id = r.id AND rm.menu_id = m.id);
 INSERT INTO role_menus (role_id, menu_id) SELECT r.id, m.id FROM roles r, menus m WHERE r.code = 'viewer' AND m.code = 'logistics' AND NOT EXISTS (SELECT 1 FROM role_menus rm WHERE rm.role_id = r.id AND rm.menu_id = m.id);
 INSERT INTO role_menus (role_id, menu_id) SELECT r.id, m.id FROM roles r, menus m WHERE r.code = 'viewer' AND m.code = 'logistics.fob_settlement' AND NOT EXISTS (SELECT 1 FROM role_menus rm WHERE rm.role_id = r.id AND rm.menu_id = m.id);
+INSERT INTO role_menus (role_id, menu_id) SELECT r.id, m.id FROM roles r, menus m WHERE r.code = 'viewer' AND m.code = 'cs' AND NOT EXISTS (SELECT 1 FROM role_menus rm WHERE rm.role_id = r.id AND rm.menu_id = m.id);
+INSERT INTO role_menus (role_id, menu_id) SELECT r.id, m.id FROM roles r, menus m WHERE r.code = 'viewer' AND m.code = 'cs.quality' AND NOT EXISTS (SELECT 1 FROM role_menus rm WHERE rm.role_id = r.id AND rm.menu_id = m.id);
 INSERT INTO role_menus (role_id, menu_id) SELECT r.id, m.id FROM roles r, menus m WHERE r.code = 'viewer' AND m.code = 'data' AND NOT EXISTS (SELECT 1 FROM role_menus rm WHERE rm.role_id = r.id AND rm.menu_id = m.id);
 INSERT INTO role_menus (role_id, menu_id) SELECT r.id, m.id FROM roles r, menus m WHERE r.code = 'viewer' AND m.code = 'data.sales' AND NOT EXISTS (SELECT 1 FROM role_menus rm WHERE rm.role_id = r.id AND rm.menu_id = m.id);
+INSERT INTO role_menus (role_id, menu_id) SELECT r.id, m.id FROM roles r, menus m WHERE r.code = 'viewer' AND m.code = 'data.forecast' AND NOT EXISTS (SELECT 1 FROM role_menus rm WHERE rm.role_id = r.id AND rm.menu_id = m.id);
 INSERT INTO role_menus (role_id, menu_id) SELECT r.id, m.id FROM roles r, menus m WHERE r.code = 'viewer' AND m.code = 'ai' AND NOT EXISTS (SELECT 1 FROM role_menus rm WHERE rm.role_id = r.id AND rm.menu_id = m.id);
 INSERT INTO role_menus (role_id, menu_id) SELECT r.id, m.id FROM roles r, menus m WHERE r.code = 'viewer' AND m.code = 'ai.chat' AND NOT EXISTS (SELECT 1 FROM role_menus rm WHERE rm.role_id = r.id AND rm.menu_id = m.id);
 INSERT INTO role_menus (role_id, menu_id) SELECT r.id, m.id FROM roles r, menus m WHERE r.code = 'viewer' AND m.code = 'help' AND NOT EXISTS (SELECT 1 FROM role_menus rm WHERE rm.role_id = r.id AND rm.menu_id = m.id);

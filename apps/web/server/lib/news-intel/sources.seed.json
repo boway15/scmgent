@@ -1,15 +1,103 @@
 [
   {
+    "code": "gnews_crossborder",
+    "name": "Google新闻-跨境电商",
+    "feed_url": "https://news.google.com/rss/search?q=%E8%B7%A8%E5%A2%83%E7%94%B5%E5%95%86+when:7d&hl=zh-CN&gl=CN&ceid=CN:zh-Hans",
+    "source_type": "rss",
+    "category_default": "other",
+    "fetch_interval_hours": 24,
+    "source_tier": "tier_3",
+    "is_official": false,
+    "source_language": "zh",
+    "enabled": true,
+    "config_json": {
+      "channel": "media",
+      "siteDomain": "news.google.com",
+      "sourceTier": "tier_3",
+      "isOfficial": false,
+      "language": "zh",
+      "includeKeywords": ["跨境", "出海", "电商", "外贸", "亚马逊", "关税", "物流", "卖家"]
+    }
+  },
+  {
+    "code": "gnews_amazon_seller",
+    "name": "Google新闻-亚马逊卖家",
+    "feed_url": "https://news.google.com/rss/search?q=%E4%BA%9A%E9%A9%AC%E9%80%8A+%E5%8D%96%E5%AE%B6+%E6%94%BF%E7%AD%96+when:7d&hl=zh-CN&gl=CN&ceid=CN:zh-Hans",
+    "source_type": "rss",
+    "category_default": "platform_policy",
+    "fetch_interval_hours": 24,
+    "source_tier": "tier_3",
+    "is_official": false,
+    "source_language": "zh",
+    "enabled": true,
+    "config_json": {
+      "channel": "media",
+      "siteDomain": "news.google.com",
+      "sourceTier": "tier_3",
+      "isOfficial": false,
+      "language": "zh",
+      "includeKeywords": ["亚马逊", "卖家", "政策", "fba", "平台", "合规", "费用"]
+    }
+  },
+  {
+    "code": "gnews_furniture",
+    "name": "Google新闻-家具出海",
+    "feed_url": "https://news.google.com/rss/search?q=%E5%AE%B6%E5%85%B7+%E5%87%BA%E6%B5%B7+%E8%B7%A8%E5%A2%83+when:7d&hl=zh-CN&gl=CN&ceid=CN:zh-Hans",
+    "source_type": "rss",
+    "category_default": "other",
+    "fetch_interval_hours": 24,
+    "source_tier": "tier_3",
+    "is_official": false,
+    "source_language": "zh",
+    "enabled": true,
+    "config_json": {
+      "channel": "media",
+      "siteDomain": "news.google.com",
+      "sourceTier": "tier_3",
+      "isOfficial": false,
+      "language": "zh",
+      "includeKeywords": ["家具", "家居", "出海", "跨境", "升降桌", "沙发", "亚马逊"]
+    }
+  },
+  {
+    "code": "gnews_tariff_logistics",
+    "name": "Google新闻-关税物流",
+    "feed_url": "https://news.google.com/rss/search?q=%E6%B5%B7%E5%85%B3+%E5%85%B3%E7%A8%8E+%E6%B8%85%E5%85%B3+when:7d&hl=zh-CN&gl=CN&ceid=CN:zh-Hans",
+    "source_type": "rss",
+    "category_default": "customs",
+    "fetch_interval_hours": 24,
+    "source_tier": "tier_3",
+    "is_official": false,
+    "source_language": "zh",
+    "enabled": true,
+    "config_json": {
+      "channel": "media",
+      "siteDomain": "news.google.com",
+      "sourceTier": "tier_3",
+      "isOfficial": false,
+      "language": "zh",
+      "includeKeywords": ["海关", "关税", "清关", "物流", "海运", "外贸", "贸易"]
+    }
+  },
+  {
     "code": "cifnews",
     "name": "雨果跨境",
     "feed_url": "https://www.cifnews.com/feed",
     "source_type": "rss",
     "category_default": "other",
-    "fetch_interval_hours": 12,
+    "fetch_interval_hours": 24,
+    "source_tier": "tier_2",
+    "is_official": false,
+    "source_language": "zh",
+    "enabled": false,
     "config_json": {
       "channel": "media",
       "siteDomain": "cifnews.com",
-      "includeKeywords": ["跨境", "亚马逊", "关税", "物流", "合规", "出海", "外贸"]
+      "sourceTier": "tier_2",
+      "isOfficial": false,
+      "language": "zh",
+      "note": "直连 /feed 返回 404，已停用",
+      "includeKeywords": ["跨境", "亚马逊", "关税", "物流", "合规", "出海", "外贸", "家具"]
     }
   },
   {
@@ -18,11 +106,19 @@
     "feed_url": "https://www.ebrun.com/feed",
     "source_type": "rss",
     "category_default": "other",
-    "fetch_interval_hours": 12,
+    "fetch_interval_hours": 24,
+    "source_tier": "tier_2",
+    "is_official": false,
+    "source_language": "zh",
+    "enabled": false,
     "config_json": {
       "channel": "media",
       "siteDomain": "ebrun.com",
-      "includeKeywords": ["跨境", "电商", "出口", "供应链", "零售"]
+      "sourceTier": "tier_2",
+      "isOfficial": false,
+      "language": "zh",
+      "note": "直连 /feed 返回 403，已停用",
+      "includeKeywords": ["跨境", "电商", "出口", "供应链", "零售", "家具"]
     }
   },
   {
@@ -31,11 +127,18 @@
     "feed_url": "https://www.amz123.com/feed",
     "source_type": "rss",
     "category_default": "other",
-    "fetch_interval_hours": 12,
-    "enabled": true,
+    "fetch_interval_hours": 24,
+    "source_tier": "tier_2",
+    "is_official": false,
+    "source_language": "zh",
+    "enabled": false,
     "config_json": {
       "channel": "media",
       "siteDomain": "amz123.com",
+      "sourceTier": "tier_2",
+      "isOfficial": false,
+      "language": "zh",
+      "note": "直连 /feed 返回 404，已停用",
       "includeKeywords": ["亚马逊", "跨境", "卖家", "fba", "物流", "关税"]
     }
   },
@@ -45,11 +148,82 @@
     "feed_url": "/36kr/newsflashes",
     "source_type": "rsshub",
     "category_default": "other",
-    "fetch_interval_hours": 12,
+    "fetch_interval_hours": 24,
+    "source_tier": "tier_3",
+    "is_official": false,
+    "source_language": "zh",
+    "enabled": true,
     "config_json": {
       "channel": "media",
       "siteDomain": "36kr.com",
+      "sourceTier": "tier_3",
+      "isOfficial": false,
+      "language": "zh",
+      "note": "需 RSSHUB_BASE_URL；未配置时自动停用",
       "includeKeywords": ["跨境", "出海", "电商", "外贸", "供应链", "关税", "亚马逊"]
+    }
+  },
+  {
+    "code": "cls_telegraph",
+    "name": "财联社-电报",
+    "feed_url": "/cls/telegraph",
+    "source_type": "rsshub",
+    "category_default": "other",
+    "fetch_interval_hours": 24,
+    "source_tier": "tier_3",
+    "is_official": false,
+    "source_language": "zh",
+    "enabled": true,
+    "config_json": {
+      "channel": "media",
+      "siteDomain": "cls.cn",
+      "sourceTier": "tier_3",
+      "isOfficial": false,
+      "language": "zh",
+      "note": "需 RSSHUB_BASE_URL；偶发空结果时看采集日志",
+      "includeKeywords": ["跨境", "出海", "电商", "外贸", "关税", "亚马逊", "物流", "海关", "贸易"]
+    }
+  },
+  {
+    "code": "wallstreetcn_global",
+    "name": "华尔街见闻-全球",
+    "feed_url": "/wallstreetcn/news/global",
+    "source_type": "rsshub",
+    "category_default": "other",
+    "fetch_interval_hours": 24,
+    "source_tier": "tier_3",
+    "is_official": false,
+    "source_language": "zh",
+    "enabled": false,
+    "config_json": {
+      "channel": "media",
+      "siteDomain": "wallstreetcn.com",
+      "sourceTier": "tier_3",
+      "isOfficial": false,
+      "language": "zh",
+      "note": "财经宏观噪声高，已停用；保留配置便于日后定向开启",
+      "includeKeywords": ["跨境", "出海", "电商", "外贸", "关税", "亚马逊", "贸易", "海关", "物流", "家具", "家居", "海运"]
+    }
+  },
+  {
+    "code": "yicai_brief",
+    "name": "第一财经-快讯",
+    "feed_url": "/yicai/brief",
+    "source_type": "rsshub",
+    "category_default": "other",
+    "fetch_interval_hours": 24,
+    "source_tier": "tier_3",
+    "is_official": false,
+    "source_language": "zh",
+    "enabled": false,
+    "config_json": {
+      "channel": "media",
+      "siteDomain": "yicai.com",
+      "sourceTier": "tier_3",
+      "isOfficial": false,
+      "language": "zh",
+      "note": "快讯侧栏污染相关性判断，已停用",
+      "includeKeywords": ["跨境", "出海", "电商", "外贸", "关税", "贸易", "物流", "海关"]
     }
   },
   {
@@ -58,24 +232,40 @@
     "feed_url": "/toutiao/keyword/跨境电商",
     "source_type": "rsshub",
     "category_default": "other",
-    "fetch_interval_hours": 8,
+    "fetch_interval_hours": 24,
+    "source_tier": "tier_3",
+    "is_official": false,
+    "source_language": "zh",
+    "enabled": false,
     "config_json": {
       "channel": "media",
       "siteDomain": "toutiao.com",
+      "sourceTier": "tier_3",
+      "isOfficial": false,
+      "language": "zh",
+      "note": "当前 RSSHub 路由 404，已停用；用 Google 新闻替代",
       "includeKeywords": ["跨境", "出海", "电商", "外贸", "亚马逊", "关税", "物流"]
     }
   },
   {
-    "code": "toutiao_amazon",
-    "name": "今日头条-亚马逊",
-    "feed_url": "/toutiao/keyword/亚马逊",
+    "code": "toutiao_furniture",
+    "name": "今日头条-家具出海",
+    "feed_url": "/toutiao/keyword/家具出海",
     "source_type": "rsshub",
     "category_default": "other",
-    "fetch_interval_hours": 8,
+    "fetch_interval_hours": 24,
+    "source_tier": "tier_3",
+    "is_official": false,
+    "source_language": "zh",
+    "enabled": false,
     "config_json": {
       "channel": "media",
       "siteDomain": "toutiao.com",
-      "includeKeywords": ["亚马逊", "fba", "卖家", "prime", "关税", "物流"]
+      "sourceTier": "tier_3",
+      "isOfficial": false,
+      "language": "zh",
+      "note": "当前 RSSHub 路由 404，已停用；用 Google 新闻替代",
+      "includeKeywords": ["家具", "家居", "出海", "跨境", "升降桌", "沙发"]
     }
   },
   {
@@ -84,10 +274,18 @@
     "feed_url": "/toutiao/keyword/关税",
     "source_type": "rsshub",
     "category_default": "other",
-    "fetch_interval_hours": 12,
+    "fetch_interval_hours": 24,
+    "source_tier": "tier_3",
+    "is_official": false,
+    "source_language": "zh",
+    "enabled": false,
     "config_json": {
       "channel": "media",
       "siteDomain": "toutiao.com",
+      "sourceTier": "tier_3",
+      "isOfficial": false,
+      "language": "zh",
+      "note": "当前 RSSHub 路由 404，已停用；用 Google 新闻替代",
       "includeKeywords": ["关税", "合规", "报关", "清关", "贸易", "美国", "欧盟"]
     }
   },
@@ -97,91 +295,563 @@
     "feed_url": "/toutiao/keyword/跨境物流",
     "source_type": "rsshub",
     "category_default": "other",
-    "fetch_interval_hours": 12,
+    "fetch_interval_hours": 24,
+    "source_tier": "tier_3",
+    "is_official": false,
+    "source_language": "zh",
+    "enabled": false,
     "config_json": {
       "channel": "media",
       "siteDomain": "toutiao.com",
+      "sourceTier": "tier_3",
+      "isOfficial": false,
+      "language": "zh",
+      "note": "当前 RSSHub 路由 404，已停用；用 Google 新闻替代",
       "includeKeywords": ["物流", "运费", "海外仓", "fba", "清关", "港口", "航运"]
     }
   },
   {
     "code": "chuhaibiji_rsshub",
     "name": "出海笔记",
-    "feed_url": "/chuhaibiji/latest",
+    "feed_url": "/wechat/mp/xxx",
     "source_type": "rsshub",
     "category_default": "other",
-    "fetch_interval_hours": 12,
-    "enabled": true,
+    "fetch_interval_hours": 24,
+    "source_tier": "tier_2",
+    "is_official": false,
+    "source_language": "zh",
+    "enabled": false,
     "config_json": {
       "channel": "media",
       "siteDomain": "chuhaibiji.com",
-      "includeKeywords": ["出海", "跨境", "亚马逊", "独立站", "选品"]
+      "sourceTier": "tier_2",
+      "isOfficial": false,
+      "language": "zh",
+      "note": "占位路由，需换成真实微信公众号 id 后再启用"
+    }
+  },
+  {
+    "code": "toutiao_amazon",
+    "name": "今日头条-亚马逊",
+    "feed_url": "/toutiao/keyword/亚马逊跨境",
+    "source_type": "rsshub",
+    "category_default": "platform_policy",
+    "fetch_interval_hours": 24,
+    "source_tier": "tier_3",
+    "is_official": false,
+    "source_language": "zh",
+    "enabled": false,
+    "config_json": {
+      "channel": "media",
+      "siteDomain": "toutiao.com",
+      "sourceTier": "tier_3",
+      "isOfficial": false,
+      "language": "zh",
+      "note": "当前 RSSHub 路由 404，已停用；用 Google 新闻替代",
+      "includeKeywords": ["亚马逊", "跨境", "卖家", "政策", "fba"]
     }
   },
   {
     "code": "customs_gov_cn",
     "name": "海关总署",
-    "feed_url": "/gov/customs/rss",
+    "feed_url": "/gov/customs/list/302249/302274",
     "source_type": "rsshub",
-    "category_default": "other",
+    "category_default": "customs",
     "fetch_interval_hours": 24,
+    "source_tier": "tier_1",
+    "is_official": true,
+    "source_language": "zh",
+    "enabled": false,
     "config_json": {
       "channel": "media",
       "siteDomain": "customs.gov.cn",
+      "sourceTier": "tier_1",
+      "isOfficial": true,
+      "language": "zh",
+      "note": "当前 RSSHub 路由不可用，已停用；用 Google 新闻关税/海关源",
       "includeKeywords": ["海关", "关税", "进出口", "监管", "报关"]
     }
   },
   {
     "code": "mofcom_rsshub",
     "name": "商务部",
-    "feed_url": "/gov/mofcom/rss",
+    "feed_url": "/gov/mofcom/article/tzgg",
     "source_type": "rsshub",
-    "category_default": "other",
+    "category_default": "customs",
     "fetch_interval_hours": 24,
+    "source_tier": "tier_1",
+    "is_official": true,
+    "source_language": "zh",
+    "enabled": false,
     "config_json": {
       "channel": "media",
       "siteDomain": "mofcom.gov.cn",
+      "sourceTier": "tier_1",
+      "isOfficial": true,
+      "language": "zh",
+      "note": "目标站经 RSSHub 访问 503，已停用",
       "includeKeywords": ["贸易", "进出口", "外贸", "制裁", "关税"]
     }
   },
   {
+    "code": "amazon_news",
+    "name": "Amazon News",
+    "feed_url": "https://www.aboutamazon.com/news/feed",
+    "source_type": "rss",
+    "category_default": "platform_policy",
+    "fetch_interval_hours": 24,
+    "source_tier": "tier_1",
+    "is_official": true,
+    "source_language": "en",
+    "enabled": true,
+    "config_json": {
+      "channel": "media",
+      "siteDomain": "aboutamazon.com",
+      "sourceTier": "tier_1",
+      "isOfficial": true,
+      "language": "en",
+      "includeKeywords": ["seller", "seller central", "fulfillment", "marketplace", "fba", "policy", "tariff", "customs", "fee"]
+    }
+  },
+  {
+    "code": "ustr_press",
+    "name": "USTR Press Releases",
+    "feed_url": "https://ustr.gov/about-us/policy-offices/press-office/press-releases/rss.xml",
+    "source_type": "rss",
+    "category_default": "customs",
+    "fetch_interval_hours": 24,
+    "source_tier": "tier_1",
+    "is_official": true,
+    "source_language": "en",
+    "enabled": false,
+    "config_json": {
+      "channel": "media",
+      "siteDomain": "ustr.gov",
+      "sourceTier": "tier_1",
+      "isOfficial": true,
+      "language": "en",
+      "note": "官方 RSS 404，已停用；请用 us_fr_ustr / us_fr_301",
+      "includeKeywords": ["tariff", "trade", "china", "customs", "section"]
+    }
+  },
+  {
+    "code": "gnews_furniture_en",
+    "name": "GNews-Furniture US marketplace",
+    "feed_url": "https://news.google.com/rss/search?q=furniture+Amazon+OR+Wayfair+seller+when:7d&hl=en-US&gl=US&ceid=US:en",
+    "source_type": "rss",
+    "category_default": "other",
+    "fetch_interval_hours": 24,
+    "source_tier": "tier_3",
+    "is_official": false,
+    "source_language": "en",
+    "enabled": true,
+    "config_json": {
+      "channel": "media",
+      "siteDomain": "news.google.com",
+      "sourceTier": "tier_3",
+      "isOfficial": false,
+      "language": "en",
+      "includeKeywords": ["furniture", "home", "seller", "Wayfair", "Amazon", "import"]
+    }
+  },
+  {
+    "code": "retailwire",
+    "name": "Retail Wire",
+    "feed_url": "https://retailwire.com/feed/",
+    "source_type": "rss",
+    "category_default": "other",
+    "fetch_interval_hours": 24,
+    "source_tier": "tier_2",
+    "is_official": false,
+    "source_language": "en",
+    "enabled": true,
+    "config_json": {
+      "channel": "media",
+      "siteDomain": "retailwire.com",
+      "sourceTier": "tier_2",
+      "isOfficial": false,
+      "language": "en",
+      "includeKeywords": ["furniture", "home", "retail", "marketplace", "Amazon"]
+    }
+  },
+  {
+    "code": "gnews_amazon_policy_en",
+    "name": "GNews-Amazon Seller Policy",
+    "feed_url": "https://news.google.com/rss/search?q=Amazon+seller+central+policy+OR+FBA+fee+when:7d&hl=en-US&gl=US&ceid=US:en",
+    "source_type": "rss",
+    "category_default": "platform_policy",
+    "fetch_interval_hours": 24,
+    "source_tier": "tier_3",
+    "is_official": false,
+    "source_language": "en",
+    "enabled": true,
+    "config_json": {
+      "channel": "media",
+      "siteDomain": "news.google.com",
+      "sourceTier": "tier_3",
+      "isOfficial": false,
+      "language": "en",
+      "includeKeywords": ["seller central", "FBA", "policy", "fee", "account"]
+    }
+  },
+  {
+    "code": "gnews_amazon_seller_zh",
+    "name": "GNews-亚马逊卖家中心政策",
+    "feed_url": "https://news.google.com/rss/search?q=%E4%BA%9A%E9%A9%AC%E9%80%8A+%E5%8D%96%E5%AE%B6%E4%B8%AD%E5%BF%83+%E6%94%BF%E7%AD%96+when:7d&hl=zh-CN&gl=CN&ceid=CN:zh-Hans",
+    "source_type": "rss",
+    "category_default": "platform_policy",
+    "fetch_interval_hours": 24,
+    "source_tier": "tier_3",
+    "is_official": false,
+    "source_language": "zh",
+    "enabled": true,
+    "config_json": {
+      "channel": "media",
+      "siteDomain": "news.google.com",
+      "sourceTier": "tier_3",
+      "isOfficial": false,
+      "language": "zh",
+      "includeKeywords": ["卖家中心", "政策", "账号", "费用", "合规", "亚马逊"]
+    }
+  },
+  {
+    "code": "gnews_tiktok_shop",
+    "name": "GNews-TikTok Shop Seller",
+    "feed_url": "https://news.google.com/rss/search?q=TikTok+Shop+seller+policy+OR+Seller+Center+when:7d&hl=en-US&gl=US&ceid=US:en",
+    "source_type": "rss",
+    "category_default": "platform_policy",
+    "fetch_interval_hours": 24,
+    "source_tier": "tier_3",
+    "is_official": false,
+    "source_language": "en",
+    "enabled": true,
+    "config_json": {
+      "channel": "media",
+      "siteDomain": "news.google.com",
+      "sourceTier": "tier_3",
+      "isOfficial": false,
+      "language": "en",
+      "includeKeywords": ["TikTok Shop", "seller", "policy", "compliance"]
+    }
+  },
+  {
+    "code": "gnews_wayfair",
+    "name": "GNews-Wayfair Partner",
+    "feed_url": "https://news.google.com/rss/search?q=Wayfair+partner+home+OR+seller+policy+when:7d&hl=en-US&gl=US&ceid=US:en",
+    "source_type": "rss",
+    "category_default": "platform_policy",
+    "fetch_interval_hours": 24,
+    "source_tier": "tier_3",
+    "is_official": false,
+    "source_language": "en",
+    "enabled": true,
+    "config_json": {
+      "channel": "media",
+      "siteDomain": "news.google.com",
+      "sourceTier": "tier_3",
+      "isOfficial": false,
+      "language": "en",
+      "includeKeywords": ["Wayfair", "partner", "seller", "home", "furniture"]
+    }
+  },
+  {
+    "code": "gnews_walmart_mp",
+    "name": "GNews-Walmart Marketplace",
+    "feed_url": "https://news.google.com/rss/search?q=Walmart+Marketplace+seller+policy+when:7d&hl=en-US&gl=US&ceid=US:en",
+    "source_type": "rss",
+    "category_default": "platform_policy",
+    "fetch_interval_hours": 24,
+    "source_tier": "tier_3",
+    "is_official": false,
+    "source_language": "en",
+    "enabled": true,
+    "config_json": {
+      "channel": "media",
+      "siteDomain": "news.google.com",
+      "sourceTier": "tier_3",
+      "isOfficial": false,
+      "language": "en",
+      "includeKeywords": ["Walmart", "Marketplace", "seller", "policy"]
+    }
+  },
+  {
+    "code": "us_fr_cbp",
+    "name": "Federal Register · CBP",
+    "feed_url": "https://www.federalregister.gov/api/v1/documents.rss?conditions%5Bagencies%5B%5D=customs-and-border-protection&conditions%5Btype%5B%5D=NOTICE&conditions%5Btype%5B%5D=RULE&order=newest",
+    "source_type": "rss",
+    "category_default": "customs",
+    "fetch_interval_hours": 24,
+    "source_tier": "tier_1",
+    "is_official": true,
+    "source_language": "en",
+    "enabled": true,
+    "config_json": {
+      "channel": "media",
+      "siteDomain": "federalregister.gov",
+      "sourceTier": "tier_1",
+      "isOfficial": true,
+      "language": "en",
+      "includeKeywords": ["customs", "tariff", "import", "duty", "furniture", "trade"]
+    }
+  },
+  {
+    "code": "us_fr_ustr",
+    "name": "Federal Register · USTR",
+    "feed_url": "https://www.federalregister.gov/api/v1/documents.rss?conditions%5Bagencies%5B%5D=office-of-the-united-states-trade-representative&order=newest",
+    "source_type": "rss",
+    "category_default": "customs",
+    "fetch_interval_hours": 24,
+    "source_tier": "tier_1",
+    "is_official": true,
+    "source_language": "en",
+    "enabled": true,
+    "config_json": {
+      "channel": "media",
+      "siteDomain": "federalregister.gov",
+      "sourceTier": "tier_1",
+      "isOfficial": true,
+      "language": "en",
+      "includeKeywords": ["tariff", "Section 301", "China", "trade", "customs"]
+    }
+  },
+  {
+    "code": "us_fr_301",
+    "name": "Federal Register · Section 301",
+    "feed_url": "https://www.federalregister.gov/api/v1/documents.rss?conditions%5Bterm%5D=Section+301&order=newest",
+    "source_type": "rss",
+    "category_default": "customs",
+    "fetch_interval_hours": 24,
+    "source_tier": "tier_1",
+    "is_official": true,
+    "source_language": "en",
+    "enabled": true,
+    "config_json": {
+      "channel": "media",
+      "siteDomain": "federalregister.gov",
+      "sourceTier": "tier_1",
+      "isOfficial": true,
+      "language": "en",
+      "includeKeywords": ["Section 301", "tariff", "China", "trade"]
+    }
+  },
+  {
+    "code": "cbp_rss",
+    "name": "CBP RSS",
+    "feed_url": "https://www.cbp.gov/rss.xml",
+    "source_type": "rss",
+    "category_default": "customs",
+    "fetch_interval_hours": 24,
+    "source_tier": "tier_1",
+    "is_official": true,
+    "source_language": "en",
+    "enabled": true,
+    "config_json": {
+      "channel": "media",
+      "siteDomain": "cbp.gov",
+      "sourceTier": "tier_1",
+      "isOfficial": true,
+      "language": "en",
+      "includeKeywords": ["customs", "import", "tariff", "trade", "duty"]
+    }
+  },
+  {
+    "code": "uk_hmrc_news",
+    "name": "UK HMRC News",
+    "feed_url": "https://www.gov.uk/search/news-and-communications.atom?organisations%5B%5D=hm-revenue-customs",
+    "source_type": "rss",
+    "category_default": "customs",
+    "fetch_interval_hours": 24,
+    "source_tier": "tier_1",
+    "is_official": true,
+    "source_language": "en",
+    "enabled": true,
+    "config_json": {
+      "channel": "media",
+      "siteDomain": "gov.uk",
+      "sourceTier": "tier_1",
+      "isOfficial": true,
+      "language": "en",
+      "includeKeywords": ["customs", "duty", "import", "VAT", "tariff"]
+    }
+  },
+  {
+    "code": "gnews_tariff_us",
+    "name": "GNews-US tariff/customs",
+    "feed_url": "https://news.google.com/rss/search?q=%28tariff+OR+customs+OR+CBP%29+%28China+OR+furniture+OR+import%29+when:7d&hl=en-US&gl=US&ceid=US:en",
+    "source_type": "rss",
+    "category_default": "customs",
+    "fetch_interval_hours": 24,
+    "source_tier": "tier_3",
+    "is_official": false,
+    "source_language": "en",
+    "enabled": true,
+    "config_json": {
+      "channel": "media",
+      "siteDomain": "news.google.com",
+      "sourceTier": "tier_3",
+      "isOfficial": false,
+      "language": "en",
+      "includeKeywords": ["tariff", "customs", "CBP", "import", "furniture", "China"]
+    }
+  },
+  {
+    "code": "gnews_eu_tariff",
+    "name": "GNews-EU tariff/CBAM",
+    "feed_url": "https://news.google.com/rss/search?q=EU+CBAM+OR+%22customs+duty%22+OR+tariff+import+when:7d&hl=en-GB&gl=GB&ceid=GB:en",
+    "source_type": "rss",
+    "category_default": "customs",
+    "fetch_interval_hours": 24,
+    "source_tier": "tier_3",
+    "is_official": false,
+    "source_language": "en",
+    "enabled": true,
+    "config_json": {
+      "channel": "media",
+      "siteDomain": "news.google.com",
+      "sourceTier": "tier_3",
+      "isOfficial": false,
+      "language": "en",
+      "includeKeywords": ["EU", "CBAM", "customs", "duty", "tariff"]
+    }
+  },
+  {
+    "code": "gnews_ocean_freight",
+    "name": "GNews-Ocean freight US/EU",
+    "feed_url": "https://news.google.com/rss/search?q=%28ocean+freight+OR+port+congestion+OR+container%29+%28US+OR+Europe%29+when:7d&hl=en-US&gl=US&ceid=US:en",
+    "source_type": "rss",
+    "category_default": "logistics",
+    "fetch_interval_hours": 24,
+    "source_tier": "tier_3",
+    "is_official": false,
+    "source_language": "en",
+    "enabled": true,
+    "config_json": {
+      "channel": "media",
+      "siteDomain": "news.google.com",
+      "sourceTier": "tier_3",
+      "isOfficial": false,
+      "language": "en",
+      "includeKeywords": ["ocean freight", "port", "container", "shipping", "congestion"]
+    }
+  },
+  {
+    "code": "gnews_ocean_zh",
+    "name": "GNews-海运运价清关",
+    "feed_url": "https://news.google.com/rss/search?q=%E6%B5%B7%E8%BF%90+%E8%BF%90%E4%BB%B7+%E6%B8%85%E5%85%B3+when:7d&hl=zh-CN&gl=CN&ceid=CN:zh-Hans",
+    "source_type": "rss",
+    "category_default": "logistics",
+    "fetch_interval_hours": 24,
+    "source_tier": "tier_3",
+    "is_official": false,
+    "source_language": "zh",
+    "enabled": true,
+    "config_json": {
+      "channel": "media",
+      "siteDomain": "news.google.com",
+      "sourceTier": "tier_3",
+      "isOfficial": false,
+      "language": "zh",
+      "includeKeywords": ["海运", "运价", "清关", "港口", "柜", "物流"]
+    }
+  },
+  {
+    "code": "freightwaves",
+    "name": "FreightWaves",
+    "feed_url": "https://www.freightwaves.com/news/feed",
+    "source_type": "rss",
+    "category_default": "logistics",
+    "fetch_interval_hours": 24,
+    "source_tier": "tier_2",
+    "is_official": false,
+    "source_language": "en",
+    "enabled": true,
+    "config_json": {
+      "channel": "media",
+      "siteDomain": "freightwaves.com",
+      "sourceTier": "tier_2",
+      "isOfficial": false,
+      "language": "en",
+      "includeKeywords": ["freight", "port", "container", "ocean", "tariff", "shipping"]
+    }
+  },
+  {
+    "code": "supplychaindive",
+    "name": "Supply Chain Dive",
+    "feed_url": "https://www.supplychaindive.com/feeds/news/",
+    "source_type": "rss",
+    "category_default": "logistics",
+    "fetch_interval_hours": 24,
+    "source_tier": "tier_2",
+    "is_official": false,
+    "source_language": "en",
+    "enabled": true,
+    "config_json": {
+      "channel": "media",
+      "siteDomain": "supplychaindive.com",
+      "sourceTier": "tier_2",
+      "isOfficial": false,
+      "language": "en",
+      "includeKeywords": ["logistics", "supply chain", "port", "shipping", "freight"]
+    }
+  },
+  {
     "code": "digitalcommerce360",
-    "name": "Digital Commerce 360（已停用）",
+    "name": "Digital Commerce 360（非官方英文，默认停用）",
     "feed_url": "https://www.digitalcommerce360.com/feed/",
     "source_type": "rss",
     "category_default": "other",
     "fetch_interval_hours": 24,
+    "source_tier": "tier_2",
+    "is_official": false,
+    "source_language": "en",
     "enabled": false,
-    "config_json": { "channel": "media", "siteDomain": "digitalcommerce360.com", "note": "英文站已默认停用" }
+    "config_json": {
+      "channel": "media",
+      "siteDomain": "digitalcommerce360.com",
+      "sourceTier": "tier_2",
+      "isOfficial": false,
+      "language": "en",
+      "note": "非官方英文媒体，默认停用"
+    }
   },
   {
     "code": "theloadstar",
-    "name": "The Loadstar（已停用）",
+    "name": "The Loadstar（非官方英文，默认停用）",
     "feed_url": "https://theloadstar.com/feed/",
     "source_type": "rss",
-    "category_default": "other",
+    "category_default": "logistics",
     "fetch_interval_hours": 24,
+    "source_tier": "tier_2",
+    "is_official": false,
+    "source_language": "en",
     "enabled": false,
-    "config_json": { "channel": "media", "siteDomain": "theloadstar.com", "note": "英文站已默认停用" }
+    "config_json": {
+      "channel": "media",
+      "siteDomain": "theloadstar.com",
+      "sourceTier": "tier_2",
+      "isOfficial": false,
+      "language": "en",
+      "note": "非官方英文媒体，默认停用；物流可用 freightwaves / supplychaindive"
+    }
   },
   {
     "code": "marketplacepulse",
-    "name": "Marketplace Pulse（已停用）",
+    "name": "Marketplace Pulse（非官方英文，默认停用）",
     "feed_url": "https://www.marketplacepulse.com/feed",
     "source_type": "rss",
     "category_default": "other",
     "fetch_interval_hours": 24,
+    "source_tier": "tier_2",
+    "is_official": false,
+    "source_language": "en",
     "enabled": false,
-    "config_json": { "channel": "media", "siteDomain": "marketplacepulse.com", "note": "英文站已默认停用" }
-  },
-  {
-    "code": "amazon_news",
-    "name": "Amazon News（已停用）",
-    "feed_url": "https://www.aboutamazon.com/news/feed",
-    "source_type": "rss",
-    "category_default": "other",
-    "fetch_interval_hours": 24,
-    "enabled": false,
-    "config_json": { "channel": "media", "siteDomain": "aboutamazon.com", "note": "英文站已默认停用" }
+    "config_json": {
+      "channel": "media",
+      "siteDomain": "marketplacepulse.com",
+      "sourceTier": "tier_2",
+      "isOfficial": false,
+      "language": "en",
+      "note": "非官方英文且 /feed 返回 404，默认停用"
+    }
   }
 ]

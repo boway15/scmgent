@@ -9,7 +9,11 @@ export type TaskName =
   | 'daily_inventory_pipeline'
   | 'forecast_accuracy'
   | 'forecast_baseline'
-  | 'news_ingest';
+  | 'news_ingest'
+  | 'procurement_bulk_stock_push'
+  | 'procurement_follow_up_push'
+  | 'procurement_bulk_stock_pull'
+  | 'procurement_follow_up_pull';
 
 export async function startTaskRun(taskName: TaskName, triggeredBy: string) {
   const [run] = await db

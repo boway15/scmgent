@@ -189,8 +189,14 @@ node -e 'import("./dist/server/hono-app/index.js").then(m=>console.log("OK", !!m
 | `FEISHU_APP_ID` | 正式必填 | 飞书自建应用 | 内测可空 |
 | `FEISHU_APP_SECRET` | 正式必填 | | |
 | `FEISHU_OAUTH_REDIRECT_URI` | 正式必填 | `{APP_BASE_URL}/api/auth/feishu/callback` | |
-| `FEISHU_ALERT_CHAT_ID` | — | 群 chat_id | 可选 |
-| `DIFY_*` | — | 留空 | Phase 2 |
+| `FEISHU_ALERT_CHAT_ID` | — | 群 chat_id | 可选（资讯模块不做群推送） |
+| `FEISHU_BITABLE_APP_TOKEN` | 资讯必填 | 多维表格 app_token | 与旧资讯表可同 app |
+| `FEISHU_BITABLE_TABLE_NEWS_INTEL` | — | 旧表 table_id | **仅保留历史，禁止新写入** |
+| `FEISHU_BITABLE_TABLE_NEWS_INTEL_V2` | 资讯必填 | 新「跨境资讯总表」table_id | 采集只写此表 |
+| `NEWS_INTEL_ENABLED` | — | `true` | 设为 `false` 可关闭采集 |
+| `RSSHUB_BASE_URL` | 建议 | 自建 RSSHub | rsshub 信源需要 |
+| `DIFY_API_KEY_NEWS_INTEL` | 建议 | Dify 工作流 key | 英文官方中文化；缺失时中文源仍可规则入库 |
+| `DIFY_*` | — | 留空 | 其他 Phase 2 |
 | `ENFORCE_RBAC` | ✅ | `true` | |
 | `CRON_SECRET` | ✅ | 随机长字符串 | Header `X-Cron-Secret` |
 
@@ -249,8 +255,8 @@ pnpm db:seed
 
 ### 5.3 验证表与菜单
 
-- [ ] 核心表存在：`users`、`roles`、`menus`、`role_menus`、`skus`、`inventory_records`、`sales_history`、`pmc_plans`、`purchase_drafts`、`sku_compliance` 等
-- [ ] `menus` 含 `dashboard`、`compliance.overview`、`data.sales`、`pmc.tracking`
+- [ ] 核心表存在：`users`、`roles`、`menus`、`role_menus`、`skus`、`inventory_records`、`sales_history`、`pmc_plans`、`purchase_drafts`、`news_sources`、`news_articles` 等
+- [ ] `menus` 含 `dashboard`、`data.sales`、`pmc.tracking`、`intel.news`（仅 super_admin）
 - [ ] 无废弃菜单：`pmc.drafts`、`pmc.import`、`reorder.*`
 
 ---
@@ -278,6 +284,9 @@ pnpm db:seed
 |--------|------|----------|--------------|
 | 缺货预警 | `0 7 * * *`（每天 07:00） | `server/tasks/stockAlert.ts` | `POST /api/tasks/stock-alert` |
 | 补货预测 | `0 6 * * 1`（每周一 06:00） | `server/tasks/replenishmentForecast.ts` | `POST /api/tasks/replenishment-forecast` |
+| 跨境资讯采集 | `0 8 * * *`（每天 08:00） | `server/tasks/newsIngest.ts` | `POST /api/tasks/news-ingest` |
+| 大件备货从飞书拉取 | `0 8 * * *`（每天 08:00） | `server/tasks/procurementFeishuPull.ts` | `POST /api/tasks/procurement-bulk-stock-pull` |
+| 采购跟单从飞书拉取 | `0 8 * * *`（每天 08:00） | `server/tasks/procurementFeishuPull.ts` | `POST /api/tasks/procurement-follow-up-pull` |
 
 手动调试或 HTTP 插件调用时，请求头必须带：
 

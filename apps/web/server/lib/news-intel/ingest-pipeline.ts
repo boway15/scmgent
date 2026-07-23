@@ -1,61 +1,71 @@
-import { eq, and, desc, sql, gte } from 'drizzle-orm';
+import { and, desc, eq, gte, sql } from 'drizzle-orm';
 import { db, newsArticles, newsIngestLogs, newsSources } from '@scm/db';
-import { sendFeishuGroupMessage } from '../../integrations/feishu.js';
-import { buildSummaryFallback, extractArticleBody } from './body-extract.js';
+import { buildSummaryFallback, buildRelevanceProbeText, extractArticleBody } from './body-extract.js';
 import { syncArticleToBitable, syncPendingArticlesToBitable } from './bitable-sync.js';
 import {
-  classifyForBitable,
-  filterByOpenclawRules,
+  classifyNewsArticle,
+  evaluateNewsRelevance,
+  isPredominantlyEnglish,
 } from './content-filter.js';
 import {
-  getNewsIntelAutoPublishThreshold,
   getNewsIntelMinRelevance,
-  isNewsIntelEnabled,
   getRsshubBaseUrl,
+  isNewsIntelEnabled,
 } from './config.js';
 import { buildDedupKeys, shouldSkipAsDuplicate } from './dedup.js';
 import { enrichArticleWithDify } from './enrich-dify.js';
 import { fetchRssFeed, parseRssPubDate } from './rss-fetcher.js';
 import {
   ensureNewsSourcesSeeded,
-  isSourceDue,
   listNewsSources,
 } from './source-service.js';
 import {
   isSourceChannelEnabled,
   loadNewsIntelPolicy,
   parseSourceConfig,
+  resolveSourceOfficial,
+  resolveSourceTier,
 } from './policy.js';
 import type {
   IngestRunResult,
   IngestSourceResult,
   NewsArticleStatus,
+  NewsBusinessValidity,
+  NewsBitableSyncStatus,
 } from './types.js';
 import { normalizeNewsUrl, normalizeTitle } from './url-normalize.js';
 
-function mapDifyCategoryToBitable(category: string): string {
-  const map: Record<string, string> = {
-    customs: '法规政策',
-    platform_policy: '法规政策',
-    logistics: '物流仓储',
-    operations: '活动运营',
-    supply_chain: '市场',
-    other: '市场',
-  };
-  return map[category] ?? '市场';
+function bumpReason(bucket: Record<string, number>, reason: string) {
+  bucket[reason] = (bucket[reason] ?? 0) + 1;
 }
 
-function resolveArticleStatus(
-  relevanceScore: number,
-  priority: string,
-): NewsArticleStatus {
-  const minRelevance = getNewsIntelMinRelevance();
-  const autoPublish = getNewsIntelAutoPublishThreshold();
+function formatFilterReasons(bucket: Record<string, number>): string | undefined {
+  const parts = Object.entries(bucket)
+    .sort((a, b) => b[1] - a[1])
+    .map(([reason, count]) => `${reason}=${count}`);
+  return parts.length ? `filterReasons: ${parts.join('; ')}` : undefined;
+}
 
-  if (relevanceScore < minRelevance) return 'ignored';
-  if (relevanceScore >= autoPublish && priority === 'high') return 'published';
-  if (relevanceScore >= autoPublish) return 'pending_review';
-  return 'pending_review';
+function shanghaiDateKey(date = new Date()): string {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Shanghai',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(date);
+}
+
+export async function hasSuccessfulIngestToday(): Promise<boolean> {
+  const today = shanghaiDateKey();
+  const recent = await db
+    .select({ createdAt: newsIngestLogs.createdAt, errorMessage: newsIngestLogs.errorMessage })
+    .from(newsIngestLogs)
+    .orderBy(desc(newsIngestLogs.createdAt))
+    .limit(200);
+
+  return recent.some(
+    (r) => !r.errorMessage && r.createdAt && shanghaiDateKey(r.createdAt) === today,
+  );
 }
 
 async function processSource(
@@ -71,10 +81,15 @@ async function processSource(
     skippedDup: 0,
     skippedLowRelevance: 0,
     skippedFiltered: 0,
+    translatedCount: 0,
+    bitableSyncFailedCount: 0,
     durationMs: 0,
   };
 
   const sourceConfig = parseSourceConfig(source.configJson);
+  const sourceTier = resolveSourceTier(source.sourceTier, sourceConfig);
+  const isOfficial = resolveSourceOfficial(source.isOfficial, sourceConfig);
+
   if (!isSourceChannelEnabled(sourceConfig)) {
     result.durationMs = Date.now() - started;
     return result;
@@ -83,7 +98,24 @@ async function processSource(
   try {
     if (source.sourceType === 'rsshub' && !getRsshubBaseUrl()) {
       result.errorMessage = 'RSSHUB_BASE_URL not configured — skip rsshub source';
+      await db
+        .update(newsSources)
+        .set({ lastError: result.errorMessage, updatedAt: new Date() })
+        .where(eq(newsSources.id, source.id));
       result.durationMs = Date.now() - started;
+      await db.insert(newsIngestLogs).values({
+        sourceId: source.id,
+        taskRunId: taskRunId ?? null,
+        fetchedCount: 0,
+        newCount: 0,
+        skippedDup: 0,
+        skippedLowRelevance: 0,
+        skippedFiltered: 0,
+        translatedCount: 0,
+        bitableSyncFailedCount: 0,
+        errorMessage: result.errorMessage,
+        durationMs: result.durationMs,
+      });
       return result;
     }
 
@@ -91,60 +123,97 @@ async function processSource(
     result.fetchedCount = items.length;
     const policy = loadNewsIntelPolicy();
     const maxItems = policy.maxItemsPerSource;
+    const minRelevance = getNewsIntelMinRelevance();
+    const filterReasons: Record<string, number> = {};
 
     for (const item of items.slice(0, maxItems)) {
-      const title = normalizeTitle(item.title);
+      const titleOriginal = normalizeTitle(item.title);
       const canonicalUrl = normalizeNewsUrl(item.link);
       const snippet = item.contentSnippet ?? '';
       const publishedAt = parseRssPubDate(item.pubDate);
+      const probeText = buildRelevanceProbeText({
+        title: titleOriginal,
+        snippet,
+        rssContent: item.content,
+      });
+
+      const relevance = evaluateNewsRelevance({
+        title: titleOriginal,
+        body: probeText,
+        publishedAt,
+        canonicalUrl,
+        sourceConfig,
+        sourceTier,
+        isOfficial,
+      });
+      if (!relevance.pass) {
+        result.skippedFiltered += 1;
+        bumpReason(filterReasons, relevance.reason || 'filtered');
+        continue;
+      }
 
       const bodyText =
         (await extractArticleBody(canonicalUrl, item.content)) ?? snippet;
 
-      const filterResult = filterByOpenclawRules({
-        title,
-        body: bodyText,
-        publishedAt,
-        canonicalUrl,
-        sourceConfig,
+      const english = isPredominantlyEnglish(titleOriginal, bodyText || probeText);
+      const classification = classifyNewsArticle(titleOriginal, probeText);
+
+      const enrich = await enrichArticleWithDify({
+        title: titleOriginal,
+        bodyText,
+        sourceName: source.name,
+        language: english ? 'en' : 'zh',
+        sourceTier,
+        isOfficial,
+        // 中文标题改由飞书多维表格 AI 字段补全；Dify 有则用，无则英文原文入表
+        requireTitleZh: false,
+        fallbackCategory: 'other',
+        fallbackPriority: classification.priority,
       });
-      if (!filterResult.pass) {
-        result.skippedFiltered += 1;
+
+      if (english && enrich?.titleZh) result.translatedCount += 1;
+
+      const titleZh = enrich?.titleZh?.trim() || (english ? null : titleOriginal);
+      const displayTitle = titleZh || titleOriginal;
+      const summary =
+        enrich?.summary ?? buildSummaryFallback(displayTitle, bodyText, snippet);
+
+      const relevanceScore = Math.max(
+        classification.relevanceScore,
+        enrich?.relevanceScore ?? 0,
+      );
+      if (relevanceScore < minRelevance) {
+        result.skippedLowRelevance += 1;
+        bumpReason(filterReasons, 'low_relevance');
         continue;
       }
 
-      const dupReason = await shouldSkipAsDuplicate(title, snippet, canonicalUrl);
+      const priority =
+        enrich?.priority ??
+        (relevanceScore >= 75 ? 'high' : relevanceScore >= 55 ? 'medium' : 'low');
+
+      const dupReason = await shouldSkipAsDuplicate(displayTitle, summary, canonicalUrl, {
+        incomingTier: sourceTier,
+        incomingOfficial: isOfficial,
+      });
       if (dupReason) {
         result.skippedDup += 1;
         continue;
       }
 
-      const bitableClass = classifyForBitable(title, bodyText);
+      const topicCategory = enrich?.topicCategory ?? classification.topicCategory;
+      const departments =
+        enrich?.departments?.length ? enrich.departments : classification.departments;
+      const platformTags = classification.platformTags;
+      const countryTags = classification.countryTags;
+      const businessTags = classification.businessTags;
+      const brandTags = classification.brandTags;
+      const filterHits = [
+        ...relevance.hits,
+        ...classification.filterHits,
+      ].join('; ');
 
-      const enrich = await enrichArticleWithDify({
-        title,
-        bodyText,
-        sourceName: source.name,
-        fallbackCategory: 'other',
-        fallbackPriority: 'medium',
-      });
-
-      const summary =
-        enrich?.summary ?? buildSummaryFallback(title, bodyText, snippet);
-
-      const relevanceScore =
-        enrich?.relevanceScore ??
-        Math.min(100, 40 + (bitableClass.hitCounts[bitableClass.bitableCategory] ?? 0) * 8);
-      const priority =
-        relevanceScore >= 75 ? 'high' : relevanceScore >= 55 ? 'medium' : 'low';
-      const status = resolveArticleStatus(relevanceScore, priority);
-
-      if (status === 'ignored') {
-        result.skippedLowRelevance += 1;
-        continue;
-      }
-
-      const { urlHash, contentHash } = buildDedupKeys(title, summary, canonicalUrl);
+      const { urlHash, contentHash } = buildDedupKeys(displayTitle, summary, canonicalUrl);
 
       const [inserted] = await db
         .insert(newsArticles)
@@ -152,26 +221,34 @@ async function processSource(
           sourceId: source.id,
           canonicalUrl,
           urlHash,
-          title,
+          title: displayTitle,
+          titleZh,
+          titleOriginal,
           summary,
           bodyText: bodyText || null,
           keyPoints: enrich?.keyPoints?.length ? enrich.keyPoints : null,
           category: 'other',
-          bitableCategory: enrich?.category
-            ? mapDifyCategoryToBitable(enrich.category)
-            : bitableClass.bitableCategory,
+          bitableCategory: topicCategory,
+          topicCategory,
+          departments,
+          platformTags,
+          countryTags,
+          businessTags,
+          brandTags,
           tags: enrich?.tags?.length ? enrich.tags : null,
           relevanceScore,
           priority,
-          status,
+          status: 'published',
+          sourceTier,
+          isOfficialSource: isOfficial,
+          filterHits,
+          businessValidity: 'valid',
           publishedAt: publishedAt ?? null,
           contentHash,
-          affectedPlatforms: bitableClass.remarkPlatforms.length
-            ? bitableClass.remarkPlatforms
-            : null,
-          affectedRegions: bitableClass.remarkCountries.length
-            ? bitableClass.remarkCountries
-            : null,
+          affectedPlatforms: platformTags.length ? platformTags : null,
+          affectedRegions: countryTags.length ? countryTags : null,
+          language: english ? 'en' : 'zh',
+          bitableSyncStatus: 'pending',
           ingestRunId: taskRunId ?? null,
         })
         .returning({ id: newsArticles.id });
@@ -181,10 +258,15 @@ async function processSource(
         try {
           await syncArticleToBitable(inserted.id);
         } catch (err) {
+          result.bitableSyncFailedCount += 1;
           console.warn('[news-intel] Bitable sync failed for', inserted.id, err);
         }
       }
     }
+
+    const reasonSummary = formatFilterReasons(filterReasons);
+    const filterNote =
+      reasonSummary && result.newCount === 0 ? reasonSummary : undefined;
 
     await db
       .update(newsSources)
@@ -195,6 +277,10 @@ async function processSource(
         updatedAt: new Date(),
       })
       .where(eq(newsSources.id, source.id));
+
+    if (filterNote) {
+      result.errorMessage = filterNote;
+    }
   } catch (err) {
     const message = err instanceof Error ? err.message : 'source ingest failed';
     result.errorMessage = message;
@@ -217,43 +303,14 @@ async function processSource(
     newCount: result.newCount,
     skippedDup: result.skippedDup,
     skippedLowRelevance: result.skippedLowRelevance,
+    skippedFiltered: result.skippedFiltered,
+    translatedCount: result.translatedCount,
+    bitableSyncFailedCount: result.bitableSyncFailedCount,
     errorMessage: result.errorMessage ?? null,
     durationMs: result.durationMs,
   });
 
   return result;
-}
-
-async function alertFailedSources(sourceResults: IngestSourceResult[]): Promise<number> {
-  const failed = sourceResults.filter(
-    (r) => r.errorMessage && !r.errorMessage.includes('RSSHUB_BASE_URL not configured'),
-  );
-  if (!failed.length) return 0;
-
-  const lines = failed.map((r) => `- ${r.sourceCode}: ${r.errorMessage}`).join('\n');
-  await sendFeishuGroupMessage(`[跨境资讯] 信源采集失败 ${failed.length} 个\n${lines}`);
-  return failed.length;
-}
-
-async function alertHighVolumePublished(): Promise<void> {
-  const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
-  const rows = await db
-    .select({ count: sql<number>`count(*)::int` })
-    .from(newsArticles)
-    .where(
-      and(
-        eq(newsArticles.status, 'published'),
-        eq(newsArticles.priority, 'high'),
-        gte(newsArticles.fetchedAt, since),
-      ),
-    );
-
-  const count = rows[0]?.count ?? 0;
-  if (count > 10) {
-    await sendFeishuGroupMessage(
-      `[跨境资讯] 今日高优已发布 ${count} 条，请检查过滤阈值是否过低`,
-    );
-  }
 }
 
 export async function runNewsIngest(options?: {
@@ -268,21 +325,38 @@ export async function runNewsIngest(options?: {
       totalSkippedDup: 0,
       totalSkippedLowRelevance: 0,
       totalSkippedFiltered: 0,
+      totalTranslated: 0,
       bitableSynced: 0,
-      alertsSent: 0,
+      bitableSyncFailed: 0,
       sourceResults: [],
     };
   }
 
   await ensureNewsSourcesSeeded();
 
+  // 每日一次保护：非 force、非指定信源时，今天已成功跑过则跳过
+  if (!options?.force && !options?.sourceId) {
+    const already = await hasSuccessfulIngestToday();
+    if (already) {
+      return {
+        sourcesProcessed: 0,
+        totalNew: 0,
+        totalSkippedDup: 0,
+        totalSkippedLowRelevance: 0,
+        totalSkippedFiltered: 0,
+        totalTranslated: 0,
+        bitableSynced: 0,
+        bitableSyncFailed: 0,
+        skippedAlreadyRunToday: true,
+        sourceResults: [],
+      };
+    }
+  }
+
   let sources = await listNewsSources();
   sources = sources.filter((s) => s.enabled);
-
   if (options?.sourceId) {
     sources = sources.filter((s) => s.id === options.sourceId);
-  } else if (!options?.force) {
-    sources = sources.filter((s) => isSourceDue(s));
   }
 
   const sourceResults: IngestSourceResult[] = [];
@@ -291,17 +365,17 @@ export async function runNewsIngest(options?: {
   }
 
   const bitableSynced = await syncPendingArticlesToBitable(50);
-  const alertsSent = await alertFailedSources(sourceResults);
-  await alertHighVolumePublished();
+  const bitableSyncFailed = sourceResults.reduce((s, r) => s + r.bitableSyncFailedCount, 0);
 
   return {
     sourcesProcessed: sourceResults.length,
     totalNew: sourceResults.reduce((s, r) => s + r.newCount, 0),
     totalSkippedDup: sourceResults.reduce((s, r) => s + r.skippedDup, 0),
     totalSkippedLowRelevance: sourceResults.reduce((s, r) => s + r.skippedLowRelevance, 0),
-    totalSkippedFiltered: sourceResults.reduce((s, r) => s + (r.skippedFiltered ?? 0), 0),
+    totalSkippedFiltered: sourceResults.reduce((s, r) => s + r.skippedFiltered, 0),
+    totalTranslated: sourceResults.reduce((s, r) => s + r.translatedCount, 0),
     bitableSynced,
-    alertsSent,
+    bitableSyncFailed,
     sourceResults,
   };
 }
@@ -310,13 +384,15 @@ export async function listNewsArticles(params: {
   page: number;
   pageSize: number;
   category?: string;
+  topicCategory?: string;
   status?: string;
 }) {
-  const { page, pageSize, category, status } = params;
+  const { page, pageSize, category, topicCategory, status } = params;
   const offset = (page - 1) * pageSize;
 
   const filters = [];
   if (category) filters.push(eq(newsArticles.category, category as never));
+  if (topicCategory) filters.push(eq(newsArticles.topicCategory, topicCategory));
   if (status) filters.push(eq(newsArticles.status, status as never));
 
   const whereClause = filters.length ? and(...filters) : undefined;
@@ -325,6 +401,8 @@ export async function listNewsArticles(params: {
     .select({
       article: newsArticles,
       sourceName: newsSources.name,
+      sourceTier: newsSources.sourceTier,
+      isOfficial: newsSources.isOfficial,
     })
     .from(newsArticles)
     .innerJoin(newsSources, eq(newsArticles.sourceId, newsSources.id))
@@ -342,6 +420,8 @@ export async function listNewsArticles(params: {
     items: items.map((row) => ({
       ...row.article,
       sourceName: row.sourceName,
+      sourceTierLabel: row.sourceTier,
+      sourceIsOfficial: row.isOfficial,
     })),
     total: countRow?.count ?? 0,
     page,
@@ -375,6 +455,8 @@ export async function updateNewsArticle(
     status: NewsArticleStatus;
     priority: 'high' | 'medium' | 'low';
     category: string;
+    businessValidity: NewsBusinessValidity;
+    bitableSyncStatus: NewsBitableSyncStatus;
   }>,
 ) {
   const [row] = await db
@@ -393,10 +475,10 @@ export async function getNewsIntelOverview() {
     .from(newsArticles)
     .where(gte(newsArticles.fetchedAt, since));
 
-  const [pendingReview] = await db
+  const [syncFailed] = await db
     .select({ count: sql<number>`count(*)::int` })
     .from(newsArticles)
-    .where(eq(newsArticles.status, 'pending_review'));
+    .where(eq(newsArticles.bitableSyncStatus, 'failed'));
 
   const [highPriority] = await db
     .select({ count: sql<number>`count(*)::int` })
@@ -409,12 +491,19 @@ export async function getNewsIntelOverview() {
       ),
     );
 
+  const [pendingSync] = await db
+    .select({ count: sql<number>`count(*)::int` })
+    .from(newsArticles)
+    .where(eq(newsArticles.bitableSyncStatus, 'pending'));
+
   const sources = await listNewsSources();
   const healthySources = sources.filter((s) => s.enabled && (s.consecutiveFailures ?? 0) < 3).length;
 
   return {
     todayNew: todayNew?.count ?? 0,
-    pendingReview: pendingReview?.count ?? 0,
+    pendingReview: 0,
+    pendingSync: pendingSync?.count ?? 0,
+    syncFailed: syncFailed?.count ?? 0,
     highPriorityToday: highPriority?.count ?? 0,
     sourceTotal: sources.length,
     sourceHealthy: healthySources,

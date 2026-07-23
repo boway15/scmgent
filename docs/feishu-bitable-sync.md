@@ -25,9 +25,15 @@ FEISHU_BITABLE_TABLE_INVENTORY_POLICY=
 FEISHU_BITABLE_TABLE_SALES_FORECAST=
 FEISHU_BITABLE_TABLE_BULK_STOCK_REQUEST=   # 大件备货申请 tbl7H8F6rc2xeFGf
 FEISHU_BITABLE_TABLE_PURCHASE_FOLLOW_UP=    # 采购跟单（采购管理）tbl3m7FqgPVr4kmY
+FEISHU_BITABLE_TABLE_NEWS_INTEL=            # 旧跨境资讯表（仅历史，禁止新写入）
+FEISHU_BITABLE_TABLE_NEWS_INTEL_V2=         # 新「跨境资讯总表」
 # 若采购表与新闻/主数据不在同一份多维表格，可单独指定：
 # FEISHU_BITABLE_PROCUREMENT_APP_TOKEN=HPJzbHdPea7elSs92T8c31BTnxe
 ```
+
+跨境资讯采集（`/intel/news`）只写入 `FEISHU_BITABLE_TABLE_NEWS_INTEL_V2`；旧 `FEISHU_BITABLE_TABLE_NEWS_INTEL` 仅保留历史记录。
+
+同步前会自动确保总表字段齐全（见 `apps/web/server/lib/news-intel/bitable-schema.ts`）。若表上已有同名「采集时间」系统列，写入使用「系统采集时间」。
 
 采购管理模块（`/procurement/bulk-stock`、`/procurement/follow-up`）与主数据导入共用 `FEISHU_BITABLE_APP_TOKEN`。本模块每次飞书同步或文件上传会**全量覆盖**对应列表；**同步到飞书**时也会先清空飞书表再写入本地全部行。
 
@@ -145,7 +151,9 @@ Bitable 列名支持中英文别名，系统会自动映射为导入字段。
 `type` 为 `skus` | `inventory` | `sales` | `merchants` | `warehouse_leads` | `inventory_policy` | `sales_forecast`。
 
 补货预测：`POST /api/tasks/replenishment-forecast`  
-采购跟进：`POST /api/tasks/purchase-follow-up`
+采购跟进：`POST /api/tasks/purchase-follow-up`  
+大件备货从飞书拉取（建议每天 08:00）：`POST /api/tasks/procurement-bulk-stock-pull`  
+采购跟单从飞书拉取（建议每天 08:00）：`POST /api/tasks/procurement-follow-up-pull`
 
 ### 采购管理列表（全量快照）
 

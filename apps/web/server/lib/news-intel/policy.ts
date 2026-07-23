@@ -1,6 +1,7 @@
-import { readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import type { NewsDepartment, NewsSourceTier, NewsTopicCategory } from './types.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const POLICY_PATH = join(__dirname, 'openclaw-policy.json');
@@ -11,27 +12,40 @@ export type NewsSourceConfig = {
   excludeKeywords?: string[];
   siteDomain?: string;
   note?: string;
+  sourceTier?: NewsSourceTier;
+  isOfficial?: boolean;
+  language?: string;
 };
 
-export type CategoryPolicy = {
-  bitableValue: string;
-  priority: number;
+export type BrandPolicy = { name: string; aliases: string[] };
+export type NamedAliasPolicy = { name: string; aliases: string[] };
+
+export type TopicPolicy = {
+  value: NewsTopicCategory;
+  departments: NewsDepartment[];
   keywords: string[];
-  platforms?: string[];
 };
 
 export type NewsIntelPolicy = {
   lookbackDays: number;
   maxItemsPerSource: number;
   requireChineseContent?: boolean;
-  excludeEnglishDomains?: string[];
   channels: Record<string, { enabled: boolean; label: string }>;
   negativeKeywords: string[];
   includeRegionKeywords: string[];
   excludeRegionKeywords: string[];
   usVietnamPolicyKeywords: string[];
-  categories: CategoryPolicy[];
-  categoryTieBreakOrder: string[];
+  crossBorderKeywords?: string[];
+  furnitureKeywords: string[];
+  brandKeywords: BrandPolicy[];
+  platformKeywords: NamedAliasPolicy[];
+  countryKeywords: NamedAliasPolicy[];
+  logisticsKeywords: string[];
+  aiKeywords: string[];
+  designKeywords: string[];
+  marketingKeywords: string[];
+  topics: TopicPolicy[];
+  categoryTieBreakOrder: NewsTopicCategory[];
 };
 
 let cachedPolicy: NewsIntelPolicy | null = null;
@@ -46,10 +60,9 @@ export function loadNewsIntelPolicy(): NewsIntelPolicy {
   return cachedPolicy;
 }
 
-export function saveNewsIntelPolicy(policy: NewsIntelPolicy): void {
-  writeFileSync(POLICY_PATH, `${JSON.stringify(policy, null, 2)}\n`, 'utf8');
-  cachedPolicy = policy;
-  cachedAt = Date.now();
+/** @deprecated Policy is read-only at runtime for Miaoda safety. Kept for type compatibility. */
+export function saveNewsIntelPolicy(_policy: NewsIntelPolicy): void {
+  throw new Error('News intel policy is read-only; edit openclaw-policy.json and redeploy');
 }
 
 export function getLookbackDays(): number {
@@ -59,8 +72,17 @@ export function getLookbackDays(): number {
 }
 
 export function parseSourceConfig(raw: unknown): NewsSourceConfig {
-  if (!raw || typeof raw !== 'object') return {};
-  const obj = raw as Record<string, unknown>;
+  let value: unknown = raw;
+  // jsonb 历史数据可能被双重字符串化，最多解开两层
+  for (let i = 0; i < 2 && typeof value === 'string'; i += 1) {
+    try {
+      value = JSON.parse(value);
+    } catch {
+      return {};
+    }
+  }
+  if (!value || typeof value !== 'object') return {};
+  const obj = value as Record<string, unknown>;
   return {
     channel: obj.channel as NewsSourceConfig['channel'],
     includeKeywords: Array.isArray(obj.includeKeywords)
@@ -71,6 +93,12 @@ export function parseSourceConfig(raw: unknown): NewsSourceConfig {
       : undefined,
     siteDomain: typeof obj.siteDomain === 'string' ? obj.siteDomain : undefined,
     note: typeof obj.note === 'string' ? obj.note : undefined,
+    sourceTier:
+      obj.sourceTier === 'tier_1' || obj.sourceTier === 'tier_2' || obj.sourceTier === 'tier_3'
+        ? obj.sourceTier
+        : undefined,
+    isOfficial: typeof obj.isOfficial === 'boolean' ? obj.isOfficial : undefined,
+    language: typeof obj.language === 'string' ? obj.language : undefined,
   };
 }
 
@@ -78,4 +106,18 @@ export function isSourceChannelEnabled(config: NewsSourceConfig): boolean {
   const policy = loadNewsIntelPolicy();
   const channel = config.channel ?? 'media';
   return policy.channels[channel]?.enabled !== false;
+}
+
+export function resolveSourceTier(
+  sourceTier?: NewsSourceTier | null,
+  config?: NewsSourceConfig,
+): NewsSourceTier {
+  return sourceTier ?? config?.sourceTier ?? 'tier_2';
+}
+
+export function resolveSourceOfficial(
+  isOfficial?: boolean | null,
+  config?: NewsSourceConfig,
+): boolean {
+  return Boolean(isOfficial ?? config?.isOfficial);
 }

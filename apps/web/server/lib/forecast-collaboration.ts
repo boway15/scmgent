@@ -1700,14 +1700,22 @@ async function findOrCreateDraftVersionByName(input: {
   reuseExisting?: boolean;
 }) {
   const station = input.station?.trim().toUpperCase();
+  const displayName = input.versionName.trim();
   if (input.reuseExisting !== false) {
+    const stationClause = station
+      ? eq(salesForecastVersions.station, station)
+      : isNull(salesForecastVersions.station);
+    // 新数据按 version_name 复用；历史数据曾把展示名写入 version_no，一并兼容
     const [existing] = await db
       .select()
       .from(salesForecastVersions)
       .where(
         and(
-          eq(salesForecastVersions.versionNo, input.versionName),
-          station ? eq(salesForecastVersions.station, station) : isNull(salesForecastVersions.station),
+          or(
+            eq(salesForecastVersions.versionName, displayName),
+            eq(salesForecastVersions.versionNo, displayName),
+          ),
+          stationClause,
           eq(salesForecastVersions.status, 'draft'),
         ),
       )
@@ -1716,10 +1724,10 @@ async function findOrCreateDraftVersionByName(input: {
     if (existing) return existing;
   }
 
-  const versionNo = await allocateUniqueDraftVersionName(input.versionName, station);
+  const versionName = await allocateUniqueDraftVersionName(displayName, station);
+  // version_no 必须是短码（varchar 50）；长展示名只写入 version_name
   return getOrCreateDraftVersion({
-    versionNo,
-    versionName: versionNo,
+    versionName,
     station,
     createdBy: input.createdBy,
   });

@@ -13,17 +13,20 @@ import { listRecentIngestLogs } from '../lib/news-intel/ingest-logs.js';
 import {
   createNewsSource,
   disableNewsSource,
+  ensureNewsSourcesSeeded,
   listNewsSources,
   updateNewsSource,
 } from '../lib/news-intel/source-service.js';
 import { syncArticleToBitable } from '../lib/news-intel/bitable-sync.js';
 import {
   getNewsBitableAppToken,
-  getNewsBitableTableId,
+  getNewsBitableV2TableId,
+  getRsshubBaseUrl,
   isNewsBitableConfigured,
   isNewsIntelEnabled,
 } from '../lib/news-intel/config.js';
-import { loadNewsIntelPolicy, saveNewsIntelPolicy } from '../lib/news-intel/policy.js';
+import { isNewsIntelEnrichEnabled } from '../lib/news-intel/enrich-dify.js';
+import { loadNewsIntelPolicy } from '../lib/news-intel/policy.js';
 import { getLatestTaskRun } from '../lib/task-runs.js';
 
 export const newsIntelRoutes = new Hono();
@@ -42,7 +45,9 @@ newsIntelRoutes.get('/news-intel/status', requireNewsIntelAdmin, async (c) => {
     enabled: isNewsIntelEnabled(),
     bitableConfigured: isNewsBitableConfigured(),
     bitableAppTokenConfigured: Boolean(getNewsBitableAppToken()),
-    bitableTableId: getNewsBitableTableId(),
+    bitableTableId: getNewsBitableV2TableId(),
+    rsshubConfigured: Boolean(getRsshubBaseUrl()),
+    enrichConfigured: isNewsIntelEnrichEnabled(),
     latestRun,
   });
 });
@@ -56,13 +61,8 @@ newsIntelRoutes.get('/news-intel/policy', requireNewsIntelAdmin, async (c) => {
   return c.json(loadNewsIntelPolicy());
 });
 
-newsIntelRoutes.put('/news-intel/policy', requireNewsIntelAdmin, async (c) => {
-  const body = await c.req.json();
-  saveNewsIntelPolicy(body);
-  return c.json({ ok: true });
-});
-
 newsIntelRoutes.get('/news-intel/sources', requireNewsIntelAdmin, async (c) => {
+  await ensureNewsSourcesSeeded();
   const sources = await listNewsSources();
   return c.json({ items: sources });
 });
@@ -75,14 +75,11 @@ newsIntelRoutes.post('/news-intel/sources', requireNewsIntelAdmin, async (c) => 
     sourceType?: 'rss' | 'rsshub' | 'manual';
     categoryDefault?: string;
     fetchIntervalHours?: number;
+    sourceTier?: 'tier_1' | 'tier_2' | 'tier_3';
+    isOfficial?: boolean;
+    sourceLanguage?: string;
     enabled?: boolean;
-    configJson?: {
-      channel?: 'media' | 'wechat' | 'xiaohongshu';
-      includeKeywords?: string[];
-      excludeKeywords?: string[];
-      siteDomain?: string;
-      note?: string;
-    };
+    configJson?: Record<string, unknown>;
   }>();
 
   if (!body.code?.trim() || !body.name?.trim() || !body.feedUrl?.trim()) {
@@ -97,6 +94,9 @@ newsIntelRoutes.post('/news-intel/sources', requireNewsIntelAdmin, async (c) => 
       sourceType: body.sourceType,
       categoryDefault: body.categoryDefault as never,
       fetchIntervalHours: body.fetchIntervalHours,
+      sourceTier: body.sourceTier,
+      isOfficial: body.isOfficial,
+      sourceLanguage: body.sourceLanguage,
       enabled: body.enabled,
       configJson: body.configJson,
     });
@@ -115,28 +115,33 @@ newsIntelRoutes.patch('/news-intel/sources/:id', requireNewsIntelAdmin, async (c
     sourceType?: 'rss' | 'rsshub' | 'manual';
     categoryDefault?: string;
     fetchIntervalHours?: number;
+    sourceTier?: 'tier_1' | 'tier_2' | 'tier_3';
+    isOfficial?: boolean;
+    sourceLanguage?: string;
     enabled?: boolean;
-    configJson?: {
-      channel?: 'media' | 'wechat' | 'xiaohongshu';
-      includeKeywords?: string[];
-      excludeKeywords?: string[];
-      siteDomain?: string;
-      note?: string;
-    } | null;
+    configJson?: Record<string, unknown> | null;
   }>();
 
-  const source = await updateNewsSource(id, {
-    name: body.name,
-    feedUrl: body.feedUrl,
-    sourceType: body.sourceType,
-    categoryDefault: body.categoryDefault as never,
-    fetchIntervalHours: body.fetchIntervalHours,
-    enabled: body.enabled,
-    configJson: body.configJson ?? undefined,
-  });
+  try {
+    const source = await updateNewsSource(id, {
+      name: body.name,
+      feedUrl: body.feedUrl,
+      sourceType: body.sourceType,
+      categoryDefault: body.categoryDefault as never,
+      fetchIntervalHours: body.fetchIntervalHours,
+      sourceTier: body.sourceTier,
+      isOfficial: body.isOfficial,
+      sourceLanguage: body.sourceLanguage,
+      enabled: body.enabled,
+      configJson: body.configJson ?? undefined,
+    });
 
-  if (!source) return c.json({ message: 'Source not found' }, 404);
-  return c.json(source);
+    if (!source) return c.json({ message: 'Source not found' }, 404);
+    return c.json(source);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'update source failed';
+    return c.json({ message }, 400);
+  }
 });
 
 newsIntelRoutes.delete('/news-intel/sources/:id', requireNewsIntelAdmin, async (c) => {
@@ -153,9 +158,10 @@ newsIntelRoutes.get('/news-intel/articles', requireNewsIntelAdmin, async (c) => 
     20,
   );
   const category = c.req.query('category');
+  const topicCategory = c.req.query('topicCategory');
   const status = c.req.query('status');
 
-  const result = await listNewsArticles({ page, pageSize, category, status });
+  const result = await listNewsArticles({ page, pageSize, category, topicCategory, status });
   return c.json(result);
 });
 
@@ -167,23 +173,13 @@ newsIntelRoutes.get('/news-intel/articles/:id', requireNewsIntelAdmin, async (c)
 
 newsIntelRoutes.patch('/news-intel/articles/:id', requireNewsIntelAdmin, async (c) => {
   const body = await c.req.json<{
-    status?: 'pending_review' | 'published' | 'ignored' | 'archived';
-    priority?: 'high' | 'medium' | 'low';
-    category?: string;
+    businessValidity?: 'valid' | 'invalid' | 'misclassified';
   }>();
 
-  const article = await updateNewsArticle(c.req.param('id'), body);
+  const article = await updateNewsArticle(c.req.param('id'), {
+    businessValidity: body.businessValidity,
+  });
   if (!article) return c.json({ message: 'Article not found' }, 404);
-
-  if (body.status && body.status !== 'ignored') {
-    try {
-      await syncArticleToBitable(article.id);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'bitable sync failed';
-      return c.json({ article, bitableSyncError: message });
-    }
-  }
-
   return c.json(article);
 });
 

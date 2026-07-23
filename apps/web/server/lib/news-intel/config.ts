@@ -26,8 +26,18 @@ export function getRsshubBaseUrl(): string | undefined {
   return raw ? raw.replace(/\/$/, '') : undefined;
 }
 
-export function getNewsBitableTableId(): string | undefined {
+/** @deprecated Legacy table; do not write new records here. */
+export function getNewsBitableLegacyTableId(): string | undefined {
   return process.env.FEISHU_BITABLE_TABLE_NEWS_INTEL?.trim() || undefined;
+}
+
+export function getNewsBitableV2TableId(): string | undefined {
+  return process.env.FEISHU_BITABLE_TABLE_NEWS_INTEL_V2?.trim() || undefined;
+}
+
+/** Prefer V2 table only. */
+export function getNewsBitableTableId(): string | undefined {
+  return getNewsBitableV2TableId();
 }
 
 export function getNewsBitableAppToken(): string | undefined {
@@ -35,7 +45,7 @@ export function getNewsBitableAppToken(): string | undefined {
 }
 
 export function isNewsBitableConfigured(): boolean {
-  return Boolean(getNewsBitableAppToken() && getNewsBitableTableId());
+  return Boolean(getNewsBitableAppToken() && getNewsBitableV2TableId());
 }
 
 export function isJinaReaderEnabled(): boolean {

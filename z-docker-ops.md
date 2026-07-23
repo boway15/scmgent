@@ -71,6 +71,7 @@ pnpm docker:start   # 或 docker compose up -d
 | **后端 API** | `apps/web/server/**` | `pnpm docker:build` → `pnpm docker:start` |
 | **数据库 Schema** | `packages/db/**` | 先 `pnpm db:generate`（如有新 migration），再 `pnpm db:migrate` 或 `pnpm docker:up`（容器 entrypoint 会自动 migrate） |
 | **环境变量** | `docker-compose.yml` → `web.environment` | `docker compose up -d --force-recreate web`（不必 rebuild） |
+| **RSSHub** | `docker-compose.yml` → `rsshub` | `docker compose up -d rsshub`；`web` 已注入 `RSSHUB_BASE_URL=http://rsshub:1200`；调试页 http://localhost:1200 |
 | **Dockerfile / 依赖** | `Dockerfile`、`package.json` 等 | `pnpm docker:rebuild` |
 
 > Docker 模式**不挂载源码**，改代码后必须重新 build 才会生效。`docker compose restart web` 不会加载新代码。

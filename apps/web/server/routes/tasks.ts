@@ -8,6 +8,11 @@ import { runDailyInventoryPipeline } from '../tasks/dailyInventoryPipeline.js';
 import { runForecastAccuracy } from '../tasks/forecastAccuracy.js';
 import { runNewsIngestTask } from '../tasks/newsIngest.js';
 import { runSalesHistoryMaintenance } from '../tasks/salesHistoryMaintenance.js';
+import {
+  runProcurementBulkStockPull,
+  runProcurementFollowUpPull,
+} from '../tasks/procurementFeishuPull.js';
+import { procurementPullTaskName } from '../lib/procurement-feishu-task-names.js';
 import { isAuthBypassLogin } from '../lib/auth-policy.js';
 import { resolveRequestUser } from '../lib/rbac.js';
 import { finishTaskRun, getLatestTaskRuns, startTaskRun } from '../lib/task-runs.js';
@@ -176,4 +181,24 @@ taskRoutes.post('/tasks/news-ingest', requireCronSecret, async (c) => {
     await finishTaskRun(run.id, { success: false, errorMessage: message });
     return c.json({ message, taskRunId: run.id }, 500);
   }
+});
+
+taskRoutes.post('/tasks/procurement-bulk-stock-pull', requireCronSecret, async (c) => {
+  const triggeredBy = resolveTriggeredBy(c);
+  const run = await startTaskRun(procurementPullTaskName('bulk_stock_request'), triggeredBy);
+  const result = await runProcurementBulkStockPull(run.id);
+  if (result.skipped) {
+    return c.json({ skipped: true, message: result.reason, taskRunId: run.id }, 409);
+  }
+  return c.json({ ...result, taskRunId: run.id });
+});
+
+taskRoutes.post('/tasks/procurement-follow-up-pull', requireCronSecret, async (c) => {
+  const triggeredBy = resolveTriggeredBy(c);
+  const run = await startTaskRun(procurementPullTaskName('purchase_follow_up'), triggeredBy);
+  const result = await runProcurementFollowUpPull(run.id);
+  if (result.skipped) {
+    return c.json({ skipped: true, message: result.reason, taskRunId: run.id }, 409);
+  }
+  return c.json({ ...result, taskRunId: run.id });
 });

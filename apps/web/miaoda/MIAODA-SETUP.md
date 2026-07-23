@@ -70,6 +70,11 @@ OK true
 | `APP_BASE_URL` | `https://你的域名/app/app_xxx` |
 | `JWT_SECRET` | 随机长字符串 |
 | `CRON_SECRET` | 随机长字符串 |
+| `FEISHU_BITABLE_APP_TOKEN` | 多维表格 app_token（资讯） |
+| `FEISHU_BITABLE_TABLE_NEWS_INTEL_V2` | 新「跨境资讯总表」table_id |
+| `NEWS_INTEL_ENABLED` | `true` |
+| `RSSHUB_BASE_URL` | 可选；本地 Docker 已默认 `http://rsshub:1200`。妙搭环境若无自建 RSSHub 可留空（rsshub 信源自动停用，Google 新闻等直连 RSS 仍可用） |
+| `DIFY_API_KEY_NEWS_INTEL` | 可选；未配置时英文也可原文入表，中文翻译可在飞书多维表格 AI 字段完成 |
 
 `CLIENT_BASE_PATH`、`DATABASE_URL`、`MIAODA_*` **不要改**。
 

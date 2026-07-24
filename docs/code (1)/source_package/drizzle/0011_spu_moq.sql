@@ -1,1 +1,0 @@
-ALTER TABLE "spus" ADD COLUMN IF NOT EXISTS "moq" integer;

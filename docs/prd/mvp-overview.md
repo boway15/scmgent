@@ -60,4 +60,5 @@
   12. 启用 Dify RAG + Workflow
   13. 合规规则库 + Agent
   14. 物流在途追踪
+  15. 库存规划与 PMC 演进（见 docs/superpowers/specs/2026-07-29-inventory-planning-pmc-evolution-design.md）
 ```

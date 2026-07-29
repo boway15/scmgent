@@ -27,6 +27,32 @@ describe('replenishment-coverage', () => {
     assert.equal(lead.totalLeadDays, 102);
   });
 
+  it('sums six segments and sets compat aliases', () => {
+    const lt = calcTotalLeadTime({
+      productionDays: 25,
+      domesticDays: 3,
+      bookingDays: 7,
+      transitDays: 35,
+      customsDays: 5,
+      inboundDays: 3,
+    });
+    assert.equal(lt.totalLeadDays, 78);
+    assert.equal(lt.shippingDays, 47); // 7+35+5
+    assert.equal(lt.inboundBufferDays, 3);
+  });
+
+  it('accepts legacy shippingDays + inboundBufferDays', () => {
+    const lt = calcTotalLeadTime({
+      productionDays: 50,
+      shippingDays: 45,
+      inboundBufferDays: 7,
+    });
+    assert.equal(lt.transitDays, 45);
+    assert.equal(lt.bookingDays, 0);
+    assert.equal(lt.customsDays, 0);
+    assert.equal(lt.totalLeadDays, 102);
+  });
+
   it('marks red when coverage is below total lead time', () => {
     const health = calcInventoryHealth({
       coverageDays: 90,

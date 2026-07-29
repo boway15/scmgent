@@ -37,9 +37,17 @@ export const DEFAULT_SHIPPING_LEAD_BY_WAREHOUSE: Record<string, number> = {
 
 export type LeadTimeBreakdown = {
   productionDays: number;
+  domesticDays: number;
+  bookingDays: number;
+  transitDays: number;
+  customsDays: number;
+  inboundDays: number;
+  /** compat = booking + transit + customs */
   shippingDays: number;
+  /** compat = inboundDays */
   inboundBufferDays: number;
   totalLeadDays: number;
+  profileId?: string | null;
 };
 
 export function resolveShippingLeadDays(warehouseCode: string, configured?: number | null): number {
@@ -58,17 +66,51 @@ export function resolveProductionLeadDays(
 
 export function calcTotalLeadTime(params: {
   productionDays: number;
-  shippingDays: number;
+  domesticDays?: number;
+  bookingDays?: number;
+  transitDays?: number;
+  customsDays?: number;
+  inboundDays?: number;
+  /** legacy: if provided without booking/transit/customs, treat as transitDays */
+  shippingDays?: number;
   inboundBufferDays?: number;
 }): LeadTimeBreakdown {
   const productionDays = Math.max(0, params.productionDays);
-  const shippingDays = Math.max(0, params.shippingDays);
-  const inboundBufferDays = Math.max(0, params.inboundBufferDays ?? DEFAULT_INBOUND_BUFFER_DAYS);
+  const domesticDays = Math.max(0, params.domesticDays ?? 0);
+
+  let bookingDays = Math.max(0, params.bookingDays ?? 0);
+  let transitDays = Math.max(0, params.transitDays ?? 0);
+  let customsDays = Math.max(0, params.customsDays ?? 0);
+
+  const hasExplicitShippingSegments =
+    params.bookingDays != null || params.transitDays != null || params.customsDays != null;
+
+  if (!hasExplicitShippingSegments && params.shippingDays != null) {
+    transitDays = Math.max(0, params.shippingDays);
+    bookingDays = 0;
+    customsDays = 0;
+  }
+
+  const inboundDays = Math.max(
+    0,
+    params.inboundDays ?? params.inboundBufferDays ?? DEFAULT_INBOUND_BUFFER_DAYS,
+  );
+
+  const shippingDays = bookingDays + transitDays + customsDays;
+  const inboundBufferDays = inboundDays;
+  const totalLeadDays =
+    productionDays + domesticDays + bookingDays + transitDays + customsDays + inboundDays;
+
   return {
     productionDays,
+    domesticDays,
+    bookingDays,
+    transitDays,
+    customsDays,
+    inboundDays,
     shippingDays,
     inboundBufferDays,
-    totalLeadDays: productionDays + shippingDays + inboundBufferDays,
+    totalLeadDays,
   };
 }
 

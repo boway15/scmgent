@@ -87,6 +87,8 @@ export type ReplenishLight = 'red' | 'yellow' | 'green';
 
 export type InventoryHealth = 'red' | 'yellow' | 'green' | 'blue' | 'gray';
 
+export type SafetyStockMethod = 'coverage_days' | 'z_demand' | 'z_demand_leadtime';
+
 export type Spu = {
   id: string;
   code: string;
@@ -1550,20 +1552,37 @@ export const api = {
         safetyStockQty: number | null;
         reorderPoint: number | null;
         reorderQty: number | null;
+        safetyStockMethod: SafetyStockMethod;
+        serviceLevel: string | null;
+        demandStdDev: string | null;
+        leadTimeStdDev: string | null;
         calcMethod: string | null;
       }>
     >('/api/safety-stock'),
   updateSafetyStock: (
     skuId: string,
-    data: { safetyStockQty: number; reorderPoint: number; reorderQty: number },
+    data: {
+      safetyStockQty: number;
+      reorderPoint: number;
+      reorderQty: number;
+      safetyStockMethod: SafetyStockMethod;
+      serviceLevel: number | null;
+    },
     warehouseCode?: string,
   ) => {
     const qs = warehouseCode ? `?warehouse=${encodeURIComponent(warehouseCode)}` : '';
     return request(`/api/safety-stock/${skuId}${qs}`, { method: 'PUT', body: JSON.stringify(data) });
   },
-  calculateSafetyStock: (skuId: string, warehouseCode?: string) => {
+  calculateSafetyStock: (
+    skuId: string,
+    data: { safetyStockMethod: SafetyStockMethod; serviceLevel: number | null },
+    warehouseCode?: string,
+  ) => {
     const qs = warehouseCode ? `?warehouse=${encodeURIComponent(warehouseCode)}` : '';
-    return request(`/api/safety-stock/${skuId}/calculate${qs}`, { method: 'POST' });
+    return request(`/api/safety-stock/${skuId}/calculate${qs}`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
   },
   getAlerts: () =>
     request<{

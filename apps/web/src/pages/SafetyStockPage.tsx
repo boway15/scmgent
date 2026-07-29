@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { api } from '@/lib/api';
+import { api, type SafetyStockMethod } from '@/lib/api';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -12,6 +12,14 @@ function rowKey(skuId: string, warehouseCode: string) {
   return `${skuId}::${warehouseCode}`;
 }
 
+type SafetyStockEdit = {
+  safetyStockQty: number;
+  reorderPoint: number;
+  reorderQty: number;
+  safetyStockMethod: SafetyStockMethod;
+  serviceLevel: number;
+};
+
 export function SafetyStockPage() {
   const qc = useQueryClient();
   const { open: importOpen, openDrawer: openImportDrawer, closeDrawer: closeImportDrawer } = useImportDrawer();
@@ -20,14 +28,35 @@ export function SafetyStockPage() {
     queryFn: api.getSafetyStock,
   });
 
-  const [editing, setEditing] = useState<
-    Record<string, { safetyStockQty: number; reorderPoint: number; reorderQty: number }>
-  >({});
+  const [editing, setEditing] = useState<Record<string, SafetyStockEdit>>({});
 
   const calc = useMutation({
-    mutationFn: ({ skuId, warehouseCode }: { skuId: string; warehouseCode: string }) =>
-      api.calculateSafetyStock(skuId, warehouseCode),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['safety-stock'] }),
+    mutationFn: ({
+      skuId,
+      warehouseCode,
+      data,
+    }: {
+      skuId: string;
+      warehouseCode: string;
+      data: SafetyStockEdit;
+    }) =>
+      api.calculateSafetyStock(
+        skuId,
+        {
+          safetyStockMethod: data.safetyStockMethod,
+          serviceLevel:
+            data.safetyStockMethod === 'coverage_days' ? null : data.serviceLevel,
+        },
+        warehouseCode,
+      ),
+    onSuccess: (_result, variables) => {
+      setEditing((current) => {
+        const next = { ...current };
+        delete next[rowKey(variables.skuId, variables.warehouseCode)];
+        return next;
+      });
+      return qc.invalidateQueries({ queryKey: ['safety-stock'] });
+    },
   });
 
   const save = useMutation({
@@ -38,9 +67,25 @@ export function SafetyStockPage() {
     }: {
       skuId: string;
       warehouseCode: string;
-      data: { safetyStockQty: number; reorderPoint: number; reorderQty: number };
-    }) => api.updateSafetyStock(skuId, data, warehouseCode),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['safety-stock'] }),
+      data: SafetyStockEdit;
+    }) =>
+      api.updateSafetyStock(
+        skuId,
+        {
+          ...data,
+          serviceLevel:
+            data.safetyStockMethod === 'coverage_days' ? null : data.serviceLevel,
+        },
+        warehouseCode,
+      ),
+    onSuccess: (_result, variables) => {
+      setEditing((current) => {
+        const next = { ...current };
+        delete next[rowKey(variables.skuId, variables.warehouseCode)];
+        return next;
+      });
+      return qc.invalidateQueries({ queryKey: ['safety-stock'] });
+    },
   });
 
   if (isLoading) return <p className="text-text-sub">加载中...</p>;
@@ -58,7 +103,7 @@ export function SafetyStockPage() {
         </CardHeader>
         <CardContent>
           <p className="mb-4 text-sm text-text-sub">
-            支持按仓库独立配置；手动编辑或本地 EOQ/ROP 计算。需先有销量历史数据才能自动计算。
+            支持按仓库独立配置；可选择覆盖天数或 Z 值法计算。需先有销量历史数据才能自动计算。
           </p>
           <table className="w-full text-sm">
             <thead>
@@ -68,7 +113,8 @@ export function SafetyStockPage() {
                 <th className="p-2 font-normal">安全库存</th>
                 <th className="p-2 font-normal">ROP</th>
                 <th className="p-2 font-normal">EOQ</th>
-                <th className="p-2 font-normal">方式</th>
+                <th className="p-2 font-normal">安全库存方法</th>
+                <th className="p-2 font-normal">服务水平</th>
                 <th className="p-2 font-normal">操作</th>
               </tr>
             </thead>
@@ -79,6 +125,8 @@ export function SafetyStockPage() {
                   safetyStockQty: item.safetyStockQty ?? 0,
                   reorderPoint: item.reorderPoint ?? 0,
                   reorderQty: item.reorderQty ?? 0,
+                  safetyStockMethod: item.safetyStockMethod ?? 'coverage_days',
+                  serviceLevel: Number(item.serviceLevel ?? 0.95),
                 };
                 const wh = item.warehouseCode ?? 'ALL';
                 return (
@@ -115,7 +163,43 @@ export function SafetyStockPage() {
                         }
                       />
                     </td>
-                    <td className="p-2 text-text-sub">{item.calcMethod ?? '未设置'}</td>
+                    <td className="p-2">
+                      <select
+                        className="h-8 min-w-[132px] rounded-md border border-input bg-card px-2 text-sm"
+                        value={edit.safetyStockMethod}
+                        onChange={(e) =>
+                          setEditing({
+                            ...editing,
+                            [key]: {
+                              ...edit,
+                              safetyStockMethod: e.target.value as SafetyStockMethod,
+                            },
+                          })
+                        }
+                      >
+                        <option value="coverage_days">覆盖天数</option>
+                        <option value="z_demand">Z 值（需求波动）</option>
+                        <option value="z_demand_leadtime">Z 值（需求+交期）</option>
+                      </select>
+                    </td>
+                    <td className="p-2">
+                      <select
+                        className="h-8 min-w-[88px] rounded-md border border-input bg-card px-2 text-sm disabled:opacity-50"
+                        value={edit.serviceLevel}
+                        disabled={edit.safetyStockMethod === 'coverage_days'}
+                        onChange={(e) =>
+                          setEditing({
+                            ...editing,
+                            [key]: { ...edit, serviceLevel: Number(e.target.value) },
+                          })
+                        }
+                      >
+                        <option value={0.9}>90%</option>
+                        <option value={0.95}>95%</option>
+                        <option value={0.975}>97.5%</option>
+                        <option value={0.99}>99%</option>
+                      </select>
+                    </td>
                     <td className="space-x-1 p-2">
                       <Button
                         size="sm"
@@ -128,7 +212,9 @@ export function SafetyStockPage() {
                       <Button
                         size="sm"
                         variant="ghost"
-                        onClick={() => calc.mutate({ skuId: item.skuId, warehouseCode: wh })}
+                        onClick={() =>
+                          calc.mutate({ skuId: item.skuId, warehouseCode: wh, data: edit })
+                        }
                         disabled={calc.isPending}
                       >
                         计算
@@ -139,7 +225,7 @@ export function SafetyStockPage() {
               })}
               {!items.length && (
                 <tr>
-                  <td colSpan={7} className="p-4 text-center text-text-hint">
+                  <td colSpan={8} className="p-4 text-center text-text-hint">
                     暂无 SKU，请先创建或导入
                   </td>
                 </tr>

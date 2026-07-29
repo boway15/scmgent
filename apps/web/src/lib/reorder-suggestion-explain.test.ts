@@ -61,6 +61,20 @@ describe('reorder-suggestion-explain', () => {
     assert.match(text, /日均需求：10\.8（销售预测）/);
   });
 
+  it('labels stockout-adjusted historical demand', () => {
+    const text = formatSuggestionExplain(
+      {
+        ...fullMetrics,
+        demandSource: 'historical',
+        stockoutAdjusted: true,
+        inStockDays: 63,
+        demandWindowDays: 90,
+      },
+      baseItem,
+    );
+    assert.match(text, /日均需求：8（断货修正历史，63\/90 天有货）/);
+  });
+
   it('derives trigger reason from health when reason empty', () => {
     assert.match(
       deriveTriggerReason({

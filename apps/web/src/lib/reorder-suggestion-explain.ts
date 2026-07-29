@@ -122,7 +122,15 @@ export function formatSuggestionExplain(
   const effectiveQty = position.effectiveQty!;
   const avgDaily = deriveAvgDaily(metrics, item, effectiveQty);
   const demandSource = String(metrics.demandSource ?? 'historical');
-  const demandLabel = DEMAND_SOURCE_LABEL[demandSource] ?? demandSource;
+  let demandLabel = DEMAND_SOURCE_LABEL[demandSource] ?? demandSource;
+  if (demandSource === 'historical' && metrics.stockoutAdjusted === true) {
+    const inStockDays = num(metrics.inStockDays);
+    const demandWindowDays = num(metrics.demandWindowDays);
+    demandLabel =
+      inStockDays != null && demandWindowDays != null
+        ? `断货修正历史，${fmtDays(inStockDays)}/${fmtDays(demandWindowDays)} 天有货`
+        : '断货修正历史';
+  }
 
   const lines = [
     `触发原因：${deriveTriggerReason(item)}`,

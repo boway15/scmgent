@@ -1,15 +1,16 @@
 /**
  * 统一库存健康计算服务：库存总览、补货任务、预警任务共用同一口径。
  */
-import { eq } from 'drizzle-orm';
+import { and, asc, eq, gte, lt } from 'drizzle-orm';
 import {
   db,
+  inventoryRecords,
   skus,
   safetyStockConfig,
   warehouses,
   spus,
 } from '@scm/db';
-import { calcReplenishment } from './replenishment.js';
+import { calcReorderPoint, calcReplenishment } from './replenishment.js';
 import {
   calcCoverageReplenishmentFromForecast,
   calcForwardAvgDaily,
@@ -31,6 +32,84 @@ import {
 import { loadDailySalesBySkuIds } from './sales-history-query.js';
 import { loadMergedPublishedForecastBySkuIds } from './forecast-published-resolve.js';
 import { FORECAST_GLOBAL_STATION } from './forecast-station-scope.js';
+import { calcEffectiveDailyDemand } from './effective-daily-demand.js';
+import { replenishmentSalesLookbackDays } from './sales-history-config.js';
+
+export const MIN_AVAILABILITY_COVERAGE = 0.3;
+
+type HistoricalInventoryRow = {
+  recordedDate: string | Date;
+  qtyAvailable: number;
+  createdAt: Date;
+};
+
+function dateKey(value: string | Date): string {
+  return typeof value === 'string' ? value.slice(0, 10) : value.toISOString().slice(0, 10);
+}
+
+export function resolveHistoricalDemand(params: {
+  sales: Array<{ qtySold: number; saleDate: string }>;
+  inventoryRows: HistoricalInventoryRow[];
+  windowDays: number;
+  asOf?: Date;
+}) {
+  const latestByDate = new Map<string, HistoricalInventoryRow>();
+  for (const row of params.inventoryRows) {
+    const key = dateKey(row.recordedDate);
+    const current = latestByDate.get(key);
+    if (!current || row.createdAt.getTime() > current.createdAt.getTime()) {
+      latestByDate.set(key, row);
+    }
+  }
+
+  const hasReliableCoverage =
+    latestByDate.size / params.windowDays >= MIN_AVAILABILITY_COVERAGE;
+  const result = calcEffectiveDailyDemand({
+    sales: params.sales,
+    availability: hasReliableCoverage
+      ? Array.from(latestByDate, ([date, row]) => ({ date, qtyAvailable: row.qtyAvailable }))
+      : [],
+    windowDays: params.windowDays,
+    asOf: params.asOf,
+  });
+
+  return {
+    avgDaily: result.avgDaily,
+    stockoutAdjusted: result.stockoutAdjusted,
+    inStockDays: result.inStockDays,
+    demandWindowDays: result.windowDays,
+  };
+}
+
+async function loadDailyAvailability(params: {
+  skuId: string;
+  warehouseCode: string;
+  windowDays: number;
+  asOf?: Date;
+}): Promise<HistoricalInventoryRow[]> {
+  const asOf = params.asOf ?? new Date();
+  const windowStart = new Date(
+    Date.UTC(asOf.getUTCFullYear(), asOf.getUTCMonth(), asOf.getUTCDate()),
+  );
+  windowStart.setUTCDate(windowStart.getUTCDate() - params.windowDays);
+
+  return db
+    .select({
+      recordedDate: inventoryRecords.recordedDate,
+      qtyAvailable: inventoryRecords.qtyAvailable,
+      createdAt: inventoryRecords.createdAt,
+    })
+    .from(inventoryRecords)
+    .where(
+      and(
+        eq(inventoryRecords.skuId, params.skuId),
+        eq(inventoryRecords.warehouse, params.warehouseCode),
+        gte(inventoryRecords.recordedDate, dateKey(windowStart)),
+        lt(inventoryRecords.recordedDate, dateKey(asOf)),
+      ),
+    )
+    .orderBy(asc(inventoryRecords.recordedDate), asc(inventoryRecords.createdAt));
+}
 
 export type SkuHealthRow = {
   skuId: string;
@@ -92,7 +171,7 @@ export async function computeSkuWarehouseHealth(params: {
     skuLeadTimeDays: params.sku.leadTimeDays,
   });
 
-  const eoqCalc = calcReplenishment({
+  let eoqCalc = calcReplenishment({
     sales: whSales,
     leadTimeDays: leadTime.totalLeadDays,
     unitCost: params.sku.unitCost ? Number(params.sku.unitCost) : 1,
@@ -121,6 +200,35 @@ export async function computeSkuWarehouseHealth(params: {
   const forecastEntry =
     params.forecastEntry ??
     params.forecastByStation.get(FORECAST_GLOBAL_STATION) ?? { map: new Map(), lifecycle: undefined };
+
+  const demandWindowDays = replenishmentSalesLookbackDays();
+  let historicalDemand = {
+    avgDaily: eoqCalc.avgDaily,
+    stockoutAdjusted: false,
+    inStockDays: 0,
+    demandWindowDays,
+  };
+  if (!forecastEntry.map.size) {
+    const inventoryRows = await loadDailyAvailability({
+      skuId: params.sku.id,
+      warehouseCode: params.warehouse.code,
+      windowDays: demandWindowDays,
+    });
+    historicalDemand = resolveHistoricalDemand({
+      sales: whSales,
+      inventoryRows,
+      windowDays: demandWindowDays,
+    });
+    eoqCalc = {
+      ...eoqCalc,
+      avgDaily: historicalDemand.avgDaily,
+      reorderPoint: calcReorderPoint(
+        historicalDemand.avgDaily,
+        leadTime.totalLeadDays,
+        eoqCalc.safetyStockQty,
+      ),
+    };
+  }
 
   const coverage = calcCoverageReplenishmentFromForecast({
     effectiveQty: position.effectiveQty,
@@ -167,6 +275,9 @@ export async function computeSkuWarehouseHealth(params: {
       overstockThresholdDays: coverage.overstockThresholdDays,
       reorderPoint: eoqCalc.reorderPoint,
       safetyStockQty: eoqCalc.safetyStockQty,
+      stockoutAdjusted: historicalDemand.stockoutAdjusted,
+      inStockDays: historicalDemand.inStockDays,
+      demandWindowDays: historicalDemand.demandWindowDays,
       ...buildInventoryPositionMetrics(position),
     },
     coverage,

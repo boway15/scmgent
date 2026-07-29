@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict';
 import {
+  MIN_AVAILABILITY_COVERAGE,
   healthToAlertType,
   healthToExceptionType,
   recommendedActionForException,
+  resolveHistoricalDemand,
 } from './inventory-health-service.js';
 import { buildInventoryPositionMetrics } from './inventory-position.js';
 import { buildLeadTimeMetrics } from './replenishment-coverage.js';
@@ -115,5 +117,57 @@ assert.equal(healthToExceptionType('gray', null), 'slow_moving');
 assert.equal(healthToExceptionType('red', null), null);
 
 assert.ok(recommendedActionForException('overstock').includes('停补'));
+
+const historicalDemand = resolveHistoricalDemand({
+  sales: [
+    { saleDate: '2026-06-01', qtySold: 50 },
+    { saleDate: '2026-06-02', qtySold: 50 },
+  ],
+  inventoryRows: [
+    {
+      recordedDate: '2026-06-01',
+      qtyAvailable: 100,
+      createdAt: new Date('2026-06-01T01:00:00.000Z'),
+    },
+    {
+      recordedDate: '2026-06-01',
+      qtyAvailable: 0,
+      createdAt: new Date('2026-06-01T02:00:00.000Z'),
+    },
+    ...Array.from({ length: 8 }, (_, index) => ({
+      recordedDate: `2026-06-${String(index + 2).padStart(2, '0')}`,
+      qtyAvailable: 100,
+      createdAt: new Date(`2026-06-${String(index + 2).padStart(2, '0')}T01:00:00.000Z`),
+    })),
+  ],
+  windowDays: 30,
+  asOf: new Date('2026-07-01T00:00:00.000Z'),
+});
+assert.equal(MIN_AVAILABILITY_COVERAGE, 0.3);
+assert.deepEqual(historicalDemand, {
+  avgDaily: 6.25,
+  stockoutAdjusted: true,
+  inStockDays: 8,
+  demandWindowDays: 30,
+});
+
+const lowCoverageDemand = resolveHistoricalDemand({
+  sales: [{ saleDate: '2026-06-01', qtySold: 90 }],
+  inventoryRows: [
+    {
+      recordedDate: '2026-06-01',
+      qtyAvailable: 100,
+      createdAt: new Date('2026-06-01T01:00:00.000Z'),
+    },
+  ],
+  windowDays: 30,
+  asOf: new Date('2026-07-01T00:00:00.000Z'),
+});
+assert.deepEqual(lowCoverageDemand, {
+  avgDaily: 3,
+  stockoutAdjusted: false,
+  inStockDays: 0,
+  demandWindowDays: 30,
+});
 
 console.log('inventory-health-service.test.ts: ok');

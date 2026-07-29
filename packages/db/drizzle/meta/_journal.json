@@ -330,6 +330,13 @@
       "when": 1785216000001,
       "tag": "0052_purchase_draft_eta_available",
       "breakpoints": true
+    },
+    {
+      "idx": 48,
+      "version": "6",
+      "when": 1785216000002,
+      "tag": "0053_lead_time_profiles",
+      "breakpoints": true
     }
   ]
 }

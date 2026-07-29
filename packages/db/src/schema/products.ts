@@ -64,6 +64,9 @@ export const merchants = pgTable('merchants', {
   /** SAP / 外部系统预留 */
   sourceSystem: varchar('source_system', { length: 50 }),
   externalId: varchar('external_id', { length: 100 }),
+  externalVersion: varchar('external_version', { length: 50 }),
+  syncStatus: varchar('sync_status', { length: 20 }),
+  lastSyncAt: timestamp('last_sync_at', { withTimezone: true }),
   isActive: boolean('is_active').notNull().default(true),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),

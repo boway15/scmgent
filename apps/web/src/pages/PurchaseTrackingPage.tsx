@@ -7,6 +7,15 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { PageHeader } from '@/components/PageHeader';
 
+type EditableMilestone = 'etd' | 'etaPort' | 'etaWarehouse' | 'etaAvailable';
+
+const MILESTONE_FIELDS: Array<{ key: EditableMilestone; label: string }> = [
+  { key: 'etd', label: 'ETD' },
+  { key: 'etaPort', label: '到港日' },
+  { key: 'etaWarehouse', label: '到仓日' },
+  { key: 'etaAvailable', label: '预计可售日' },
+];
+
 const STATUS_LABEL: Record<PurchaseDraftStatus, string> = {
   draft: '待确认',
   confirmed: '已确认',
@@ -46,6 +55,9 @@ export function PurchaseTrackingPage() {
   const [exceptionReason, setExceptionReason] = useState<Record<string, string>>({});
   const [confirmEtaDate, setConfirmEtaDate] = useState<Record<string, string>>({});
   const [updateEtaDate, setUpdateEtaDate] = useState<Record<string, string>>({});
+  const [milestoneDates, setMilestoneDates] = useState<
+    Record<string, Partial<Record<EditableMilestone, string>>>
+  >({});
 
   const { data: records = [], isLoading } = useQuery({
     queryKey: ['purchase-tracking', statusFilter],
@@ -58,6 +70,9 @@ export function PurchaseTrackingPage() {
       status,
       etaAvailable,
       confirmedDeliveryDate,
+      etd,
+      etaPort,
+      etaWarehouse,
       actualShipDate,
       exceptionReason: reason,
     }: {
@@ -65,6 +80,9 @@ export function PurchaseTrackingPage() {
       status?: PurchaseDraftStatus;
       etaAvailable?: string;
       confirmedDeliveryDate?: string;
+      etd?: string | null;
+      etaPort?: string | null;
+      etaWarehouse?: string | null;
       actualShipDate?: string;
       exceptionReason?: string;
     }) =>
@@ -72,12 +90,16 @@ export function PurchaseTrackingPage() {
         ...(status ? { status } : {}),
         etaAvailable,
         confirmedDeliveryDate,
+        etd,
+        etaPort,
+        etaWarehouse,
         actualShipDate,
         exceptionReason: reason,
       }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['purchase-tracking'] });
       qc.invalidateQueries({ queryKey: ['dashboard'] });
+      setMilestoneDates({});
     },
   });
 
@@ -268,6 +290,52 @@ export function PurchaseTrackingPage() {
                           </>
                         )}
                       </div>
+                      <details className="rounded-md border border-border/60 p-2">
+                        <summary className="cursor-pointer text-xs text-text-sub">里程碑日期</summary>
+                        <div className="mt-2 grid grid-cols-2 gap-2">
+                          {MILESTONE_FIELDS.map(({ key, label }) => (
+                            <label key={key} className="space-y-1 text-xs text-text-sub">
+                              <span>{label}</span>
+                              <Input
+                                type="date"
+                                className="h-8 min-w-32"
+                                value={milestoneDates[d.id]?.[key] ?? d[key] ?? ''}
+                                onChange={(e) =>
+                                  setMilestoneDates((prev) => ({
+                                    ...prev,
+                                    [d.id]: { ...prev[d.id], [key]: e.target.value },
+                                  }))
+                                }
+                              />
+                            </label>
+                          ))}
+                        </div>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="mt-2"
+                          disabled={updateStatus.isPending}
+                          onClick={() => {
+                            const values = milestoneDates[d.id] ?? {};
+                            updateStatus.mutate({
+                              id: d.id,
+                              etd: values.etd === undefined ? d.etd : values.etd || null,
+                              etaPort:
+                                values.etaPort === undefined ? d.etaPort : values.etaPort || null,
+                              etaWarehouse:
+                                values.etaWarehouse === undefined
+                                  ? d.etaWarehouse
+                                  : values.etaWarehouse || null,
+                              etaAvailable:
+                                values.etaAvailable === undefined
+                                  ? d.etaAvailable ?? undefined
+                                  : values.etaAvailable || undefined,
+                            });
+                          }}
+                        >
+                          保存里程碑
+                        </Button>
+                      </details>
                       {canReceive && (
                         <div className="flex items-center gap-2">
                           <Input

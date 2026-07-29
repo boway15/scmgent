@@ -11,6 +11,10 @@ import {
 } from '../lib/purchase-draft-lifecycle.js';
 import { receivePurchaseDraft } from '../lib/purchase-draft-receipt.js';
 import { buildEtaPatch } from '../lib/purchase-draft-eta.js';
+import {
+  buildMilestonePatch,
+  type PurchaseDraftMilestonePatch,
+} from '../lib/purchase-draft-milestones.js';
 
 function draftNo(): string {
   const d = new Date();
@@ -80,6 +84,14 @@ function mapDraftRow(row: {
   supplierConfirmedAt: Date | null;
   etaAvailable: string | null;
   confirmedDeliveryDate: string | null;
+  plannedProductionDoneDate: string | null;
+  actualProductionDoneDate: string | null;
+  plannedPickupDate: string | null;
+  etd: string | null;
+  etaPort: string | null;
+  customsDoneDate: string | null;
+  etaWarehouse: string | null;
+  transportMode: string | null;
   actualShipDate: string | null;
   actualReceivedDate: string | null;
   receivedQty: number;
@@ -120,6 +132,14 @@ procurementRoutes.get('/purchase-drafts', async (c) => {
       supplierConfirmedAt: purchaseDrafts.supplierConfirmedAt,
       etaAvailable: purchaseDrafts.etaAvailable,
       confirmedDeliveryDate: purchaseDrafts.confirmedDeliveryDate,
+      plannedProductionDoneDate: purchaseDrafts.plannedProductionDoneDate,
+      actualProductionDoneDate: purchaseDrafts.actualProductionDoneDate,
+      plannedPickupDate: purchaseDrafts.plannedPickupDate,
+      etd: purchaseDrafts.etd,
+      etaPort: purchaseDrafts.etaPort,
+      customsDoneDate: purchaseDrafts.customsDoneDate,
+      etaWarehouse: purchaseDrafts.etaWarehouse,
+      transportMode: purchaseDrafts.transportMode,
       actualShipDate: purchaseDrafts.actualShipDate,
       actualReceivedDate: purchaseDrafts.actualReceivedDate,
       receivedQty: purchaseDrafts.receivedQty,
@@ -159,15 +179,17 @@ procurementRoutes.post('/purchase-drafts', async (c) => {
 procurementRoutes.patch('/purchase-drafts/:id', requireMenu('pmc.tracking'), async (c) => {
   const user = await getCurrentUser(c);
   const draftId = c.req.param('id');
-  const body = await c.req.json<{
-    status?: PurchaseDraftStatus;
-    remark?: string;
-    etaAvailable?: string;
-    confirmedDeliveryDate?: string;
-    actualShipDate?: string;
-    exceptionReason?: string;
-    ownerUserId?: string;
-  }>();
+  const body = await c.req.json<
+    {
+      status?: PurchaseDraftStatus;
+      remark?: string;
+      etaAvailable?: string;
+      confirmedDeliveryDate?: string;
+      actualShipDate?: string;
+      exceptionReason?: string;
+      ownerUserId?: string;
+    } & PurchaseDraftMilestonePatch
+  >();
 
   const [existing] = await db
     .select()
@@ -195,6 +217,7 @@ procurementRoutes.patch('/purchase-drafts/:id', requireMenu('pmc.tracking'), asy
     Object.assign(patch, buildEtaPatch(body.confirmedDeliveryDate));
   }
   if (body.actualShipDate) patch.actualShipDate = body.actualShipDate;
+  Object.assign(patch, buildMilestonePatch(body));
   if (body.exceptionReason != null) patch.exceptionReason = body.exceptionReason;
   if (body.ownerUserId) patch.ownerUserId = body.ownerUserId;
 

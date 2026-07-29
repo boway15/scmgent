@@ -1504,6 +1504,14 @@ export const api = {
         expectedDate?: string | null;
         etaAvailable?: string | null;
         confirmedDeliveryDate?: string | null;
+        plannedProductionDoneDate?: string | null;
+        actualProductionDoneDate?: string | null;
+        plannedPickupDate?: string | null;
+        etd?: string | null;
+        etaPort?: string | null;
+        customsDoneDate?: string | null;
+        etaWarehouse?: string | null;
+        transportMode?: string | null;
         actualShipDate?: string | null;
         actualReceivedDate?: string | null;
         source: string;
@@ -1525,6 +1533,14 @@ export const api = {
       remark?: string;
       etaAvailable?: string;
       confirmedDeliveryDate?: string;
+      plannedProductionDoneDate?: string | null;
+      actualProductionDoneDate?: string | null;
+      plannedPickupDate?: string | null;
+      etd?: string | null;
+      etaPort?: string | null;
+      customsDoneDate?: string | null;
+      etaWarehouse?: string | null;
+      transportMode?: string | null;
       actualShipDate?: string;
       exceptionReason?: string;
     },

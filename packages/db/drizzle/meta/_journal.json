@@ -337,6 +337,20 @@
       "when": 1785216000002,
       "tag": "0053_lead_time_profiles",
       "breakpoints": true
+    },
+    {
+      "idx": 49,
+      "version": "6",
+      "when": 1785216000003,
+      "tag": "0054_lead_time_menu",
+      "breakpoints": true
+    },
+    {
+      "idx": 50,
+      "version": "6",
+      "when": 1785216000004,
+      "tag": "0055_purchase_draft_milestones",
+      "breakpoints": true
     }
   ]
 }

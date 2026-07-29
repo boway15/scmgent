@@ -1,6 +1,8 @@
 import { useQuery } from '@tanstack/react-query';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
-import { api } from '@/lib/api';
+import { api, type SkuPlanningView } from '@/lib/api';
+
+type PlanningView = SkuPlanningView & { stockoutAdjusted?: boolean };
 import { PageHeader } from '@/components/PageHeader';
 import { InventoryHealthBadge } from '@/components/InventoryHealthBadge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -69,7 +71,9 @@ export function SkuInventoryPlanningPage() {
     );
   }
 
-  const item = planning.data;
+  const item = planning.data as PlanningView;
+  const showStockoutAdjustedNote =
+    item.demandSource === 'historical' && item.stockoutAdjusted === true;
   const coverageLabel = Number.isFinite(item.coverageDays)
     ? `${item.coverageDays} 天`
     : '无消耗';
@@ -109,6 +113,9 @@ export function SkuInventoryPlanningPage() {
           <InventoryHealthBadge health={item.healthStatus} />
           <span className="text-sm text-text-sub">
             需求口径：{item.demandSource === 'forecast' ? '已发布销售预测' : '历史销量回退'}
+            {showStockoutAdjustedNote && (
+              <span className="ml-2 text-text-hint">· 日需求已按有库存天数修正</span>
+            )}
           </span>
         </CardContent>
       </Card>

@@ -80,6 +80,28 @@ describe('inventory planning view', () => {
     assert.equal(estimateStockoutDate(2, Infinity, new Date('2026-07-29T00:00:00Z')), null);
   });
 
+  it('exposes stockoutAdjusted when demand is historical', () => {
+    const view = buildSkuPlanningView({
+      health: {
+        skuId: 'sku-1',
+        skuCode: 'SKU-001',
+        warehouseCode: 'US-WEST',
+        avgDaily: 3,
+        demandSource: 'historical',
+        coverageDays: 20,
+        suggestedQty: 0,
+        suggestedDate: '2026-07-29',
+        healthStatus: 'green',
+        metrics: { stockoutAdjusted: true },
+        coverage: { safetyStockDays: 14 },
+        position,
+        leadTime,
+      },
+    });
+
+    assert.equal(view.stockoutAdjusted, true);
+  });
+
   it('selects the nearest future ETA for the requested warehouse', () => {
     assert.equal(
       pickNearestEtaAvailable(

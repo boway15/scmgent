@@ -26,6 +26,7 @@ export type SkuPlanningView = {
   leadTime: ResolvedLeadTime;
   avgDaily: number;
   demandSource: 'forecast' | 'historical';
+  stockoutAdjusted?: boolean;
   coverageDays: number;
   safetyStockDays: number;
   reorderPoint?: number;
@@ -115,6 +116,9 @@ export function buildSkuPlanningView(input: {
     leadTime: input.health.leadTime,
     avgDaily: input.health.avgDaily,
     demandSource: input.health.demandSource,
+    ...(input.health.demandSource === 'historical'
+      ? { stockoutAdjusted: input.health.metrics.stockoutAdjusted === true }
+      : {}),
     coverageDays: input.health.coverageDays,
     safetyStockDays: input.health.coverage.safetyStockDays,
     ...(Number.isFinite(reorderPoint) ? { reorderPoint } : {}),

@@ -7,6 +7,11 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { PageHeader } from '@/components/PageHeader';
 import { InventoryHealthBadge } from '@/components/InventoryHealthBadge';
+import { formatSuggestionExplain } from '@/lib/reorder-suggestion-explain';
+
+type ReorderSuggestionRow = Awaited<ReturnType<typeof api.getReorderSuggestions>>[number] & {
+  skuId?: string;
+};
 
 export function ReorderSuggestionsPage() {
   const [searchParams] = useSearchParams();
@@ -69,7 +74,7 @@ export function ReorderSuggestionsPage() {
       <Card className="border-primary/20 bg-primary/5">
         <CardContent className="pt-6 text-sm text-text-sub">
           <p>
-            <strong className="text-text-main">补货预测</strong>：基于销量、三类库存（可售+在途+在产）与供应链周期（生产+海运+入仓缓冲）计算覆盖天数与健康灯，生成建议行。
+            <strong className="text-text-main">补货预测</strong>：基于销量、有效供给（库存位置：可售+在途+生产/跟单补缺+已确认开放−已分配）与供应链六段提前期计算覆盖天数与健康灯，生成建议行。
           </p>
           <p className="mt-1">
             <strong className="text-text-main">补货建议</strong>：预测产出的待办清单；采纳后合并到同商家草稿计划，在
@@ -103,10 +108,21 @@ export function ReorderSuggestionsPage() {
               </tr>
             </thead>
             <tbody>
-              {items.map((item) => (
+              {items.map((item: ReorderSuggestionRow) => (
                 <tr key={item.id} className="border-b border-border/60">
                   <td className="p-2 font-mono text-primary">{item.warehouseCode ?? '-'}</td>
-                  <td className="p-2 font-mono text-text-main">{item.skuCode}</td>
+                  <td className="p-2 font-mono text-text-main">
+                    {item.skuId ? (
+                      <Link
+                        to={`/inventory/planning/${item.skuId}`}
+                        className="text-primary hover:underline"
+                      >
+                        {item.skuCode}
+                      </Link>
+                    ) : (
+                      item.skuCode
+                    )}
+                  </td>
                   <td className="p-2">
                     {item.merchantCode ? (
                       <span className="font-mono">{item.merchantName ?? item.merchantCode}</span>
@@ -148,7 +164,9 @@ export function ReorderSuggestionsPage() {
                       {expandedReason[item.id] ? '收起' : '查看依据'}
                     </button>
                     {expandedReason[item.id] && (
-                      <p className="mt-1 whitespace-pre-wrap text-xs text-text-main">{item.reason}</p>
+                      <p className="mt-1 whitespace-pre-wrap text-xs text-text-main">
+                        {formatSuggestionExplain(item.metrics, item)}
+                      </p>
                     )}
                   </td>
                   <td className="p-2 text-text-main">

@@ -32,6 +32,7 @@ import { CsReplyQualityPage } from '@/pages/CsReplyQualityPage';
 import { BulkStockRequestPage, ProcurementFollowUpPage } from '@/pages/ProcurementPages';
 import { HomeRedirect } from '@/components/HomeRedirect';
 import { PlaceholderPage } from '@/pages/PlaceholderPage';
+import { SapMirrorPage } from '@/pages/SapMirrorPage';
 
 export function AppRouter() {
   return (
@@ -63,6 +64,7 @@ export function AppRouter() {
           <Route path="data/forecast" element={<SalesForecastListPage />} />
           <Route path="data/forecast/strategy" element={<Navigate to="/data/forecast?tab=strategy" replace />} />
           <Route path="data/forecast/:versionId" element={<SalesForecastVersionDetailPage />} />
+          <Route path="data/sap-mirror" element={<SapMirrorPage />} />
           <Route path="pmc/import" element={<Navigate to="/pmc/list?import=1" replace />} />
           <Route path="reorder/suggestions" element={<Navigate to="/pmc/suggestions" replace />} />
           <Route path="reorder/forecast" element={<Navigate to="/data/forecast" replace />} />

@@ -190,6 +190,59 @@ export type ShipmentMilestoneInput = {
   remark?: string | null;
 };
 
+export type SapMirrorEntityType = 'merchant' | 'sku' | 'purchase_order';
+
+export type SapMirrorIngestResult = {
+  runId: string;
+  inserted: number;
+  updated: number;
+  skipped: number;
+  errors: Array<{ externalId?: string; message: string }>;
+};
+
+export type SapSyncRun = {
+  id: string;
+  sourceSystem: string;
+  entityType: SapMirrorEntityType;
+  status: string;
+  requestedBy?: string | null;
+  startedAt: string;
+  finishedAt?: string | null;
+  summary?: {
+    inserted?: number;
+    updated?: number;
+    skipped?: number;
+    errors?: Array<{ externalId?: string; message: string }>;
+  } | null;
+  errorMessage?: string | null;
+};
+
+export type SapPoMirrorLine = {
+  id: string;
+  mirrorId: string;
+  externalLineId: string;
+  skuExternalId?: string | null;
+  skuId?: string | null;
+  qty?: number | null;
+  uom?: string | null;
+  deliveryDate?: string | null;
+};
+
+export type SapPoMirror = {
+  id: string;
+  sourceSystem: string;
+  externalId: string;
+  externalVersion?: string | null;
+  syncStatus?: string | null;
+  lastSyncAt?: string | null;
+  poNumber?: string | null;
+  vendorExternalId?: string | null;
+  merchantCode?: string | null;
+  orderDate?: string | null;
+  statusRaw?: string | null;
+  lines: SapPoMirrorLine[];
+};
+
 export type InventoryPositionBreakdown = {
   qtyAvailable: number;
   qtyInProduction: number;
@@ -1541,6 +1594,15 @@ export const api = {
     request<{ ok: true }>(`/api/lead-time-profiles/${id}`, { method: 'DELETE' }),
   getShipments: (params?: { delayed?: boolean }) =>
     request<{ items: Shipment[] }>(`/api/shipments${params?.delayed ? '?delayed=1' : ''}`),
+  ingestSapMirror: (data: { entityType: SapMirrorEntityType; items: unknown[] }) =>
+    request<SapMirrorIngestResult>('/api/sap-mirror/ingest', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+  getSapMirrorRuns: (limit = 50) =>
+    request<{ items: SapSyncRun[] }>(`/api/sap-mirror/runs?limit=${limit}`),
+  getSapMirrorPurchaseOrders: (limit = 100) =>
+    request<{ items: SapPoMirror[] }>(`/api/sap-mirror/purchase-orders?limit=${limit}`),
   upsertShipmentMilestone: (shipmentId: string, data: ShipmentMilestoneInput) =>
     request<ShipmentMilestone>(`/api/shipments/${encodeURIComponent(shipmentId)}/milestones`, {
       method: 'POST',

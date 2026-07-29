@@ -9,6 +9,7 @@ import {
 } from '@scm/db';
 import { getCurrentUser } from '../lib/auth-context.js';
 import { requireMenu } from '../lib/rbac.js';
+import { createDraftsFromPoMirror } from '../lib/sap-mirror/create-draft-from-po-mirror.js';
 import { createFixtureTransport } from '../lib/sap-mirror/fixture-transport.js';
 import { ingestSapMirrorBatch } from '../lib/sap-mirror/ingest.js';
 import type { SapMirrorFixture } from '../lib/sap-mirror/types.js';
@@ -128,4 +129,14 @@ sapMirrorRoutes.get('/sap-mirror/purchase-orders', sapMirrorMenu, async (c) => {
   }));
 
   return c.json({ items });
+});
+
+sapMirrorRoutes.post('/sap-mirror/purchase-orders/:id/create-draft', sapMirrorMenu, async (c) => {
+  const mirrorId = c.req.param('id');
+  const user = await getCurrentUser(c);
+  const result = await createDraftsFromPoMirror({ mirrorId, createdBy: user.id });
+  if (!result) {
+    return c.json({ message: 'PO mirror not found' }, 404);
+  }
+  return c.json(result);
 });

@@ -1459,6 +1459,7 @@ export const api = {
         receivedQty: number;
         remainingQty: number;
         expectedDate?: string | null;
+        etaAvailable?: string | null;
         confirmedDeliveryDate?: string | null;
         actualShipDate?: string | null;
         actualReceivedDate?: string | null;
@@ -1479,6 +1480,7 @@ export const api = {
     data: {
       status?: PurchaseDraftStatus;
       remark?: string;
+      etaAvailable?: string;
       confirmedDeliveryDate?: string;
       actualShipDate?: string;
       exceptionReason?: string;

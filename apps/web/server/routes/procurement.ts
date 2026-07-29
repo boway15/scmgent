@@ -10,6 +10,7 @@ import {
   type PurchaseDraftStatus,
 } from '../lib/purchase-draft-lifecycle.js';
 import { receivePurchaseDraft } from '../lib/purchase-draft-receipt.js';
+import { buildEtaPatch } from '../lib/purchase-draft-eta.js';
 
 function draftNo(): string {
   const d = new Date();
@@ -77,6 +78,7 @@ function mapDraftRow(row: {
   merchantName: string | null;
   status: string;
   supplierConfirmedAt: Date | null;
+  etaAvailable: string | null;
   confirmedDeliveryDate: string | null;
   actualShipDate: string | null;
   actualReceivedDate: string | null;
@@ -116,6 +118,7 @@ procurementRoutes.get('/purchase-drafts', async (c) => {
       merchantName: pmcPlans.merchantName,
       status: purchaseDrafts.status,
       supplierConfirmedAt: purchaseDrafts.supplierConfirmedAt,
+      etaAvailable: purchaseDrafts.etaAvailable,
       confirmedDeliveryDate: purchaseDrafts.confirmedDeliveryDate,
       actualShipDate: purchaseDrafts.actualShipDate,
       actualReceivedDate: purchaseDrafts.actualReceivedDate,
@@ -159,6 +162,7 @@ procurementRoutes.patch('/purchase-drafts/:id', requireMenu('pmc.tracking'), asy
   const body = await c.req.json<{
     status?: PurchaseDraftStatus;
     remark?: string;
+    etaAvailable?: string;
     confirmedDeliveryDate?: string;
     actualShipDate?: string;
     exceptionReason?: string;
@@ -185,15 +189,19 @@ procurementRoutes.patch('/purchase-drafts/:id', requireMenu('pmc.tracking'), asy
 
   if (nextStatus) patch.status = nextStatus;
   if (body.remark != null) patch.remark = body.remark;
-  if (body.confirmedDeliveryDate) patch.confirmedDeliveryDate = body.confirmedDeliveryDate;
+  if (body.etaAvailable) {
+    Object.assign(patch, buildEtaPatch(body.etaAvailable));
+  } else if (body.confirmedDeliveryDate) {
+    Object.assign(patch, buildEtaPatch(body.confirmedDeliveryDate));
+  }
   if (body.actualShipDate) patch.actualShipDate = body.actualShipDate;
   if (body.exceptionReason != null) patch.exceptionReason = body.exceptionReason;
   if (body.ownerUserId) patch.ownerUserId = body.ownerUserId;
 
   if (nextStatus === 'confirmed' && !existing.supplierConfirmedAt) {
     patch.supplierConfirmedAt = new Date();
-    if (!body.confirmedDeliveryDate && existing.expectedDate) {
-      patch.confirmedDeliveryDate = existing.expectedDate;
+    if (!body.etaAvailable && !body.confirmedDeliveryDate && existing.expectedDate) {
+      Object.assign(patch, buildEtaPatch(existing.expectedDate));
     }
   }
 

@@ -19,10 +19,17 @@ const STATUS_LABEL: Record<PurchaseDraftStatus, string> = {
   cancelled: '已取消',
 };
 
+function displaySellableDate(d: {
+  etaAvailable?: string | null;
+  confirmedDeliveryDate?: string | null;
+  expectedDate?: string | null;
+}) {
+  return d.etaAvailable ?? d.confirmedDeliveryDate ?? d.expectedDate ?? '-';
+}
+
 const NEXT_ACTION: Partial<
   Record<PurchaseDraftStatus, { label: string; status: PurchaseDraftStatus }[]>
 > = {
-  draft: [{ label: '确认交期', status: 'confirmed' }],
   confirmed: [{ label: '标记生产中', status: 'in_production' }],
   in_production: [{ label: '标记待发货', status: 'ready_to_ship' }],
   ready_to_ship: [{ label: '标记在途', status: 'in_transit' }],
@@ -37,6 +44,8 @@ export function PurchaseTrackingPage() {
   const qc = useQueryClient();
   const [receiveQty, setReceiveQty] = useState<Record<string, string>>({});
   const [exceptionReason, setExceptionReason] = useState<Record<string, string>>({});
+  const [confirmEtaDate, setConfirmEtaDate] = useState<Record<string, string>>({});
+  const [updateEtaDate, setUpdateEtaDate] = useState<Record<string, string>>({});
 
   const { data: records = [], isLoading } = useQuery({
     queryKey: ['purchase-tracking', statusFilter],
@@ -47,18 +56,21 @@ export function PurchaseTrackingPage() {
     mutationFn: ({
       id,
       status,
+      etaAvailable,
       confirmedDeliveryDate,
       actualShipDate,
       exceptionReason: reason,
     }: {
       id: string;
-      status: PurchaseDraftStatus;
+      status?: PurchaseDraftStatus;
+      etaAvailable?: string;
       confirmedDeliveryDate?: string;
       actualShipDate?: string;
       exceptionReason?: string;
     }) =>
       api.updatePurchaseTracking(id, {
-        status,
+        ...(status ? { status } : {}),
+        etaAvailable,
         confirmedDeliveryDate,
         actualShipDate,
         exceptionReason: reason,
@@ -91,6 +103,7 @@ export function PurchaseTrackingPage() {
           <CardTitle>跟单列表</CardTitle>
           <p className="text-sm text-text-sub">
             内部履约台账，非正式采购单。确认交期 → 生产 → 发货 → 在途 → 登记到货回写库存。
+            交期/日期表示预计可售日（到仓上架后可售），不是到港日。
             数据来自{' '}
             <Link to="/pmc/list" className="text-primary hover:underline">
               计划列表
@@ -107,7 +120,7 @@ export function PurchaseTrackingPage() {
                 <th className="p-2 font-normal">商家</th>
                 <th className="p-2 font-normal">SKU</th>
                 <th className="p-2 font-normal">计划/已收</th>
-                <th className="p-2 font-normal">承诺交期</th>
+                <th className="p-2 font-normal">预计可售日</th>
                 <th className="p-2 font-normal">状态</th>
                 <th className="p-2 font-normal">操作</th>
               </tr>
@@ -138,7 +151,7 @@ export function PurchaseTrackingPage() {
                         <span className="ml-1 text-text-sub">（剩 {d.remainingQty}）</span>
                       )}
                     </td>
-                    <td className="p-2">{d.confirmedDeliveryDate ?? d.expectedDate ?? '-'}</td>
+                    <td className="p-2">{displaySellableDate(d)}</td>
                     <td className="p-2">
                       {d.statusLabel ?? STATUS_LABEL[d.status] ?? d.status}
                       {d.exceptionReason && (
@@ -147,6 +160,69 @@ export function PurchaseTrackingPage() {
                     </td>
                     <td className="space-y-1 p-2">
                       <div className="flex flex-wrap gap-1">
+                        {d.status === 'draft' && (
+                          <>
+                            <Input
+                              type="date"
+                              className="h-8 w-36"
+                              value={confirmEtaDate[d.id] ?? ''}
+                              onChange={(e) =>
+                                setConfirmEtaDate((prev) => ({ ...prev, [d.id]: e.target.value }))
+                              }
+                            />
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              disabled={updateStatus.isPending || !confirmEtaDate[d.id]}
+                              onClick={() =>
+                                updateStatus.mutate({
+                                  id: d.id,
+                                  status: 'confirmed',
+                                  etaAvailable: confirmEtaDate[d.id],
+                                })
+                              }
+                            >
+                              确认交期
+                            </Button>
+                          </>
+                        )}
+                        {d.status === 'confirmed' && (
+                          <>
+                            <Input
+                              type="date"
+                              className="h-8 w-36"
+                              value={
+                                updateEtaDate[d.id] ??
+                                d.etaAvailable ??
+                                d.confirmedDeliveryDate ??
+                                ''
+                              }
+                              onChange={(e) =>
+                                setUpdateEtaDate((prev) => ({ ...prev, [d.id]: e.target.value }))
+                              }
+                            />
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              disabled={
+                                updateStatus.isPending ||
+                                !(updateEtaDate[d.id] ?? d.etaAvailable ?? d.confirmedDeliveryDate)
+                              }
+                              onClick={() =>
+                                updateStatus.mutate({
+                                  id: d.id,
+                                  etaAvailable:
+                                    updateEtaDate[d.id] ??
+                                    d.etaAvailable ??
+                                    d.confirmedDeliveryDate ??
+                                    undefined,
+                                })
+                              }
+                            >
+                              更新可售日
+                            </Button>
+                          </>
+                        )}
                         {actions.map((a) => (
                           <Button
                             key={a.status}

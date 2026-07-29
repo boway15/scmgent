@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
+  aggregateDraftBucketsForWarehouse,
   mapDraftStatusToBucket,
   mergeInventoryPosition,
   openDraftQty,
@@ -22,6 +23,28 @@ describe('inventory-position pure', () => {
   it('computes open qty', () => {
     assert.equal(openDraftQty(100, 30), 70);
     assert.equal(openDraftQty(10, 15), 0);
+  });
+
+  it('aggregates draft lines for one warehouse and tracks unassigned', () => {
+    const { draftBuckets, sources, unassignedOpenQty } = aggregateDraftBucketsForWarehouse(
+      [
+        { draftId: 'a', status: 'submitted', openQty: 100, warehouseCode: 'US-WEST' },
+        { draftId: 'b', status: 'in_transit', openQty: 50, warehouseCode: 'US-WEST' },
+        { draftId: 'c', status: 'in_production', openQty: 20, warehouseCode: null },
+        { draftId: 'd', status: 'exception', openQty: 5, warehouseCode: 'US-WEST' },
+        { draftId: 'e', status: 'confirmed', openQty: 30, warehouseCode: 'US-EAST' },
+      ],
+      'US-WEST',
+    );
+
+    assert.deepEqual(draftBuckets, {
+      confirmedOpen: 105,
+      inTransit: 50,
+      inProduction: 0,
+    });
+    assert.equal(unassignedOpenQty, 20);
+    assert.equal(sources.length, 3);
+    assert.ok(sources.some((source) => source.draftId === 'd' && source.atRisk === true));
   });
 
   it('drafts_fill_gap only fills zero snapshot buckets', () => {

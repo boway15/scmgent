@@ -1,3 +1,14 @@
+import { and, desc, eq } from 'drizzle-orm';
+import {
+  db,
+  inventoryRecords,
+  pmcPlanItems,
+  pmcPlans,
+  purchaseDrafts,
+} from '@scm/db';
+import { IN_PRODUCTION_WAREHOUSE } from './inventory-constants.js';
+import { normalizePurchaseDraftStatus } from './purchase-draft-lifecycle.js';
+
 export type InventoryDedupeMode = 'snapshot_only' | 'drafts_fill_gap' | 'sum_both';
 
 export type InventoryPositionBucket =
@@ -29,6 +40,14 @@ export type InventoryPositionBreakdown = {
   unassignedOpenQty: number;
 };
 
+export type DraftOpenLine = {
+  draftId: string;
+  status: string;
+  openQty: number;
+  warehouseCode: string | null;
+  atRisk?: boolean;
+};
+
 export function openDraftQty(qty: number, receivedQty: number): number {
   return Math.max(0, (qty ?? 0) - (receivedQty ?? 0));
 }
@@ -48,6 +67,50 @@ export function mapDraftStatusToBucket(status: string): InventoryPositionBucket 
     default:
       return null;
   }
+}
+
+export function aggregateDraftBucketsForWarehouse(
+  lines: DraftOpenLine[],
+  warehouseCode: string,
+): {
+  draftBuckets: { inProduction: number; inTransit: number; confirmedOpen: number };
+  sources: InventoryPositionSource[];
+  unassignedOpenQty: number;
+} {
+  const draftBuckets = { inProduction: 0, inTransit: 0, confirmedOpen: 0 };
+  const sources: InventoryPositionSource[] = [];
+  let unassignedOpenQty = 0;
+
+  for (const line of lines) {
+    if (line.openQty <= 0) continue;
+    const status = normalizePurchaseDraftStatus(line.status);
+    const bucket = mapDraftStatusToBucket(status);
+    if (!bucket) continue;
+
+    if (line.warehouseCode == null) {
+      unassignedOpenQty += line.openQty;
+      continue;
+    }
+    if (line.warehouseCode !== warehouseCode) continue;
+    if (
+      bucket !== 'inProduction' &&
+      bucket !== 'inTransit' &&
+      bucket !== 'confirmedOpen'
+    ) {
+      continue;
+    }
+
+    draftBuckets[bucket] += line.openQty;
+    sources.push({
+      source: 'purchase_draft',
+      bucket,
+      qty: line.openQty,
+      draftId: line.draftId,
+      atRisk: status === 'exception' ? true : line.atRisk,
+    });
+  }
+
+  return { draftBuckets, sources, unassignedOpenQty };
 }
 
 export function mergeInventoryPosition(input: {
@@ -105,4 +168,100 @@ export function mergeInventoryPosition(input: {
     dedupeMode,
     unassignedOpenQty: input.unassignedOpenQty ?? 0,
   };
+}
+
+function snapshotSources(snapshot: {
+  qtyAvailable: number;
+  qtyInTransit: number;
+  qtyInProduction: number;
+  qtyReserved: number;
+}): InventoryPositionSource[] {
+  const entries: Array<[InventoryPositionBucket, number]> = [
+    ['available', snapshot.qtyAvailable],
+    ['inTransit', snapshot.qtyInTransit],
+    ['inProduction', snapshot.qtyInProduction],
+    ['reserved', snapshot.qtyReserved],
+  ];
+  return entries
+    .filter(([, qty]) => qty !== 0)
+    .map(([bucket, qty]) => ({ source: 'snapshot', bucket, qty }));
+}
+
+export async function resolveInventoryPosition(params: {
+  skuId: string;
+  warehouseCode: string;
+  dedupeMode?: InventoryDedupeMode;
+}): Promise<InventoryPositionBreakdown> {
+  const [record] = await db
+    .select({
+      qtyAvailable: inventoryRecords.qtyAvailable,
+      qtyInTransit: inventoryRecords.qtyInTransit,
+      qtyInProduction: inventoryRecords.qtyInProduction,
+      qtyReserved: inventoryRecords.qtyReserved,
+    })
+    .from(inventoryRecords)
+    .where(
+      and(
+        eq(inventoryRecords.skuId, params.skuId),
+        eq(inventoryRecords.warehouse, params.warehouseCode),
+      ),
+    )
+    .orderBy(desc(inventoryRecords.recordedDate), desc(inventoryRecords.createdAt))
+    .limit(1);
+
+  const snapshot = {
+    qtyAvailable: record?.qtyAvailable ?? 0,
+    qtyInTransit: record?.qtyInTransit ?? 0,
+    qtyInProduction: record?.qtyInProduction ?? 0,
+    qtyReserved: record?.qtyReserved ?? 0,
+  };
+
+  if (params.warehouseCode === IN_PRODUCTION_WAREHOUSE) {
+    return mergeInventoryPosition({
+      dedupeMode: params.dedupeMode,
+      snapshot: {
+        qtyAvailable: 0,
+        qtyInTransit: 0,
+        qtyInProduction: snapshot.qtyInProduction,
+        qtyReserved: 0,
+      },
+      draftBuckets: { inProduction: 0, inTransit: 0, confirmedOpen: 0 },
+      sources: snapshotSources({
+        qtyAvailable: 0,
+        qtyInTransit: 0,
+        qtyInProduction: snapshot.qtyInProduction,
+        qtyReserved: 0,
+      }),
+    });
+  }
+
+  const draftRows = await db
+    .select({
+      id: purchaseDrafts.id,
+      status: purchaseDrafts.status,
+      qty: purchaseDrafts.qty,
+      receivedQty: purchaseDrafts.receivedQty,
+      itemWarehouseCode: pmcPlanItems.warehouseCode,
+      planWarehouseCode: pmcPlans.targetWarehouseCode,
+    })
+    .from(purchaseDrafts)
+    .leftJoin(pmcPlanItems, eq(purchaseDrafts.planItemId, pmcPlanItems.id))
+    .leftJoin(pmcPlans, eq(pmcPlanItems.planId, pmcPlans.id))
+    .where(eq(purchaseDrafts.skuId, params.skuId));
+
+  const draftLines: DraftOpenLine[] = draftRows.map((row) => ({
+    draftId: row.id,
+    status: row.status,
+    openQty: openDraftQty(row.qty, row.receivedQty),
+    warehouseCode: row.itemWarehouseCode ?? row.planWarehouseCode,
+  }));
+  const aggregated = aggregateDraftBucketsForWarehouse(draftLines, params.warehouseCode);
+
+  return mergeInventoryPosition({
+    dedupeMode: params.dedupeMode,
+    snapshot,
+    draftBuckets: aggregated.draftBuckets,
+    sources: [...snapshotSources(snapshot), ...aggregated.sources],
+    unassignedOpenQty: aggregated.unassignedOpenQty,
+  });
 }

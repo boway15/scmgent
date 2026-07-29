@@ -496,7 +496,8 @@ last_sync_time
 | **P1** | `lead_time_profiles` + resolver；SKU 规划页；建议可解释 UI；跟单里程碑日期 | 换 profile 后建议量/日期变化可测；单 SKU 页可用；实现计划见 `docs/superpowers/plans/2026-07-29-inventory-planning-p1.md` |
 | **P2** | 断货修正有效日需求；`shipments` 轻模型 + 人工节点；延误列表 | 有断货史 SKU 回退需求升高；节点可维护；实现计划见 `docs/superpowers/plans/2026-07-29-inventory-planning-p2.md` |
 | **P3** | Z 值可选策略；规划驾驶舱 KPI；external_id 铺齐 | 方法切换有配置与单测；驾驶舱只读聚合；实现计划见 `docs/superpowers/plans/2026-07-29-inventory-planning-p3.md` |
-| **P4+** | SAP 镜像适配（另开设计） | — |
+| **P4** | SAP 镜像适配（Fixture Transport + 主数据/PO 镜像，非真实连接） | 幂等导入可测；PO 不进库存位置；见 `docs/superpowers/specs/2026-07-29-sap-mirror-adapter-design.md` |
+| **P4.1+** | 库存/入库镜像、PO 变更事件、真实 Transport | 另开 |
 
 工程旁路（不阻塞本主线，可并行）：库存查询页/系统任务页路由接通。
 
@@ -582,4 +583,4 @@ P1/P2 变更仅落在：提前期配置、内部 PMC 跟单（`/pmc/tracking`）
 - P1：`docs/superpowers/plans/2026-07-29-inventory-planning-p1.md`
 - P2：`docs/superpowers/plans/2026-07-29-inventory-planning-p2.md`
 - P3：`docs/superpowers/plans/2026-07-29-inventory-planning-p3.md`
-- P4+：另开设计
+- P4：`docs/superpowers/plans/2026-07-29-inventory-planning-p4-sap-mirror.md` + `docs/superpowers/specs/2026-07-29-sap-mirror-adapter-design.md`

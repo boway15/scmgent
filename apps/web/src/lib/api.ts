@@ -139,6 +139,55 @@ export type LeadTimeProfileInput = Omit<
   'id' | 'createdAt' | 'updatedAt'
 > & { id?: string };
 
+export type ShipmentStatus =
+  | 'booked'
+  | 'loaded'
+  | 'departed'
+  | 'arrived_port'
+  | 'customs'
+  | 'received_wh'
+  | 'available'
+  | 'cancelled';
+
+export type ShipmentMilestone = {
+  id: string;
+  shipmentId: string;
+  milestone: Exclude<ShipmentStatus, 'cancelled'>;
+  plannedAt?: string | null;
+  actualAt?: string | null;
+  remark?: string | null;
+  delayDays?: number | null;
+  createdAt: string;
+};
+
+export type Shipment = {
+  id: string;
+  shipmentNo: string;
+  draftId?: string | null;
+  planItemId?: string | null;
+  skuId: string;
+  qty: number;
+  containerNo?: string | null;
+  bookingRef?: string | null;
+  trackingNo?: string | null;
+  transportMode?: string | null;
+  status: ShipmentStatus;
+  etaAvailable?: string | null;
+  sourceSystem?: string | null;
+  externalId?: string | null;
+  delayDays: number;
+  milestones: ShipmentMilestone[];
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type ShipmentMilestoneInput = {
+  milestone: ShipmentMilestone['milestone'];
+  plannedAt?: string | null;
+  actualAt?: string | null;
+  remark?: string | null;
+};
+
 export type InventoryPositionBreakdown = {
   qtyAvailable: number;
   qtyInProduction: number;
@@ -1474,6 +1523,13 @@ export const api = {
     }),
   deleteLeadTimeProfile: (id: string) =>
     request<{ ok: true }>(`/api/lead-time-profiles/${id}`, { method: 'DELETE' }),
+  getShipments: (params?: { delayed?: boolean }) =>
+    request<{ items: Shipment[] }>(`/api/shipments${params?.delayed ? '?delayed=1' : ''}`),
+  upsertShipmentMilestone: (shipmentId: string, data: ShipmentMilestoneInput) =>
+    request<ShipmentMilestone>(`/api/shipments/${encodeURIComponent(shipmentId)}/milestones`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
   getChannelWarehousePrefs: () =>
     request<
       Array<{

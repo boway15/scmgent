@@ -9,6 +9,7 @@ import { SafetyStockPage } from '@/pages/SafetyStockPage';
 import { AlertsPage } from '@/pages/AlertsPage';
 import { ReorderSuggestionsPage } from '@/pages/ReorderSuggestionsPage';
 import { PurchaseTrackingPage } from '@/pages/PurchaseTrackingPage';
+import { ShipmentsPage } from '@/pages/ShipmentsPage';
 import { RoleMenusPage } from '@/pages/RoleMenusPage';
 import { UsersPage } from '@/pages/UsersPage';
 import { ImportLegacyRedirect } from '@/components/import/ImportLegacyRedirect';
@@ -49,6 +50,7 @@ export function AppRouter() {
           <Route path="pmc/suggestions" element={<ReorderSuggestionsPage />} />
           <Route path="pmc/list" element={<PmcListPage />} />
           <Route path="pmc/tracking" element={<PurchaseTrackingPage />} />
+          <Route path="pmc/shipments" element={<ShipmentsPage />} />
           <Route path="procurement/bulk-stock" element={<BulkStockRequestPage />} />
           <Route path="procurement/follow-up" element={<ProcurementFollowUpPage />} />
           <Route path="pmc/drafts" element={<Navigate to="/pmc/tracking" replace />} />

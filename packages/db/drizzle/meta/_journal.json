@@ -358,6 +358,13 @@
       "when": 1785216000005,
       "tag": "0056_inventory_planning_menu",
       "breakpoints": true
+    },
+    {
+      "idx": 52,
+      "version": "6",
+      "when": 1785216000006,
+      "tag": "0057_shipments",
+      "breakpoints": true
     }
   ]
 }

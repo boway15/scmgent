@@ -128,6 +128,7 @@ export function PurchaseTrackingPage() {
             <tbody>
               {records.map((d) => {
                 const actions = NEXT_ACTION[d.status] ?? [];
+                const confirmDate = confirmEtaDate[d.id] ?? d.expectedDate ?? '';
                 const canReceive = ['in_transit', 'partial_received', 'ready_to_ship', 'in_production', 'confirmed'].includes(
                   d.status,
                 ) && d.remainingQty > 0;
@@ -165,7 +166,7 @@ export function PurchaseTrackingPage() {
                             <Input
                               type="date"
                               className="h-8 w-36"
-                              value={confirmEtaDate[d.id] ?? ''}
+                              value={confirmDate}
                               onChange={(e) =>
                                 setConfirmEtaDate((prev) => ({ ...prev, [d.id]: e.target.value }))
                               }
@@ -173,12 +174,12 @@ export function PurchaseTrackingPage() {
                             <Button
                               size="sm"
                               variant="outline"
-                              disabled={updateStatus.isPending || !confirmEtaDate[d.id]}
+                              disabled={updateStatus.isPending || !confirmDate}
                               onClick={() =>
                                 updateStatus.mutate({
                                   id: d.id,
                                   status: 'confirmed',
-                                  etaAvailable: confirmEtaDate[d.id],
+                                  etaAvailable: confirmDate,
                                 })
                               }
                             >

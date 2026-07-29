@@ -211,6 +211,15 @@ export function mergeInventoryPosition(input: {
   const qtyBackorder = 0;
   const effectiveQty =
     qtyAvailable + qtyInProduction + qtyInTransit + qtyConfirmedOpen - qtyReserved - qtyBackorder;
+  const sources =
+    dedupeMode === 'drafts_fill_gap'
+      ? (input.sources ?? []).filter((source) => {
+          if (source.source !== 'purchase_draft') return true;
+          if (source.bucket === 'inProduction') return s.qtyInProduction <= 0;
+          if (source.bucket === 'inTransit') return s.qtyInTransit <= 0;
+          return true;
+        })
+      : (input.sources ?? []);
 
   return {
     qtyAvailable,
@@ -220,7 +229,7 @@ export function mergeInventoryPosition(input: {
     qtyReserved,
     qtyBackorder,
     effectiveQty,
-    sources: input.sources ?? [],
+    sources,
     dedupeMode,
     unassignedOpenQty: input.unassignedOpenQty ?? 0,
   };

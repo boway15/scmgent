@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
   aggregateDraftBucketsForWarehouse,
+  buildInventoryPositionMetrics,
   effectiveQtyWithProductionFallback,
   mapDraftStatusToBucket,
   mergeInventoryPosition,
@@ -82,6 +83,27 @@ describe('inventory-position pure', () => {
         inTransit: 2000,
         confirmedOpen: 300,
       },
+      sources: [
+        { source: 'snapshot', bucket: 'inTransit', qty: 1000 },
+        {
+          source: 'purchase_draft',
+          bucket: 'inProduction',
+          qty: 500,
+          draftId: 'production-draft',
+        },
+        {
+          source: 'purchase_draft',
+          bucket: 'inTransit',
+          qty: 2000,
+          draftId: 'transit-draft',
+        },
+        {
+          source: 'purchase_draft',
+          bucket: 'confirmedOpen',
+          qty: 300,
+          draftId: 'confirmed-draft',
+        },
+      ],
     });
     assert.equal(result.qtyAvailable, 2400);
     assert.equal(result.qtyInTransit, 1000); // snapshot wins
@@ -90,6 +112,45 @@ describe('inventory-position pure', () => {
     assert.equal(result.qtyReserved, 100);
     assert.equal(result.effectiveQty, 2400 + 1000 + 500 + 300 - 100);
     assert.equal(result.dedupeMode, 'drafts_fill_gap');
+    assert.deepEqual(
+      result.sources.map(({ bucket, qty, draftId }) => ({ bucket, qty, draftId })),
+      [
+        { bucket: 'inTransit', qty: 1000, draftId: undefined },
+        { bucket: 'inProduction', qty: 500, draftId: 'production-draft' },
+        { bucket: 'confirmedOpen', qty: 300, draftId: 'confirmed-draft' },
+      ],
+    );
+    assert.deepEqual(buildInventoryPositionMetrics(result).inventoryPosition.sources, result.sources);
+  });
+
+  it('does not imply a snapshot-winning draft in-transit quantity was counted', () => {
+    const result = mergeInventoryPosition({
+      dedupeMode: 'drafts_fill_gap',
+      snapshot: {
+        qtyAvailable: 0,
+        qtyInTransit: 100,
+        qtyInProduction: 0,
+        qtyReserved: 0,
+      },
+      draftBuckets: {
+        inProduction: 0,
+        inTransit: 2000,
+        confirmedOpen: 0,
+      },
+      sources: [
+        { source: 'snapshot', bucket: 'inTransit', qty: 100 },
+        {
+          source: 'purchase_draft',
+          bucket: 'inTransit',
+          qty: 2000,
+          draftId: 'draft-in-transit',
+        },
+      ],
+    });
+
+    assert.equal(result.qtyInTransit, 100);
+    assert.equal(result.effectiveQty, 100);
+    assert.deepEqual(result.sources, [{ source: 'snapshot', bucket: 'inTransit', qty: 100 }]);
   });
 
   it('snapshot_only ignores drafts', () => {

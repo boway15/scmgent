@@ -495,7 +495,7 @@ last_sync_time
 | **P0** | `resolveInventoryPosition` 同源；跟单 `eta_available` 语义；建议 metrics 构成 | 同 SKU 健康与建议 effectiveQty 一致；UI 可见位置拆分 |
 | **P1** | `lead_time_profiles` + resolver；SKU 规划页；建议可解释 UI；跟单里程碑日期 | 换 profile 后建议量/日期变化可测；单 SKU 页可用；实现计划见 `docs/superpowers/plans/2026-07-29-inventory-planning-p1.md` |
 | **P2** | 断货修正有效日需求；`shipments` 轻模型 + 人工节点；延误列表 | 有断货史 SKU 回退需求升高；节点可维护；实现计划见 `docs/superpowers/plans/2026-07-29-inventory-planning-p2.md` |
-| **P3** | Z 值可选策略；规划驾驶舱 KPI；external_id 铺齐 | 方法切换有配置与单测；驾驶舱只读聚合 |
+| **P3** | Z 值可选策略；规划驾驶舱 KPI；external_id 铺齐 | 方法切换有配置与单测；驾驶舱只读聚合；实现计划见 `docs/superpowers/plans/2026-07-29-inventory-planning-p3.md` |
 | **P4+** | SAP 镜像适配（另开设计） | — |
 
 工程旁路（不阻塞本主线，可并行）：库存查询页/系统任务页路由接通。
@@ -579,6 +579,7 @@ P1/P2 变更仅落在：提前期配置、内部 PMC 跟单（`/pmc/tracking`）
 **实现计划**：
 
 - P0：`docs/superpowers/plans/2026-07-29-inventory-planning-boundary-p0.md`（已合入 main）
-- P1：`docs/superpowers/plans/2026-07-29-inventory-planning-p1.md`（分支 `feat/inventory-planning-p1`）
+- P1：`docs/superpowers/plans/2026-07-29-inventory-planning-p1.md`
 - P2：`docs/superpowers/plans/2026-07-29-inventory-planning-p2.md`
-- P3：另开 plan
+- P3：`docs/superpowers/plans/2026-07-29-inventory-planning-p3.md`
+- P4+：另开设计

@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
   aggregateDraftBucketsForWarehouse,
+  effectiveQtyWithProductionFallback,
   mapDraftStatusToBucket,
   mergeInventoryPosition,
   normalizeSnapshotForWarehouse,
@@ -121,5 +122,28 @@ describe('inventory-position pure', () => {
     assert.equal(result.qtyInTransit, 30);
     assert.equal(result.qtyConfirmedOpen, 10);
     assert.equal(result.effectiveQty, 100 + 55 + 30 + 10);
+  });
+
+  it('fills region production once only when warehouse positions contain none', () => {
+    assert.equal(
+      effectiveQtyWithProductionFallback(
+        [
+          { effectiveQty: 100, qtyInProduction: 0 },
+          { effectiveQty: 50, qtyInProduction: 0 },
+        ],
+        25,
+      ),
+      175,
+    );
+    assert.equal(
+      effectiveQtyWithProductionFallback(
+        [
+          { effectiveQty: 120, qtyInProduction: 20 },
+          { effectiveQty: 50, qtyInProduction: 0 },
+        ],
+        25,
+      ),
+      170,
+    );
   });
 });

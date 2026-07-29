@@ -1,6 +1,11 @@
 import { eq, desc, and } from 'drizzle-orm';
 import { db, inventoryRecords, warehouses } from '@scm/db';
 import { IN_PRODUCTION_WAREHOUSE } from './inventory-constants.js';
+import {
+  effectiveQtyWithProductionFallback,
+  resolveInventoryPosition,
+  type InventoryPositionBreakdown,
+} from './inventory-position.js';
 
 export type InventorySnapshot = {
   warehouseCode: string;
@@ -70,36 +75,39 @@ export async function getLatestInventorySnapshot(
 export async function getRegionPoolSnapshot(
   skuId: string,
   regionGroup: string,
-): Promise<{ effectiveQty: number; warehouseCodes: string[]; byWarehouse: InventorySnapshot[] }> {
+): Promise<{
+  effectiveQty: number;
+  warehouseCodes: string[];
+  byWarehouse: Array<InventoryPositionBreakdown & { warehouseCode: string }>;
+}> {
   const whRows = await db
     .select({ code: warehouses.code })
     .from(warehouses)
     .where(and(eq(warehouses.regionGroup, regionGroup), eq(warehouses.isActive, true)));
 
   const warehouseCodes = whRows.map((w) => w.code);
-  const byWarehouse: InventorySnapshot[] = [];
-  let effectiveQty = 0;
+  const byWarehouse: Array<InventoryPositionBreakdown & { warehouseCode: string }> = [];
 
   for (const code of warehouseCodes) {
-    const snap = await getLatestInventorySnapshot(skuId, code);
-    byWarehouse.push(snap);
-    effectiveQty += snap.localEffectiveQty;
+    const position = await resolveInventoryPosition({ skuId, warehouseCode: code });
+    byWarehouse.push({ warehouseCode: code, ...position });
   }
 
-  effectiveQty += await getLatestInProductionQty(skuId);
+  const effectiveQty = effectiveQtyWithProductionFallback(
+    byWarehouse,
+    await getLatestInProductionQty(skuId),
+  );
 
   return { effectiveQty, warehouseCodes, byWarehouse };
 }
 
 export async function sumEffectiveQtyForWarehouses(skuId: string, codes: string[]): Promise<number> {
   if (!codes.length) return 0;
-  let total = 0;
+  const positions: InventoryPositionBreakdown[] = [];
   for (const code of codes) {
-    const snap = await getLatestInventorySnapshot(skuId, code);
-    total += snap.localEffectiveQty;
+    positions.push(await resolveInventoryPosition({ skuId, warehouseCode: code }));
   }
-  total += await getLatestInProductionQty(skuId);
-  return total;
+  return effectiveQtyWithProductionFallback(positions, await getLatestInProductionQty(skuId));
 }
 
 /** 汇总 SKU 在所有启用仓的最新有效供给（含 SKU 级在产池） */

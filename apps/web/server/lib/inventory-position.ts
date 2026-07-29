@@ -48,6 +48,36 @@ export type DraftOpenLine = {
   atRisk?: boolean;
 };
 
+export function buildInventoryPositionMetrics(position: InventoryPositionBreakdown) {
+  return {
+    inventoryPosition: {
+      effectiveQty: position.effectiveQty,
+      qtyAvailable: position.qtyAvailable,
+      qtyInProduction: position.qtyInProduction,
+      qtyInTransit: position.qtyInTransit,
+      qtyConfirmedOpen: position.qtyConfirmedOpen,
+      qtyReserved: position.qtyReserved,
+      dedupeMode: position.dedupeMode,
+      unassignedOpenQty: position.unassignedOpenQty,
+      sources: position.sources,
+    },
+  };
+}
+
+export function effectiveQtyWithProductionFallback(
+  positions: Array<Pick<InventoryPositionBreakdown, 'effectiveQty' | 'qtyInProduction'>>,
+  fallbackInProductionQty: number,
+): number {
+  const total = positions.reduce((sum, position) => sum + position.effectiveQty, 0);
+  const productionFromWarehouses = positions.reduce(
+    (sum, position) => sum + position.qtyInProduction,
+    0,
+  );
+  return productionFromWarehouses <= 0 && fallbackInProductionQty > 0
+    ? total + fallbackInProductionQty
+    : total;
+}
+
 type InventoryPositionSnapshot = {
   qtyAvailable: number;
   qtyInTransit: number;

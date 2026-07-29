@@ -9,10 +9,8 @@ import {
 } from '@scm/db';
 import { applyMoq, calcReplenishment, resolveEffectiveMoq } from '../lib/replenishment.js';
 import { formatCoverageReason, type InventoryHealth } from '../lib/replenishment-coverage.js';
-import {
-  getLatestInventorySnapshot,
-  getRegionPoolSnapshot,
-} from '../lib/inventory-snapshot.js';
+import { getRegionPoolSnapshot } from '../lib/inventory-snapshot.js';
+import { resolveInventoryPosition } from '../lib/inventory-position.js';
 import {
   shouldDeferReplenishment,
   splitQtyByDailyShare,
@@ -200,12 +198,15 @@ export async function runReplenishmentForecast() {
       const coverage = coverageByWh[wh.code];
       if (!coverage.needsReplenishment) continue;
 
-      const snapshot = await getLatestInventorySnapshot(sku.id, wh.code);
+      const position = await resolveInventoryPosition({
+        skuId: sku.id,
+        warehouseCode: wh.code,
+      });
       const eoqRop = (health.metrics.reorderPoint as number) ?? 0;
 
       if (wh.regionGroup === 'US') {
         const defer = shouldDeferReplenishment({
-          warehouseEffective: snapshot.effectiveQty,
+          warehouseEffective: position.effectiveQty,
           warehouseRop: eoqRop,
           networkEffective: usPool.effectiveQty,
           networkRop: usNetworkRop,
@@ -233,7 +234,7 @@ export async function runReplenishmentForecast() {
         effectiveMoq > 0 && suggestedQty > rawQty ? `MOQ ${effectiveMoq}` : undefined;
       const reasonBase = formatCoverageReason({
         warehouseCode: wh.code,
-        effectiveQty: snapshot.effectiveQty,
+        effectiveQty: position.effectiveQty,
         avgDaily: dailyByWh[wh.code] ?? 0,
         result: coverage,
         poolNote,

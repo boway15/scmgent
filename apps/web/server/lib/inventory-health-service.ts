@@ -15,7 +15,10 @@ import {
   calcForwardAvgDaily,
 } from './forecast-demand.js';
 import { resolveLeadTimeForSkuWarehouse } from './lead-time-resolver.js';
-import { getLatestInventorySnapshot } from './inventory-snapshot.js';
+import {
+  buildInventoryPositionMetrics,
+  resolveInventoryPosition,
+} from './inventory-position.js';
 import { isGrayLifecycle, type InventoryHealth } from './inventory-light.js';
 import type { CoverageReplenishmentResult } from './replenishment-coverage.js';
 import { loadDailySalesBySkuIds } from './sales-history-query.js';
@@ -87,7 +90,10 @@ export async function computeSkuWarehouseHealth(params: {
   });
 
   const policy = params.policyMap.get(params.warehouse.code) ?? params.policyMap.get('ALL');
-  const snapshot = await getLatestInventorySnapshot(params.sku.id, params.warehouse.code);
+  const position = await resolveInventoryPosition({
+    skuId: params.sku.id,
+    warehouseCode: params.warehouse.code,
+  });
 
   if (!params.forecastEntry) {
     if (!params.forecastByStation.has(FORECAST_GLOBAL_STATION)) {
@@ -108,7 +114,7 @@ export async function computeSkuWarehouseHealth(params: {
     params.forecastByStation.get(FORECAST_GLOBAL_STATION) ?? { map: new Map(), lifecycle: undefined };
 
   const coverage = calcCoverageReplenishmentFromForecast({
-    effectiveQty: snapshot.effectiveQty,
+    effectiveQty: position.effectiveQty,
     forecasts: forecastEntry.map,
     historicalAvgDaily: eoqCalc.avgDaily,
     productionDays: leadTime.productionDays,
@@ -134,7 +140,7 @@ export async function computeSkuWarehouseHealth(params: {
     warehouseCode: params.warehouse.code,
     regionGroup: params.warehouse.regionGroup,
     countryCode: params.warehouse.countryCode,
-    effectiveQty: snapshot.effectiveQty,
+    effectiveQty: position.effectiveQty,
     avgDaily,
     demandSource: coverage.demandSource,
     healthStatus: coverage.healthStatus,
@@ -154,6 +160,7 @@ export async function computeSkuWarehouseHealth(params: {
       overstockThresholdDays: coverage.overstockThresholdDays,
       reorderPoint: eoqCalc.reorderPoint,
       safetyStockQty: eoqCalc.safetyStockQty,
+      ...buildInventoryPositionMetrics(position),
     },
     coverage,
   };

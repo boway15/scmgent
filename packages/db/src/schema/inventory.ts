@@ -18,6 +18,11 @@ import { users } from './auth';
 import { spus } from './products';
 
 export const calcMethodEnum = pgEnum('calc_method', ['manual', 'eoq', 'dify_ai']);
+export const safetyStockMethodEnum = pgEnum('safety_stock_method', [
+  'coverage_days',
+  'z_demand',
+  'z_demand_leadtime',
+]);
 export const dataSourceEnum = pgEnum('data_source', ['manual', 'import', 'pmc_receipt']);
 /** 补货亮灯：red=必补，yellow=同 SPU 有红灯 SKU 需补时才补，green=不补 */
 export const replenishLightEnum = pgEnum('replenish_light', ['red', 'yellow', 'green']);
@@ -213,7 +218,14 @@ export const safetyStockConfig = pgTable(
     targetCoverageDays: integer('target_coverage_days'),
     /** 超备阈值（覆盖天数） */
     overstockThresholdDays: integer('overstock_threshold_days').default(180),
-    serviceLevel: numeric('service_level', { precision: 4, scale: 2 }),
+    /** 安全库存计算方法；默认覆盖天数，可选 Z 值法 */
+    safetyStockMethod: safetyStockMethodEnum('safety_stock_method').notNull().default('coverage_days'),
+    /** 服务水平（Z 值法），如 0.950 */
+    serviceLevel: numeric('service_level', { precision: 4, scale: 3 }),
+    /** 需求标准差 σ_d（Z 值法） */
+    demandStdDev: numeric('demand_std_dev'),
+    /** 提前期标准差 σ_L（Z 值法，含需求与提前期波动） */
+    leadTimeStdDev: numeric('lead_time_std_dev'),
     calcMethod: calcMethodEnum('calc_method').notNull().default('manual'),
     lastCalcAt: timestamp('last_calc_at', { withTimezone: true }),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),

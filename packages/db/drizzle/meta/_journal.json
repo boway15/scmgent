@@ -372,6 +372,13 @@
       "when": 1785216000007,
       "tag": "0058_shipments_menu",
       "breakpoints": true
+    },
+    {
+      "idx": 54,
+      "version": "6",
+      "when": 1785216000008,
+      "tag": "0059_safety_stock_method",
+      "breakpoints": true
     }
   ]
 }

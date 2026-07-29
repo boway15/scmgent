@@ -4,6 +4,7 @@ import {
   aggregateDraftBucketsForWarehouse,
   mapDraftStatusToBucket,
   mergeInventoryPosition,
+  normalizeSnapshotForWarehouse,
   openDraftQty,
 } from './inventory-position.js';
 
@@ -23,6 +24,25 @@ describe('inventory-position pure', () => {
   it('computes open qty', () => {
     assert.equal(openDraftQty(100, 30), 70);
     assert.equal(openDraftQty(10, 15), 0);
+  });
+
+  it('zeros in-production snapshot quantity for a physical warehouse', () => {
+    const snapshot = normalizeSnapshotForWarehouse(
+      {
+        qtyAvailable: 100,
+        qtyInTransit: 20,
+        qtyInProduction: 75,
+        qtyReserved: 10,
+      },
+      'US-WEST',
+    );
+
+    assert.deepEqual(snapshot, {
+      qtyAvailable: 100,
+      qtyInTransit: 20,
+      qtyInProduction: 0,
+      qtyReserved: 10,
+    });
   });
 
   it('aggregates draft lines for one warehouse and tracks unassigned', () => {

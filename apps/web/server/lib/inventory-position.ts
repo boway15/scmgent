@@ -48,6 +48,32 @@ export type DraftOpenLine = {
   atRisk?: boolean;
 };
 
+type InventoryPositionSnapshot = {
+  qtyAvailable: number;
+  qtyInTransit: number;
+  qtyInProduction: number;
+  qtyReserved: number;
+};
+
+export function normalizeSnapshotForWarehouse(
+  snapshot: InventoryPositionSnapshot,
+  warehouseCode: string,
+): InventoryPositionSnapshot {
+  if (warehouseCode === IN_PRODUCTION_WAREHOUSE) {
+    return {
+      qtyAvailable: 0,
+      qtyInTransit: 0,
+      qtyInProduction: snapshot.qtyInProduction,
+      qtyReserved: 0,
+    };
+  }
+
+  return {
+    ...snapshot,
+    qtyInProduction: 0,
+  };
+}
+
 export function openDraftQty(qty: number, receivedQty: number): number {
   return Math.max(0, (qty ?? 0) - (receivedQty ?? 0));
 }
@@ -209,29 +235,22 @@ export async function resolveInventoryPosition(params: {
     .orderBy(desc(inventoryRecords.recordedDate), desc(inventoryRecords.createdAt))
     .limit(1);
 
-  const snapshot = {
-    qtyAvailable: record?.qtyAvailable ?? 0,
-    qtyInTransit: record?.qtyInTransit ?? 0,
-    qtyInProduction: record?.qtyInProduction ?? 0,
-    qtyReserved: record?.qtyReserved ?? 0,
-  };
+  const snapshot = normalizeSnapshotForWarehouse(
+    {
+      qtyAvailable: record?.qtyAvailable ?? 0,
+      qtyInTransit: record?.qtyInTransit ?? 0,
+      qtyInProduction: record?.qtyInProduction ?? 0,
+      qtyReserved: record?.qtyReserved ?? 0,
+    },
+    params.warehouseCode,
+  );
 
   if (params.warehouseCode === IN_PRODUCTION_WAREHOUSE) {
     return mergeInventoryPosition({
       dedupeMode: params.dedupeMode,
-      snapshot: {
-        qtyAvailable: 0,
-        qtyInTransit: 0,
-        qtyInProduction: snapshot.qtyInProduction,
-        qtyReserved: 0,
-      },
+      snapshot,
       draftBuckets: { inProduction: 0, inTransit: 0, confirmedOpen: 0 },
-      sources: snapshotSources({
-        qtyAvailable: 0,
-        qtyInTransit: 0,
-        qtyInProduction: snapshot.qtyInProduction,
-        qtyReserved: 0,
-      }),
+      sources: snapshotSources(snapshot),
     });
   }
 

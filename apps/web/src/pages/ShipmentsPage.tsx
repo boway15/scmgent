@@ -1,12 +1,14 @@
-import { useState } from 'react';
-import { Link } from 'react-router-dom';
+import { useEffect, useMemo, useState } from 'react';
+import { Link, useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   api,
+  type PurchaseDraftStatus,
   type Shipment,
   type ShipmentMilestoneInput,
   type ShipmentStatus,
 } from '@/lib/api';
+import { apiFetch, apiUrl } from '@/lib/base-path';
 import { PageHeader } from '@/components/PageHeader';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -61,15 +63,127 @@ function shortId(value?: string | null) {
   return value ? value.slice(0, 8) : '-';
 }
 
+type TrackingDraft = {
+  id: string;
+  draftNo: string;
+  skuId?: string;
+  skuCode: string;
+  qty: number;
+  remainingQty: number;
+  planItemId?: string | null;
+  etaAvailable?: string | null;
+  confirmedDeliveryDate?: string | null;
+  expectedDate?: string | null;
+  transportMode?: string | null;
+  status: PurchaseDraftStatus;
+};
+
+export type ShipmentCreatePrefill = {
+  shipmentNo: string;
+  draftId: string;
+  planItemId: string;
+  skuId: string;
+  qty: number;
+  etaAvailable: string;
+  transportMode: string;
+};
+
+export function shipmentsForDraftId(items: Shipment[], draftId: string | null | undefined) {
+  if (!draftId) return [];
+  return items.filter((item) => item.draftId === draftId);
+}
+
+export function defaultShipmentNoFromDraft(draftNo: string) {
+  return `SHP-${draftNo}`;
+}
+
+export function buildShipmentCreatePrefill(draft: TrackingDraft): ShipmentCreatePrefill | null {
+  if (!draft.skuId) return null;
+  return {
+    shipmentNo: defaultShipmentNoFromDraft(draft.draftNo),
+    draftId: draft.id,
+    planItemId: draft.planItemId ?? '',
+    skuId: draft.skuId,
+    qty: draft.remainingQty > 0 ? draft.remainingQty : draft.qty,
+    etaAvailable: draft.etaAvailable ?? draft.confirmedDeliveryDate ?? draft.expectedDate ?? '',
+    transportMode: draft.transportMode ?? '',
+  };
+}
+
 export function ShipmentsPage() {
   const queryClient = useQueryClient();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const draftIdFromQuery = searchParams.get('draftId') ?? undefined;
   const [tab, setTab] = useState<ShipmentTab>('all');
   const [selected, setSelected] = useState<Shipment | null>(null);
   const [milestoneDraft, setMilestoneDraft] = useState<MilestoneDraft | null>(null);
+  const [createDraft, setCreateDraft] = useState<ShipmentCreatePrefill | null>(null);
 
   const shipments = useQuery({
     queryKey: ['shipments', tab],
     queryFn: () => api.getShipments(shipmentListParamsForTab(tab)),
+  });
+
+  const trackingDrafts = useQuery({
+    queryKey: ['purchase-tracking', 'shipment-prefill', draftIdFromQuery],
+    queryFn: () => api.getPurchaseTracking(),
+    enabled: Boolean(draftIdFromQuery),
+  });
+
+  const linkedDraft = useMemo(() => {
+    if (!draftIdFromQuery) return undefined;
+    return (trackingDrafts.data as TrackingDraft[] | undefined)?.find((d) => d.id === draftIdFromQuery);
+  }, [draftIdFromQuery, trackingDrafts.data]);
+
+  const items = shipments.data?.items ?? [];
+
+  const linkedShipments = useMemo(
+    () => shipmentsForDraftId(items, draftIdFromQuery),
+    [items, draftIdFromQuery],
+  );
+
+  const visibleItems = useMemo(() => {
+    if (!draftIdFromQuery) return items;
+    return linkedShipments.length > 0 ? linkedShipments : items;
+  }, [draftIdFromQuery, items, linkedShipments]);
+
+  useEffect(() => {
+    if (!draftIdFromQuery || !linkedDraft || linkedShipments.length > 0) {
+      setCreateDraft(null);
+      return;
+    }
+    setCreateDraft(buildShipmentCreatePrefill(linkedDraft));
+  }, [draftIdFromQuery, linkedDraft, linkedShipments.length]);
+
+  const createShipment = useMutation({
+    mutationFn: async (values: ShipmentCreatePrefill) => {
+      const response = await apiFetch(apiUrl('/api/shipments'), {
+        method: 'POST',
+        body: JSON.stringify({
+          shipmentNo: values.shipmentNo,
+          draftId: values.draftId,
+          planItemId: values.planItemId || null,
+          skuId: values.skuId,
+          qty: values.qty,
+          etaAvailable: values.etaAvailable || null,
+          transportMode: values.transportMode || null,
+        }),
+      });
+      if (!response.ok) {
+        const body = (await response.json().catch(() => null)) as { message?: string } | null;
+        throw new Error(body?.message ?? '创建发运失败');
+      }
+      return response.json() as Promise<Shipment>;
+    },
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ['shipments'] });
+      if (draftIdFromQuery) {
+        const next = new URLSearchParams(searchParams);
+        next.delete('draftId');
+        setSearchParams(next, { replace: true });
+      }
+      setCreateDraft(null);
+    },
   });
 
   const saveMilestones = useMutation({
@@ -100,11 +214,110 @@ export function ShipmentsPage() {
     setMilestoneDraft(milestoneDraftFromShipment(shipment));
   };
 
-  const items = shipments.data?.items ?? [];
-
   return (
     <div className="space-y-6">
       <PageHeader title="发运管理" />
+
+      {draftIdFromQuery && (
+        <Card>
+          <CardContent className="flex flex-wrap items-center justify-between gap-3 pt-6">
+            <p className="text-sm text-text-sub">
+              {linkedShipments.length > 0
+                ? `已筛选跟单 ${shortId(draftIdFromQuery)} 的 ${linkedShipments.length} 条发运`
+                : linkedDraft
+                  ? `跟单 ${linkedDraft.draftNo} 尚未创建发运，可在下方预填创建`
+                  : trackingDrafts.isLoading
+                    ? '正在加载跟单信息…'
+                    : '未找到对应跟单，请返回跟单页重试'}
+            </p>
+            <div className="flex gap-2">
+              <Button asChild size="sm" variant="outline">
+                <Link to="/pmc/tracking">返回跟单</Link>
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => {
+                  const next = new URLSearchParams(searchParams);
+                  next.delete('draftId');
+                  setSearchParams(next, { replace: true });
+                }}
+              >
+                清除筛选
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {createDraft && (
+        <Card>
+          <CardHeader>
+            <CardTitle>创建发运</CardTitle>
+            <p className="text-sm text-text-sub">
+              已从跟单 {linkedDraft?.draftNo} 预填，提交后将关联 draftId。
+            </p>
+          </CardHeader>
+          <CardContent className="grid gap-3 sm:grid-cols-2">
+            <label className="space-y-1 text-sm text-text-sub">
+              <span>发运单号</span>
+              <Input
+                value={createDraft.shipmentNo}
+                onChange={(event) =>
+                  setCreateDraft({ ...createDraft, shipmentNo: event.target.value })
+                }
+              />
+            </label>
+            <label className="space-y-1 text-sm text-text-sub">
+              <span>数量</span>
+              <Input
+                type="number"
+                value={createDraft.qty}
+                onChange={(event) =>
+                  setCreateDraft({ ...createDraft, qty: Number(event.target.value) || 0 })
+                }
+              />
+            </label>
+            <label className="space-y-1 text-sm text-text-sub">
+              <span>预计可售日</span>
+              <Input
+                type="date"
+                value={createDraft.etaAvailable}
+                onChange={(event) =>
+                  setCreateDraft({ ...createDraft, etaAvailable: event.target.value })
+                }
+              />
+            </label>
+            <label className="space-y-1 text-sm text-text-sub">
+              <span>运输方式</span>
+              <Input
+                value={createDraft.transportMode}
+                onChange={(event) =>
+                  setCreateDraft({ ...createDraft, transportMode: event.target.value })
+                }
+              />
+            </label>
+            {createShipment.isError && (
+              <p className="text-sm text-destructive sm:col-span-2">
+                {createShipment.error instanceof Error ? createShipment.error.message : '创建失败'}
+              </p>
+            )}
+            <div className="sm:col-span-2">
+              <Button
+                disabled={
+                  createShipment.isPending ||
+                  !createDraft.shipmentNo ||
+                  !createDraft.skuId ||
+                  createDraft.qty <= 0
+                }
+                onClick={() => createShipment.mutate(createDraft)}
+              >
+                {createShipment.isPending ? '创建中…' : '创建发运'}
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       <Card>
         <CardHeader className="space-y-3">
@@ -154,8 +367,15 @@ export function ShipmentsPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {items.map((shipment) => (
-                    <tr key={shipment.id} className="border-b border-border/60">
+                  {visibleItems.map((shipment) => (
+                    <tr
+                      key={shipment.id}
+                      className={`border-b border-border/60 ${
+                        draftIdFromQuery && shipment.draftId === draftIdFromQuery
+                          ? 'bg-primary/5'
+                          : ''
+                      }`}
+                    >
                       <td className="p-2 font-mono text-text-main">{shipment.shipmentNo}</td>
                       <td className="p-2 font-mono" title={shipment.skuId}>
                         {shortId(shipment.skuId)}
@@ -173,7 +393,10 @@ export function ShipmentsPage() {
                       <td className="p-2">{shipment.etaAvailable ?? '-'}</td>
                       <td className="p-2 font-mono">
                         {shipment.draftId ? (
-                          <Link to="/pmc/tracking" className="text-primary hover:underline">
+                          <Link
+                            to={`/pmc/tracking`}
+                            className="text-primary hover:underline"
+                          >
                             {shortId(shipment.draftId)}
                           </Link>
                         ) : (
@@ -187,10 +410,14 @@ export function ShipmentsPage() {
                       </td>
                     </tr>
                   ))}
-                  {!items.length && (
+                  {!visibleItems.length && (
                     <tr>
                       <td colSpan={8} className="p-6 text-center text-text-hint">
-                        {tab === 'delayed' ? '暂无延误发运' : '暂无发运记录'}
+                        {draftIdFromQuery && linkedShipments.length === 0
+                          ? '该跟单暂无发运记录'
+                          : tab === 'delayed'
+                            ? '暂无延误发运'
+                            : '暂无发运记录'}
                       </td>
                     </tr>
                   )}

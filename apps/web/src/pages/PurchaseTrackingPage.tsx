@@ -47,6 +47,13 @@ const NEXT_ACTION: Partial<
   exception: [{ label: '恢复已确认', status: 'confirmed' }],
 };
 
+const SHIPMENT_LINK_STATUSES: PurchaseDraftStatus[] = [
+  'ready_to_ship',
+  'in_transit',
+  'partial_received',
+  'in_production',
+];
+
 export function PurchaseTrackingPage() {
   const [searchParams] = useSearchParams();
   const statusFilter = (searchParams.get('status') as PurchaseDraftStatus | null) ?? undefined;
@@ -63,6 +70,17 @@ export function PurchaseTrackingPage() {
     queryKey: ['purchase-tracking', statusFilter],
     queryFn: () => api.getPurchaseTracking(statusFilter),
   });
+
+  const { data: shipmentData } = useQuery({
+    queryKey: ['shipments', 'tracking-links'],
+    queryFn: () => api.getShipments(),
+  });
+
+  const linkedDraftIds = new Set(
+    (shipmentData?.items ?? [])
+      .map((shipment) => shipment.draftId)
+      .filter((draftId): draftId is string => Boolean(draftId)),
+  );
 
   const updateStatus = useMutation({
     mutationFn: ({
@@ -144,6 +162,7 @@ export function PurchaseTrackingPage() {
                 <th className="p-2 font-normal">计划/已收</th>
                 <th className="p-2 font-normal">预计可售日</th>
                 <th className="p-2 font-normal">状态</th>
+                <th className="p-2 font-normal">发运</th>
                 <th className="p-2 font-normal">操作</th>
               </tr>
             </thead>
@@ -179,6 +198,25 @@ export function PurchaseTrackingPage() {
                       {d.statusLabel ?? STATUS_LABEL[d.status] ?? d.status}
                       {d.exceptionReason && (
                         <p className="mt-0.5 text-xs text-destructive">{d.exceptionReason}</p>
+                      )}
+                    </td>
+                    <td className="p-2">
+                      {linkedDraftIds.has(d.id) ? (
+                        <Link
+                          to={`/pmc/shipments?draftId=${d.id}`}
+                          className="text-primary hover:underline"
+                        >
+                          查看发运
+                        </Link>
+                      ) : SHIPMENT_LINK_STATUSES.includes(d.status) ? (
+                        <Link
+                          to={`/pmc/shipments?draftId=${d.id}`}
+                          className="text-primary hover:underline"
+                        >
+                          创建发运
+                        </Link>
+                      ) : (
+                        '-'
                       )}
                     </td>
                     <td className="space-y-1 p-2">
@@ -367,7 +405,7 @@ export function PurchaseTrackingPage() {
               })}
               {!records.length && (
                 <tr>
-                  <td colSpan={8} className="p-4 text-center text-text-hint">
+                  <td colSpan={9} className="p-4 text-center text-text-hint">
                     暂无跟单记录，请先在计划列表确认计划
                   </td>
                 </tr>

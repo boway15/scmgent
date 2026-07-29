@@ -65,6 +65,9 @@ export const purchaseDrafts = pgTable(
     receivedQty: integer('received_qty').notNull().default(0),
     exceptionReason: text('exception_reason'),
     ownerUserId: uuid('owner_user_id').references(() => users.id),
+    /** SAP / 外部系统预留 */
+    sourceSystem: varchar('source_system', { length: 50 }),
+    externalId: varchar('external_id', { length: 100 }),
     remark: text('remark'),
     createdBy: uuid('created_by').references(() => users.id),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),

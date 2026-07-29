@@ -40,6 +40,9 @@ export const pmcPlans = pgTable(
     /** 本计划目标入库仓（一计划一商家一仓） */
     targetWarehouseCode: varchar('target_warehouse_code', { length: 100 }),
     remark: text('remark'),
+    /** SAP / 外部系统预留 */
+    sourceSystem: varchar('source_system', { length: 50 }),
+    externalId: varchar('external_id', { length: 100 }),
     createdBy: uuid('created_by').references(() => users.id),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
@@ -62,6 +65,8 @@ export const pmcPlanItems = pgTable('pmc_plan_items', {
   completedQty: integer('completed_qty').default(0),
   unit: varchar('unit', { length: 20 }).notNull(),
   sortOrder: integer('sort_order').default(0),
+  /** SAP / 外部系统行号预留 */
+  externalLineId: varchar('external_line_id', { length: 100 }),
 });
 
 export const materialRequirements = pgTable('material_requirements', {

@@ -61,6 +61,9 @@ export const merchants = pgTable('merchants', {
   /** 工厂平均生产周期（天） */
   productionLeadDays: integer('production_lead_days').notNull().default(50),
   remark: text('remark'),
+  /** SAP / 外部系统预留 */
+  sourceSystem: varchar('source_system', { length: 50 }),
+  externalId: varchar('external_id', { length: 100 }),
   isActive: boolean('is_active').notNull().default(true),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),

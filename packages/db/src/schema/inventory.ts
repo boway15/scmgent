@@ -80,6 +80,9 @@ export const skus = pgTable(
     replenishLight: replenishLightEnum('replenish_light').notNull().default('red'),
     /** 强制纳入预测生成（无视销量准入） */
     forceForecast: boolean('force_forecast').notNull().default(false),
+    /** SAP / 外部系统预留 */
+    sourceSystem: varchar('source_system', { length: 50 }),
+    externalId: varchar('external_id', { length: 100 }),
     isActive: boolean('is_active').notNull().default(true),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),

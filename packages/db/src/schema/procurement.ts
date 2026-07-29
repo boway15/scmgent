@@ -50,6 +50,8 @@ export const purchaseDrafts = pgTable(
     status: purchaseDraftStatusEnum('status').notNull().default('draft'),
     supplierConfirmedAt: timestamp('supplier_confirmed_at', { withTimezone: true }),
     confirmedDeliveryDate: date('confirmed_delivery_date'),
+    /** 预计可售日（补货/延误主字段；写入时同步 confirmedDeliveryDate） */
+    etaAvailable: date('eta_available'),
     actualShipDate: date('actual_ship_date'),
     actualReceivedDate: date('actual_received_date'),
     receivedQty: integer('received_qty').notNull().default(0),

@@ -316,6 +316,20 @@
       "when": 1780717058185,
       "tag": "0046_news_intel_menu",
       "breakpoints": true
+    },
+    {
+      "idx": 46,
+      "version": "6",
+      "when": 1785216000000,
+      "tag": "0047_drop_creator_ops_menu",
+      "breakpoints": true
+    },
+    {
+      "idx": 47,
+      "version": "6",
+      "when": 1785216000001,
+      "tag": "0052_purchase_draft_eta_available",
+      "breakpoints": true
     }
   ]
 }

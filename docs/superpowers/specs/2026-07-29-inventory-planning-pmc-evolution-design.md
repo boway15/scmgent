@@ -138,12 +138,12 @@ PMC 计划 + 采购跟单（已有）
 | `in_production` / `ready_to_ship` | `inProduction` | 同上 |
 | `in_transit` / `partial_received` | `inTransit` | 未收货部分 |
 | `received` / `cancelled` | 不计入开放量 | — |
-| `exception` | 默认计入原桶，或标记 `atRisk` 供预警 | 可配置；默认仍计入开放量并打标 |
+| `exception` | `confirmedOpen` | `qty - receivedQty`；`sources` 打标 `atRisk: true` |
 
 与飞书/导入快照的 `qtyInProduction` / `qtyInTransit` **去重规则**（必须写死）：
 
 1. **优先快照**：若当日快照已含「供应商订单 / 调拨在途」等合计，跟单开放量仅在「快照未覆盖该 SKU+仓」或「显式启用跟单叠加开关」时叠加。
-2. 首版默认：**快照权威 + 跟单仅补齐快照为 0 的缺口**（可配置为 `snapshot_only` | `drafts_fill_gap` | `sum_both`）。
+2. 首版默认：**快照权威 + 跟单仅补齐快照为 0 的缺口**（P0 锁定 `drafts_fill_gap`；可配置为 `snapshot_only` | `drafts_fill_gap` | `sum_both`）。
 3. 构成明细写入 metrics，便于审计「为什么位置是 5800」。
 
 ### 4.3 服务契约

@@ -242,6 +242,18 @@ export type SkuPlanningView = {
   stockoutDateEstimate?: string | null;
 };
 
+export type PlanningDashboard = {
+  skuActiveCount: number;
+  healthRedCount: number;
+  healthYellowCount: number;
+  belowRopCount: number;
+  pendingSuggestions: number;
+  delayedShipments: number;
+  delayedDraftsEtaAvailable: number;
+  stockoutRateApprox: number;
+  calculatedAt: string;
+};
+
 export type SkuOverview = {
   id: string;
   code: string;
@@ -1441,6 +1453,8 @@ export const api = {
       : '';
     return request<SkuPlanningView>(`/api/inventory/planning/${skuId}${query}`);
   },
+  getPlanningDashboard: () =>
+    request<PlanningDashboard>('/api/planning/dashboard'),
   exportInventoryOverviewCsv: async (params?: {
     q?: string;
     category?: string;

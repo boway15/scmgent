@@ -112,6 +112,33 @@ export type Merchant = {
   isActive: boolean;
 };
 
+export type TransportMode = 'fcl' | 'lcl' | 'air' | 'express' | 'rail' | 'truck_air' | 'direct';
+
+export type LeadTimeProfile = {
+  id: string;
+  merchantCode?: string | null;
+  originLocation?: string | null;
+  destinationWarehouseCode: string;
+  transportMode?: TransportMode | null;
+  productionDays: number;
+  domesticDays: number;
+  bookingDays: number;
+  transitDays: number;
+  customsDays: number;
+  inboundDays: number;
+  leadTimeStdDev?: number | null;
+  isDefault: boolean;
+  sourceSystem?: string | null;
+  externalId?: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type LeadTimeProfileInput = Omit<
+  LeadTimeProfile,
+  'id' | 'createdAt' | 'updatedAt'
+> & { id?: string };
+
 export type SkuOverview = {
   id: string;
   code: string;
@@ -1373,6 +1400,22 @@ export const api = {
         allowCrossFulfill: boolean;
       }>
     >('/api/warehouses'),
+  getLeadTimeProfiles: (params?: { warehouse?: string; merchant?: string }) => {
+    const qs = new URLSearchParams();
+    if (params?.warehouse) qs.set('warehouse', params.warehouse);
+    if (params?.merchant) qs.set('merchant', params.merchant);
+    const query = qs.toString();
+    return request<{ items: LeadTimeProfile[] }>(
+      `/api/lead-time-profiles${query ? `?${query}` : ''}`,
+    );
+  },
+  upsertLeadTimeProfile: (data: LeadTimeProfileInput) =>
+    request<LeadTimeProfile>('/api/lead-time-profiles', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+  deleteLeadTimeProfile: (id: string) =>
+    request<{ ok: true }>(`/api/lead-time-profiles/${id}`, { method: 'DELETE' }),
   getChannelWarehousePrefs: () =>
     request<
       Array<{

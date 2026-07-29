@@ -46,6 +46,7 @@ import { skuEncodingRoutes } from './routes/sku-encoding.js';
 import { inventoryHealthRoutes } from './routes/inventory-health.js';
 import { salesForecastRoutes } from './routes/sales-forecast.js';
 import { inventoryExceptionRoutes } from './routes/inventory-exceptions.js';
+import { leadTimeProfileRoutes } from './routes/lead-time-profiles.js';
 import { sql } from 'drizzle-orm';
 import { db } from '@scm/db';
 import { getRuntimeConfigSummary } from './lib/runtime-config.js';
@@ -144,6 +145,7 @@ app.route('/api', skuEncodingRoutes);
 app.route('/api', inventoryHealthRoutes);
 app.route('/api', salesForecastRoutes);
 app.route('/api', inventoryExceptionRoutes);
+app.route('/api', leadTimeProfileRoutes);
 app.route('/api', newsIntelRoutes);
 app.route('/api', csReplyQualityRoutes);
 

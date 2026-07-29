@@ -3,6 +3,7 @@ import { AppLayout } from '@/layouts/AppLayout';
 import { RequireAuth } from '@/components/RequireAuth';
 import { LoginPage } from '@/pages/LoginPage';
 import { InventoryOverviewPage } from '@/pages/InventoryOverviewPage';
+import { LeadTimeProfilesPage } from '@/pages/LeadTimeProfilesPage';
 import { SafetyStockPage } from '@/pages/SafetyStockPage';
 import { AlertsPage } from '@/pages/AlertsPage';
 import { ReorderSuggestionsPage } from '@/pages/ReorderSuggestionsPage';
@@ -39,6 +40,7 @@ export function AppRouter() {
           <Route index element={<HomeRedirect />} />
           <Route path="dashboard" element={<DashboardPage />} />
           <Route path="inventory/overview" element={<InventoryOverviewPage />} />
+          <Route path="inventory/lead-time" element={<LeadTimeProfilesPage />} />
           <Route path="inventory/safety" element={<SafetyStockPage />} />
           <Route path="inventory/alerts" element={<AlertsPage />} />
           <Route path="pmc/suggestions" element={<ReorderSuggestionsPage />} />

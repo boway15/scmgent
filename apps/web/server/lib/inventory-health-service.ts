@@ -20,7 +20,10 @@ import {
   resolveInventoryPosition,
 } from './inventory-position.js';
 import { isGrayLifecycle, type InventoryHealth } from './inventory-light.js';
-import type { CoverageReplenishmentResult } from './replenishment-coverage.js';
+import {
+  buildLeadTimeMetrics,
+  type CoverageReplenishmentResult,
+} from './replenishment-coverage.js';
 import { loadDailySalesBySkuIds } from './sales-history-query.js';
 import { loadMergedPublishedForecastBySkuIds } from './forecast-published-resolve.js';
 import { FORECAST_GLOBAL_STATION } from './forecast-station-scope.js';
@@ -152,9 +155,7 @@ export async function computeSkuWarehouseHealth(params: {
     suggestedQty: coverage.suggestedQty,
     suggestedDate: coverage.suggestedDate,
     metrics: {
-      productionDays: coverage.leadTime.productionDays,
-      shippingDays: coverage.leadTime.shippingDays,
-      inboundBufferDays: coverage.leadTime.inboundBufferDays,
+      ...buildLeadTimeMetrics(leadTime),
       safetyStockDays: coverage.safetyStockDays,
       targetCoverageDays: coverage.targetCoverageDays,
       overstockThresholdDays: coverage.overstockThresholdDays,

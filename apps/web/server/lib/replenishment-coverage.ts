@@ -114,6 +114,21 @@ export function calcTotalLeadTime(params: {
   };
 }
 
+export function buildLeadTimeMetrics(leadTime: LeadTimeBreakdown) {
+  return {
+    leadTimeProfileId: leadTime.profileId ?? null,
+    productionDays: leadTime.productionDays,
+    domesticDays: leadTime.domesticDays,
+    bookingDays: leadTime.bookingDays,
+    transitDays: leadTime.transitDays,
+    customsDays: leadTime.customsDays,
+    inboundDays: leadTime.inboundDays,
+    shippingDays: leadTime.shippingDays,
+    inboundBufferDays: leadTime.inboundBufferDays,
+    totalLeadDays: leadTime.totalLeadDays,
+  };
+}
+
 export function calcCoverageDays(effectiveQty: number, avgDaily: number): number {
   if (avgDaily <= 0) return effectiveQty > 0 ? Number.POSITIVE_INFINITY : 0;
   return effectiveQty / avgDaily;

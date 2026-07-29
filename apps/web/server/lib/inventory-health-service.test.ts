@@ -5,6 +5,60 @@ import {
   recommendedActionForException,
 } from './inventory-health-service.js';
 import { buildInventoryPositionMetrics } from './inventory-position.js';
+import { buildLeadTimeMetrics } from './replenishment-coverage.js';
+
+assert.deepEqual(
+  buildLeadTimeMetrics({
+    productionDays: 30,
+    domesticDays: 2,
+    bookingDays: 3,
+    transitDays: 40,
+    customsDays: 5,
+    inboundDays: 7,
+    shippingDays: 48,
+    inboundBufferDays: 7,
+    totalLeadDays: 87,
+    profileId: 'profile-1',
+  }),
+  {
+    leadTimeProfileId: 'profile-1',
+    productionDays: 30,
+    domesticDays: 2,
+    bookingDays: 3,
+    transitDays: 40,
+    customsDays: 5,
+    inboundDays: 7,
+    shippingDays: 48,
+    inboundBufferDays: 7,
+    totalLeadDays: 87,
+  },
+);
+
+assert.deepEqual(
+  buildLeadTimeMetrics({
+    productionDays: 50,
+    domesticDays: 0,
+    bookingDays: 0,
+    transitDays: 60,
+    customsDays: 0,
+    inboundDays: 7,
+    shippingDays: 60,
+    inboundBufferDays: 7,
+    totalLeadDays: 117,
+  }),
+  {
+    leadTimeProfileId: null,
+    productionDays: 50,
+    domesticDays: 0,
+    bookingDays: 0,
+    transitDays: 60,
+    customsDays: 0,
+    inboundDays: 7,
+    shippingDays: 60,
+    inboundBufferDays: 7,
+    totalLeadDays: 117,
+  },
+);
 
 assert.deepEqual(
   buildInventoryPositionMetrics({

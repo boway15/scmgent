@@ -493,7 +493,7 @@ last_sync_time
 | 阶段 | 内容 | 验收 |
 |------|------|------|
 | **P0** | `resolveInventoryPosition` 同源；跟单 `eta_available` 语义；建议 metrics 构成 | 同 SKU 健康与建议 effectiveQty 一致；UI 可见位置拆分 |
-| **P1** | `lead_time_profiles` + resolver；SKU 规划页；建议可解释 UI；跟单里程碑日期 | 换 profile 后建议量/日期变化可测；单 SKU 页可用 |
+| **P1** | `lead_time_profiles` + resolver；SKU 规划页；建议可解释 UI；跟单里程碑日期 | 换 profile 后建议量/日期变化可测；单 SKU 页可用；实现计划见 `docs/superpowers/plans/2026-07-29-inventory-planning-p1.md` |
 | **P2** | 断货修正有效日需求；`shipments` 轻模型 + 人工节点；延误列表 | 有断货史 SKU 回退需求升高；节点可维护 |
 | **P3** | Z 值可选策略；规划驾驶舱 KPI；external_id 铺齐 | 方法切换有配置与单测；驾驶舱只读聚合 |
 | **P4+** | SAP 镜像适配（另开设计） | — |
@@ -549,12 +549,21 @@ last_sync_time
 | `exception` 开放量 | 计入 `confirmedOpen`，`sources` 打标 `atRisk: true` |
 | 跟单仓归属 | `pmc_plan_items.warehouse_code` → 否则 `pmc_plans.target_warehouse_code`；皆空则不进物理仓 position（记入 `unassignedOpen` 仅 metrics） |
 | `eta_available` | 新列；写入时同步 `confirmed_delivery_date`；列表展示以 `eta_available` 优先 |
-| SKU 规划页菜单 | **P1** 再定（候选：`/inventory/planning/:skuId`） |
-| 提前期运输方式维 | **P1**：可先商家+目的仓，运输方式可空 |
+| SKU 规划页菜单 | **P1 已锁定**：`/inventory/planning/:skuId`，菜单 `inventory.planning` |
+| 提前期运输方式维 | **P1 已锁定**：商家+目的仓优先，运输方式可空 |
 
 ### 16.2 本阶段非目标（边界）
 
 P0 **不包含**：`lead_time_profiles`、SKU 规划页 UI、发运 `shipments` 表、断货修正、Z 值安全库存、规划驾驶舱、SAP 接口、正式 PO、BOM、FOB 改造。
+
+### 16.3 P1 补充约束（飞书同步列表）
+
+以下飞书同步驱动的列表**不得调整列结构 / 表头 / 行信息布局**：
+
+- 大件备货、采购跟进（飞书采购列表）
+- 库存总览、库存查询
+
+P1 变更仅落在：提前期配置、内部 PMC 跟单（`/pmc/tracking`）、补货建议可解释、新建 SKU 规划页；不改上述飞书对照表。
 
 ---
 
@@ -567,4 +576,8 @@ P0 **不包含**：`lead_time_profiles`、SKU 规划页 UI、发运 `shipments` 
 
 ---
 
-**实现计划**：`docs/superpowers/plans/2026-07-29-inventory-planning-boundary-p0.md`（边界锁定 + P0）。P1/P2 另开 plan。
+**实现计划**：
+
+- P0：`docs/superpowers/plans/2026-07-29-inventory-planning-boundary-p0.md`（已合入 main）
+- P1：`docs/superpowers/plans/2026-07-29-inventory-planning-p1.md`
+- P2/P3：另开 plan

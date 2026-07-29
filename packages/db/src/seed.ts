@@ -44,6 +44,7 @@ const MENU_SEEDS: MenuSeed[] = [
       { code: 'inventory.overview', name: '库存总览', path: '/inventory/overview', sortOrder: 1, isLeaf: true },
       { code: 'inventory.safety', name: '安全库存设置', path: '/inventory/safety', sortOrder: 2, isLeaf: true },
       { code: 'inventory.alert', name: '缺货预警', path: '/inventory/alerts', sortOrder: 3, isLeaf: true },
+      { code: 'inventory.planning', name: 'SKU 库存规划', path: '/inventory/planning', sortOrder: 4, isLeaf: true },
       { code: 'inventory.lead_time', name: '交期配置', path: '/inventory/lead-time', sortOrder: 5, isLeaf: true },
     ],
   },
@@ -180,7 +181,7 @@ const DEPRECATED_MENU_CODES = [
 ];
 
 const ROLE_MENU_CODES: Record<string, string[]> = {
-  super_admin: ['dashboard', 'inventory', 'inventory.overview', 'inventory.safety', 'inventory.alert', 'inventory.lead_time', 'pmc', 'pmc.suggestion', 'pmc.list', 'pmc.tracking', 'procurement', 'procurement.bulk_stock', 'procurement.follow_up', 'cs', 'cs.quality', 'logistics', 'logistics.fob_settlement', 'data', 'data.products', 'data.sales', 'data.forecast', 'intel', 'intel.news', 'ai', 'ai.chat', 'help', 'system', 'system.users', 'system.roles', 'system.logs'],
+  super_admin: ['dashboard', 'inventory', 'inventory.overview', 'inventory.safety', 'inventory.alert', 'inventory.planning', 'inventory.lead_time', 'pmc', 'pmc.suggestion', 'pmc.list', 'pmc.tracking', 'procurement', 'procurement.bulk_stock', 'procurement.follow_up', 'cs', 'cs.quality', 'logistics', 'logistics.fob_settlement', 'data', 'data.products', 'data.sales', 'data.forecast', 'intel', 'intel.news', 'ai', 'ai.chat', 'help', 'system', 'system.users', 'system.roles', 'system.logs'],
   pmc_planner: ['dashboard', 'inventory', 'inventory.overview', 'inventory.safety', 'inventory.lead_time', 'pmc', 'pmc.suggestion', 'pmc.list', 'procurement', 'procurement.bulk_stock', 'logistics', 'logistics.fob_settlement', 'cs', 'cs.quality', 'data', 'data.products', 'data.sales', 'data.forecast', 'ai', 'ai.chat', 'help'],
   warehouse: ['dashboard', 'inventory', 'inventory.overview', 'inventory.alert', 'pmc', 'pmc.list', 'logistics', 'logistics.fob_settlement', 'cs', 'cs.quality', 'data', 'data.products', 'data.sales', 'data.forecast', 'ai', 'ai.chat', 'help'],
   purchaser: ['dashboard', 'inventory', 'inventory.overview', 'inventory.safety', 'inventory.alert', 'inventory.lead_time', 'pmc', 'pmc.list', 'pmc.tracking', 'procurement', 'procurement.bulk_stock', 'procurement.follow_up', 'logistics', 'logistics.fob_settlement', 'cs', 'cs.quality', 'data', 'data.products', 'data.sales', 'data.forecast', 'ai', 'ai.chat', 'help'],

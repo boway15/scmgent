@@ -139,6 +139,58 @@ export type LeadTimeProfileInput = Omit<
   'id' | 'createdAt' | 'updatedAt'
 > & { id?: string };
 
+export type InventoryPositionBreakdown = {
+  qtyAvailable: number;
+  qtyInProduction: number;
+  qtyInTransit: number;
+  qtyConfirmedOpen: number;
+  qtyReserved: number;
+  qtyBackorder: number;
+  effectiveQty: number;
+  sources: Array<{
+    source: 'snapshot' | 'purchase_draft';
+    bucket: string;
+    qty: number;
+    draftId?: string;
+    atRisk?: boolean;
+  }>;
+  dedupeMode: 'snapshot_only' | 'drafts_fill_gap' | 'sum_both';
+  unassignedOpenQty: number;
+};
+
+export type ResolvedLeadTime = {
+  productionDays: number;
+  domesticDays: number;
+  bookingDays: number;
+  transitDays: number;
+  customsDays: number;
+  inboundDays: number;
+  shippingDays: number;
+  inboundBufferDays: number;
+  totalLeadDays: number;
+  profileId?: string | null;
+  merchantCode?: string | null;
+  warehouseCode: string;
+};
+
+export type SkuPlanningView = {
+  skuId: string;
+  skuCode: string;
+  warehouseCode: string;
+  position: InventoryPositionBreakdown;
+  leadTime: ResolvedLeadTime;
+  avgDaily: number;
+  demandSource: 'forecast' | 'historical';
+  coverageDays: number;
+  safetyStockDays: number;
+  reorderPoint?: number;
+  suggestedQty: number;
+  suggestedDate: string;
+  healthStatus: InventoryHealth;
+  etaAvailableNearest?: string | null;
+  stockoutDateEstimate?: string | null;
+};
+
 export type SkuOverview = {
   id: string;
   code: string;
@@ -1332,6 +1384,12 @@ export const api = {
   },
   getInventoryOverviewDetail: (skuId: string) =>
     request<InventoryOverview>(`/api/inventory/overview/${skuId}`),
+  getSkuPlanning: (skuId: string, warehouseCode?: string) => {
+    const query = warehouseCode
+      ? `?warehouse=${encodeURIComponent(warehouseCode)}`
+      : '';
+    return request<SkuPlanningView>(`/api/inventory/planning/${skuId}${query}`);
+  },
   exportInventoryOverviewCsv: async (params?: {
     q?: string;
     category?: string;

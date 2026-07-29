@@ -14,10 +14,14 @@ import {
   calcCoverageReplenishmentFromForecast,
   calcForwardAvgDaily,
 } from './forecast-demand.js';
-import { resolveLeadTimeForSkuWarehouse } from './lead-time-resolver.js';
+import {
+  resolveLeadTimeForSkuWarehouse,
+  type ResolvedLeadTime,
+} from './lead-time-resolver.js';
 import {
   buildInventoryPositionMetrics,
   resolveInventoryPosition,
+  type InventoryPositionBreakdown,
 } from './inventory-position.js';
 import { isGrayLifecycle, type InventoryHealth } from './inventory-light.js';
 import {
@@ -49,6 +53,8 @@ export type SkuHealthRow = {
   suggestedDate: string;
   metrics: Record<string, unknown>;
   coverage: CoverageReplenishmentResult & { demandSource: 'forecast' | 'historical' };
+  position: InventoryPositionBreakdown;
+  leadTime: ResolvedLeadTime;
 };
 
 async function loadPolicyMap(skuId: string) {
@@ -164,6 +170,8 @@ export async function computeSkuWarehouseHealth(params: {
       ...buildInventoryPositionMetrics(position),
     },
     coverage,
+    position,
+    leadTime,
   };
 }
 

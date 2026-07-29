@@ -3,6 +3,7 @@ import { AppLayout } from '@/layouts/AppLayout';
 import { RequireAuth } from '@/components/RequireAuth';
 import { LoginPage } from '@/pages/LoginPage';
 import { InventoryOverviewPage } from '@/pages/InventoryOverviewPage';
+import { SkuInventoryPlanningPage } from '@/pages/SkuInventoryPlanningPage';
 import { LeadTimeProfilesPage } from '@/pages/LeadTimeProfilesPage';
 import { SafetyStockPage } from '@/pages/SafetyStockPage';
 import { AlertsPage } from '@/pages/AlertsPage';
@@ -40,6 +41,8 @@ export function AppRouter() {
           <Route index element={<HomeRedirect />} />
           <Route path="dashboard" element={<DashboardPage />} />
           <Route path="inventory/overview" element={<InventoryOverviewPage />} />
+          <Route path="inventory/planning" element={<Navigate to="/inventory/overview" replace />} />
+          <Route path="inventory/planning/:skuId" element={<SkuInventoryPlanningPage />} />
           <Route path="inventory/lead-time" element={<LeadTimeProfilesPage />} />
           <Route path="inventory/safety" element={<SafetyStockPage />} />
           <Route path="inventory/alerts" element={<AlertsPage />} />

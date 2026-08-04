@@ -9,18 +9,19 @@
 
 | 项 | 说明 |
 |----|------|
-| 端口 | 宿主机 `8081` → 容器 `8080`，已绑定 `0.0.0.0` |
+| 端口 | 宿主机 `8081` → 容器 `8081`，已绑定 `0.0.0.0`（不占用 8080） |
 | 登录 | 邮箱登录可用；`COOKIE_SECURE=false` 已适配 HTTP 局域网 |
 | 飞书登录 | 若启用，须把 `APP_BASE_URL` 改为 `http://<本机IP>:8081` 并重建 web 容器 |
 | 防火墙 | Win11 需放行入站 TCP 8081（可用 `netsh advfirewall firewall add rule name="scm-agent 8081" dir=in action=allow protocol=TCP localport=8081`） |
 | 开发模式 | `pnpm dev` 时 Vite 已 `host: true`，局域网访问 `http://<本机IP>:5173` |
+| 定时任务 | Compose 服务 `cron`（内网 `http://web:8081`）；停调度：`docker compose stop cron` |
 
 > **本地服务器版发布 SOP（日常更新/回滚/备份）**：见 [docs/local-server-release-sop.md](docs/local-server-release-sop.md)  
 > **全新专用机安装与迁移（Win11 + Docker + cloudflared + al6s.cn）**：见 [docs/dedicated-host-setup-migration.md](docs/dedicated-host-setup-migration.md)  
 > **服务器本地部署清单（推荐，不依赖 SSH）**：见 [docs/dedicated-host-server-checklist.md](docs/dedicated-host-server-checklist.md)  
 > Tunnel 运维详解：[docs/win11-cloudflare-tunnel-deploy.md](docs/win11-cloudflare-tunnel-deploy.md)
 
-> 宿主机端口映射为 `8081:8080`。若本机 8080 已被其他项目占用（如 Dify / mail-guide 的 `8080:80`），scm-agent 会使用 8081，避免冲突。
+> 映射为 `8081:8081`。宿主机 8080 可留给 Dify 等其他应用，互不冲突。
 
 ---
 
@@ -71,8 +72,7 @@ pnpm docker:start   # 或 docker compose up -d
 | **后端 API** | `apps/web/server/**` | `pnpm docker:build` → `pnpm docker:start` |
 | **数据库 Schema** | `packages/db/**` | 先 `pnpm db:generate`（如有新 migration），再 `pnpm db:migrate` 或 `pnpm docker:up`（容器 entrypoint 会自动 migrate） |
 | **环境变量** | `docker-compose.yml` → `web.environment` | `docker compose up -d --force-recreate web`（不必 rebuild） |
-| **RSSHub** | `docker-compose.yml` → `rsshub` | `docker compose up -d rsshub`；`web` 已注入 `RSSHUB_BASE_URL=http://rsshub:1200`；调试页 http://localhost:1200 |
-| **Dockerfile / 依赖** | `Dockerfile`、`package.json` 等 | `pnpm docker:rebuild` |
+| **Dockerfile / 依赖** | `Dockerfile`、`package.json` 等 | `pnpm docker:rebuild`；跨境资讯按需浏览器依赖镜像内 Chromium，修改安装或路径后必须重建 |
 
 > Docker 模式**不挂载源码**，改代码后必须重新 build 才会生效。`docker compose restart web` 不会加载新代码。
 
@@ -161,7 +161,7 @@ pnpm docker:start
 | 现象 | 处理 |
 |------|------|
 | 页面还是旧的 | `pnpm docker:build && pnpm docker:start` + 浏览器 Ctrl+F5 |
-| 8081 打不开 / 端口冲突 | `docker compose ps` 看 web 是否 `0.0.0.0:8081->8080`；若只有 `8080/tcp` 说明宿主机 8080/8081 被占，改 `docker-compose.yml` 的 `ports` 或停掉占用容器 |
+| 8081 打不开 / 端口冲突 | `docker compose ps` 看 web 是否 `0.0.0.0:8081->8081`；若端口被占，改 `docker-compose.yml` 的 `ports` 或停掉占用容器 |
 | 启动失败 | `pnpm docker:logs` 看迁移/Seed 是否报错 |
 | `pnpm db:migrate` ECONNREFUSED | 先 `docker compose up -d postgres`（需映射 5432）；或直接用 `pnpm docker:up` 让容器内自动 migrate |
 | 经营看板/合规页 403 或空白 | 老库缺菜单：执行 `pnpm db:migrate`（0009）或 `pnpm db:seed`；然后 `pnpm docker:start` + Ctrl+F5 |

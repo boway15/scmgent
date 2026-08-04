@@ -11,11 +11,9 @@ export function isRbacEnforced(): boolean {
 
 const menuCache = new Map<string, { codes: Set<string>; at: number }>();
 const CACHE_TTL_MS = 60_000;
-const FORECAST_WRITE_ROLE_CODES = ['super_admin'] as const;
 
-export function isForecastWriteRoleCode(roleCode: string): boolean {
-  return FORECAST_WRITE_ROLE_CODES.includes(roleCode as (typeof FORECAST_WRITE_ROLE_CODES)[number]);
-}
+/** 销量预测写操作：角色需包含菜单 data.forecast（销售预测）。 */
+export const FORECAST_WRITE_MENU_CODE = 'data.forecast';
 
 export async function loadRoleMenuCodes(user: AuthUser): Promise<Set<string>> {
   if (user.role.code === 'super_admin') {
@@ -55,6 +53,10 @@ export async function userHasMenu(user: AuthUser, ...menuCodes: string[]): Promi
   return menuCodes.some((m) => codes.has(m));
 }
 
+export async function userCanWriteForecast(user: AuthUser): Promise<boolean> {
+  return userHasMenu(user, FORECAST_WRITE_MENU_CODE);
+}
+
 /** Block pending users without any menu from reading business APIs. */
 export function requireBusinessRead() {
   return async (c: Context, next: Next) => {
@@ -68,7 +70,8 @@ export function requireBusinessRead() {
       path.startsWith('/api/auth') ||
       path === '/api/health' ||
       path.startsWith('/api/menus') ||
-      path.startsWith('/api/me')
+      path.startsWith('/api/me') ||
+      path.startsWith('/api/tasks')
     ) {
       return next();
     }
@@ -127,8 +130,10 @@ export function requireWrite() {
 const IMPORT_TYPE_MENUS: Record<string, string | string[]> = {
   skus: 'data.products',
   inventory: 'inventory.overview',
+  inventory_turnover: 'inventory.overview',
   sales: 'data.sales',
   safety_stock: 'inventory.safety',
+  inventory_policy: 'inventory.safety',
   merchants: 'data.products',
   pmc_plans: 'pmc.list',
 };

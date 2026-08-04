@@ -11,6 +11,23 @@ docker/dify/.env
 *.zip
 .turbo
 
+# 本地调试凭证 / HTTP 抓包（勿提交）
+cookies.txt
+headers.txt
+login.json
+**/cookies.txt
+**/headers.txt
+
+# 根目录临时 SQL / 一次性脚本
+/tmp_*.sql
+/tmp_*.mjs
+/tmp_*.js
+/tmp_*.ts
+
+# 根目录与 web 下本地导出 CSV（业务数据，勿提交）
+/*.csv
+/apps/web/*.csv
+
 # 业务销量报表（含真实销售数据，勿提交）
 docs/samples/import-fob/产品销售报表-*.csv
 docs/samples/import-fob/产品销售报表-*.xlsx
@@ -22,3 +39,7 @@ apps/web/.backtest-out.txt
 apps/web/tmp-hono-test/
 apps/web/scripts/.hono-test/
 apps/web/apps/
+
+# 误放的妙搭 ZIP 解压包 / 整仓副本（勿再提交）
+docs/code/
+docs/code (1)/

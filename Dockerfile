@@ -16,7 +16,7 @@ RUN pnpm --filter @scm/web build
 
 FROM node:20-alpine AS runner
 RUN corepack enable && corepack prepare pnpm@10.33.2 --activate
-RUN apk add --no-cache postgresql-client
+RUN apk add --no-cache postgresql-client chromium
 WORKDIR /app
 
 COPY --from=build /app /app
@@ -25,7 +25,8 @@ RUN chmod +x /entrypoint.sh
 
 ENV NODE_ENV=production
 ENV SERVE_STATIC=true
-ENV PORT=8080
-EXPOSE 8080
+ENV PORT=8081
+ENV CHROMIUM_EXECUTABLE_PATH=/usr/bin/chromium-browser
+EXPOSE 8081
 
 ENTRYPOINT ["/entrypoint.sh"]

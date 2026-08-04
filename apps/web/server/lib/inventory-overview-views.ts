@@ -1,7 +1,12 @@
-import { TURNOVER_IMPORT_HEADERS } from './inventory-turnover-headers.js';
+import {
+  FEISHU_INVENTORY_TURNOVER_HEADERS,
+  FEISHU_REPLENISH_VIEW_HEADERS,
+  FEISHU_STOCKOUT_VIEW_HEADERS,
+  FEISHU_WAREHOUSE_VIEW_HEADERS,
+} from './inventory-turnover-feishu-headers.js';
 import { orderOverviewColumnIds } from './inventory-overview-column-order.js';
 
-export type OverviewViewId = 'replenish' | 'warehouse' | 'stockout' | 'excel_full' | 'custom';
+export type OverviewViewId = 'replenish' | 'warehouse' | 'stockout' | 'feishu_full' | 'excel_full' | 'custom';
 
 const VALID_COLUMN_IDS = new Set([
   'updatedAt',
@@ -9,54 +14,8 @@ const VALID_COLUMN_IDS = new Set([
   'inventoryRecordedDate',
   'replenishLight',
   'ai',
-  ...TURNOVER_IMPORT_HEADERS,
+  ...FEISHU_INVENTORY_TURNOVER_HEADERS,
 ]);
-
-const MASTER_DATA_COLS = [
-  '品类',
-  'SKU',
-  '生命周期',
-  'SKU名称',
-  '销售国家',
-  '产品分类',
-  '供应商编码',
-] as const;
-
-function sheetHeadersMatching(pred: (header: string) => boolean): string[] {
-  return [...TURNOVER_IMPORT_HEADERS].filter(pred);
-}
-
-function isStockoutGroupHeader(header: string): boolean {
-  return header.includes('断货') || header.includes('上架时间') || header.includes('最早上架');
-}
-
-const REPLENISH_SHEET_HEADERS = [
-  ...MASTER_DATA_COLS,
-  '海外仓库存_合计',
-  '调拨在途_合计',
-  '供应商订单合计',
-  '预下单',
-  '全链条合计库存',
-  '3天销量',
-  '7天销量',
-  '30天销量',
-  '海外周转_合计',
-];
-
-const WAREHOUSE_SHEET_HEADERS = [
-  ...MASTER_DATA_COLS,
-  ...sheetHeadersMatching(
-    (h) =>
-      h.startsWith('海外仓库存_') ||
-      h.startsWith('调拨在途_') ||
-      h.startsWith('已调拨未在途_'),
-  ),
-];
-
-const STOCKOUT_SHEET_HEADERS = [
-  ...MASTER_DATA_COLS,
-  ...sheetHeadersMatching(isStockoutGroupHeader),
-];
 
 function uniqueValidColumnIds(ids: string[]): string[] {
   const seen = new Set<string>();
@@ -70,22 +29,23 @@ function uniqueValidColumnIds(ids: string[]): string[] {
 }
 
 export function getViewColumnIds(viewId: OverviewViewId): string[] {
-  let sheetHeaders: string[];
+  let sheetHeaders: readonly string[];
   switch (viewId) {
     case 'warehouse':
-      sheetHeaders = WAREHOUSE_SHEET_HEADERS;
+      sheetHeaders = FEISHU_WAREHOUSE_VIEW_HEADERS;
       break;
     case 'stockout':
-      sheetHeaders = STOCKOUT_SHEET_HEADERS;
+      sheetHeaders = FEISHU_STOCKOUT_VIEW_HEADERS;
       break;
+    case 'feishu_full':
     case 'excel_full':
-      sheetHeaders = [...TURNOVER_IMPORT_HEADERS];
+      sheetHeaders = FEISHU_INVENTORY_TURNOVER_HEADERS;
       break;
     case 'custom':
       return getViewColumnIds('replenish');
     case 'replenish':
     default:
-      sheetHeaders = REPLENISH_SHEET_HEADERS;
+      sheetHeaders = FEISHU_REPLENISH_VIEW_HEADERS;
       break;
   }
 

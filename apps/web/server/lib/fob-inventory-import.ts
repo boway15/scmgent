@@ -1,5 +1,6 @@
 import { pickField } from './import/parse.js';
 import { extractTurnoverSnapshot } from './inventory-turnover-snapshot.js';
+import { isFeishuCompressedTurnoverFormat } from './inventory-turnover-bitable-mapper.js';
 import {
   parseTurnoverWarehouseBuckets,
   type TurnoverWarehouseBucket,
@@ -9,8 +10,6 @@ export type FobInventoryExpandedRow = {
   skuCode: string;
   name: string;
   category?: string;
-  /** C 生命周期 */
-  lifecycle?: string;
   /** E 销售国家（原始值） */
   salesCountry?: string;
   /** F 产品分类 */
@@ -84,6 +83,7 @@ function pickRowField(row: Record<string, string>, ...aliases: string[]): string
 /** SKU库存周转情况查询-明细：V:AD 海外仓、BF:BN 在途、BO:BS 有合同在产、CC 预下单、CD 全链合计 */
 function isTurnoverInventoryFormat(rows: Array<Record<string, string>>): boolean {
   if (!rows.length) return false;
+  if (isFeishuCompressedTurnoverFormat(rows)) return true;
   const keys = rowKeys(rows[0]);
   const hasOverseasBucket = keys.some((key) => key.includes('海外仓库存_'));
   const hasTransitBucket = keys.some((key) => key.includes('调拨在途_'));
@@ -171,7 +171,7 @@ function extractTurnoverSkuMaster(row: Record<string, string>) {
 
   return {
     category: pickRowField(row, '品类', 'category') || undefined,
-    lifecycle: pickRowField(row, '生命周期', 'lifecycle') || undefined,
+    // 生命周期改为系统按销量计算，导入宽表不再读取「生命周期」列
     name: pickRowField(row, 'sku名称', '品名', 'name') || '',
     salesCountry: pickRowField(row, '销售国家', '区域', 'region', 'station') || undefined,
     productCategory: pickRowField(row, '产品分类') || undefined,
@@ -220,7 +220,6 @@ function expandLegacyFobInventoryRow(
     turnoverSnapshot: extractTurnoverSnapshot(row),
     name: pickRowField(row, '品名', 'name', 'sku名称') || skuCode,
     category: pickRowField(row, '品类', 'category') || undefined,
-    lifecycle: pickRowField(row, '生命周期', 'lifecycle') || undefined,
     salesCountry: pickRowField(row, '区域', 'region', 'station', '销售国家') || undefined,
     productCategory: pickRowField(row, '产品分类') || undefined,
     merchantCode: pickRowField(row, '供应商编码', 'merchant_code') || undefined,
@@ -250,7 +249,7 @@ function expandTurnoverInventoryRow(
     pickRowField(row, '销售国家', '区域', 'region', 'station'),
   );
 
-  const qtyInProduction = sumSupplierOrderQty(row);
+  const qtyInProduction = sumSupplierOrderQty(row) || parseQty(pickRowField(row, '供应商订单'));
   const qtyPreOrder = parseQty(pickRowField(row, '预下单'));
   const qtyChainTotalRaw = pickRowField(row, '全链条合计库存', '全链库存总数');
   const qtyChainTotal = qtyChainTotalRaw ? parseQty(qtyChainTotalRaw) : undefined;
@@ -263,7 +262,6 @@ function expandTurnoverInventoryRow(
     turnoverSnapshot: extractTurnoverSnapshot(row),
     name: master.name || skuCode,
     category: master.category,
-    lifecycle: master.lifecycle,
     salesCountry: master.salesCountry,
     productCategory: master.productCategory,
     merchantCode: master.merchantCode,

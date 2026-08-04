@@ -4,7 +4,7 @@ import { api } from '@/lib/api';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { PageHeader } from '@/components/PageHeader';
 import { ListPagination } from '@/components/ListPagination';
-import { Button } from '@/components/ui/button';
+import { Button, buttonVariants } from '@/components/ui/button';
 import { cn, formatDateTimeCst } from '@/lib/utils';
 
 const SYNC_LABELS: Record<string, string> = {
@@ -36,11 +36,20 @@ const TIER_HELP = [
     tier: '三级',
     meaning: '经验证的聚合信源',
     detail:
-      'RSSHub 等稳定聚合源，主要用于发现线索；需经过更严格的业务相关性、可信度与去重校验后才能入表。',
+      '查询型新闻源用于发现线索；需经过更严格的业务相关性、可信度与去重校验后才能入表。',
   },
 ] as const;
 
 type TabKey = 'articles' | 'logs' | 'sources';
+type ArticleStatusFilter = 'pending_review' | 'published' | 'ignored' | 'all';
+type ReviewStatus = Exclude<ArticleStatusFilter, 'all'>;
+
+const STATUS_FILTERS: Array<{ value: ArticleStatusFilter; label: string }> = [
+  { value: 'pending_review', label: '待审核' },
+  { value: 'published', label: '已采用' },
+  { value: 'ignored', label: '已忽略' },
+  { value: 'all', label: '全部' },
+];
 
 const TABS: Array<{ key: TabKey; label: string }> = [
   { key: 'articles', label: '最近入库' },
@@ -64,10 +73,22 @@ function formatTime(value?: string | null): string {
   return formatDateTimeCst(value);
 }
 
+export function shouldShowNewsSyncRetry(article: {
+  status: string;
+  bitableSyncStatus?: string | null;
+}): boolean {
+  return (
+    article.status === 'published' &&
+    (article.bitableSyncStatus === 'pending' || article.bitableSyncStatus === 'failed')
+  );
+}
+
 export function NewsIntelPage() {
   const queryClient = useQueryClient();
   const [tab, setTab] = useState<TabKey>('articles');
   const [page, setPage] = useState(1);
+  const [articleStatus, setArticleStatus] =
+    useState<ArticleStatusFilter>('pending_review');
   const [editingSourceId, setEditingSourceId] = useState<string | null>(null);
   const [includeKw, setIncludeKw] = useState('');
   const [excludeKw, setExcludeKw] = useState('');
@@ -107,11 +128,12 @@ export function NewsIntelPage() {
   });
 
   const { data: articles, isLoading } = useQuery({
-    queryKey: ['news-intel-articles', page],
+    queryKey: ['news-intel-articles', page, articleStatus],
     queryFn: () =>
       api.getNewsIntelArticles({
         page,
         pageSize,
+        status: articleStatus === 'all' ? undefined : articleStatus,
       }),
     enabled: tab === 'articles',
   });
@@ -137,6 +159,12 @@ export function NewsIntelPage() {
 
   const syncMutation = useMutation({
     mutationFn: (id: string) => api.syncNewsIntelArticleBitable(id),
+    onSuccess: invalidateAll,
+  });
+
+  const reviewMutation = useMutation({
+    mutationFn: ({ id, status }: { id: string; status: ReviewStatus }) =>
+      api.updateNewsIntelArticle(id, { status }),
     onSuccess: invalidateAll,
   });
 
@@ -202,7 +230,7 @@ export function NewsIntelPage() {
 
   return (
     <div className="space-y-6">
-      <PageHeader title="跨境资讯采集">
+      <PageHeader title="跨境资讯研究">
         <div className="flex gap-2">
           <Button
             variant="outline"
@@ -261,7 +289,7 @@ export function NewsIntelPage() {
               ? status.bitableTableId
               : '未配置 FEISHU_BITABLE_TABLE_NEWS_INTEL_V2'}
           </div>
-          <div>RSSHub：{status?.rsshubConfigured ? '已配置' : '未配置（rsshub 信源已自动停用）'}</div>
+          <div>研究采集：查询型新闻源 + 官方源 + 按需浏览器</div>
           <div>
             中文 enrichment（Dify）：
             {status?.enrichConfigured
@@ -298,29 +326,46 @@ export function NewsIntelPage() {
 
       {tab === 'articles' && (
         <Card>
-          <CardHeader>
+          <CardHeader className="flex flex-row items-center justify-between gap-3">
             <CardTitle className="text-base">最近入库</CardTitle>
+            <div className="flex flex-wrap gap-1">
+              {STATUS_FILTERS.map((filter) => (
+                <Button
+                  key={filter.value}
+                  size="sm"
+                  variant={articleStatus === filter.value ? 'outline' : 'ghost'}
+                  onClick={() => {
+                    setArticleStatus(filter.value);
+                    setPage(1);
+                  }}
+                >
+                  {filter.label}
+                </Button>
+              ))}
+            </div>
           </CardHeader>
           <CardContent>
             {isLoading ? (
               <div className="text-sm text-text-sub">加载中…</div>
             ) : (
               <div className="overflow-x-auto">
-                <table className="w-full min-w-[960px] table-fixed text-sm">
+                <table className="w-full min-w-[1180px] table-fixed text-sm">
                   <colgroup>
-                    <col style={{ width: '34%' }} />
+                    <col style={{ width: '28%' }} />
                     <col style={{ width: '14%' }} />
-                    <col style={{ width: '18%' }} />
-                    <col style={{ width: '16%' }} />
+                    <col style={{ width: '14%' }} />
+                    <col style={{ width: '22%' }} />
                     <col style={{ width: '12%' }} />
-                    <col style={{ width: '96px' }} />
+                    <col style={{ width: '10%' }} />
+                    <col style={{ width: '220px' }} />
                   </colgroup>
                   <thead>
                     <tr className="border-b text-left text-text-sub">
                       <th className="px-2 py-2">中文标题</th>
                       <th className="px-2 py-2">主题/部门</th>
                       <th className="px-2 py-2">标签</th>
-                      <th className="px-2 py-2">信源</th>
+                      <th className="px-2 py-2">发现来源</th>
+                      <th className="px-2 py-2">状态</th>
                       <th className="px-2 py-2">同步</th>
                       <th className="px-2 py-2">操作</th>
                     </tr>
@@ -389,6 +434,25 @@ export function NewsIntelPage() {
                             {TIER_LABELS[item.sourceTier ?? 'tier_2']} · {item.language ?? 'zh'} ·
                             相关度 {item.relevanceScore}
                           </div>
+                          <div
+                            className="truncate text-xs text-text-hint"
+                            title={`${item.discoveryChannel ?? '-'} · ${item.sourceDomain ?? '-'}`}
+                          >
+                            {item.discoveryChannel ?? '-'} · {item.sourceDomain ?? '-'}
+                          </div>
+                          <div
+                            className="truncate text-xs text-text-hint"
+                            title={item.discoveryQuery ?? '-'}
+                          >
+                            查询：{item.discoveryQuery ?? '-'}
+                          </div>
+                        </td>
+                        <td className="px-2 py-2">
+                          {STATUS_FILTERS.find((filter) => filter.value === item.status)?.label ??
+                            item.status}
+                          <div className="mt-0.5 font-mono text-xs text-text-hint">
+                            {formatTime(item.reviewedAt)}
+                          </div>
                         </td>
                         <td className="px-2 py-2">
                           <div className="whitespace-nowrap">
@@ -405,17 +469,62 @@ export function NewsIntelPage() {
                           )}
                         </td>
                         <td className="px-2 py-2">
-                          {(item.bitableSyncStatus === 'failed' ||
-                            item.bitableSyncStatus === 'pending') && (
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              disabled={syncMutation.isPending}
-                              onClick={() => syncMutation.mutate(item.id)}
+                          <div className="flex flex-wrap gap-1">
+                            <a
+                              className={buttonVariants({ size: 'sm', variant: 'ghost' })}
+                              href={item.canonicalUrl}
+                              target="_blank"
+                              rel="noreferrer"
                             >
-                              重试同步
-                            </Button>
-                          )}
+                              打开原文
+                            </a>
+                            {item.status === 'pending_review' && (
+                              <>
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  disabled={reviewMutation.isPending}
+                                  onClick={() =>
+                                    reviewMutation.mutate({ id: item.id, status: 'published' })
+                                  }
+                                >
+                                  采用
+                                </Button>
+                                <Button
+                                  size="sm"
+                                  variant="ghost"
+                                  disabled={reviewMutation.isPending}
+                                  onClick={() =>
+                                    reviewMutation.mutate({ id: item.id, status: 'ignored' })
+                                  }
+                                >
+                                  忽略
+                                </Button>
+                              </>
+                            )}
+                            {(item.status === 'published' || item.status === 'ignored') && (
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                disabled={reviewMutation.isPending}
+                                onClick={() =>
+                                  reviewMutation.mutate({ id: item.id, status: 'pending_review' })
+                                }
+                              >
+                                恢复待审核
+                              </Button>
+                            )}
+                            {shouldShowNewsSyncRetry(item) && (
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                disabled={syncMutation.isPending}
+                                onClick={() => syncMutation.mutate(item.id)}
+                              >
+                                重试同步
+                              </Button>
+                            )}
+                          </div>
                         </td>
                       </tr>
                     ))}
@@ -541,6 +650,7 @@ export function NewsIntelPage() {
                 />
                 <Button
                   size="sm"
+                  variant="outline"
                   disabled={createSourceMutation.isPending}
                   onClick={() => createSourceMutation.mutate()}
                 >
@@ -652,6 +762,7 @@ export function NewsIntelPage() {
                             <div className="flex flex-wrap gap-1.5">
                               <Button
                                 size="sm"
+                                variant="outline"
                                 onClick={() =>
                                   updateSourceMutation.mutate({
                                     id: source.id,

@@ -6,6 +6,7 @@ import {
   getNewsArticleById,
   getNewsIntelOverview,
   listNewsArticles,
+  NewsIngestBusyError,
   runNewsIngest,
   updateNewsArticle,
 } from '../lib/news-intel/ingest-pipeline.js';
@@ -21,13 +22,21 @@ import { syncArticleToBitable } from '../lib/news-intel/bitable-sync.js';
 import {
   getNewsBitableAppToken,
   getNewsBitableV2TableId,
-  getRsshubBaseUrl,
+  isBrowserExtractionEnabled,
   isNewsBitableConfigured,
   isNewsIntelEnabled,
 } from '../lib/news-intel/config.js';
 import { isNewsIntelEnrichEnabled } from '../lib/news-intel/enrich-dify.js';
 import { loadNewsIntelPolicy } from '../lib/news-intel/policy.js';
-import { getLatestTaskRun } from '../lib/task-runs.js';
+import {
+  buildReviewPatch,
+  isArticleReviewStatus,
+} from '../lib/news-intel/article-review.js';
+import {
+  finishTaskRun,
+  getLatestTaskRun,
+  startTaskRun,
+} from '../lib/task-runs.js';
 
 export const newsIntelRoutes = new Hono();
 
@@ -46,7 +55,7 @@ newsIntelRoutes.get('/news-intel/status', requireNewsIntelAdmin, async (c) => {
     bitableConfigured: isNewsBitableConfigured(),
     bitableAppTokenConfigured: Boolean(getNewsBitableAppToken()),
     bitableTableId: getNewsBitableV2TableId(),
-    rsshubConfigured: Boolean(getRsshubBaseUrl()),
+    browserExtractionEnabled: isBrowserExtractionEnabled(),
     enrichConfigured: isNewsIntelEnrichEnabled(),
     latestRun,
   });
@@ -72,7 +81,7 @@ newsIntelRoutes.post('/news-intel/sources', requireNewsIntelAdmin, async (c) => 
     code: string;
     name: string;
     feedUrl: string;
-    sourceType?: 'rss' | 'rsshub' | 'manual';
+    sourceType?: 'rss' | 'manual';
     categoryDefault?: string;
     fetchIntervalHours?: number;
     sourceTier?: 'tier_1' | 'tier_2' | 'tier_3';
@@ -108,11 +117,11 @@ newsIntelRoutes.post('/news-intel/sources', requireNewsIntelAdmin, async (c) => 
 });
 
 newsIntelRoutes.patch('/news-intel/sources/:id', requireNewsIntelAdmin, async (c) => {
-  const id = c.req.param('id');
+  const id = c.req.param('id')!;
   const body = await c.req.json<{
     name?: string;
     feedUrl?: string;
-    sourceType?: 'rss' | 'rsshub' | 'manual';
+    sourceType?: 'rss' | 'manual';
     categoryDefault?: string;
     fetchIntervalHours?: number;
     sourceTier?: 'tier_1' | 'tier_2' | 'tier_3';
@@ -145,7 +154,7 @@ newsIntelRoutes.patch('/news-intel/sources/:id', requireNewsIntelAdmin, async (c
 });
 
 newsIntelRoutes.delete('/news-intel/sources/:id', requireNewsIntelAdmin, async (c) => {
-  const id = c.req.param('id');
+  const id = c.req.param('id')!;
   const source = await disableNewsSource(id);
   if (!source) return c.json({ message: 'Source not found' }, 404);
   return c.json(source);
@@ -160,24 +169,44 @@ newsIntelRoutes.get('/news-intel/articles', requireNewsIntelAdmin, async (c) => 
   const category = c.req.query('category');
   const topicCategory = c.req.query('topicCategory');
   const status = c.req.query('status');
+  const discoveryChannel = c.req.query('discoveryChannel');
+  const sourceDomain = c.req.query('sourceDomain');
 
-  const result = await listNewsArticles({ page, pageSize, category, topicCategory, status });
+  const result = await listNewsArticles({
+    page,
+    pageSize,
+    category,
+    topicCategory,
+    status,
+    discoveryChannel,
+    sourceDomain,
+  });
   return c.json(result);
 });
 
 newsIntelRoutes.get('/news-intel/articles/:id', requireNewsIntelAdmin, async (c) => {
-  const article = await getNewsArticleById(c.req.param('id'));
+  const article = await getNewsArticleById(c.req.param('id')!);
   if (!article) return c.json({ message: 'Article not found' }, 404);
   return c.json(article);
 });
 
 newsIntelRoutes.patch('/news-intel/articles/:id', requireNewsIntelAdmin, async (c) => {
   const body = await c.req.json<{
+    status?: string;
     businessValidity?: 'valid' | 'invalid' | 'misclassified';
   }>();
 
-  const article = await updateNewsArticle(c.req.param('id'), {
+  if (body.status !== undefined && !isArticleReviewStatus(body.status)) {
+    return c.json({ message: 'Invalid article status' }, 400);
+  }
+
+  const user = await getCurrentUser(c);
+  const reviewPatch = body.status
+    ? buildReviewPatch(body.status, user.id, new Date())
+    : {};
+  const article = await updateNewsArticle(c.req.param('id')!, {
     businessValidity: body.businessValidity,
+    ...reviewPatch,
   });
   if (!article) return c.json({ message: 'Article not found' }, 404);
   return c.json(article);
@@ -185,7 +214,7 @@ newsIntelRoutes.patch('/news-intel/articles/:id', requireNewsIntelAdmin, async (
 
 newsIntelRoutes.post('/news-intel/articles/:id/sync-bitable', requireNewsIntelAdmin, async (c) => {
   try {
-    const recordId = await syncArticleToBitable(c.req.param('id'));
+    const recordId = await syncArticleToBitable(c.req.param('id')!);
     return c.json({ recordId });
   } catch (err) {
     const message = err instanceof Error ? err.message : 'bitable sync failed';
@@ -200,15 +229,31 @@ newsIntelRoutes.get('/news-intel/ingest/logs', requireNewsIntelAdmin, async (c) 
 });
 
 newsIntelRoutes.post('/news-intel/ingest/trigger', requireNewsIntelAdmin, async (c) => {
-  const body = await c.req.json<{ force?: boolean; sourceId?: string }>().catch(() => ({}));
+  const body: { force?: boolean; sourceId?: string } = await c.req
+    .json<{ force?: boolean; sourceId?: string }>()
+    .catch(() => ({}));
+  const run = await startTaskRun('news_ingest', 'manual');
   try {
     const result = await runNewsIngest({
+      taskRunId: run.id,
       force: body.force,
       sourceId: body.sourceId,
     });
-    return c.json(result);
+    await finishTaskRun(run.id, {
+      success: !result.stoppedByBudget,
+      resultSummary: `sources=${result.sourcesProcessed}; new=${result.totalNew}; budgetStop=${Boolean(result.stoppedByBudget)}`,
+      errorMessage: result.stoppedByBudget ? 'news ingest stopped at run budget' : undefined,
+    });
+    return c.json(
+      { ...result, taskRunId: run.id },
+      result.stoppedByBudget ? 504 : 200,
+    );
   } catch (err) {
     const message = err instanceof Error ? err.message : 'news ingest failed';
-    return c.json({ message }, 500);
+    await finishTaskRun(run.id, { success: false, errorMessage: message });
+    return c.json(
+      { message, taskRunId: run.id },
+      err instanceof NewsIngestBusyError ? 409 : 500,
+    );
   }
 });

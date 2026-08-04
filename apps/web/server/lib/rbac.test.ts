@@ -1,15 +1,26 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  isForecastWriteRoleCode,
+  FORECAST_WRITE_MENU_CODE,
+  userCanWriteForecast,
 } from './rbac.js';
+import type { AuthUser } from './auth-context.js';
+
+function authUser(roleCode: string): AuthUser {
+  return {
+    id: 'u1',
+    name: 'Test',
+    email: 'test@example.com',
+    role: { id: 'r1', name: roleCode, code: roleCode },
+  };
+}
 
 describe('forecast write permissions', () => {
-  it('allows only forecast write role codes to write forecast data', () => {
-    assert.equal(isForecastWriteRoleCode('super_admin'), true);
-    assert.equal(isForecastWriteRoleCode('viewer'), false);
-    assert.equal(isForecastWriteRoleCode('pmc_planner'), false);
-    assert.equal(isForecastWriteRoleCode('purchaser'), false);
-    assert.equal(isForecastWriteRoleCode('warehouse'), false);
+  it('uses data.forecast menu as the write gate', () => {
+    assert.equal(FORECAST_WRITE_MENU_CODE, 'data.forecast');
+  });
+
+  it('allows super_admin to write forecast (menu wildcard)', async () => {
+    assert.equal(await userCanWriteForecast(authUser('super_admin')), true);
   });
 });

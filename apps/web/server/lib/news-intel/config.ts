@@ -21,9 +21,19 @@ export function getNewsIntelMaxBodyChars(): number {
   return Number.isFinite(n) ? n : 20_000;
 }
 
-export function getRsshubBaseUrl(): string | undefined {
-  const raw = process.env.RSSHUB_BASE_URL?.trim();
-  return raw ? raw.replace(/\/$/, '') : undefined;
+export function getNewsIntelRunBudgetMs(): number {
+  const n = Number(process.env.NEWS_INTEL_RUN_BUDGET_MS ?? 30 * 60 * 1000);
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : 30 * 60 * 1000;
+}
+
+export function isBrowserExtractionEnabled(): boolean {
+  return process.env.NEWS_INTEL_BROWSER_ENABLED !== 'false';
+}
+
+export function getChromiumExecutablePath(): string | undefined {
+  const configured = process.env.CHROMIUM_EXECUTABLE_PATH?.trim();
+  if (configured) return configured;
+  return process.platform === 'linux' ? '/usr/bin/chromium-browser' : undefined;
 }
 
 /** @deprecated Legacy table; do not write new records here. */

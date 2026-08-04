@@ -4,9 +4,10 @@ const MAX_FILE_BYTES_LARGE = 15 * 1024 * 1024;
 const MAX_FILE_BYTES_SALES = 70 * 1024 * 1024;
 const MAX_ROWS = 5000;
 
-/** FOB 宽表导出通常 1–2 万行，高于通用粘贴导入上限 */
+/** FOB 宽表导出通常 1–2 万行，高于通用粘贴导入上限；库存查询飞书明细约 3 万+ */
 const MAX_ROWS_BY_IMPORT_TYPE: Record<string, number> = {
   inventory: 25_000,
+  inventory_query: 50_000,
   sales: 35_000,
   'cs-reply': 20_000,
   'procurement-bulk_stock_request': 20_000,

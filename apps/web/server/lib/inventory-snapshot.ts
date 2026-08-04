@@ -3,6 +3,7 @@ import { db, inventoryRecords, warehouses } from '@scm/db';
 import { IN_PRODUCTION_WAREHOUSE } from './inventory-constants.js';
 import {
   effectiveQtyWithProductionFallback,
+  PLANNING_INVENTORY_DEDUPE_MODE,
   resolveInventoryPosition,
   type InventoryPositionBreakdown,
 } from './inventory-position.js';
@@ -89,7 +90,11 @@ export async function getRegionPoolSnapshot(
   const byWarehouse: Array<InventoryPositionBreakdown & { warehouseCode: string }> = [];
 
   for (const code of warehouseCodes) {
-    const position = await resolveInventoryPosition({ skuId, warehouseCode: code });
+    const position = await resolveInventoryPosition({
+      skuId,
+      warehouseCode: code,
+      dedupeMode: PLANNING_INVENTORY_DEDUPE_MODE,
+    });
     byWarehouse.push({ warehouseCode: code, ...position });
   }
 
@@ -105,7 +110,13 @@ export async function sumEffectiveQtyForWarehouses(skuId: string, codes: string[
   if (!codes.length) return 0;
   const positions: InventoryPositionBreakdown[] = [];
   for (const code of codes) {
-    positions.push(await resolveInventoryPosition({ skuId, warehouseCode: code }));
+    positions.push(
+      await resolveInventoryPosition({
+        skuId,
+        warehouseCode: code,
+        dedupeMode: PLANNING_INVENTORY_DEDUPE_MODE,
+      }),
+    );
   }
   return effectiveQtyWithProductionFallback(positions, await getLatestInProductionQty(skuId));
 }

@@ -98,4 +98,26 @@ describe('sales-history-import', () => {
       'DJ02-家具事业1部\\Amazon项目1组\\卧室-床头柜Nightstands',
     );
   });
+
+  it('resolves SKU id via normalized legacy code when map uses uppercase key', () => {
+    const plan = buildSalesHistoryImportPlan(
+      [
+        {
+          skuCode: 'dj502313_34',
+          skuName: 'Desk',
+          station: 'US',
+          platformRaw: 'Amazon',
+          firstOrderAt: '',
+          category: '',
+          saleDate: '2026-06-26',
+          qtySold: 2,
+        },
+      ],
+      new Map([['DJ502313_34', 'sku-legacy']]),
+      new Map([['sku-legacy', 'Outdoor/Patio']]),
+    );
+
+    assert.equal(plan.rows[0]?.skuId, 'sku-legacy');
+    assert.equal(plan.unmatchedSkuCount, 0);
+  });
 });

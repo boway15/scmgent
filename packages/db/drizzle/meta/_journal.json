@@ -384,21 +384,42 @@
       "idx": 55,
       "version": "6",
       "when": 1785216000009,
-      "tag": "0062_sync_metadata",
+      "tag": "0060_external_ids",
       "breakpoints": true
     },
     {
       "idx": 56,
       "version": "6",
       "when": 1785216000010,
-      "tag": "0063_sap_mirror",
+      "tag": "0062_sync_metadata",
       "breakpoints": true
     },
     {
       "idx": 57,
       "version": "6",
       "when": 1785216000011,
-      "tag": "0064_sap_mirror_menu",
+      "tag": "0063_sap_mirror",
+      "breakpoints": true
+    },
+    {
+      "idx": 58,
+      "version": "6",
+      "when": 1785216000012,
+      "tag": "0065_inventory_planning_role_menus",
+      "breakpoints": true
+    },
+    {
+      "idx": 59,
+      "version": "6",
+      "when": 1785216000013,
+      "tag": "0066_drop_sap_mirror",
+      "breakpoints": true
+    },
+    {
+      "idx": 60,
+      "version": "6",
+      "when": 1785216000014,
+      "tag": "0067_system_tasks_menu",
       "breakpoints": true
     }
   ]

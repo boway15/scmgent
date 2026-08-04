@@ -15,6 +15,11 @@ import {
   resolveOverviewColumnIds,
 } from './inventory-overview-views.js';
 import type { WarehouseStockLine } from './turnover-bucket-warehouse.js';
+import {
+  getPublishedSnapshotDate,
+  loadInventorySnapshots,
+} from './inventory-daily-snapshot.js';
+import { filterSnapshotItems } from './inventory-overview-history.js';
 
 export type InventoryOverviewQuery = {
   page: number;
@@ -29,6 +34,7 @@ export type InventoryOverviewQuery = {
   developerName?: string;
   view?: string;
   columns?: string[];
+  snapshotDate?: string;
 };
 
 export type InventoryTurnoverOverviewItem = {
@@ -371,6 +377,46 @@ export async function buildInventoryOverviewRows(query: InventoryOverviewQuery) 
     view: query.view,
     columns: query.columns,
   });
+  const snapshotSelection = await getPublishedSnapshotDate(query.snapshotDate);
+
+  if (snapshotSelection.selectedSnapshotDate) {
+    const archived = await loadInventorySnapshots({
+      snapshotDate: snapshotSelection.selectedSnapshotDate,
+    });
+    const filtered = filterSnapshotItems(
+      archived.map((row) => row.payload as InventoryTurnoverOverviewItem),
+      query,
+    );
+    const pageItems = filtered
+      .slice(query.offset, query.offset + query.pageSize)
+      .map((item) => ({
+        ...item,
+        turnoverExtras: projectTurnoverExtras(item.turnoverExtras ?? {}, columnProjection),
+      }));
+
+    return {
+      items: pageItems,
+      total: filtered.length,
+      page: query.page,
+      pageSize: query.pageSize,
+      columns: getInventoryOverviewColumnCatalog(),
+      defaultVisibleColumns: getDefaultVisibleColumnIds(),
+      ...snapshotSelection,
+    };
+  }
+
+  // 新功能上线前或尚无成功快照时，继续使用现有当前态，避免库存页空白。
+  if (query.snapshotDate) {
+    return {
+      items: [],
+      total: 0,
+      page: query.page,
+      pageSize: query.pageSize,
+      columns: getInventoryOverviewColumnCatalog(),
+      defaultVisibleColumns: getDefaultVisibleColumnIds(),
+      ...snapshotSelection,
+    };
+  }
 
   const [total, rows] = await Promise.all([
     countInventoryOverviewRows(query),
@@ -399,12 +445,25 @@ export async function buildInventoryOverviewRows(query: InventoryOverviewQuery) 
     pageSize: query.pageSize,
     columns: getInventoryOverviewColumnCatalog(),
     defaultVisibleColumns: getDefaultVisibleColumnIds(),
+    ...snapshotSelection,
   };
 }
 
 export async function buildInventoryOverviewItemBySkuId(
   skuId: string,
+  snapshotDate?: string,
 ): Promise<InventoryTurnoverOverviewItem | null> {
+  const snapshotSelection = await getPublishedSnapshotDate(snapshotDate);
+  if (snapshotSelection.selectedSnapshotDate) {
+    const [archived] = await loadInventorySnapshots({
+      snapshotDate: snapshotSelection.selectedSnapshotDate,
+      skuId,
+      limit: 1,
+    });
+    return (archived?.payload as InventoryTurnoverOverviewItem | undefined) ?? null;
+  }
+  if (snapshotDate) return null;
+
   const rows = await fetchSkuRows(
     { page: 1, pageSize: 1, offset: 0 },
     { limit: 1, offset: 0, skuId },
@@ -422,8 +481,22 @@ export async function buildInventoryOverviewItemBySkuId(
 
 export async function buildInventoryOverviewExportItems(
   query: Omit<InventoryOverviewQuery, 'page' | 'pageSize' | 'offset'>,
-  options?: { fullColumns?: boolean },
+  options?: { fullColumns?: boolean; forceCurrent?: boolean },
 ): Promise<InventoryTurnoverOverviewItem[]> {
+  if (!options?.forceCurrent) {
+    const snapshotSelection = await getPublishedSnapshotDate(query.snapshotDate);
+    if (snapshotSelection.selectedSnapshotDate) {
+      const archived = await loadInventorySnapshots({
+        snapshotDate: snapshotSelection.selectedSnapshotDate,
+      });
+      return filterSnapshotItems(
+        archived.map((row) => row.payload as InventoryTurnoverOverviewItem),
+        query,
+      );
+    }
+    if (query.snapshotDate) return [];
+  }
+
   const total = await countInventoryOverviewRows({
     ...query,
     page: 1,

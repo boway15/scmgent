@@ -1,14 +1,27 @@
 ---
-description: 飞书妙搭对齐技术栈与编码规范（含 NestJS 外壳、server/hono-app、ScmHonoModule、部署避坑）
+description: >-
+  【已归档】飞书妙搭 ZIP/CJS 双轨历史规范。默认开发请忽略本规则。
+  仅当用户明确要求妙搭/ZIP/hono-app/ScmHonoModule 时参考。
 globs:
-  - apps/web/**
-  - packages/db/**
-  - drizzle/**
-  - docs/miaoda/**
+  - apps/web/miaoda/**
+  - apps/web/scripts/*miaoda*
+  - docs/miaoda*
 alwaysApply: false
 ---
 
-# 妙搭对齐技术栈
+# 妙搭对齐技术栈（已归档）
+
+> **状态：已停用（2026-07-24）**  
+> 生产与日常开发以 **自建 Docker** 为准：`apps/web/server`（ESM）+ `docker compose`。  
+> 发布 SOP：`docs/local-server-release-sop.md`  
+> 决策：`docs/superpowers/specs/2026-07-24-de-miaoda-docs-baseline-design.md`  
+>  
+> **Agent 默认行为**：新功能不要做妙搭兼容、不要跑 `pnpm zip:miaoda`、不要迁 `server/hono-app`。  
+> 仅当用户明确要求「妙搭 / ZIP 导入」时，才使用下文历史说明。
+
+---
+
+以下内容为历史参考（ZIP → Nest 外壳 → Hono CJS 桥接）。
 
 ## 部署避坑（按优先级）
 
@@ -32,15 +45,14 @@ alwaysApply: false
 
 **已建项目不能重新导入 ZIP** → 在线改 `server/hono-app/` + `client/` + `app.module.ts`，或新建应用导入。
 
-## 固定选型
+## 固定选型（历史）
 
 - 前端：React 18 + TypeScript + Vite + Tailwind CSS + shadcn/ui
 - 后端：Node.js + Hono + TypeScript（妙搭：`server/hono-app/`）
 - 数据库：PostgreSQL + Drizzle ORM（`packages/db`）
 - 包管理：pnpm（本地）/ npm（妙搭 ZIP）
-- AI：Dify MVP 不对接
 
-## 妙搭运行形态（必读）
+## 妙搭运行形态（历史）
 
 | 本地开发 | 妙搭生产 |
 |----------|----------|
@@ -50,66 +62,15 @@ alwaysApply: false
 | — | `server/app.module.ts`（注册 ScmHonoModule，**在 ViewModule 前**） |
 | — | `server/modules/scm-hono/scm-hono.module.ts` |
 
-**禁止**：修改 `server/main.ts`、`server/modules/view/*`。
-
-**必须**：Hono 在 `server/hono-app/`（非 `source_package/server/`）；ScmHonoModule 挂载 `export default app`。
-
-## 子路径 CLIENT_BASE_PATH
-
-| 层 | 实现 |
-|----|------|
-| Vite | `vite.config.ts` → `base` |
-| React Router | `App.tsx` → `basename` |
-| 前端 API | `base-path.ts` → `apiUrl()` |
-| Hono | `server/hono-app/index.ts` → `basePath()` |
-
-## 环境变量（妙搭）
-
-| 变量 | 妙搭建议 |
-|------|----------|
-| `SERVE_STATIC` | **`false`** |
-| `AUTH_DEV_MODE` | 内测 `true` / 正式 `false` |
-| `DATABASE_URL` | 平台注入 |
-| `APP_BASE_URL` | 含 `/app/app_xxx`，无末尾 `/` |
-| `CLIENT_BASE_PATH` | 平台自带，勿改 |
-
-改环境变量后 **保存 → 重新发布**。
-
-## 数据库
-
-- Schema：`packages/db/schema/`
-- 妙搭初始化：`drizzle/miaoda-init-all.sql`（SQL 控制台）
-- 本地 Docker 自动 migrate + seed；**妙搭不会**
-
-## Hono 双轨约定
-
-| | 本地 `apps/web/server/` | 妙搭 `server/hono-app/` |
-|--|-------------------------|-------------------------|
-| 模块 | ESM（`import.meta`、`.js` 后缀） | CJS（`__dirname`、无 `.js` 后缀） |
-| 启动 | `tsx server/index.ts` 可 `serve()` | 仅 `export default app`，由 ScmHonoModule 挂载 |
-| health | `/api/health` 含 db 探测 | 同左 |
-
-## 前端鉴权
-
-- `RequireAuth`：config 失败 →「服务不可用」（非永久加载中）
-- 勿在地址栏直接访问 `/api/*`
-
-## 导入与打包
+## 导入与打包（历史）
 
 - `pnpm zip:miaoda` → `apps/web/scm-agent-miaoda.zip`
-- 自动打入：`server/hono-app/`（CJS）、`server/modules/scm-hono/`、`packages/db/`、`drizzle/`
 - 脚本：`apps/web/scripts/zip-for-miaoda.js`、`miaoda-cjs-transform.js`
 - 现场文档：`apps/web/miaoda/MIAODA-SETUP.md`、`hono-app-checklist.md`
 - 发布 SOP：`docs/miaoda-new-app-release.md`
 
-## 代码规范
+## 当前自建栈（默认）
 
-- 本地 API 路由：`apps/web/server/routes/`（同步到妙搭 `server/hono-app/routes/`）
-- 定时任务：`server/tasks/*.ts`
-- 函数组件 + Hooks；snake_case 字段
-
-## 智能体开发
-
-- PRD：`.cursor/skills/miaoda-prd/`
-- 妙搭部署：`.cursor/skills/feishu-miaoda/SKILL.md`
-- 导入清单：`docs/miaoda-import-checklist.md`
+- API：`apps/web/server/routes/`
+- 定时任务实现：`apps/web/server/tasks/*.ts`（由外部 HTTP 触发，Header `X-Cron-Secret`）
+- 发布：`docs/local-server-release-sop.md`

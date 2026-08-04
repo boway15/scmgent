@@ -131,7 +131,6 @@ const MENU_SEEDS: MenuSeed[] = [
       { code: 'data.products', name: '商品主数据', path: '/data/products', sortOrder: 1, isLeaf: true },
       { code: 'data.sales', name: '销量历史', path: '/data/sales', sortOrder: 2, isLeaf: true },
       { code: 'data.forecast', name: '销售预测', path: '/data/forecast', sortOrder: 3, isLeaf: true },
-      { code: 'data.sap_mirror', name: 'SAP 镜像同步', path: '/data/sap-mirror', sortOrder: 4, isLeaf: true },
     ],
   },
   {
@@ -162,6 +161,7 @@ const MENU_SEEDS: MenuSeed[] = [
       { code: 'system.users', name: '用户管理', path: '/system/users', sortOrder: 1, isLeaf: true },
       { code: 'system.roles', name: '角色与菜单', path: '/system/roles', sortOrder: 2, isLeaf: true },
       { code: 'system.logs', name: '操作日志', icon: 'ScrollText', path: '/system/logs', sortOrder: 3, isLeaf: true },
+      { code: 'system.tasks', name: '定时任务', path: '/system/tasks', sortOrder: 4, isLeaf: true },
     ],
   },
 ];
@@ -184,10 +184,10 @@ const DEPRECATED_MENU_CODES = [
 ];
 
 const ROLE_MENU_CODES: Record<string, string[]> = {
-  super_admin: ['dashboard', 'inventory', 'inventory.overview', 'inventory.safety', 'inventory.alert', 'inventory.planning', 'inventory.lead_time', 'inventory.planning_dashboard', 'pmc', 'pmc.suggestion', 'pmc.list', 'pmc.tracking', 'pmc.shipments', 'procurement', 'procurement.bulk_stock', 'procurement.follow_up', 'cs', 'cs.quality', 'logistics', 'logistics.fob_settlement', 'data', 'data.products', 'data.sales', 'data.forecast', 'data.sap_mirror', 'intel', 'intel.news', 'ai', 'ai.chat', 'help', 'system', 'system.users', 'system.roles', 'system.logs'],
-  pmc_planner: ['dashboard', 'inventory', 'inventory.overview', 'inventory.safety', 'inventory.lead_time', 'inventory.planning_dashboard', 'pmc', 'pmc.suggestion', 'pmc.list', 'pmc.shipments', 'procurement', 'procurement.bulk_stock', 'logistics', 'logistics.fob_settlement', 'cs', 'cs.quality', 'data', 'data.products', 'data.sales', 'data.forecast', 'data.sap_mirror', 'ai', 'ai.chat', 'help'],
+  super_admin: ['dashboard', 'inventory', 'inventory.overview', 'inventory.safety', 'inventory.alert', 'inventory.planning', 'inventory.lead_time', 'inventory.planning_dashboard', 'pmc', 'pmc.suggestion', 'pmc.list', 'pmc.tracking', 'pmc.shipments', 'procurement', 'procurement.bulk_stock', 'procurement.follow_up', 'cs', 'cs.quality', 'logistics', 'logistics.fob_settlement', 'data', 'data.products', 'data.sales', 'data.forecast', 'intel', 'intel.news', 'ai', 'ai.chat', 'help', 'system', 'system.users', 'system.roles', 'system.logs', 'system.tasks'],
+  pmc_planner: ['dashboard', 'inventory', 'inventory.overview', 'inventory.safety', 'inventory.lead_time', 'inventory.planning', 'inventory.planning_dashboard', 'pmc', 'pmc.suggestion', 'pmc.list', 'pmc.shipments', 'procurement', 'procurement.bulk_stock', 'logistics', 'logistics.fob_settlement', 'cs', 'cs.quality', 'data', 'data.products', 'data.sales', 'data.forecast', 'ai', 'ai.chat', 'help'],
   warehouse: ['dashboard', 'inventory', 'inventory.overview', 'inventory.alert', 'pmc', 'pmc.list', 'logistics', 'logistics.fob_settlement', 'cs', 'cs.quality', 'data', 'data.products', 'data.sales', 'data.forecast', 'ai', 'ai.chat', 'help'],
-  purchaser: ['dashboard', 'inventory', 'inventory.overview', 'inventory.safety', 'inventory.alert', 'inventory.lead_time', 'inventory.planning_dashboard', 'pmc', 'pmc.list', 'pmc.tracking', 'pmc.shipments', 'procurement', 'procurement.bulk_stock', 'procurement.follow_up', 'logistics', 'logistics.fob_settlement', 'cs', 'cs.quality', 'data', 'data.products', 'data.sales', 'data.forecast', 'ai', 'ai.chat', 'help'],
+  purchaser: ['dashboard', 'inventory', 'inventory.overview', 'inventory.safety', 'inventory.alert', 'inventory.lead_time', 'inventory.planning', 'inventory.planning_dashboard', 'pmc', 'pmc.list', 'pmc.tracking', 'pmc.shipments', 'procurement', 'procurement.bulk_stock', 'procurement.follow_up', 'logistics', 'logistics.fob_settlement', 'cs', 'cs.quality', 'data', 'data.products', 'data.sales', 'data.forecast', 'ai', 'ai.chat', 'help'],
   viewer: ['dashboard', 'inventory', 'inventory.overview', 'pmc', 'pmc.suggestion', 'pmc.list', 'pmc.tracking', 'procurement', 'procurement.bulk_stock', 'procurement.follow_up', 'logistics', 'logistics.fob_settlement', 'cs', 'cs.quality', 'data', 'data.sales', 'data.forecast', 'ai', 'ai.chat', 'help'],
 };
 

@@ -11,7 +11,7 @@ tunnel: scm-al6s
 credentials-file: C:\Users\<USERNAME>\.cloudflared\<TUNNEL-ID>.json
 
 ingress:
-  # 公网子域名 → 本机 Docker web 端口（与 docker-compose ports 8081:8080 一致）
+  # 公网子域名 → 本机 Docker web 端口（与 docker-compose ports 8081:8081 一致）
   - hostname: scm.al6s.cn
     service: http://localhost:8081
   # 兜底：未匹配域名返回 404

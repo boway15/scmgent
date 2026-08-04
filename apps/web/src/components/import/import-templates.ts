@@ -48,7 +48,7 @@ DJ485882P01,大件款-通用配件01,pcs,,大件,30,50,20,2.0,M-DJ-001,大件工
   },
   inventory: {
     title: '库存盘点',
-    hint: '支持三种格式：① 标准列；② 旧 FOB 导出；③ SKU库存周转查询明细（库存 V:AD/BF:BN/BO:BS/CC，SKU 主数据 A:K）。**请用「上传文件」导入 xlsx**（约 5500 行将自动后台导入，在下方批次查看进度）；勿用粘贴框导入大表',
+    hint: '推荐：下方「飞书多维表格」从「SKU周转相关信息」同步（与库存总览定时任务同源）。也可上传：① 标准列；② 旧 FOB 导出；③ Excel 周转明细 xlsx（约 5500 行走后台批次）。勿用粘贴框导入大表。',
     sample: `sku_code,warehouse,qty_available,qty_in_transit,qty_in_production,recorded_date
 DJ502313_34,US-WEST,120,80,0,2026-06-01
 DJ502313_34,IN-PRODUCTION,0,0,45,2026-06-01`,
@@ -82,6 +82,7 @@ DJ502952_1,500,pcs`,
 const BITABLE_SYNC_TYPES = new Set<BitableSyncType>([
   'skus',
   'inventory',
+  'inventory_turnover',
   'merchants',
   'inventory_policy',
 ]);
@@ -92,6 +93,8 @@ function isBitableSyncType(type: ImportType): type is BitableSyncType {
 
 export function bitableTypeForImport(type: ImportType): BitableSyncType | null {
   if (type === 'safety_stock') return 'inventory_policy';
+  /** 库存导入默认走飞书周转宽表同步（库存总览权威源） */
+  if (type === 'inventory') return 'inventory_turnover';
   if (isBitableSyncType(type)) return type;
   return null;
 }

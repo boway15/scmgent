@@ -1,11 +1,18 @@
-import { TURNOVER_IMPORT_HEADERS } from './inventory-turnover-headers';
+import {
+  FEISHU_INVENTORY_TURNOVER_HEADERS,
+  FEISHU_REPLENISH_VIEW_HEADERS,
+  FEISHU_STOCKOUT_VIEW_HEADERS,
+  FEISHU_WAREHOUSE_VIEW_HEADERS,
+} from './inventory-turnover-feishu-headers';
 import type { OverviewColumnDef } from './inventory-overview-columns';
 import { orderOverviewColumnIds } from './inventory-overview-column-order';
+import { OVERVIEW_COLUMN_GROUPS } from './inventory-overview-groups';
 
-export type OverviewViewId = 'replenish' | 'warehouse' | 'stockout' | 'excel_full' | 'custom';
 
-export const OVERVIEW_VIEW_STORAGE_KEY = 'scm.inventory-overview.view-v1';
-export const CUSTOM_COLUMNS_STORAGE_KEY = 'scm.inventory-overview.visible-columns-v4';
+export type OverviewViewId = 'replenish' | 'warehouse' | 'stockout' | 'feishu_full' | 'excel_full' | 'custom';
+
+export const OVERVIEW_VIEW_STORAGE_KEY = 'scm.inventory-overview.view-v2';
+export const CUSTOM_COLUMNS_STORAGE_KEY = 'scm.inventory-overview.visible-columns-v5';
 
 const VALID_COLUMN_IDS = new Set([
   'updatedAt',
@@ -13,62 +20,14 @@ const VALID_COLUMN_IDS = new Set([
   'inventoryRecordedDate',
   'replenishLight',
   'ai',
-  ...TURNOVER_IMPORT_HEADERS,
+  ...FEISHU_INVENTORY_TURNOVER_HEADERS,
 ]);
-
-const MASTER_DATA_COLS = [
-  '品类',
-  'SKU',
-  '生命周期',
-  'SKU名称',
-  '销售国家',
-  '产品分类',
-  '供应商编码',
-] as const;
-
-function sheetHeadersMatching(pred: (header: string) => boolean): string[] {
-  return TURNOVER_IMPORT_HEADERS.filter(pred);
-}
-
-function isStockoutGroupHeader(header: string): boolean {
-  return header.includes('断货') || header.includes('上架时间') || header.includes('最早上架');
-}
-
-const REPLENISH_SHEET_HEADERS = [
-  ...MASTER_DATA_COLS,
-  '海外仓库存_合计',
-  '调拨在途_合计',
-  '供应商订单合计',
-  '预下单',
-  '全链条合计库存',
-  '3天销量',
-  '7天销量',
-  '30天销量',
-  '海外周转_合计',
-];
-
-const WAREHOUSE_SHEET_HEADERS = [
-  ...MASTER_DATA_COLS,
-  ...sheetHeadersMatching(
-    (h) =>
-      h.startsWith('海外仓库存_') ||
-      h.startsWith('调拨在途_') ||
-      h.startsWith('已调拨未在途_'),
-  ),
-];
-
-const STOCKOUT_SHEET_HEADERS = [
-  ...MASTER_DATA_COLS,
-  ...sheetHeadersMatching(isStockoutGroupHeader),
-];
-
-const EXCEL_FULL_SHEET_HEADERS = [...TURNOVER_IMPORT_HEADERS];
 
 export const OVERVIEW_VIEW_OPTIONS: Array<{ id: OverviewViewId; label: string }> = [
   { id: 'replenish', label: '补货日常' },
-  { id: 'warehouse', label: '分仓库存' },
+  { id: 'warehouse', label: '近半年海外仓销售占比' },
   { id: 'stockout', label: '断货与上架' },
-  { id: 'excel_full', label: 'Excel 全字段' },
+  { id: 'feishu_full', label: '飞书全字段' },
   { id: 'custom', label: '自定义' },
 ];
 
@@ -88,20 +47,21 @@ export function getViewColumnIds(viewId: OverviewViewId, customColumnIds?: strin
     return uniqueValidColumnIds(customColumnIds ?? []);
   }
 
-  let sheetHeaders: string[];
+  let sheetHeaders: readonly string[];
   switch (viewId) {
     case 'warehouse':
-      sheetHeaders = WAREHOUSE_SHEET_HEADERS;
+      sheetHeaders = FEISHU_WAREHOUSE_VIEW_HEADERS;
       break;
     case 'stockout':
-      sheetHeaders = STOCKOUT_SHEET_HEADERS;
+      sheetHeaders = FEISHU_STOCKOUT_VIEW_HEADERS;
       break;
+    case 'feishu_full':
     case 'excel_full':
-      sheetHeaders = EXCEL_FULL_SHEET_HEADERS;
+      sheetHeaders = FEISHU_INVENTORY_TURNOVER_HEADERS;
       break;
     case 'replenish':
     default:
-      sheetHeaders = REPLENISH_SHEET_HEADERS;
+      sheetHeaders = FEISHU_REPLENISH_VIEW_HEADERS;
       break;
   }
 
@@ -121,6 +81,7 @@ export function getDefaultOverviewViewId(): OverviewViewId {
 export function loadOverviewViewId(): OverviewViewId {
   try {
     const raw = localStorage.getItem(OVERVIEW_VIEW_STORAGE_KEY);
+    if (raw === 'excel_full') return 'feishu_full';
     if (raw && OVERVIEW_VIEW_OPTIONS.some((v) => v.id === raw)) {
       return raw as OverviewViewId;
     }
@@ -131,7 +92,8 @@ export function loadOverviewViewId(): OverviewViewId {
 }
 
 export function saveOverviewViewId(viewId: OverviewViewId): void {
-  localStorage.setItem(OVERVIEW_VIEW_STORAGE_KEY, viewId);
+  const normalized = viewId === 'excel_full' ? 'feishu_full' : viewId;
+  localStorage.setItem(OVERVIEW_VIEW_STORAGE_KEY, normalized);
 }
 
 export function loadCustomColumnIds(): string[] {
@@ -198,25 +160,8 @@ export function projectTurnoverExtras(
   return out;
 }
 
-/** 抽屉 Tab 分组顺序 */
-export const DRAWER_TAB_GROUPS = [
-  '更新信息',
-  '主数据扩展',
-  '销售占比',
-  '海外仓库存',
-  '预计上架',
-  '调拨在途',
-  '供应商订单',
-  '已调拨未在途',
-  '库存汇总',
-  '销量',
-  '预测日均',
-  '周转天数',
-  '断货与上架',
-  '包装与毛利',
-  '运营',
-  '其他',
-] as const;
+/** 抽屉 Tab 分组顺序（与列选择器一致） */
+export const DRAWER_TAB_GROUPS = OVERVIEW_COLUMN_GROUPS;
 
 export function groupCatalogForDrawer(catalog: OverviewColumnDef[]): Map<string, OverviewColumnDef[]> {
   const map = new Map<string, OverviewColumnDef[]>();
@@ -224,7 +169,7 @@ export function groupCatalogForDrawer(catalog: OverviewColumnDef[]): Map<string,
     map.set(group, []);
   }
   for (const col of catalog) {
-    const bucket = map.has(col.group) ? col.group : '其他';
+    const bucket = map.has(col.group) ? col.group : '主数据';
     const list = map.get(bucket) ?? [];
     list.push(col);
     map.set(bucket, list);

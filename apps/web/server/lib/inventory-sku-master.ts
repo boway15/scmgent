@@ -43,11 +43,11 @@ export const INVENTORY_MASTER_COLUMN_LABELS = {
   leadTimeDays: '采购周期',
 } as const;
 
-/** 库存周转总览数量/销量列（对齐导入周转表） */
+/** 库存周转总览数量/销量列（对齐飞书多维表格） */
 export const INVENTORY_TURNOVER_QTY_LABELS = {
   unitCost: '采购价',
-  qtyOverseas: '海外仓库存_合计',
-  qtyInTransit: '调拨在途_合计',
+  qtyOverseas: '海外仓在库',
+  qtyInTransit: '调拨在途合计',
   qtyInProduction: '供应商订单',
   qtyPreOrder: '预下单',
   qtyChainTotal: '全链条合计库存',
@@ -273,10 +273,23 @@ export function buildNextInventoryEncodingMeta(
   const snapshot =
     turnoverSnapshot ??
     readTurnoverSnapshot(existingEncodingMeta);
-  return mergeTurnoverSnapshotMeta(
+  const meta = mergeTurnoverSnapshotMeta(
     buildInventoryEncodingMeta(master, skuCode, existingEncodingMeta),
     snapshot,
   );
+
+  const feishuId = snapshot.Id?.trim() || snapshot.id?.trim();
+  const productBaseId = snapshot.ProductBaseID?.trim();
+  const supplierId = snapshot.SupplierId?.trim();
+  if (feishuId || productBaseId || supplierId) {
+    meta.feishuIds = {
+      id: feishuId || undefined,
+      productBaseId: productBaseId || undefined,
+      supplierId: supplierId || undefined,
+    };
+  }
+
+  return meta;
 }
 
 export function inventoryMasterFromEncodingMeta(

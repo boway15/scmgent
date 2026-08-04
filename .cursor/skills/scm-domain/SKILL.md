@@ -47,14 +47,14 @@ description: >-
 
 ## MVP 建议范围
 
-**Phase 1**（妙搭完整应用）
+**Phase 1**（自建 Docker 完整应用）
 - 供应商管理
 - SKU 主数据
 - 采购单 CRUD + 审批
 - 基础库存视图
 
-**Phase 2**（+ aily Agent）
-- 物流追踪自动化任务
+**Phase 2**（+ aily / Dify Agent）
+- 物流追踪自动化任务（HTTP `/api/tasks/*`）
 - 补货预警 Agent
 - 合规审查 Agent
 

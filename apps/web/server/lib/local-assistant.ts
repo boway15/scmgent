@@ -21,7 +21,7 @@ const FAQ: FaqEntry[] = [
   {
     keywords: ['rop', '补货点', 'reorder point'],
     answer:
-      'ROP（Reorder Point）= 平均日销量 × 采购交期 + 安全库存。\n当有效供给（可售+在途+在产）低于 ROP 时，系统会生成补货建议或触发预警。',
+      'ROP（Reorder Point）= 平均日销量 × 采购交期 + 安全库存。\n当有效供给（飞书快照：可售+在途+在产−已分配，不含跟单）低于 ROP 时，系统会生成补货建议或触发预警。',
   },
   {
     keywords: ['eoq', '经济订货', '订货批量'],

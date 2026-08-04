@@ -12,11 +12,15 @@ import {
   createImportBatch,
   finalizeImportBatch,
 } from './import/batch.js';
-import { runImport } from './import/handlers.js';
+import { runImport, type ImportType } from './import/handlers.js';
+import { mapInventoryTurnoverBitableRecords } from './inventory-turnover-bitable-mapper.js';
+import { buildInventoryOverviewExportItems } from './inventory-overview-service.js';
+import { publishInventoryDailySnapshot } from './inventory-daily-snapshot.js';
 
 export type BitableSyncType =
   | 'skus'
   | 'inventory'
+  | 'inventory_turnover'
   | 'sales'
   | 'merchants'
   | 'inventory_policy';
@@ -24,6 +28,7 @@ export type BitableSyncType =
 const BITABLE_SYNC_TYPES: BitableSyncType[] = [
   'skus',
   'inventory',
+  'inventory_turnover',
   'sales',
   'merchants',
   'inventory_policy',
@@ -32,13 +37,17 @@ const BITABLE_SYNC_TYPES: BitableSyncType[] = [
 const TABLE_ENV_KEYS: Record<BitableSyncType, string> = {
   skus: 'FEISHU_BITABLE_TABLE_SKUS',
   inventory: 'FEISHU_BITABLE_TABLE_INVENTORY',
+  inventory_turnover: 'FEISHU_BITABLE_TABLE_INVENTORY',
   sales: 'FEISHU_BITABLE_TABLE_SALES',
   merchants: 'FEISHU_BITABLE_TABLE_MERCHANTS',
   inventory_policy: 'FEISHU_BITABLE_TABLE_INVENTORY_POLICY',
 };
 
 /** Bitable column aliases per import field. */
-export const BITABLE_FIELD_MAPS: Record<BitableSyncType, Record<string, string[]>> = {
+export const BITABLE_FIELD_MAPS: Record<
+  Exclude<BitableSyncType, 'inventory_turnover'>,
+  Record<string, string[]>
+> = {
   skus: {
     sku_code: ['SKU编码', 'sku_code', 'SKU', '编码', 'code', '内部SKU'],
     external_code: ['外部SKU', 'external_code', '外部编码', '标准外部码'],
@@ -97,7 +106,11 @@ export type BitableSyncTargetStatus = {
   appTokenConfigured: boolean;
 };
 
-export function getBitableAppToken(): string | undefined {
+export function getBitableAppToken(type?: BitableSyncType): string | undefined {
+  if (type === 'inventory_turnover' || type === 'inventory') {
+    const procurement = process.env.FEISHU_BITABLE_PROCUREMENT_APP_TOKEN?.trim();
+    if (procurement) return procurement;
+  }
   return process.env.FEISHU_BITABLE_APP_TOKEN?.trim() || undefined;
 }
 
@@ -107,10 +120,10 @@ export function getBitableTableId(type: BitableSyncType): string | undefined {
 }
 
 export function getBitableSyncConfig(): Record<BitableSyncType, BitableSyncTargetStatus> {
-  const appTokenConfigured = Boolean(getBitableAppToken());
   const result = {} as Record<BitableSyncType, BitableSyncTargetStatus>;
 
   for (const type of BITABLE_SYNC_TYPES) {
+    const appTokenConfigured = Boolean(getBitableAppToken(type));
     const tableId = getBitableTableId(type);
     result[type] = {
       configured: appTokenConfigured && Boolean(tableId),
@@ -141,7 +154,7 @@ function lookupFieldValue(
 
 export function mapBitableRecordToRow(
   record: BitableRecord,
-  type: BitableSyncType,
+  type: Exclude<BitableSyncType, 'inventory_turnover'>,
 ): Record<string, string> {
   const fieldMap = BITABLE_FIELD_MAPS[type];
   const row: Record<string, string> = {};
@@ -167,26 +180,48 @@ export function isEmptyImportRow(row: Record<string, string>): boolean {
 
 export function mapBitableRecordsToRows(
   records: BitableRecord[],
-  type: BitableSyncType,
+  type: Exclude<BitableSyncType, 'inventory_turnover'>,
 ): Array<Record<string, string>> {
   return records
     .map((record) => mapBitableRecordToRow(record, type))
     .filter((row) => !isEmptyImportRow(row));
 }
 
-export async function fetchMappedRows(type: BitableSyncType): Promise<Array<Record<string, string>>> {
-  const appToken = getBitableAppToken();
+function resolveImportType(type: BitableSyncType): ImportType {
+  if (type === 'inventory_policy') return 'safety_stock';
+  if (type === 'inventory_turnover') return 'inventory';
+  return type;
+}
+
+export type FetchMappedRowsResult = {
+  rows: Array<Record<string, string>>;
+  mismatchCount?: number;
+  skipped?: number;
+};
+
+export async function fetchMappedRows(type: BitableSyncType): Promise<FetchMappedRowsResult> {
+  const appToken = getBitableAppToken(type);
   const tableId = getBitableTableId(type);
 
   if (!appToken || !tableId) {
     throw new Error(
-      `Bitable sync not configured for ${type}. Set FEISHU_BITABLE_APP_TOKEN and ${TABLE_ENV_KEYS[type]}.`,
+      `Bitable sync not configured for ${type}. Set FEISHU_BITABLE_APP_TOKEN (or FEISHU_BITABLE_PROCUREMENT_APP_TOKEN) and ${TABLE_ENV_KEYS[type]}.`,
     );
   }
 
-  const importType = type === 'inventory_policy' ? 'safety_stock' : type;
+  const importType = resolveImportType(type);
   const records = await listAllRecords(appToken, tableId, importType);
-  return mapBitableRecordsToRows(records, type);
+
+  if (type === 'inventory_turnover') {
+    const mapped = mapInventoryTurnoverBitableRecords(records);
+    return {
+      rows: mapped.rows,
+      mismatchCount: mapped.mismatchCount,
+      skipped: mapped.skipped,
+    };
+  }
+
+  return { rows: mapBitableRecordsToRows(records, type) };
 }
 
 export function bitableSyncFileName(type: BitableSyncType): string {
@@ -195,15 +230,21 @@ export function bitableSyncFileName(type: BitableSyncType): string {
 }
 
 export async function previewBitableSync(type: BitableSyncType) {
-  const rows = await fetchMappedRows(type);
-  const importType = type === 'inventory_policy' ? 'safety_stock' : type;
-  const preview = await buildImportPreviewResponse(importType, rows);
-  return { ...preview, source: 'feishu-bitable' as const };
+  const fetched = await fetchMappedRows(type);
+  const importType = resolveImportType(type);
+  const preview = await buildImportPreviewResponse(importType, fetched.rows);
+  return {
+    ...preview,
+    source: 'feishu-bitable' as const,
+    mismatchCount: fetched.mismatchCount,
+    skipped: fetched.skipped,
+  };
 }
 
-export async function executeBitableSync(type: BitableSyncType, userId: string) {
-  const rows = await fetchMappedRows(type);
-  const importType = type === 'inventory_policy' ? 'safety_stock' : type;
+export async function executeBitableSync(type: BitableSyncType, userId?: string) {
+  const fetched = await fetchMappedRows(type);
+  const rows = fetched.rows;
+  const importType = resolveImportType(type);
   const preview = await buildImportPreviewResponse(importType, rows);
 
   if (preview.hasBlockingIssues && BATCH_TRACKED_IMPORT_TYPES.has(importType)) {
@@ -213,6 +254,8 @@ export async function executeBitableSync(type: BitableSyncType, userId: string) 
       body: {
         message: 'Import blocked by validation issues',
         validationIssues: preview.validationIssues,
+        mismatchCount: fetched.mismatchCount,
+        skipped: fetched.skipped,
       },
     };
   }
@@ -238,6 +281,39 @@ export async function executeBitableSync(type: BitableSyncType, userId: string) 
     batchStatus = finalized.status;
   }
 
+  let snapshot:
+    | { runId: string; snapshotDate: string; rowCount: number }
+    | undefined;
+  let snapshotSkippedReason: string | undefined;
+
+  if (type === 'inventory_turnover') {
+    if (result.errors.length > 0) {
+      snapshotSkippedReason = `同步存在 ${result.errors.length} 条错误，未替换每日快照`;
+    } else {
+      const sourceCodes = new Set(
+        rows
+          .map((row) => row.SKU?.trim() || row.sku_code?.trim())
+          .filter((code): code is string => Boolean(code))
+          .map((code) => code.toLocaleUpperCase()),
+      );
+      const currentItems = await buildInventoryOverviewExportItems(
+        {},
+        { fullColumns: true, forceCurrent: true },
+      );
+      const snapshotItems = currentItems.filter((item) =>
+        sourceCodes.has(item.code.trim().toLocaleUpperCase()),
+      );
+      snapshot = await publishInventoryDailySnapshot({
+        items: snapshotItems,
+        // 周转导入的 imported 仅统计写入 inventory_records 的行；快照发布应以飞书源行数为准
+        imported: rows.length,
+        errors: result.errors,
+        snapshotDate: rows[0]?.recorded_date,
+        importBatchId: batchId,
+      });
+    }
+  }
+
   return {
     ok: true as const,
     status: 200,
@@ -247,6 +323,13 @@ export async function executeBitableSync(type: BitableSyncType, userId: string) 
       batchStatus,
       validationIssues: preview.validationIssues,
       source: 'feishu-bitable' as const,
+      syncType: type,
+      mismatchCount: fetched.mismatchCount,
+      skipped: fetched.skipped,
+      snapshotRunId: snapshot?.runId,
+      snapshotDate: snapshot?.snapshotDate,
+      snapshotRowCount: snapshot?.rowCount,
+      snapshotSkippedReason,
     },
   };
 }

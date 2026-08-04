@@ -1,6 +1,37 @@
 {
   "lookbackDays": 7,
   "maxItemsPerSource": 40,
+  "research": {
+    "maxQueriesPerRun": 40,
+    "maxItemsPerQuery": 20,
+    "providers": ["google_news"],
+    "queryTemplates": [
+      {
+        "code": "platform_policy_us",
+        "label": "{platform} 美国平台政策",
+        "template": "{platform} seller policy update US",
+        "dimension": "platform",
+        "language": "en",
+        "region": "US"
+      },
+      {
+        "code": "brand_news_us",
+        "label": "{brand} 品牌动态",
+        "template": "{brand} news OR launch OR expansion",
+        "dimension": "brand",
+        "language": "en",
+        "region": "US"
+      },
+      {
+        "code": "topic_policy_cn",
+        "label": "跨境电商{topic}",
+        "template": "跨境电商 {topic} 最新政策",
+        "dimension": "topic",
+        "language": "zh",
+        "region": "CN"
+      }
+    ]
+  },
   "requireChineseContent": false,
   "channels": {
     "media": { "enabled": true, "label": "综合媒体与专业信源" },

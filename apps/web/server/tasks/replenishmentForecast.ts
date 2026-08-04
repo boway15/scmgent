@@ -10,7 +10,10 @@ import {
 import { applyMoq, calcReplenishment, resolveEffectiveMoq } from '../lib/replenishment.js';
 import { formatCoverageReason, type InventoryHealth } from '../lib/replenishment-coverage.js';
 import { getRegionPoolSnapshot } from '../lib/inventory-snapshot.js';
-import { resolveInventoryPosition } from '../lib/inventory-position.js';
+import {
+  PLANNING_INVENTORY_DEDUPE_MODE,
+  resolveInventoryPosition,
+} from '../lib/inventory-position.js';
 import {
   shouldDeferReplenishment,
   splitQtyByDailyShare,
@@ -31,6 +34,7 @@ import {
   saveHealthSnapshots,
   supersedePendingSuggestions,
 } from '../lib/inventory-health-store.js';
+import { syncReplenishLightFromHealth } from '../lib/replenish-light-sync.js';
 import { loadDailySalesBySkuIds } from '../lib/sales-history-query.js';
 
 async function upsertSafetyStock(
@@ -201,6 +205,7 @@ export async function runReplenishmentForecast() {
       const position = await resolveInventoryPosition({
         skuId: sku.id,
         warehouseCode: wh.code,
+        dedupeMode: PLANNING_INVENTORY_DEDUPE_MODE,
       });
       const eoqRop = (health.metrics.reorderPoint as number) ?? 0;
 
@@ -267,6 +272,7 @@ export async function runReplenishmentForecast() {
   }
 
   const snapshotCount = await saveHealthSnapshots(healthRows);
+  await syncReplenishLightFromHealth(healthRows);
 
   const spuRedNeeding = new Set<string>();
   for (const item of pending) {

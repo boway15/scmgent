@@ -13,7 +13,14 @@ import {
 } from 'drizzle-orm/pg-core';
 import { relations } from 'drizzle-orm';
 
-export const newsSourceTypeEnum = pgEnum('news_source_type', ['rss', 'rsshub', 'manual']);
+export const newsSourceTypeEnum = pgEnum('news_source_type', [
+  'rss',
+  'rsshub',
+  'manual',
+  'query_feed',
+  'sitemap',
+  'web_page',
+]);
 
 export const newsSourceTierEnum = pgEnum('news_source_tier', ['tier_1', 'tier_2', 'tier_3']);
 
@@ -108,6 +115,12 @@ export const newsArticles = pgTable(
     status: newsArticleStatusEnum('status').notNull().default('pending_review'),
     sourceTier: newsSourceTierEnum('source_tier'),
     isOfficialSource: boolean('is_official_source').notNull().default(false),
+    discoveryChannel: varchar('discovery_channel', { length: 30 }),
+    discoveryQuery: text('discovery_query'),
+    sourceDomain: varchar('source_domain', { length: 255 }),
+    aggregatorOnly: boolean('aggregator_only').notNull().default(false),
+    reviewedAt: timestamp('reviewed_at', { withTimezone: true }),
+    reviewedBy: uuid('reviewed_by'),
     filterHits: text('filter_hits'),
     businessValidity: newsBusinessValidityEnum('business_validity').notNull().default('valid'),
     publishedAt: timestamp('published_at', { withTimezone: true }),

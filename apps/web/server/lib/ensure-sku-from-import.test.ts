@@ -64,6 +64,37 @@ describe('ensure-sku-from-import', () => {
       category: 'Beds',
     });
   });
+
+  it('merges daily sales stubs when SKU code only differs by letter case', () => {
+    const stubs = collectDailySalesSkuStubs([
+      {
+        skuCode: 'dj502313_34',
+        skuName: 'Desk A',
+        station: 'US',
+        platformRaw: 'Amazon',
+        firstOrderAt: '',
+        category: 'Desks',
+        saleDate: '2026-06-26',
+        qtySold: 1,
+      },
+      {
+        skuCode: 'DJ502313_34',
+        skuName: 'Desk B',
+        station: 'US',
+        platformRaw: 'Amazon',
+        firstOrderAt: '',
+        category: 'Office',
+        saleDate: '2026-06-25',
+        qtySold: 2,
+      },
+    ]);
+
+    assert.equal(stubs.size, 1);
+    assert.deepEqual(stubs.get('DJ502313_34'), {
+      name: 'Desk B',
+      category: 'Office',
+    });
+  });
 });
 
 describe('fob-inventory-import', () => {
@@ -167,7 +198,7 @@ describe('fob-inventory-import', () => {
     ]);
 
     assert.equal(rows[0]?.category, '大件');
-    assert.equal(rows[0]?.lifecycle, '成熟期');
+    assert.equal(rows[0]?.lifecycle, undefined);
     assert.equal(rows[0]?.productCategory, '卧室-床');
     assert.equal(rows[0]?.merchantCode, 'M001');
     assert.equal(rows[0]?.ownerName, '张三');

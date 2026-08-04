@@ -1,4 +1,4 @@
-import { eq, desc, and } from 'drizzle-orm';
+import { eq, desc, and, lt } from 'drizzle-orm';
 import { db, taskRuns } from '@scm/db';
 
 export type TaskName =
@@ -13,7 +13,9 @@ export type TaskName =
   | 'procurement_bulk_stock_push'
   | 'procurement_follow_up_push'
   | 'procurement_bulk_stock_pull'
-  | 'procurement_follow_up_pull';
+  | 'procurement_follow_up_pull'
+  | 'inventory_turnover_pull'
+  | 'inventory_query_pull';
 
 export async function startTaskRun(taskName: TaskName, triggeredBy: string) {
   const [run] = await db
@@ -41,6 +43,37 @@ export async function failRunningTaskRuns(
     .where(and(eq(taskRuns.taskName, taskName), eq(taskRuns.status, 'running')));
 }
 
+/** 进程崩溃 / 容器重建后，running 记录不会自动收尾；超时则标记失败。 */
+export async function failStaleRunningTaskRuns(input?: {
+  maxAgeMs?: number;
+  taskName?: TaskName;
+  errorMessage?: string;
+}): Promise<number> {
+  const maxAgeMs = input?.maxAgeMs ?? 20 * 60 * 1000;
+  const cutoff = new Date(Date.now() - maxAgeMs);
+  const conditions = [eq(taskRuns.status, 'running'), lt(taskRuns.startedAt, cutoff)];
+  if (input?.taskName) conditions.push(eq(taskRuns.taskName, input.taskName));
+
+  const rows = await db
+    .update(taskRuns)
+    .set({
+      status: 'failed',
+      finishedAt: new Date(),
+      errorMessage: input?.errorMessage ?? '任务超时或进程中断，已自动标记失败',
+    })
+    .where(and(...conditions))
+    .returning({ id: taskRuns.id });
+
+  if (rows.length) {
+    console.warn(`[task-runs] marked ${rows.length} stale running task(s) as failed`);
+  }
+  return rows.length;
+}
+
+export async function reconcileStaleRunningTaskRuns(): Promise<number> {
+  return failStaleRunningTaskRuns({ maxAgeMs: 10 * 60 * 1000 });
+}
+
 export async function countRunningTaskRuns(taskName: TaskName) {
   const rows = await db
     .select({ id: taskRuns.id })
@@ -65,6 +98,7 @@ export async function finishTaskRun(
 }
 
 export async function getLatestTaskRuns(limit = 10) {
+  await reconcileStaleRunningTaskRuns();
   return db
     .select({
       id: taskRuns.id,

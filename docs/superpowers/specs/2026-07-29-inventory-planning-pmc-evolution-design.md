@@ -57,10 +57,12 @@
 
 ### 1.4 成功标准
 
-- 健康灯、补货建议、SKU 规划页、总览对同一 SKU+仓使用**同一库存位置**定义。
-- 补货建议可解释：能展示触发原因、库存位置构成、提前期拆解、预测版本、建议下单日与建议量。
-- 跟单至少能维护并驱动「预计可售日」，补货覆盖计算优先使用该日期语义（而非到港日）。
-- 提前期可按「供应商 × 目的仓 × 运输方式」配置，缺省回退到现有 3 段解析。
+- **库存总览（展示）**：分仓可售/在途/在产等以飞书同步写入的 `inventory_records` 为准；宽表周转列与近端销量仅作参考展示，不参与总览逻辑计算。
+- **补货 / 健康 / 告警 / SKU 规划 / 建议依据（计算）**：与总览分仓同源，仅读 `inventory_records` 快照（`snapshot_only`），**不叠加** `purchase_drafts`；仍扣除 `qtyReserved`。
+- 补货建议可解释：能展示触发原因、库存位置构成、提前期拆解、建议下单日与建议量。
+- 跟单维护「预计可售日」与发运里程碑，供运营与驾驶舱延期 KPI；**不驱动**补货有效供给（待飞书同步或到货回写后库存才变化）。
+- 补货/健康任务结束后，按各仓最差 `health_status` 回写 SKU 级 `replenish_light`（人工锁定除外），使总览灯与系统计算逐步对齐。
+- 提前期可按「供应商 × 目的仓 × 运输方式」配置，缺省回退到现有分段解析。
 
 ---
 
@@ -70,7 +72,7 @@
 |----|------|
 | 演进方式 | 在现闭环上加深，不重造规划系统 |
 | 默认补货策略 | 覆盖天数 + 健康灯（现网）；Z 值服务水平为可选高级策略，字段先预留 |
-| 库存位置 | 单一服务 `resolveInventoryPosition`；全链路强制同源 |
+| 库存位置 | 单一服务 `resolveInventoryPosition`；**补货主路径** `snapshot_only`（与飞书快照同源）；`drafts_fill_gap` 代码保留、默认不用于规划 |
 | 提前期 | 新建 `lead_time_profiles`；算法对外仍用 `totalLeadDays` + `breakdown` |
 | 正式 PO | 继续用 `purchase_drafts`；不引入审批流 PO |
 | 发运跟踪 | 轻量 `shipments` / `shipment_milestones`，与 FOB 解耦；MVP 人工维护 |
@@ -496,8 +498,8 @@ last_sync_time
 | **P1** | `lead_time_profiles` + resolver；SKU 规划页；建议可解释 UI；跟单里程碑日期 | 换 profile 后建议量/日期变化可测；单 SKU 页可用；实现计划见 `docs/superpowers/plans/2026-07-29-inventory-planning-p1.md` |
 | **P2** | 断货修正有效日需求；`shipments` 轻模型 + 人工节点；延误列表 | 有断货史 SKU 回退需求升高；节点可维护；实现计划见 `docs/superpowers/plans/2026-07-29-inventory-planning-p2.md` |
 | **P3** | Z 值可选策略；规划驾驶舱 KPI；external_id 铺齐 | 方法切换有配置与单测；驾驶舱只读聚合；实现计划见 `docs/superpowers/plans/2026-07-29-inventory-planning-p3.md` |
-| **P4** | SAP 镜像适配（Fixture Transport + 主数据/PO 镜像，非真实连接） | 幂等导入可测；PO 不进库存位置；见 `docs/superpowers/specs/2026-07-29-sap-mirror-adapter-design.md` |
-| **P4.1+** | 库存/入库镜像、PO 变更事件、真实 Transport | 另开 |
+| ~~**P4**~~ | ~~SAP 镜像适配~~ | **不做**（2026-07-30 决策：不引入 SAP 镜像模块；`0066_drop_sap_mirror` 清理表与菜单） |
+| **P4+** | 外部 ERP/SAP 真实对接 | 另开需求时再设计；当前仅保留 `source_system` / `external_id` 预留字段 |
 
 工程旁路（不阻塞本主线，可并行）：库存查询页/系统任务页路由接通。
 
@@ -535,7 +537,7 @@ last_sync_time
 
 | 风险 | 缓解 |
 |------|------|
-| 飞书快照与跟单数量双计 | 默认 `drafts_fill_gap`；metrics 暴露 mode |
+| 飞书快照与跟单数量双计 | 补货主路径 `snapshot_only`；跟单仅履约台账，不进 effectiveQty |
 | 历史 `confirmed_delivery_date` 语义不清 | UI 标注；新字段 `eta_available` 为主 |
 | 提前期分段过多导致无人维护 | 配置用 6 段，录入可用 3 段汇总模板 |
 | 驾驶舱过早建设导致口径再改 | 驾驶舱放 P3，P0 先锁 position |
@@ -545,8 +547,9 @@ last_sync_time
 
 | 项 | 决定 |
 |----|------|
-| 去重模式默认 | `drafts_fill_gap` |
-| 物理仓 `effectiveQty` | `available + transit + production(draft/fill) + confirmedOpen − reserved`（不含把全局在产重复计入每个仓） |
+| 去重模式（补货主路径） | **`snapshot_only`**（2026-07-30 锁定） |
+| 去重模式（代码保留） | `drafts_fill_gap` / `sum_both` 仍可用于审计或非规划场景 |
+| 物理仓 `effectiveQty` | `available + transit + production(快照) − reserved`（不含跟单 open；物理仓在产仍按 P0 规则归零后由在产仓/区域池 fallback） |
 | `exception` 开放量 | 计入 `confirmedOpen`，`sources` 打标 `atRisk: true` |
 | 跟单仓归属 | `pmc_plan_items.warehouse_code` → 否则 `pmc_plans.target_warehouse_code`；皆空则不进物理仓 position（记入 `unassignedOpen` 仅 metrics） |
 | `eta_available` | 新列；写入时同步 `confirmed_delivery_date`；列表展示以 `eta_available` 优先 |
@@ -566,6 +569,17 @@ P0 **不包含**：`lead_time_profiles`、SKU 规划页 UI、发运 `shipments` 
 
 P1/P2 变更仅落在：提前期配置、内部 PMC 跟单（`/pmc/tracking`）、补货建议可解释、SKU 规划页、发运页（`/pmc/shipments`）；不改上述飞书对照表。
 
+### 16.4 业务口径锁定（2026-07-30）
+
+| 模块 | 库存 / 供给口径 | 说明 |
+|------|-----------------|------|
+| 库存总览 | `inventory_records` + 飞书宽表展示 | 飞书库存权威；销量/预测列仅参考 |
+| 补货 / 健康 / 告警 / 规划 / 建议 | `snapshot_only` | 与总览分仓同源；扣 `qtyReserved` |
+| 采购跟单 / 发运 | 不进入 effectiveQty | 可售日、里程碑供运营与延期 KPI |
+| AI 助手 | 可售+在途简单快照 | 注明与补货建议可能不同 |
+| `replenish_light` | 补货任务回写 | `encoding_meta.replenishLightManual=true` 时跳过 |
+| SAP 镜像 | 不做 | 见 §13 |
+
 ---
 
 ## 17. Self-review
@@ -583,4 +597,4 @@ P1/P2 变更仅落在：提前期配置、内部 PMC 跟单（`/pmc/tracking`）
 - P1：`docs/superpowers/plans/2026-07-29-inventory-planning-p1.md`
 - P2：`docs/superpowers/plans/2026-07-29-inventory-planning-p2.md`
 - P3：`docs/superpowers/plans/2026-07-29-inventory-planning-p3.md`
-- P4：`docs/superpowers/plans/2026-07-29-inventory-planning-p4-sap-mirror.md` + `docs/superpowers/specs/2026-07-29-sap-mirror-adapter-design.md`
+- ~~P4 SAP 镜像~~：**不做**（见 §13）

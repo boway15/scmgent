@@ -50,7 +50,6 @@ import { salesForecastRoutes } from './routes/sales-forecast.js';
 import { inventoryExceptionRoutes } from './routes/inventory-exceptions.js';
 import { leadTimeProfileRoutes } from './routes/lead-time-profiles.js';
 import { shipmentRoutes } from './routes/shipments.js';
-import { sapMirrorRoutes } from './routes/sap-mirror.js';
 import { sql } from 'drizzle-orm';
 import { db } from '@scm/db';
 import { getRuntimeConfigSummary } from './lib/runtime-config.js';
@@ -153,7 +152,6 @@ app.route('/api', salesForecastRoutes);
 app.route('/api', inventoryExceptionRoutes);
 app.route('/api', leadTimeProfileRoutes);
 app.route('/api', shipmentRoutes);
-app.route('/api', sapMirrorRoutes);
 app.route('/api', newsIntelRoutes);
 app.route('/api', csReplyQualityRoutes);
 

@@ -155,4 +155,73 @@ describe('inventory-sku-master', () => {
       false,
     );
   });
+
+  it('change-detection: identical master+snapshot is treated as unchanged', () => {
+    const encodingMeta = {
+      masterDataSource: 'inventory',
+      turnoverSnapshot: { 海外仓在库: '10', 调拨在途合计: '2' },
+    };
+    assert.equal(
+      inventoryImportMasterUnchanged(
+        {
+          name: '床',
+          category: 'Beds',
+          lifecycle: '成熟期',
+          salesCountry: '美国',
+          productCategory: 'C',
+          ownerName: 'A',
+          developerName: 'B',
+          merchantCode: 'M1',
+          merchantName: '厂',
+          leadTimeDays: 40,
+          unitCost: '12.00',
+          encodingMeta,
+        },
+        {
+          name: '床',
+          category: 'Beds',
+          lifecycle: '成熟期',
+          salesCountry: '美国',
+          productCategory: 'C',
+          ownerName: 'A',
+          developerName: 'B',
+          merchantCode: 'M1',
+          merchantName: '厂',
+          leadTimeDays: 40,
+          unitCost: '12',
+          encodingMeta,
+        },
+      ),
+      true,
+    );
+  });
+
+  it('change-detection: snapshot qty change forces update', () => {
+    const base = {
+      name: '床',
+      category: 'Beds',
+      lifecycle: '成熟期' as string | null,
+      salesCountry: '美国',
+      productCategory: 'C',
+      ownerName: 'A',
+      developerName: 'B',
+      merchantCode: 'M1',
+      merchantName: '厂',
+      leadTimeDays: 40,
+      unitCost: '12',
+    };
+    assert.equal(
+      inventoryImportMasterUnchanged(
+        {
+          ...base,
+          encodingMeta: { turnoverSnapshot: { 海外仓在库: '10' } },
+        },
+        {
+          ...base,
+          encodingMeta: { turnoverSnapshot: { 海外仓在库: '11' } },
+        },
+      ),
+      false,
+    );
+  });
 });

@@ -13,9 +13,12 @@ import {
   runProcurementFollowUpPull,
 } from '../tasks/procurementFeishuPull.js';
 import { procurementPullTaskName } from '../lib/procurement-feishu-task-names.js';
-import { isAuthBypassLogin } from '../lib/auth-policy.js';
 import { resolveRequestUser } from '../lib/rbac.js';
 import { finishTaskRun, getLatestTaskRuns, startTaskRun } from '../lib/task-runs.js';
+import { runInventoryQueryPull } from '../tasks/inventoryQueryPull.js';
+import { runInventoryTurnoverPull } from '../tasks/inventoryTurnoverPull.js';
+import { INVENTORY_QUERY_PULL_TASK } from '../lib/inventory-query-pull-task.js';
+import { INVENTORY_TURNOVER_PULL_TASK } from '../lib/inventory-turnover-pull-task.js';
 
 export const taskRoutes = new Hono();
 
@@ -24,10 +27,8 @@ async function requireCronSecret(c: Context, next: Next) {
   const header = c.req.header('X-Cron-Secret');
   if (secret && header === secret) return next();
 
-  if (isAuthBypassLogin()) {
-    const user = await resolveRequestUser(c);
-    if (user?.role.code === 'super_admin') return next();
-  }
+  const user = await resolveRequestUser(c);
+  if (user?.role.code === 'super_admin') return next();
 
   if (!secret) {
     return c.json({ message: 'CRON_SECRET not configured' }, 503);
@@ -197,6 +198,26 @@ taskRoutes.post('/tasks/procurement-follow-up-pull', requireCronSecret, async (c
   const triggeredBy = resolveTriggeredBy(c);
   const run = await startTaskRun(procurementPullTaskName('purchase_follow_up'), triggeredBy);
   const result = await runProcurementFollowUpPull(run.id);
+  if (result.skipped) {
+    return c.json({ skipped: true, message: result.reason, taskRunId: run.id }, 409);
+  }
+  return c.json({ ...result, taskRunId: run.id });
+});
+
+taskRoutes.post('/tasks/inventory-query-pull', requireCronSecret, async (c) => {
+  const triggeredBy = resolveTriggeredBy(c);
+  const run = await startTaskRun(INVENTORY_QUERY_PULL_TASK, triggeredBy);
+  const result = await runInventoryQueryPull(run.id);
+  if (result.skipped) {
+    return c.json({ skipped: true, message: result.reason, taskRunId: run.id }, 409);
+  }
+  return c.json({ ...result, taskRunId: run.id });
+});
+
+taskRoutes.post('/tasks/inventory-turnover-pull', requireCronSecret, async (c) => {
+  const triggeredBy = resolveTriggeredBy(c);
+  const run = await startTaskRun(INVENTORY_TURNOVER_PULL_TASK, triggeredBy);
+  const result = await runInventoryTurnoverPull(run.id);
   if (result.skipped) {
     return c.json({ skipped: true, message: result.reason, taskRunId: run.id }, 409);
   }

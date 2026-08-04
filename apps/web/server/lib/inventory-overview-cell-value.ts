@@ -1,8 +1,10 @@
 import type { InventoryTurnoverOverviewItem } from './inventory-overview-service.js';
 import {
   TURNOVER_GROSS_WEIGHT_HEADER,
+  TURNOVER_GROSS_WEIGHT_HEADER_EXCEL,
   TURNOVER_PACK_DIMENSIONS_HEADER,
   TURNOVER_VOLUME_HEADER,
+  TURNOVER_VOLUME_HEADER_EXCEL,
 } from './inventory-turnover-snapshot.js';
 import { formatTurnoverDateValue, isTurnoverDateColumn } from './turnover-date-format.js';
 
@@ -24,11 +26,27 @@ function formatOverviewDataSource(source: string | null | undefined): string {
   return DATA_SOURCE_LABEL[source] ?? source;
 }
 
+/** Excel 海外仓库存_* → 仓 code（飞书美东等列为销售占比，不映射为库存） */
+const COLUMN_TO_WAREHOUSE = new Map<string, string>([
+  ['海外仓库存_美东', 'US-EAST'],
+  ['海外仓库存_美南', 'US-SOUTH'],
+  ['海外仓库存_美西', 'US-WEST'],
+  ['海外仓库存_美中', 'US-CENTRAL'],
+  ['海外仓库存_美东南', 'US-SOUTHEAST'],
+  ['海外仓库存_德国', 'DE'],
+  ['海外仓库存_平台仓_美', 'PLATFORM-US'],
+  ['海外仓库存_平台仓_欧', 'PLATFORM-EU'],
+]);
+
 function isTurnoverInventoryQuantityColumn(columnId: string): boolean {
   return (
-    columnId.startsWith('海外仓库存_') ||
-    columnId.startsWith('调拨在途_') ||
-    columnId.startsWith('已调拨未在途_') ||
+    COLUMN_TO_WAREHOUSE.has(columnId) ||
+    columnId === '海外仓在库' ||
+    columnId === '海外仓库存_合计' ||
+    columnId === '调拨在途合计' ||
+    columnId === '调拨在途_合计' ||
+    columnId === '已调拨未在途' ||
+    columnId === '已调拨未在途_合计' ||
     columnId.includes('供应商订单') ||
     columnId === '预下单' ||
     columnId === '全链条合计库存' ||
@@ -36,40 +54,24 @@ function isTurnoverInventoryQuantityColumn(columnId: string): boolean {
   );
 }
 
-const WAREHOUSE_TO_OVERSEAS_SUFFIX = new Map<string, string>([
-  ['US-EAST', '海外仓库存_美东'],
-  ['US-SOUTH', '海外仓库存_美南'],
-  ['US-WEST', '海外仓库存_美西'],
-  ['US-CENTRAL', '海外仓库存_美中'],
-  ['US-SOUTHEAST', '海外仓库存_美东南'],
-  ['DE', '海外仓库存_德国'],
-  ['PLATFORM-US', '海外仓库存_平台仓_美'],
-  ['PLATFORM-EU', '海外仓库存_平台仓_欧'],
-]);
-
-const WAREHOUSE_TO_TRANSIT_SUFFIX = new Map<string, string>([
-  ['US-EAST', '调拨在途_美东'],
-  ['US-SOUTH', '调拨在途_美南'],
-  ['US-WEST', '调拨在途_美西'],
-  ['US-CENTRAL', '调拨在途_美中'],
-  ['US-SOUTHEAST', '调拨在途_美东南'],
-  ['DE', '调拨在途_德国'],
-  ['PLATFORM-US', '调拨在途_平台仓_美'],
-  ['PLATFORM-EU', '调拨在途_平台仓_欧'],
-]);
-
 function warehouseStockToColumnValue(
   item: InventoryTurnoverOverviewItem,
   columnId: string,
 ): string | null {
   const stocks = item.warehouseStocks;
   if (!stocks?.length) return null;
-  for (const stock of stocks) {
-    const overseasCol = WAREHOUSE_TO_OVERSEAS_SUFFIX.get(stock.warehouseCode);
-    if (overseasCol === columnId) return String(stock.qtyAvailable);
-    const transitCol = WAREHOUSE_TO_TRANSIT_SUFFIX.get(stock.warehouseCode);
-    if (transitCol === columnId) return String(stock.qtyInTransit);
+
+  const warehouse = COLUMN_TO_WAREHOUSE.get(columnId);
+  if (warehouse) {
+    const stock = stocks.find((s) => s.warehouseCode === warehouse);
+    if (stock) return String(stock.qtyAvailable);
   }
+
+  if (columnId === '海外仓在库' || columnId === '海外仓库存_合计') {
+    const total = stocks.reduce((sum, s) => sum + (s.qtyAvailable ?? 0), 0);
+    return String(total);
+  }
+
   return null;
 }
 
@@ -91,7 +93,9 @@ export function getOverviewCellValue(
   if (isTurnoverInventoryQuantityColumn(columnId)) {
     const fromWarehouse = warehouseStockToColumnValue(item, columnId);
     if (fromWarehouse != null) return fromWarehouse;
-    if (columnId === '供应商订单合计') return String(item.qtyInProduction ?? 0);
+    if (columnId === '供应商订单' || columnId === '供应商订单合计') {
+      return String(item.qtyInProduction ?? 0);
+    }
     if (columnId === '预下单') return String(item.qtyPreOrder ?? 0);
     return '-';
   }
@@ -132,8 +136,10 @@ export function getOverviewCellValue(
     case TURNOVER_PACK_DIMENSIONS_HEADER:
       return item.packDimensionsCm ?? '-';
     case TURNOVER_VOLUME_HEADER:
+    case TURNOVER_VOLUME_HEADER_EXCEL:
       return item.volumeM3 ?? '-';
     case TURNOVER_GROSS_WEIGHT_HEADER:
+    case TURNOVER_GROSS_WEIGHT_HEADER_EXCEL:
       return item.grossWeightKg ?? '-';
     default:
       return '-';
@@ -145,6 +151,7 @@ export function isNumericOverviewColumn(columnId: string): boolean {
   return (
     columnId.includes('销量') ||
     columnId.includes('库存') ||
+    columnId.includes('在库') ||
     columnId.includes('在途') ||
     columnId.includes('订单') ||
     columnId.includes('周转') ||
@@ -154,6 +161,7 @@ export function isNumericOverviewColumn(columnId: string): boolean {
     columnId.includes('体积') ||
     columnId === '预下单' ||
     columnId === '采购周期' ||
-    columnId === '采购价'
+    columnId === '采购价' ||
+    COLUMN_TO_WAREHOUSE.has(columnId)
   );
 }

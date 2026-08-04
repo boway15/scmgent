@@ -29,7 +29,7 @@ export function extractFieldValue(value: unknown): string {
   if (value == null) return '';
   if (typeof value === 'string') return value.trim();
   if (typeof value === 'number') {
-    if (value > 1_000_000_000_000) {
+    if (Number.isFinite(value) && value > 1_000_000_000_000) {
       return formatTimestampDate(value);
     }
     return String(value);
@@ -38,20 +38,29 @@ export function extractFieldValue(value: unknown): string {
 
   if (Array.isArray(value)) {
     if (!value.length) return '';
+    // 保留 "0"；勿用 filter(Boolean) 误伤数字零
     const parts = value
       .map((item) => extractFieldValue(item))
-      .filter(Boolean);
+      .filter((part) => part !== '');
     return parts.join(', ');
   }
 
   if (typeof value === 'object') {
     const obj = value as Record<string, unknown>;
+    // 公式 / 查找引用：{ type, ui_type, value }
+    if ('value' in obj && (obj.type != null || obj.ui_type != null)) {
+      return extractFieldValue(obj.value);
+    }
     if (typeof obj.text === 'string') return obj.text.trim();
     if (typeof obj.name === 'string') return obj.name.trim();
     if (typeof obj.value === 'string' || typeof obj.value === 'number') {
       return extractFieldValue(obj.value);
     }
     if (typeof obj.date === 'string') return obj.date.trim();
+    if (typeof obj.full_address === 'string') return obj.full_address.trim();
+    if (Array.isArray(obj.link_record_ids)) {
+      return extractFieldValue(obj.link_record_ids);
+    }
   }
 
   return String(value).trim();
@@ -70,17 +79,23 @@ export async function listAllRecords(
   appToken: string,
   tableId: string,
   importType?: string,
+  options?: { displayFormulaRef?: boolean },
 ): Promise<BitableRecord[]> {
   const maxRows = getMaxRows(importType);
   const token = await getTenantAccessToken();
   const records: BitableRecord[] = [];
   let pageToken: string | undefined;
+  const displayFormulaRef = options?.displayFormulaRef ?? false;
 
   do {
     const url = new URL(
       `${FEISHU_BASE}/bitable/v1/apps/${encodeURIComponent(appToken)}/tables/${encodeURIComponent(tableId)}/records`,
     );
     url.searchParams.set('page_size', '500');
+    // 公式/查找引用需显式打开，否则数字结果常为空
+    if (displayFormulaRef) {
+      url.searchParams.set('display_formula_ref', 'true');
+    }
     if (pageToken) url.searchParams.set('page_token', pageToken);
 
     const res = await fetch(url.toString(), {
@@ -89,7 +104,13 @@ export async function listAllRecords(
 
     const body = (await res.json()) as ListRecordsResponse;
     if (body.code !== 0) {
-      throw new Error(`Feishu Bitable list failed: ${body.msg ?? res.status}`);
+      const msg = body.msg ?? String(res.status);
+      if (msg === 'RolePermNotAllow' || body.code === 91403) {
+        throw new Error(
+          `Feishu Bitable list failed: RolePermNotAllow（应用无该表读权限）。请在多维表格「… → 更多 → 添加文档应用 / 协作者」中加入当前飞书应用，并在「高级权限」里允许该应用可读表 ${tableId}（与库存总览同 Base 时，常因明细表单独限制角色导致）。`,
+        );
+      }
+      throw new Error(`Feishu Bitable list failed: ${msg}`);
     }
 
     const items = body.data?.items ?? [];

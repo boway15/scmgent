@@ -11,6 +11,9 @@ import { normalizePurchaseDraftStatus } from './purchase-draft-lifecycle.js';
 
 export type InventoryDedupeMode = 'snapshot_only' | 'drafts_fill_gap' | 'sum_both';
 
+/** 补货 / 健康 / 规划主路径：与库存总览同源，仅读 inventory_records，不叠加 purchase_drafts */
+export const PLANNING_INVENTORY_DEDUPE_MODE: InventoryDedupeMode = 'snapshot_only';
+
 export type InventoryPositionBucket =
   | 'available'
   | 'inProduction'

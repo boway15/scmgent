@@ -1,5 +1,5 @@
 /**
- * 统一库存健康计算服务：库存总览、补货任务、预警任务共用同一口径。
+ * 统一库存健康计算服务：补货任务、预警任务、SKU 规划共用 snapshot_only 口径（与库存总览分仓同源）。
  */
 import { and, asc, eq, gte, lt } from 'drizzle-orm';
 import {
@@ -21,6 +21,7 @@ import {
 } from './lead-time-resolver.js';
 import {
   buildInventoryPositionMetrics,
+  PLANNING_INVENTORY_DEDUPE_MODE,
   resolveInventoryPosition,
   type InventoryPositionBreakdown,
 } from './inventory-position.js';
@@ -181,6 +182,7 @@ export async function computeSkuWarehouseHealth(params: {
   const position = await resolveInventoryPosition({
     skuId: params.sku.id,
     warehouseCode: params.warehouse.code,
+    dedupeMode: PLANNING_INVENTORY_DEDUPE_MODE,
   });
 
   if (!params.forecastEntry) {
@@ -269,6 +271,7 @@ export async function computeSkuWarehouseHealth(params: {
     suggestedQty: coverage.suggestedQty,
     suggestedDate: coverage.suggestedDate,
     metrics: {
+      planningCalculatedAt: new Date().toISOString(),
       ...buildLeadTimeMetrics(leadTime),
       safetyStockDays: coverage.safetyStockDays,
       targetCoverageDays: coverage.targetCoverageDays,

@@ -50,8 +50,26 @@ describe('inventory-overview-cell-value', () => {
     });
 
     assert.equal(getOverviewCellValue(item, '包装长宽高cm'), '80*60*40');
+    assert.equal(getOverviewCellValue(item, '体积(m3)'), '0.192');
+    assert.equal(getOverviewCellValue(item, '毛重(Kg)'), '25.5');
     assert.equal(getOverviewCellValue(item, '体积（m3）'), '0.192');
-    assert.equal(getOverviewCellValue(item, '毛重（Kg）'), '25.5');
+  });
+
+  it('reads overseas warehouse stock via 海外仓库存_* column ids', () => {
+    const item = baseItem({
+      warehouseStocks: [
+        {
+          warehouseCode: 'DE',
+          warehouseName: '德国',
+          qtyAvailable: 12,
+          qtyInTransit: 0,
+          qtyInProduction: 0,
+          qtyReserved: 0,
+        },
+      ],
+    });
+    assert.equal(getOverviewCellValue(item, '海外仓库存_德国'), '12');
+    assert.equal(getOverviewCellValue(item, '德国'), '-');
   });
 
   it('prefers turnoverExtras over top-level packaging fields', () => {

@@ -27,32 +27,44 @@ export function pickLatestPublishedVersionPerSku(
   return new Map([...best.entries()].map(([skuId, item]) => [skuId, item.versionId]));
 }
 
+const SKU_IN_CHUNK = 2000;
+
 export async function resolvePublishedVersionIdBySkuIds(
   skuIds: string[],
   station: string = FORECAST_GLOBAL_STATION,
 ): Promise<Map<string, string>> {
   if (!skuIds.length) return new Map();
 
-  const rows = await db
-    .selectDistinct({
-      skuId: salesForecastMonthly.skuId,
-      versionId: salesForecastMonthly.versionId,
-      publishedAt: salesForecastVersions.publishedAt,
-    })
-    .from(salesForecastMonthly)
-    .innerJoin(
-      salesForecastVersions,
-      and(
-        eq(salesForecastVersions.id, salesForecastMonthly.versionId),
-        eq(salesForecastVersions.status, 'published'),
-      ),
-    )
-    .where(
-      and(
-        inArray(salesForecastMonthly.skuId, skuIds),
-        eq(salesForecastMonthly.station, station),
-      ),
-    );
+  const rows: Array<{
+    skuId: string;
+    versionId: string | null;
+    publishedAt: Date | null;
+  }> = [];
+
+  for (let offset = 0; offset < skuIds.length; offset += SKU_IN_CHUNK) {
+    const chunk = skuIds.slice(offset, offset + SKU_IN_CHUNK);
+    const chunkRows = await db
+      .selectDistinct({
+        skuId: salesForecastMonthly.skuId,
+        versionId: salesForecastMonthly.versionId,
+        publishedAt: salesForecastVersions.publishedAt,
+      })
+      .from(salesForecastMonthly)
+      .innerJoin(
+        salesForecastVersions,
+        and(
+          eq(salesForecastVersions.id, salesForecastMonthly.versionId),
+          eq(salesForecastVersions.status, 'published'),
+        ),
+      )
+      .where(
+        and(
+          inArray(salesForecastMonthly.skuId, chunk),
+          eq(salesForecastMonthly.station, station),
+        ),
+      );
+    rows.push(...chunkRows);
+  }
 
   return pickLatestPublishedVersionPerSku(
     rows
@@ -97,30 +109,44 @@ export async function loadMergedPublishedForecastBySkuIds(
   }
 
   for (const [versionId, ids] of skuIdsByVersion) {
-    const rows = await db
-      .select({
-        skuId: salesForecastMonthly.skuId,
-        forecastYear: salesForecastMonthly.forecastYear,
-        month: salesForecastMonthly.month,
-        forecastDailyAvg: salesForecastMonthly.forecastDailyAvg,
-        manualDailyAvg: salesForecastMonthly.manualDailyAvg,
-        lifecycle: salesForecastMonthly.lifecycle,
-        platform: salesForecastMonthly.platform,
-      })
-      .from(salesForecastMonthly)
-      .where(
-        and(
-          eq(salesForecastMonthly.versionId, versionId),
-          eq(salesForecastMonthly.station, station),
-          inArray(salesForecastMonthly.skuId, ids),
-        ),
-      );
+    const rowsBySku = new Map<
+      string,
+      Array<{
+        skuId: string;
+        forecastYear: number;
+        month: number;
+        forecastDailyAvg: string | null;
+        manualDailyAvg: string | null;
+        lifecycle: string | null;
+        platform: string | null;
+      }>
+    >();
 
-    const rowsBySku = new Map<string, typeof rows>();
-    for (const row of rows) {
-      const list = rowsBySku.get(row.skuId) ?? [];
-      list.push(row);
-      rowsBySku.set(row.skuId, list);
+    for (let offset = 0; offset < ids.length; offset += SKU_IN_CHUNK) {
+      const chunk = ids.slice(offset, offset + SKU_IN_CHUNK);
+      const rows = await db
+        .select({
+          skuId: salesForecastMonthly.skuId,
+          forecastYear: salesForecastMonthly.forecastYear,
+          month: salesForecastMonthly.month,
+          forecastDailyAvg: salesForecastMonthly.forecastDailyAvg,
+          manualDailyAvg: salesForecastMonthly.manualDailyAvg,
+          lifecycle: salesForecastMonthly.lifecycle,
+          platform: salesForecastMonthly.platform,
+        })
+        .from(salesForecastMonthly)
+        .where(
+          and(
+            eq(salesForecastMonthly.versionId, versionId),
+            eq(salesForecastMonthly.station, station),
+            inArray(salesForecastMonthly.skuId, chunk),
+          ),
+        );
+      for (const row of rows) {
+        const list = rowsBySku.get(row.skuId) ?? [];
+        list.push(row);
+        rowsBySku.set(row.skuId, list);
+      }
     }
 
     for (const skuId of ids) {

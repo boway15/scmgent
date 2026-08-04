@@ -17,6 +17,7 @@ import { normalizeReplenishLight, parseReplenishLight } from '../replenish-light
 import { ensureSpuFromSkuEncoding } from '../spu-from-sku.js';
 import { skuEncodingToColumns } from '../sku-encoding.js';
 import { ensureSkuFromImport } from '../ensure-sku-from-import.js';
+import { refreshSkuLifecycles } from '../sku-lifecycle.js';
 import {
   expandFobInventoryRows,
   isFobInventoryFormat,
@@ -237,7 +238,7 @@ export async function importMerchantRows(
 
 export async function importInventoryRows(
   rows: Array<Record<string, string>>,
-  userId: string,
+  userId?: string,
   batchId?: string,
 ): Promise<ImportResult> {
   if (isFobInventoryFormat(rows)) {
@@ -321,7 +322,7 @@ export async function importInventoryRows(
 
 async function importFobInventoryRows(
   rows: Array<Record<string, string>>,
-  userId: string,
+  userId?: string,
   batchId?: string,
 ): Promise<ImportResult> {
   const expanded = expandFobInventoryRows(rows);
@@ -340,6 +341,7 @@ async function importFobInventoryRows(
     recordedDate: string;
   };
   const pendingInventory: InvRow[] = [];
+  const touchedSkuIds = new Set<string>();
   const FLUSH_SIZE = 250;
 
   async function flushInventory() {
@@ -367,7 +369,6 @@ async function importFobInventoryRows(
         rawCode: row.skuCode,
         name: row.name,
         category: row.category,
-        lifecycle: row.lifecycle,
         salesCountry: row.salesCountry,
         productCategory: row.productCategory,
         merchantCode: row.merchantCode,
@@ -383,6 +384,7 @@ async function importFobInventoryRows(
         errors.push(`SKU could not be created: ${row.skuCode}`);
         continue;
       }
+      touchedSkuIds.add(ensured.id);
       if (ensured.created) createdSkus++;
       else if (ensured.updated) enrichedSkus++;
 
@@ -467,6 +469,15 @@ async function importFobInventoryRows(
   }
 
   await flushInventory();
+
+  if (touchedSkuIds.size > 0) {
+    try {
+      await refreshSkuLifecycles([...touchedSkuIds]);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      errors.push(`lifecycle refresh: ${message}`);
+    }
+  }
 
   return { imported, errors, createdSkus, updatedSkus: enrichedSkus };
 }
@@ -640,14 +651,22 @@ export type ImportType =
   | 'merchants'
   | 'pmc_plans';
 
+/** 自动库存同步可不绑定人工用户；会创建业务单据的导入仍必须可审计到用户。 */
+export function assertImportUserAllowed(type: ImportType, userId?: string): void {
+  if (type === 'pmc_plans' && !userId) {
+    throw new Error('userId required for pmc_plans import');
+  }
+}
+
 export async function runImport(
   type: ImportType,
   rows: Array<Record<string, string>>,
-  userId: string,
+  userId?: string,
   planMeta?: { name?: string; planDate?: string; deliveryDate?: string; merchantCode?: string; merchantName?: string },
   batchId?: string,
   salesXiaoshou?: SalesXiaoshouWideInput,
 ): Promise<ImportResult> {
+  assertImportUserAllowed(type, userId);
   switch (type) {
     case 'skus':
       return importSkuRows(rows);
@@ -660,7 +679,7 @@ export async function runImport(
     case 'merchants':
       return importMerchantRows(rows);
     case 'pmc_plans':
-      return importPmcPlanRows(rows, userId, planMeta);
+      return importPmcPlanRows(rows, userId!, planMeta);
     default:
       return { imported: 0, errors: [`Unknown import type: ${type}`] };
   }

@@ -186,8 +186,12 @@ export function ImportPanel({ type, onSuccess }: Props) {
   const executeBitable = useMutation({
     mutationFn: () => api.executeBitableSync(bitableType!),
     onSuccess: (r) => {
+      const mismatch =
+        typeof r.mismatchCount === 'number' && r.mismatchCount > 0
+          ? `；销售占比合计异常 ${r.mismatchCount} 条`
+          : '';
       setResult(
-        `多维表格同步 ${r.imported} 条；批次 ${r.batchStatus ?? '-'}；错误：${r.errors.join('; ') || '无'}`,
+        `多维表格同步 ${r.imported} 条；批次 ${r.batchStatus ?? '-'}；错误：${r.errors.join('; ') || '无'}${mismatch}`,
       );
       setBitablePreviewReady(false);
       if (type === 'inventory' || type === 'sales') {
@@ -295,11 +299,13 @@ export function ImportPanel({ type, onSuccess }: Props) {
 
       {bitableEnabled && (
         <div className="space-y-2 rounded-md border border-dashed border-border bg-muted/10 p-3">
-          <p className="text-sm font-medium">飞书多维表格</p>
+          <p className="text-sm font-medium">从飞书同步</p>
           <p className="text-xs text-text-sub">
             {bitableConfigured
-              ? `已配置表 ID：${bitableStatus?.[bitableType!]?.tableId ?? '-'}`
-              : '未配置 FEISHU_BITABLE_APP_TOKEN 或对应 TABLE 环境变量，请在部署环境配置后重试'}
+              ? `已配置表 ID：${bitableStatus?.[bitableType!]?.tableId ?? '-'}${
+                  type === 'inventory' ? '（SKU周转相关信息，与每日 07:30 定时任务同源）' : ''
+                }`
+              : '未配置 FEISHU_BITABLE_APP_TOKEN / FEISHU_BITABLE_PROCUREMENT_APP_TOKEN 或对应 TABLE 环境变量'}
           </p>
           <div className="flex flex-wrap gap-2">
             <Button
@@ -308,14 +314,14 @@ export function ImportPanel({ type, onSuccess }: Props) {
               onClick={() => previewBitable.mutate()}
               disabled={!bitableConfigured || previewBitable.isPending}
             >
-              {previewBitable.isPending ? '拉取中...' : '从多维表格预览'}
+              {previewBitable.isPending ? '拉取中...' : '从飞书同步预览'}
             </Button>
             <Button
               size="sm"
               onClick={() => executeBitable.mutate()}
               disabled={!bitableConfigured || !bitablePreviewReady || executeBitable.isPending}
             >
-              {executeBitable.isPending ? '同步中...' : '确认从多维表格同步'}
+              {executeBitable.isPending ? '同步中...' : '从飞书同步'}
             </Button>
           </div>
         </div>

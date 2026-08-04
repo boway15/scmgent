@@ -164,7 +164,7 @@ export async function createImportBatch(params: {
   type: ImportType;
   fileName?: string;
   rowCount: number;
-  userId: string;
+  userId?: string;
   progressMeta?: ImportBatchProgressMeta;
 }) {
   await abandonStalePendingBatches(params.type);

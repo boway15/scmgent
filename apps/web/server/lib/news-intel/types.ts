@@ -38,7 +38,13 @@ export type NewsBitableSyncStatus = 'pending' | 'synced' | 'failed';
 
 export type NewsBusinessValidity = 'valid' | 'invalid' | 'misclassified';
 
-export type NewsSourceType = 'rss' | 'rsshub' | 'manual';
+export type NewsSourceType =
+  | 'rss'
+  | 'rsshub'
+  | 'manual'
+  | 'query_feed'
+  | 'sitemap'
+  | 'web_page';
 
 export type RssItem = {
   title: string;
@@ -46,6 +52,7 @@ export type RssItem = {
   pubDate?: string;
   contentSnippet?: string;
   content?: string;
+  sourceUrl?: string;
 };
 
 export type ParsedArticle = {
@@ -123,5 +130,6 @@ export type IngestRunResult = {
   bitableSynced: number;
   bitableSyncFailed: number;
   skippedAlreadyRunToday?: boolean;
+  stoppedByBudget?: boolean;
   sourceResults: IngestSourceResult[];
 };

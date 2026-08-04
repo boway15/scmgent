@@ -3,7 +3,9 @@ import { AppLayout } from '@/layouts/AppLayout';
 import { RequireAuth } from '@/components/RequireAuth';
 import { LoginPage } from '@/pages/LoginPage';
 import { InventoryOverviewPage } from '@/pages/InventoryOverviewPage';
+import { InventoryQueryPage } from '@/pages/InventoryQueryPage';
 import { SkuInventoryPlanningPage } from '@/pages/SkuInventoryPlanningPage';
+import { SkuPlanningEntryPage } from '@/pages/SkuPlanningEntryPage';
 import { PlanningDashboardPage } from '@/pages/PlanningDashboardPage';
 import { LeadTimeProfilesPage } from '@/pages/LeadTimeProfilesPage';
 import { SafetyStockPage } from '@/pages/SafetyStockPage';
@@ -32,8 +34,7 @@ import { CsReplyQualityPage } from '@/pages/CsReplyQualityPage';
 import { BulkStockRequestPage, ProcurementFollowUpPage } from '@/pages/ProcurementPages';
 import { HomeRedirect } from '@/components/HomeRedirect';
 import { PlaceholderPage } from '@/pages/PlaceholderPage';
-import { SapMirrorPage } from '@/pages/SapMirrorPage';
-
+import { SystemTasksPage } from '@/pages/SystemTasksPage';
 export function AppRouter() {
   return (
     <Routes>
@@ -44,8 +45,9 @@ export function AppRouter() {
           <Route index element={<HomeRedirect />} />
           <Route path="dashboard" element={<DashboardPage />} />
           <Route path="inventory/overview" element={<InventoryOverviewPage />} />
+          <Route path="inventory/query" element={<InventoryQueryPage />} />
           <Route path="inventory/planning-dashboard" element={<PlanningDashboardPage />} />
-          <Route path="inventory/planning" element={<Navigate to="/inventory/overview" replace />} />
+          <Route path="inventory/planning" element={<SkuPlanningEntryPage />} />
           <Route path="inventory/planning/:skuId" element={<SkuInventoryPlanningPage />} />
           <Route path="inventory/lead-time" element={<LeadTimeProfilesPage />} />
           <Route path="inventory/safety" element={<SafetyStockPage />} />
@@ -64,7 +66,6 @@ export function AppRouter() {
           <Route path="data/forecast" element={<SalesForecastListPage />} />
           <Route path="data/forecast/strategy" element={<Navigate to="/data/forecast?tab=strategy" replace />} />
           <Route path="data/forecast/:versionId" element={<SalesForecastVersionDetailPage />} />
-          <Route path="data/sap-mirror" element={<SapMirrorPage />} />
           <Route path="pmc/import" element={<Navigate to="/pmc/list?import=1" replace />} />
           <Route path="reorder/suggestions" element={<Navigate to="/pmc/suggestions" replace />} />
           <Route path="reorder/forecast" element={<Navigate to="/data/forecast" replace />} />
@@ -80,6 +81,7 @@ export function AppRouter() {
           <Route path="system/users" element={<UsersPage />} />
           <Route path="system/roles" element={<RoleMenusPage />} />
           <Route path="system/logs" element={<AuditLogsPage />} />
+          <Route path="system/tasks" element={<SystemTasksPage />} />
           <Route path="intel/news" element={<NewsIntelPage />} />
           <Route path="cs/quality" element={<CsReplyQualityPage />} />
           <Route path="system/menus" element={<Navigate to="/system/roles" replace />} />

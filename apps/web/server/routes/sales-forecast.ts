@@ -10,7 +10,12 @@ import {
   skus,
 } from '@scm/db';
 import { getCurrentUser } from '../lib/auth-context.js';
-import { isForecastWriteRoleCode, requireMenu, resolveRequestUser } from '../lib/rbac.js';
+import {
+  isRbacEnforced,
+  requireMenu,
+  resolveRequestUser,
+  userCanWriteForecast,
+} from '../lib/rbac.js';
 import { writeAuditLog } from '../lib/audit-log.js';
 import { formatForecastMonth, mapForecastDailyFields } from '../lib/forecast-demand.js';
 import { resolveSalesPlatformCode, listActiveSalesPlatforms } from '../lib/sales-platform.js';
@@ -150,11 +155,13 @@ function parseOptionalPositiveNumber(
 }
 
 async function requireForecastWrite(c: Context, next: Next) {
+  if (!isRbacEnforced()) return next();
+
   const user = await resolveRequestUser(c);
   if (!user) return c.json({ message: 'Unauthorized' }, 401);
   c.set('user', user);
 
-  if (!isForecastWriteRoleCode(user.role.code)) {
+  if (!(await userCanWriteForecast(user))) {
     return c.json({ message: 'Forbidden' }, 403);
   }
 

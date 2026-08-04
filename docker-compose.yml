@@ -16,36 +16,14 @@ services:
       retries: 10
     restart: unless-stopped
 
-  # 跨境资讯：将无官方 RSS 的站点转为订阅；web 通过 RSSHUB_BASE_URL 访问
-  rsshub:
-    image: diygod/rsshub:latest
-    ports:
-      - "1200:1200"
-    environment:
-      NODE_ENV: production
-      CACHE_TYPE: memory
-      # 降低被目标站限流概率；可按需再加 Redis / 代理
-      CACHE_EXPIRE: "600"
-      TITLE_LENGTH_LIMIT: "150"
-    healthcheck:
-      test:
-        [
-          "CMD-SHELL",
-          "node -e \"require('http').get('http://127.0.0.1:1200/',(r)=>process.exit(r.statusCode&&r.statusCode<500?0:1)).on('error',()=>process.exit(1))\"",
-        ]
-      interval: 15s
-      timeout: 5s
-      retries: 10
-      start_period: 45s
-    restart: unless-stopped
-
   web:
     build:
       context: .
       dockerfile: Dockerfile
     image: scm-agent-web:latest
     ports:
-      - "0.0.0.0:8081:8080"
+      # 宿主机与容器均使用 8081（不占用常被 Dify 等占用的 8080）
+      - "0.0.0.0:8081:8081"
     env_file:
       - .env
     environment:
@@ -53,7 +31,7 @@ services:
       DB_HOST: postgres
       DB_USER: scm
       DB_NAME: scm_dev
-      PORT: 8080
+      PORT: 8081
       HOST: 0.0.0.0
       # 局域网访问：同网段设备用 http://<本机IP>:8081；启用飞书登录时 APP_BASE_URL 须与访问地址一致
       APP_BASE_URL: http://127.0.0.1:8081
@@ -74,8 +52,6 @@ services:
       NODE_OPTIONS: "--max-old-space-size=4096"
       # DIFY_BASE_URL / DIFY_API_KEY_* 由 .env 注入；容器内 127.0.0.1 会在代码中改写为 host.docker.internal
       RUNNING_IN_DOCKER: "true"
-      # 跨境资讯 RSSHub（compose 内服务名；覆盖 .env 中的 localhost）
-      RSSHUB_BASE_URL: "http://rsshub:1200"
       # 日表 + 月表双轨（见 apps/web/server/lib/sales-history-config.ts）
       # 全量初始化完成后启用：仅展开 >= 该日期的宽表列（上线日常人工导入）
       # SALES_IMPORT_MIN_DATE: "2026-01-01"
@@ -86,7 +62,33 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      rsshub:
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "node -e \"require('http').get('http://127.0.0.1:8081/api/health',(r)=>process.exit(r.statusCode&&r.statusCode<500?0:1)).on('error',()=>process.exit(1))\"",
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 12
+      start_period: 60s
+    restart: unless-stopped
+
+  # 定时任务：Compose 内网调用 web（不映射宿主机端口）
+  cron:
+    build:
+      context: ./deploy/cron
+    image: scm-agent-cron:latest
+    env_file:
+      - .env
+    environment:
+      TZ: Asia/Shanghai
+      CRON_BASE_URL: http://web:8081
+      CRON_SECRET: "dev-cron-secret-local"
+      # 本地临时关掉调度：CRON_ENABLED=false 或 docker compose stop cron
+      CRON_ENABLED: "true"
+    depends_on:
+      web:
         condition: service_healthy
     restart: unless-stopped
 

@@ -2,9 +2,33 @@ const FEISHU_BASE = 'https://open.feishu.cn/open-apis';
 
 let cachedToken: { token: string; expiresAt: number } | null = null;
 
+function looksLikePlaceholderCredential(value: string): boolean {
+  const v = value.trim();
+  if (!v) return true;
+  return /^(cli_)?x{4,}|your_|change-?me|placeholder|example|todo/i.test(v);
+}
+
+function formatFeishuAuthError(msg: string | undefined, appId: string, appSecret: string): string {
+  const detail = msg?.trim() || 'unknown';
+  if (detail.toLowerCase().includes('invalid param')) {
+    const hints: string[] = [];
+    if (looksLikePlaceholderCredential(appId)) {
+      hints.push('FEISHU_APP_ID 仍为占位符或未填');
+    }
+    if (looksLikePlaceholderCredential(appSecret)) {
+      hints.push('FEISHU_APP_SECRET 仍为占位符或未填');
+    }
+    if (hints.length) {
+      return `Feishu auth failed: ${detail}（${hints.join('；')}）。请在飞书开放平台创建自建应用，复制 App ID（cli_ 开头）与 App Secret 到 .env，重建 web 容器。多维表格 app_token 不能替代这两项。`;
+    }
+    return `Feishu auth failed: ${detail}。请核对 .env 中 FEISHU_APP_ID / FEISHU_APP_SECRET 是否与飞书开放平台一致，并确认应用已开通「多维表格」权限且已加入目标 Base 协作者。`;
+  }
+  return `Feishu auth failed: ${detail}`;
+}
+
 export async function getTenantAccessToken(): Promise<string> {
-  const appId = process.env.FEISHU_APP_ID;
-  const appSecret = process.env.FEISHU_APP_SECRET;
+  const appId = process.env.FEISHU_APP_ID?.trim();
+  const appSecret = process.env.FEISHU_APP_SECRET?.trim();
 
   if (!appId || !appSecret) {
     throw new Error('FEISHU_APP_ID and FEISHU_APP_SECRET are required');
@@ -28,7 +52,7 @@ export async function getTenantAccessToken(): Promise<string> {
   };
 
   if (data.code !== 0 || !data.tenant_access_token) {
-    throw new Error(`Feishu auth failed: ${data.msg}`);
+    throw new Error(formatFeishuAuthError(data.msg, appId, appSecret));
   }
 
   cachedToken = {

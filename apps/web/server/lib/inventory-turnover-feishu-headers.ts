@@ -1,0 +1,131 @@
+/** 近半年海外仓销售单占比列（迅捷同义；非分仓可售数量） */
+export const FEISHU_REGION_SALES_SHARE_FIELDS = [
+  '美东',
+  '美南',
+  '美西',
+  '美中',
+  '美东南',
+  '德国',
+  '平台仓_美',
+  '平台仓_欧',
+] as const;
+
+/** @deprecated 历史误称「分仓库存」；请用 FEISHU_REGION_SALES_SHARE_FIELDS */
+export const FEISHU_REGION_STOCK_FIELDS = [...FEISHU_REGION_SALES_SHARE_FIELDS];
+
+/**
+ * 飞书表字段顺序（与多维表格列一致，库存总览权威列目录）。
+ * 共 66 列。
+ */
+export const FEISHU_INVENTORY_TURNOVER_HEADERS = [
+  'SKU',
+  'Id',
+  'ProductBaseID',
+  'SupplierId',
+  'SKU名称',
+  '品类',
+  '销售国家',
+  '产品分类',
+  '负责人',
+  '开发人员',
+  '供应商编码',
+  '供应商简称',
+  '采购周期',
+  '采购价',
+  '币种',
+  '美东',
+  '美西',
+  '美南',
+  '美中',
+  '美东南',
+  '德国',
+  '平台仓_美',
+  '平台仓_欧',
+  '海外仓在库',
+  '预计10天内|10-20天|超20天上架数量',
+  '调拨在途合计',
+  '供应商订单',
+  '预下单',
+  '全链条合计库存',
+  '上月销量',
+  '上上月销量',
+  '3天销量',
+  '7天销量',
+  '14天销量',
+  '30天销量',
+  '本月预测日均销量',
+  '下月预测日均销量',
+  '下2月预测日均销量',
+  '下3月预测日均销量',
+  '下4月预测日均销量',
+  '预计海外仓周转天数',
+  '预计海外在途周转天数',
+  '预计海外周转天数',
+  '预计国内周转',
+  '预计全链条周转',
+  '采购单最早上架时间',
+  '预计国内断货天数',
+  '最早在途上架时间',
+  '预计海外断货天数',
+  '预计海外仓断货时间',
+  '预计海外断货时间',
+  '预计全链条断货时间',
+  '全链条断货时间(不含预下单)',
+  '包装长宽高cm',
+  '体积(m3)',
+  '毛重(Kg)',
+  '近30天毛利率',
+  '近90天毛利率',
+  '近30天毛利率(AMZ)',
+  '近90天毛利率(AMZ)',
+  '近30天毛利率(AMZ不含计提)',
+  '近90天毛利率(AMZ不含计提)',
+  '近3月退款率',
+  '全链条周转天数',
+  '近30天断货天数',
+  '已调拨未在途',
+] as const;
+
+export type FeishuInventoryTurnoverHeader = (typeof FEISHU_INVENTORY_TURNOVER_HEADERS)[number];
+
+/** @deprecated 使用 FEISHU_INVENTORY_TURNOVER_HEADERS；保留别名避免旧引用断裂 */
+export const FEISHU_INVENTORY_TURNOVER_EXTRA_HEADERS = FEISHU_INVENTORY_TURNOVER_HEADERS;
+
+/** 近半年海外仓销售占比视图（原「分仓库存」误用名） */
+export const FEISHU_WAREHOUSE_VIEW_HEADERS = [...FEISHU_REGION_SALES_SHARE_FIELDS];
+
+export const FEISHU_REPLENISH_VIEW_HEADERS = [
+  '品类',
+  'SKU',
+  'SKU名称',
+  '销售国家',
+  '产品分类',
+  '供应商编码',
+  '海外仓在库',
+  '调拨在途合计',
+  '供应商订单',
+  '预下单',
+  '全链条合计库存',
+  '3天销量',
+  '7天销量',
+  '30天销量',
+  '预计海外周转天数',
+] as const;
+
+export const FEISHU_STOCKOUT_VIEW_HEADERS = [
+  '品类',
+  'SKU',
+  'SKU名称',
+  '销售国家',
+  '产品分类',
+  '供应商编码',
+  '采购单最早上架时间',
+  '预计国内断货天数',
+  '最早在途上架时间',
+  '预计海外断货天数',
+  '预计海外仓断货时间',
+  '预计海外断货时间',
+  '预计全链条断货时间',
+  '全链条断货时间(不含预下单)',
+  '近30天断货天数',
+] as const;

@@ -13,8 +13,13 @@ import {
 } from './config.js';
 import { mapArticleToBitableFields } from './bitable-mapper.js';
 import { ensureNewsIntelBitableSchema } from './bitable-schema.js';
+import type { NewsArticleStatus } from './types.js';
 
 let schemaEnsuredForTable: string | null = null;
+
+export function canSyncNewsArticle(status: NewsArticleStatus): boolean {
+  return status === 'published';
+}
 
 async function ensureSchemaOnce(appToken: string, tableId: string): Promise<void> {
   if (schemaEnsuredForTable === tableId) return;
@@ -23,6 +28,21 @@ async function ensureSchemaOnce(appToken: string, tableId: string): Promise<void
 }
 
 export async function syncArticleToBitable(articleId: string): Promise<string | null> {
+  const [row] = await db
+    .select({
+      article: newsArticles,
+      sourceName: newsSources.name,
+      sourceTier: newsSources.sourceTier,
+      isOfficial: newsSources.isOfficial,
+    })
+    .from(newsArticles)
+    .innerJoin(newsSources, eq(newsArticles.sourceId, newsSources.id))
+    .where(eq(newsArticles.id, articleId))
+    .limit(1);
+
+  if (!row) throw new Error(`Article not found: ${articleId}`);
+  if (!canSyncNewsArticle(row.article.status)) return null;
+
   if (!isNewsBitableConfigured()) {
     await db
       .update(newsArticles)
@@ -38,21 +58,6 @@ export async function syncArticleToBitable(articleId: string): Promise<string | 
   const appToken = getNewsBitableAppToken()!;
   const tableId = getNewsBitableV2TableId()!;
   await ensureSchemaOnce(appToken, tableId);
-
-  const [row] = await db
-    .select({
-      article: newsArticles,
-      sourceName: newsSources.name,
-      sourceTier: newsSources.sourceTier,
-      isOfficial: newsSources.isOfficial,
-    })
-    .from(newsArticles)
-    .innerJoin(newsSources, eq(newsArticles.sourceId, newsSources.id))
-    .where(eq(newsArticles.id, articleId))
-    .limit(1);
-
-  if (!row) throw new Error(`Article not found: ${articleId}`);
-  if (row.article.status === 'ignored') return null;
 
   const mapped = mapArticleToBitableFields(row.article, {
     name: row.sourceName,
@@ -96,7 +101,10 @@ export async function syncArticleToBitable(articleId: string): Promise<string | 
   }
 }
 
-export async function syncPendingArticlesToBitable(limit = 50): Promise<number> {
+export async function syncPendingArticlesToBitable(
+  limit = 50,
+  deadlineAt = Number.POSITIVE_INFINITY,
+): Promise<number> {
   if (!isNewsBitableConfigured()) return 0;
 
   const rows = await db
@@ -109,6 +117,7 @@ export async function syncPendingArticlesToBitable(limit = 50): Promise<number> 
     .where(
       and(
         inArray(newsArticles.bitableSyncStatus, ['pending', 'failed']),
+        eq(newsArticles.status, 'published'),
       ),
     )
     .orderBy(asc(newsArticles.updatedAt))
@@ -116,10 +125,10 @@ export async function syncPendingArticlesToBitable(limit = 50): Promise<number> 
 
   let synced = 0;
   for (const row of rows) {
-    if (row.status === 'ignored') continue;
+    if (Date.now() >= deadlineAt) break;
     try {
-      await syncArticleToBitable(row.id);
-      synced += 1;
+      const recordId = await syncArticleToBitable(row.id);
+      if (recordId) synced += 1;
     } catch {
       // 错误已写入 bitable_sync_error
     }

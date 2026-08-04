@@ -1,4 +1,5 @@
 import { TURNOVER_IMPORT_HEADERS } from './inventory-turnover-headers.js';
+import { FEISHU_INVENTORY_TURNOVER_HEADERS } from './inventory-turnover-feishu-headers.js';
 import { formatTurnoverDateValue } from './turnover-date-format.js';
 
 /** 与 parseXlsxBuffer / CSV 导入列名规范化保持一致 */
@@ -65,15 +66,22 @@ function indexImportRow(row: Record<string, string>): Map<string, string> {
 }
 
 /**
- * 按 Excel A:GR 标准表头写入 turnoverSnapshot，键名与列目录完全一致（含 A:K 主数据列）。
+ * 按飞书字段优先写入 turnoverSnapshot；同时保留 Excel 兼容键（若导入行含有）。
  */
 export function extractTurnoverSnapshot(row: Record<string, string>): Record<string, string> {
   const indexed = indexImportRow(row);
   const snapshot: Record<string, string> = {};
 
-  for (const header of TURNOVER_IMPORT_HEADERS) {
+  for (const header of FEISHU_INVENTORY_TURNOVER_HEADERS) {
     const value = indexed.get(normalizeImportHeaderKey(header));
     if (value !== undefined && value !== '') {
+      snapshot[header] = formatTurnoverDateValue(header, value);
+    }
+  }
+
+  for (const header of TURNOVER_IMPORT_HEADERS) {
+    const value = indexed.get(normalizeImportHeaderKey(header));
+    if (value !== undefined && value !== '' && snapshot[header] === undefined) {
       snapshot[header] = formatTurnoverDateValue(header, value);
     }
   }
@@ -148,10 +156,12 @@ export function readTurnoverSnapshotAt(encodingMeta: unknown): string | null {
   return typeof value === 'string' && value.trim() ? value : null;
 }
 
-/** 库存周转表包装列（与库存总览 turnoverExtras 键名一致） */
+/** 库存周转表包装列（飞书优先，兼容 Excel 全角括号） */
 export const TURNOVER_PACK_DIMENSIONS_HEADER = '包装长宽高cm';
-export const TURNOVER_VOLUME_HEADER = '体积（m3）';
-export const TURNOVER_GROSS_WEIGHT_HEADER = '毛重（Kg）';
+export const TURNOVER_VOLUME_HEADER = '体积(m3)';
+export const TURNOVER_VOLUME_HEADER_EXCEL = '体积（m3）';
+export const TURNOVER_GROSS_WEIGHT_HEADER = '毛重(Kg)';
+export const TURNOVER_GROSS_WEIGHT_HEADER_EXCEL = '毛重（Kg）';
 
 export type SkuPackagingFromTurnover = {
   packDimensionsCm: string | null;
@@ -164,36 +174,48 @@ export function readSkuPackagingFromEncodingMeta(encodingMeta: unknown): SkuPack
   const snapshot = readTurnoverSnapshot(encodingMeta);
   return {
     packDimensionsCm: snapshot[TURNOVER_PACK_DIMENSIONS_HEADER] ?? null,
-    volumeM3: snapshot[TURNOVER_VOLUME_HEADER] ?? null,
-    grossWeightKg: snapshot[TURNOVER_GROSS_WEIGHT_HEADER] ?? null,
+    volumeM3: snapshot[TURNOVER_VOLUME_HEADER] ?? snapshot[TURNOVER_VOLUME_HEADER_EXCEL] ?? null,
+    grossWeightKg:
+      snapshot[TURNOVER_GROSS_WEIGHT_HEADER] ?? snapshot[TURNOVER_GROSS_WEIGHT_HEADER_EXCEL] ?? null,
   };
 }
 
 export function inferTurnoverHeaderGroup(header: string): string {
-  if (header.includes('销售占比')) return '销售占比';
-  if (header.startsWith('海外仓库存')) return '海外仓库存';
-  if (header.includes('预计') && header.includes('上架')) return '预计上架';
-  if (header.startsWith('调拨在途')) return '调拨在途';
-  if (header.includes('供应商订单')) return '供应商订单';
-  if (header.startsWith('已调拨未在途')) return '已调拨未在途';
-  if (header === '预下单' || header === '全链条合计库存') return '库存汇总';
-  if (header.endsWith('销量') || header.includes('月销量')) return '销量';
-  if (header.includes('预测日均')) return '预测日均';
-  if (header.includes('周转')) return '周转天数';
-  if (header.includes('断货') || header.includes('上架时间') || header.includes('最早上架')) {
-    return '断货与上架';
+  const salesShare = new Set([
+    '美东',
+    '美南',
+    '美西',
+    '美中',
+    '美东南',
+    '德国',
+    '平台仓_美',
+    '平台仓_欧',
+  ]);
+  if (
+    salesShare.has(header) ||
+    header.endsWith('销量') ||
+    header.includes('月销量') ||
+    header.includes('预测日均')
+  ) {
+    return '销售与预测';
   }
   if (
-    header.includes('毛利率') ||
-    header.includes('退款率') ||
-    header.includes('包装') ||
-    header.includes('体积') ||
-    header.includes('毛重')
+    header === '海外仓在库' ||
+    header === '调拨在途合计' ||
+    header === '已调拨未在途' ||
+    (header.includes('预计') && header.includes('上架')) ||
+    header === '预下单' ||
+    header === '全链条合计库存' ||
+    header === '供应商订单' ||
+    header.includes('周转') ||
+    header.includes('断货') ||
+    header.includes('上架时间') ||
+    header.includes('最早上架') ||
+    header.includes('在途上架')
   ) {
-    return '包装与毛利';
+    return '库存数据';
   }
-  if (header === '币种') return '主数据扩展';
-  return '其他';
+  return '主数据';
 }
 
 export type OverviewColumnDef = {
@@ -218,29 +240,28 @@ export function excelColumnLabel(index: number): string {
 }
 
 const META_COLUMNS: OverviewColumnDef[] = [
-  { id: 'updatedAt', label: '更新时间', group: '更新信息', kind: 'meta', defaultVisible: true },
-  { id: 'dataSource', label: '数据来源', group: '更新信息', kind: 'meta', defaultVisible: true },
+  { id: 'updatedAt', label: '更新时间', group: '主数据', kind: 'meta', defaultVisible: true },
+  { id: 'dataSource', label: '数据来源', group: '主数据', kind: 'meta', defaultVisible: true },
   {
     id: 'inventoryRecordedDate',
     label: '库存快照日期',
-    group: '更新信息',
+    group: '主数据',
     kind: 'meta',
     defaultVisible: false,
   },
 ];
-
-const SHEET_COLUMNS: OverviewColumnDef[] = TURNOVER_IMPORT_HEADERS.map((header, index) => ({
+const SHEET_COLUMNS: OverviewColumnDef[] = FEISHU_INVENTORY_TURNOVER_HEADERS.map((header, index) => ({
   id: header,
   label: header,
   group: inferTurnoverHeaderGroup(header),
   kind: 'sheet' as const,
-  excelCol: excelColumnLabel(index + 1),
+  excelCol: `F${index + 1}`,
   defaultVisible: false,
 }));
 
 const OPS_COLUMNS: OverviewColumnDef[] = [
-  { id: 'replenishLight', label: '补货灯', group: '运营', kind: 'ops', defaultVisible: true },
-  { id: 'ai', label: 'AI', group: '运营', kind: 'ops', defaultVisible: true },
+  { id: 'replenishLight', label: '补货灯', group: '主数据', kind: 'ops', defaultVisible: true },
+  { id: 'ai', label: 'AI', group: '主数据', kind: 'ops', defaultVisible: true },
 ];
 
 export const INVENTORY_OVERVIEW_COLUMNS: OverviewColumnDef[] = [
@@ -253,4 +274,4 @@ export const INVENTORY_OVERVIEW_COLUMN_BY_ID = new Map(
   INVENTORY_OVERVIEW_COLUMNS.map((col) => [col.id, col]),
 );
 
-export const TURNOVER_SHEET_COLUMN_COUNT = TURNOVER_IMPORT_HEADERS.length;
+export const TURNOVER_SHEET_COLUMN_COUNT = FEISHU_INVENTORY_TURNOVER_HEADERS.length;

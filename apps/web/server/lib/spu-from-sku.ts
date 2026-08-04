@@ -72,15 +72,24 @@ export async function ensureSpuFromSkuEncoding(
     encodingSource: 'manual',
   };
 
-  const [created] = await db
-    .insert(spus)
-    .values({
-      ...insertValues,
-      name: (insertValues.name as string) || opts.name,
-      isActive: true,
-      updatedAt: new Date(),
-    })
-    .returning();
+  try {
+    const [created] = await db
+      .insert(spus)
+      .values({
+        ...insertValues,
+        name: (insertValues.name as string) || opts.name,
+        isActive: true,
+        updatedAt: new Date(),
+      })
+      .returning();
 
-  return { spuId: created.id, parse, spuCode };
+    return { spuId: created.id, parse, spuCode };
+  } catch (err) {
+    const pg = err as { code?: string };
+    if (pg.code === '23505') {
+      const [retry] = await db.select().from(spus).where(eq(spus.code, spuCode)).limit(1);
+      if (retry) return { spuId: retry.id, parse, spuCode };
+    }
+    throw err;
+  }
 }

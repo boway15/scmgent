@@ -28,6 +28,22 @@ describe('extractFieldValue', () => {
   it('joins person arrays', () => {
     assert.equal(extractFieldValue([{ name: 'Alice' }, { name: 'Bob' }]), 'Alice, Bob');
   });
+
+  it('extracts formula / lookup number results', () => {
+    assert.equal(
+      extractFieldValue({ type: 2, ui_type: 'Number', value: 1250.5 }),
+      '1250.5',
+    );
+    assert.equal(
+      extractFieldValue({ type: 2, ui_type: 'Number', value: [12] }),
+      '12',
+    );
+    assert.equal(extractFieldValue({ type: 2, value: 0 }), '0');
+  });
+
+  it('keeps numeric zero in arrays', () => {
+    assert.equal(extractFieldValue([0, 1]), '0, 1');
+  });
 });
 
 describe('mapBitableRecordToRow', () => {

@@ -1,7 +1,7 @@
 import { eq } from 'drizzle-orm';
 import { db, skus } from '@scm/db';
 import { ensureSpuFromSkuEncoding } from './spu-from-sku.js';
-import { skuEncodingToColumns } from './sku-encoding.js';
+import { parseSkuCode, skuEncodingToColumns } from './sku-encoding.js';
 import type { DailySalesRow } from './sales-report-parser.js';
 import { sanitizeDbText } from './import/parse.js';
 import {
@@ -34,11 +34,16 @@ export type EnsureSkuResult = {
   updated: boolean;
 };
 
-function buildInventoryMasterInput(input: EnsureSkuInput, code: string): InventorySkuMasterFields {
+function buildInventoryMasterInput(
+  input: EnsureSkuInput,
+  code: string,
+  lifecycleOverride?: string | null,
+): InventorySkuMasterFields {
   return {
     category: input.category,
     skuCode: code,
-    lifecycle: input.lifecycle,
+    // 生命周期不由库存导入提供；写入 meta 时沿用已有/默认值以免误判「有变化」
+    lifecycle: lifecycleOverride ?? undefined,
     name: input.name || code,
     salesCountry: input.salesCountry,
     productCategory: input.productCategory,
@@ -54,13 +59,20 @@ function resolveDailySalesSkuCode(rawCode: string, parse: { normalizedCode: stri
   return sanitizeDbText(parse.normalizedCode || rawCode.trim());
 }
 
+/** 日销量导入：legacy / 9 位 / 大小写等写法归一为 skus.code */
+export function normalizedDailySalesSkuCode(rawCode: string): string {
+  const sanitized = sanitizeDbText(rawCode.trim());
+  if (!sanitized) return '';
+  return resolveDailySalesSkuCode(sanitized, parseSkuCode(sanitized));
+}
+
 export function collectDailySalesSkuStubs(
   rows: DailySalesRow[],
 ): Map<string, { name: string; category?: string }> {
   const stubs = new Map<string, { name: string; category?: string }>();
 
   for (const row of rows) {
-    const code = sanitizeDbText(row.skuCode.trim());
+    const code = normalizedDailySalesSkuCode(row.skuCode);
     if (!code) continue;
 
     const name = row.skuName.trim() || code;
@@ -91,7 +103,7 @@ export async function ensureSkuFromImport(input: EnsureSkuInput): Promise<Ensure
   const encodingCols = skuEncodingToColumns(parse);
   const inventoryCols =
     input.source === 'inventory'
-      ? inventoryMasterToSkuColumns(buildInventoryMasterInput(input, code))
+      ? inventoryMasterToSkuColumns(buildInventoryMasterInput(input, code, null))
       : null;
   const displayName = sanitizeDbText(inventoryCols?.name || input.name?.trim() || rawCode);
 
@@ -108,7 +120,8 @@ export async function ensureSkuFromImport(input: EnsureSkuInput): Promise<Ensure
           unit: input.unit?.trim() || 'pcs',
           spuId,
           category: inventoryCols?.category ?? input.category,
-          lifecycle: inventoryCols?.lifecycle,
+          // 生命周期默认为空，有销量后再由系统刷新
+          lifecycle: input.source === 'inventory' ? null : inventoryCols?.lifecycle,
           salesCountry: inventoryCols?.salesCountry,
           productCategory: inventoryCols?.productCategory,
           ownerName: inventoryCols?.ownerName,
@@ -123,7 +136,7 @@ export async function ensureSkuFromImport(input: EnsureSkuInput): Promise<Ensure
           encodingMeta:
             input.source === 'inventory'
               ? buildNextInventoryEncodingMeta(
-                  buildInventoryMasterInput(input, code),
+                  buildInventoryMasterInput(input, code, null),
                   code,
                   undefined,
                   input.turnoverSnapshot ?? {},
@@ -175,7 +188,7 @@ export async function ensureSkuFromImport(input: EnsureSkuInput): Promise<Ensure
   }
 
   if (input.source === 'inventory') {
-    const master = buildInventoryMasterInput(input, code);
+    const master = buildInventoryMasterInput(input, code, existing.lifecycle);
     const cols = inventoryMasterToSkuColumns(master);
     const nextUnitCost = input.unitCost || existing.unitCost || undefined;
     const nextEncodingMeta = buildNextInventoryEncodingMeta(
@@ -187,7 +200,8 @@ export async function ensureSkuFromImport(input: EnsureSkuInput): Promise<Ensure
     const nextState = {
       name: cols.name || displayName,
       category: cols.category ?? existing.category,
-      lifecycle: cols.lifecycle ?? existing.lifecycle,
+      // 生命周期由销量自动计算，库存/飞书导入不覆盖
+      lifecycle: existing.lifecycle,
       salesCountry: cols.salesCountry ?? existing.salesCountry,
       productCategory: cols.productCategory ?? existing.productCategory,
       ownerName: cols.ownerName ?? existing.ownerName,

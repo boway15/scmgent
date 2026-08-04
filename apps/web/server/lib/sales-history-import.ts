@@ -1,7 +1,10 @@
 import { inArray } from 'drizzle-orm';
 import { db, salesHistory, skus } from '@scm/db';
 import type { DailySalesRow } from './sales-report-parser.js';
-import { ensureSkusFromDailySales } from './ensure-sku-from-import.js';
+import {
+  ensureSkusFromDailySales,
+  normalizedDailySalesSkuCode,
+} from './ensure-sku-from-import.js';
 import { aggregateSalesHistoryMonthlyFromDaily } from './sales-history-monthly.js';
 import { loadSkuCategoryMap, resolveSkuCategoryFromMaster } from './sku-category.js';
 import { sanitizeDbText } from './import/parse.js';
@@ -37,6 +40,52 @@ export type SalesHistoryImportStats = SalesHistoryImportPlan & {
   };
 };
 
+function resolveSkuIdForDailySalesRow(
+  rawSkuCode: string,
+  skuIdByCode: Map<string, string>,
+): string | undefined {
+  const sanitized = sanitizeDbText(rawSkuCode.trim());
+  if (!sanitized) return undefined;
+  const normalized = normalizedDailySalesSkuCode(sanitized);
+  return (
+    skuIdByCode.get(normalized) ??
+    skuIdByCode.get(sanitized) ??
+    skuIdByCode.get(rawSkuCode.trim())
+  );
+}
+
+function registerDailySalesSkuCodeAliases(
+  rows: DailySalesRow[],
+  skuIdByCode: Map<string, string>,
+): void {
+  for (const row of rows) {
+    const sanitized = sanitizeDbText(row.skuCode.trim());
+    if (!sanitized) continue;
+    const normalized = normalizedDailySalesSkuCode(sanitized);
+    const skuId = resolveSkuIdForDailySalesRow(sanitized, skuIdByCode);
+    if (!skuId) continue;
+    skuIdByCode.set(normalized, skuId);
+    skuIdByCode.set(sanitized, skuId);
+  }
+}
+
+function dedupeSalesHistoryPlanRows(rows: SalesHistoryImportPlanRow[]): SalesHistoryImportPlanRow[] {
+  const merged = new Map<string, SalesHistoryImportPlanRow>();
+  for (const row of rows) {
+    const key = `${row.skuId}::${row.saleDate}::${row.channel ?? ''}`;
+    const existing = merged.get(key);
+    if (existing) {
+      existing.qtySold += row.qtySold;
+      if (row.category && !existing.category) {
+        existing.category = row.category;
+      }
+      continue;
+    }
+    merged.set(key, { ...row });
+  }
+  return Array.from(merged.values());
+}
+
 export function buildSalesHistoryImportPlan(
   rows: DailySalesRow[],
   skuIdByCode: Map<string, string>,
@@ -46,12 +95,12 @@ export function buildSalesHistoryImportPlan(
   const unmatchedSkuCodes = new Set<string>();
 
   for (const row of rows) {
-    const skuCode = row.skuCode.trim();
+    const skuCode = sanitizeDbText(row.skuCode.trim());
     if (!skuCode) {
       continue;
     }
 
-    const skuId = skuIdByCode.get(skuCode);
+    const skuId = resolveSkuIdForDailySalesRow(skuCode, skuIdByCode);
     if (!skuId) {
       unmatchedSkuCodes.add(skuCode);
       continue;
@@ -94,7 +143,11 @@ export async function persistDailySalesRowsAsHistory(
   const { skuIdByCode, createdSkuCount, enrichedSkuCount, skippedExistingCount } =
     await ensureSkusFromDailySales(rows);
 
-  const skuCodes = Array.from(new Set(rows.map((row) => row.skuCode.trim()).filter(Boolean)));
+  registerDailySalesSkuCodeAliases(rows, skuIdByCode);
+
+  const skuCodes = Array.from(
+    new Set(rows.map((row) => normalizedDailySalesSkuCode(row.skuCode)).filter(Boolean)),
+  );
   if (skuCodes.length) {
     const skuRows = await db
       .select({ id: skus.id, code: skus.code, category: skus.category })
@@ -108,13 +161,14 @@ export async function persistDailySalesRowsAsHistory(
 
   const categoryBySkuId = await loadSkuCategoryMap(Array.from(new Set(skuIdByCode.values())));
   const plan = buildSalesHistoryImportPlan(rows, skuIdByCode, categoryBySkuId);
+  const planRows = dedupeSalesHistoryPlanRows(plan.rows);
 
   let insertedSalesRows = 0;
   let skippedExistingSalesRows = 0;
 
   const INSERT_CHUNK = 1000;
-  for (let offset = 0; offset < plan.rows.length; offset += INSERT_CHUNK) {
-    const chunk = plan.rows.slice(offset, offset + INSERT_CHUNK);
+  for (let offset = 0; offset < planRows.length; offset += INSERT_CHUNK) {
+    const chunk = planRows.slice(offset, offset + INSERT_CHUNK);
     if (!chunk.length) continue;
 
     const inserted = await db
@@ -142,11 +196,12 @@ export async function persistDailySalesRowsAsHistory(
   const monthlyAggregate = options?.skipMonthlyAggregate
     ? undefined
     : await aggregateSalesHistoryMonthlyFromDaily({
-        skuIds: Array.from(new Set(plan.rows.map((row) => row.skuId))),
+        skuIds: Array.from(new Set(planRows.map((row) => row.skuId))),
       });
 
   return {
     ...plan,
+    rows: planRows,
     importedSalesRows: insertedSalesRows,
     insertedSalesRows,
     updatedSalesRows: 0,

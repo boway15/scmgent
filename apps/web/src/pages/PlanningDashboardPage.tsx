@@ -72,7 +72,7 @@ const WORKBENCH_LINKS = [
   { label: '补货建议', description: '审核并采纳待处理建议', href: '/pmc/suggestions' },
   { label: '采购跟单', description: '处理预计可用日期延期', href: '/pmc/tracking' },
   { label: '发运管理', description: '检查延期发运与节点', href: '/pmc/shipments' },
-  { label: 'SKU 库存规划', description: '从库存总览进入单 SKU 规划', href: '/inventory/planning' },
+  { label: 'SKU 库存规划', description: '搜索 SKU 进入单仓规划详情', href: '/inventory/planning' },
 ] as const;
 
 export function PlanningDashboardPage() {

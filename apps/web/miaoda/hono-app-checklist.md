@@ -1,5 +1,7 @@
 # 妙搭 Hono 挂载 · 导入后检查清单
 
+> **状态：已停用（2026-07-24）** — 默认开发入口为 `apps/web/server`（ESM），无需 CJS `hono-app`。本清单仅历史归档。
+
 > `pnpm zip:miaoda` 已预生成 `server/hono-app/`（CJS）与 `server/modules/scm-hono/`。  
 > 导入后执行 **`node source_package/scripts/miaoda-sync-to-server.js`** 自动同步到平台编译树（替代手工复制 1–3 步）。
 

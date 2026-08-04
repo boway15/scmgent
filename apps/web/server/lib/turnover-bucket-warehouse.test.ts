@@ -20,4 +20,13 @@ describe('turnover-bucket-warehouse', () => {
       ],
     );
   });
+
+  it('falls back to OVERSEAS total when only aggregate stock columns exist', () => {
+    const buckets = parseTurnoverWarehouseBuckets({
+      海外仓库存_合计: '27',
+      调拨在途_合计: '5',
+      美东: '0.41',
+    });
+    assert.deepEqual(buckets, [{ warehouse: 'OVERSEAS', qtyAvailable: 27, qtyInTransit: 5 }]);
+  });
 });

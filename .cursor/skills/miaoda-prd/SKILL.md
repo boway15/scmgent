@@ -1,16 +1,18 @@
 ---
 name: miaoda-prd
 description: >-
-  生成飞书妙搭可理解的 PRD 文档，含数据模型、页面流程、业务逻辑。
-  Use when writing requirements, PRD, user stories, data schema for 妙搭/秒搭,
-  or preparing specs before Miaoda import.
+  生成结构化 PRD（数据模型、页面流程、业务逻辑），面向自建 Docker 栈实现。
+  Use when writing requirements, PRD, user stories, or data schema for scm-agent
+  (React/Hono/Postgres). Not for 飞书妙搭 ZIP import.
 ---
 
-# 妙搭 PRD 编写规范
+# SCM PRD 编写规范
 
-妙搭生成质量取决于 PRD 的结构化程度。描述越准确，代码质量越高。
+> Skill 目录名保留 `miaoda-prd` 以兼容既有 `@` 引用；**产出面向自建栈**（`apps/web` + Docker），不是妙搭导入模板。
 
-## PRD 必备三部分
+PRD 结构化程度决定实现质量。描述越准确，代码与验收越稳。
+
+## PRD 必备部分
 
 1. **需求分析** — 用户角色、痛点、目标
 2. **数据模型（Schema）** — 表、字段、关系、约束
@@ -72,11 +74,12 @@ draft → pending_approval → approved → shipped → completed
 
 ### 规则
 - 金额 > 10万 需总监审批
-- 每日 08:00 同步物流状态（自动化任务）
+- 每日 08:00 同步物流状态（HTTP 定时任务 `/api/tasks/*`）
 
 ## 5. 集成
-- 飞书：审批结果推送群消息
+- 飞书：审批结果推送群消息 / 多维表格同步
 - 外部：物流 API GET /tracking/{no}
+- 部署：自建 Docker（见 docs/local-server-release-sop.md）
 ```
 
 ## 字段命名约定
@@ -92,4 +95,5 @@ draft → pending_approval → approved → shipped → completed
 - [ ] 外键关系明确
 - [ ] 每个页面标注 CRUD 操作
 - [ ] 状态流转完整且无孤立状态
-- [ ] 自动化任务有触发时间与执行逻辑
+- [ ] 自动化任务写明触发方式（HTTP + Cron 建议时刻）与执行逻辑
+- [ ] 不默认要求「导入妙搭 / ZIP」

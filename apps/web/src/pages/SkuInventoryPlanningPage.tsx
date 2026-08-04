@@ -121,7 +121,7 @@ export function SkuInventoryPlanningPage() {
       </Card>
 
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-        <MetricCard label="有效供给" value={item.position.effectiveQty} hint="同健康灯库存位置口径" />
+        <MetricCard label="有效供给" value={item.position.effectiveQty} hint="飞书快照口径，与库存总览分仓一致" />
         <MetricCard label="日均需求" value={item.avgDaily.toFixed(2)} hint="件 / 天" />
         <MetricCard label="覆盖天数" value={coverageLabel} hint={`安全库存 ${item.safetyStockDays} 天`} />
         <MetricCard label="建议补货量" value={item.suggestedQty} hint={`建议下单 ${item.suggestedDate}`} />
@@ -196,7 +196,7 @@ export function SkuInventoryPlanningPage() {
             </div>
           </div>
           <p className="text-xs text-text-hint">
-            简化说明：库存按日均需求持续消耗；到预计可售日时，开放跟单补给进入可售节点。预计断货日未做断货期销量修正。
+            简化说明：有效供给按飞书同步库存快照计算（不含跟单开放量）。最近预计可售日来自采购跟单，仅作运营参考，不参与覆盖天数与建议量。
           </p>
         </CardContent>
       </Card>

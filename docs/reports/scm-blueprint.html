@@ -1,0 +1,927 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>数智驱动 · 计划—采购—物流—运营主轴平台 | scm-agent</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Roboto+Mono:wght@500;600&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --primary: #ff5000;
+      --primary-hover: #ff7a22;
+      --primary-soft: #fff4ee;
+      --ai-fill: #f5f3ff;
+      --ai-accent: #a855f7;
+      --text-main: #1f1f1f;
+      --text-sub: #595959;
+      --text-hint: #8c8c8c;
+      --bg-layout: #f5f7fa;
+      --bg-card: #ffffff;
+      --border: #e8e8e8;
+      --highlight-warm: #ffedd5;
+      --success: #16a34a;
+      --success-bg: #f0fdf4;
+      --warning: #d97706;
+      --warning-bg: #fffbeb;
+      --info: #2563eb;
+      --info-bg: #eff6ff;
+      --radius: 6px;
+      --shadow: 0 1px 3px rgba(0, 0, 0, 0.05), 0 8px 24px rgba(0, 0, 0, 0.04);
+      --nav-w: 240px;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    html { scroll-behavior: smooth; }
+
+    body {
+      font-family: "PingFang SC", "Microsoft YaHei", Inter, system-ui, sans-serif;
+      font-size: 14px;
+      line-height: 1.65;
+      color: var(--text-main);
+      background: var(--bg-layout);
+    }
+
+    .mono { font-family: "Roboto Mono", ui-monospace, monospace; }
+
+    /* ── Layout ── */
+    .shell {
+      display: grid;
+      grid-template-columns: var(--nav-w) 1fr;
+      min-height: 100vh;
+    }
+
+    .nav {
+      position: sticky;
+      top: 0;
+      height: 100vh;
+      overflow-y: auto;
+      background: var(--bg-card);
+      border-right: 1px solid var(--border);
+      padding: 24px 16px;
+    }
+
+    .nav-brand {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--primary);
+      margin-bottom: 4px;
+    }
+
+    .nav-title {
+      font-size: 12px;
+      color: var(--text-sub);
+      line-height: 1.4;
+      margin-bottom: 20px;
+      padding-bottom: 16px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .nav a {
+      display: block;
+      padding: 8px 10px;
+      border-radius: var(--radius);
+      color: var(--text-sub);
+      text-decoration: none;
+      font-size: 13px;
+      transition: background 0.15s, color 0.15s;
+    }
+
+    .nav a:hover { background: var(--primary-soft); color: var(--primary); }
+    .nav a.active { background: var(--primary-soft); color: var(--primary); font-weight: 600; }
+
+    .main { padding: 32px 40px 64px; max-width: 960px; }
+
+    /* ── Hero ── */
+    .hero {
+      background: linear-gradient(135deg, #fff 0%, var(--primary-soft) 55%, var(--ai-fill) 100%);
+      border: 1px solid var(--border);
+      border-radius: calc(var(--radius) + 2px);
+      box-shadow: var(--shadow);
+      padding: 36px 40px;
+      margin-bottom: 28px;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .hero::after {
+      content: "";
+      position: absolute;
+      top: -60px;
+      right: -60px;
+      width: 200px;
+      height: 200px;
+      background: radial-gradient(circle, rgba(255, 80, 0, 0.12) 0%, transparent 70%);
+      pointer-events: none;
+    }
+
+    .hero-tag {
+      display: inline-flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin-bottom: 16px;
+    }
+
+    .pill {
+      display: inline-block;
+      padding: 4px 10px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 500;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      color: var(--text-sub);
+    }
+
+    .pill.active {
+      background: var(--primary);
+      border-color: var(--primary);
+      color: #fff;
+    }
+
+    .hero h1 {
+      font-size: 26px;
+      font-weight: 700;
+      line-height: 1.35;
+      margin-bottom: 12px;
+      letter-spacing: -0.02em;
+    }
+
+    .hero-lead {
+      font-size: 15px;
+      color: var(--text-sub);
+      max-width: 640px;
+    }
+
+    .hero-meta {
+      margin-top: 20px;
+      font-size: 12px;
+      color: var(--text-hint);
+    }
+
+    /* ── Sections ── */
+    section { margin-bottom: 32px; scroll-margin-top: 24px; }
+
+    .section-head {
+      display: flex;
+      align-items: baseline;
+      gap: 12px;
+      margin-bottom: 16px;
+    }
+
+    .section-num {
+      font-family: "Roboto Mono", monospace;
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--primary);
+      background: var(--primary-soft);
+      padding: 2px 8px;
+      border-radius: var(--radius);
+    }
+
+    .section-head h2 {
+      font-size: 18px;
+      font-weight: 600;
+    }
+
+    .card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      padding: 20px 24px;
+      margin-bottom: 16px;
+    }
+
+    .card h3 {
+      font-size: 15px;
+      font-weight: 600;
+      margin-bottom: 12px;
+      color: var(--text-main);
+    }
+
+    .card p, .card li { color: var(--text-sub); }
+    .card p + p { margin-top: 8px; }
+    .card ul { padding-left: 18px; }
+    .card li + li { margin-top: 6px; }
+
+    .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+    .grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+    .grid-4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
+
+    /* ── Pain cards ── */
+    .pain-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+      gap: 12px;
+    }
+
+    .pain-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 16px 18px;
+      box-shadow: var(--shadow);
+      border-left: 3px solid var(--primary);
+    }
+
+    .pain-card strong {
+      display: block;
+      font-size: 14px;
+      margin-bottom: 6px;
+    }
+
+    .pain-card span { font-size: 13px; color: var(--text-sub); }
+
+    /* ── Stats ── */
+    .stat {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 16px;
+      text-align: center;
+      box-shadow: var(--shadow);
+    }
+
+    .stat-value {
+      font-family: "Roboto Mono", monospace;
+      font-size: 22px;
+      font-weight: 600;
+      color: var(--primary);
+      line-height: 1.2;
+    }
+
+    .stat-value.green { color: var(--success); }
+
+    .stat-label {
+      font-size: 12px;
+      color: var(--text-sub);
+      margin-top: 6px;
+    }
+
+    /* ── Callout ── */
+    .callout {
+      border-radius: var(--radius);
+      padding: 14px 18px;
+      margin-bottom: 16px;
+      font-size: 13px;
+    }
+
+    .callout-warn {
+      background: var(--warning-bg);
+      border: 1px solid #fde68a;
+      color: #92400e;
+    }
+
+    .callout-info {
+      background: var(--info-bg);
+      border: 1px solid #bfdbfe;
+      color: #1e40af;
+    }
+
+    .callout-ai {
+      background: var(--ai-fill);
+      border: 1px solid #ddd6fe;
+      color: #5b21b6;
+    }
+
+    .callout strong { font-weight: 600; }
+
+    /* ── Capability cards ── */
+    .cap-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 16px 18px;
+      box-shadow: var(--shadow);
+    }
+
+    .cap-card.featured {
+      border-color: rgba(255, 80, 0, 0.35);
+      background: linear-gradient(180deg, #fff 0%, var(--primary-soft) 100%);
+    }
+
+    .cap-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 8px;
+      margin-bottom: 8px;
+    }
+
+    .cap-head h4 { font-size: 14px; font-weight: 600; }
+
+    .badge {
+      font-size: 11px;
+      font-weight: 500;
+      padding: 2px 8px;
+      border-radius: 999px;
+      white-space: nowrap;
+    }
+
+    .badge-a { background: var(--primary-soft); color: var(--primary); }
+    .badge-b { background: var(--info-bg); color: var(--info); }
+    .badge-c { background: var(--success-bg); color: var(--success); }
+    .badge-neutral { background: #f5f5f5; color: var(--text-sub); }
+
+    .cap-card p { font-size: 13px; color: var(--text-sub); }
+
+    /* ── Architecture stack ── */
+    .stack { display: flex; flex-direction: column; gap: 8px; }
+
+    .stack-layer {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      padding: 14px 18px;
+      border-radius: var(--radius);
+      border: 1px solid var(--border);
+      background: var(--bg-card);
+    }
+
+    .stack-layer:nth-child(1) { border-left: 4px solid var(--primary); }
+    .stack-layer:nth-child(2) { border-left: 4px solid #3b82f6; }
+    .stack-layer:nth-child(3) { border-left: 4px solid var(--ai-accent); }
+    .stack-layer:nth-child(4) { border-left: 4px solid #64748b; }
+    .stack-layer:nth-child(5) { border-left: 4px solid #94a3b8; }
+
+    .stack-layer .layer-title { font-weight: 600; font-size: 14px; min-width: 160px; }
+    .stack-layer .layer-sub { font-size: 13px; color: var(--text-sub); flex: 1; }
+    .stack-layer .layer-status { font-size: 12px; }
+
+    /* ── Engines ── */
+    .engine-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 14px;
+    }
+
+    .engine {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 18px 20px;
+      box-shadow: var(--shadow);
+    }
+
+    .engine h4 {
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--primary);
+      margin-bottom: 8px;
+    }
+
+    .engine .q { font-size: 12px; color: var(--text-hint); margin-bottom: 8px; }
+    .engine p { font-size: 13px; color: var(--text-sub); }
+
+    /* ── Timeline ── */
+    .timeline { position: relative; padding-left: 24px; }
+
+    .timeline::before {
+      content: "";
+      position: absolute;
+      left: 6px;
+      top: 8px;
+      bottom: 8px;
+      width: 2px;
+      background: linear-gradient(180deg, var(--primary), var(--ai-accent));
+      border-radius: 2px;
+    }
+
+    .timeline-item {
+      position: relative;
+      padding: 0 0 16px 16px;
+    }
+
+    .timeline-item::before {
+      content: "";
+      position: absolute;
+      left: -21px;
+      top: 6px;
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: var(--primary);
+      border: 2px solid #fff;
+      box-shadow: 0 0 0 2px var(--primary-soft);
+    }
+
+    .timeline-item .time {
+      font-family: "Roboto Mono", monospace;
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--primary);
+    }
+
+    .timeline-item .task { font-size: 14px; font-weight: 500; margin: 2px 0; }
+    .timeline-item .desc { font-size: 12px; color: var(--text-sub); }
+
+    /* ── Loop stepper ── */
+    .stepper {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .step {
+      flex: 1 1 calc(25% - 8px);
+      min-width: 140px;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 12px 14px;
+      box-shadow: var(--shadow);
+    }
+
+    .step-id {
+      font-family: "Roboto Mono", monospace;
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--primary);
+    }
+
+    .step-name { font-size: 13px; font-weight: 600; margin: 4px 0; }
+    .step-desc { font-size: 11px; color: var(--text-sub); }
+
+    .stepper-arrow {
+      display: none;
+    }
+
+    /* ── Module list ── */
+    .module-list { display: flex; flex-wrap: wrap; gap: 8px; }
+
+    .module-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 8px 12px;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      font-size: 13px;
+      box-shadow: var(--shadow);
+    }
+
+    .dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+
+    .dot.done { background: var(--success); }
+    .dot.wip { background: var(--warning); }
+
+    /* ── Roadmap ── */
+    .roadmap { display: flex; flex-direction: column; gap: 0; }
+
+    .road-item {
+      display: grid;
+      grid-template-columns: 120px 100px 1fr;
+      gap: 16px;
+      padding: 16px 0;
+      border-bottom: 1px solid var(--border);
+      align-items: start;
+    }
+
+    .road-item:last-child { border-bottom: none; }
+
+    .road-level { font-weight: 600; font-size: 14px; }
+
+    .status {
+      font-size: 12px;
+      font-weight: 500;
+      padding: 3px 10px;
+      border-radius: 999px;
+      text-align: center;
+    }
+
+    .status-done { background: var(--success-bg); color: var(--success); }
+    .status-wip { background: var(--warning-bg); color: var(--warning); }
+    .status-plan { background: #f5f5f5; color: var(--text-sub); }
+
+    .road-desc { font-size: 13px; color: var(--text-sub); }
+
+    /* ── Footer ── */
+    .footer {
+      margin-top: 48px;
+      padding-top: 24px;
+      border-top: 1px solid var(--border);
+      font-size: 12px;
+      color: var(--text-hint);
+      text-align: center;
+    }
+
+    .flywheel {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 8px;
+      font-size: 13px;
+      color: var(--text-sub);
+      padding: 14px 18px;
+      background: var(--highlight-warm);
+      border-radius: var(--radius);
+      margin-bottom: 16px;
+    }
+
+    .flywheel span.arrow { color: var(--primary); font-weight: 700; }
+
+    @media (max-width: 900px) {
+      .shell { grid-template-columns: 1fr; }
+      .nav {
+        position: relative;
+        height: auto;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 4px;
+        padding: 12px;
+      }
+      .nav-brand, .nav-title { width: 100%; }
+      .nav-title { margin-bottom: 8px; padding-bottom: 8px; }
+      .main { padding: 20px 16px 48px; }
+      .grid-2, .grid-3, .grid-4, .engine-grid { grid-template-columns: 1fr; }
+      .hero { padding: 24px 20px; }
+      .hero h1 { font-size: 22px; }
+      .road-item { grid-template-columns: 1fr; gap: 6px; }
+      .step { flex: 1 1 100%; }
+    }
+
+    @media print {
+      .nav { display: none; }
+      .shell { grid-template-columns: 1fr; }
+      .main { max-width: 100%; padding: 16px; }
+      .card, .hero { box-shadow: none; break-inside: avoid; }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <nav class="nav" aria-label="章节目录">
+      <div class="nav-brand">scm-agent</div>
+      <div class="nav-title">数智驱动 · 计划—采购—物流—运营主轴平台</div>
+      <a href="#hero">概述</a>
+      <a href="#s1">一、背景与痛点</a>
+      <a href="#s2">二、价值模型</a>
+      <a href="#s3">三、总体架构</a>
+      <a href="#s4">四、四大引擎</a>
+      <a href="#s5">五、数据自动化</a>
+      <a href="#s6">六、业务闭环</a>
+      <a href="#s7">七、能力地图</a>
+      <a href="#s8">八、数字化对齐</a>
+      <a href="#s9">九、AI 能力</a>
+      <a href="#s10">十、安全治理</a>
+      <a href="#s11">十一、成熟度路线</a>
+    </nav>
+
+    <main class="main">
+      <header class="hero" id="hero">
+        <div class="hero-tag">
+          <span class="pill active">效率工程</span>
+          <span class="pill active">飞书 AI+</span>
+          <span class="pill">四大引擎</span>
+          <span class="pill">八节点主闭环</span>
+        </div>
+        <h1>数智驱动 · 计划—采购—物流—运营主轴平台</h1>
+        <p class="hero-lead">
+          以飞书为协同底座、妙搭为统一入口、Dify 为 AI 神经、scm-agent 为业务计算引擎。
+          在集团数字化蓝图中，率先回答并闭环：<strong>该不该补、补多少、何时下单、能否按期到货</strong>。
+        </p>
+        <p class="hero-meta">跨境电商供应链 · 飞书 AI+ 效率工程 · 向领导汇报蓝图 · 2026-07-30</p>
+      </header>
+
+      <!-- 一、背景 -->
+      <section id="s1">
+        <div class="section-head">
+          <span class="section-num">01</span>
+          <h2>背景 · 现状 · 要解决的问题</h2>
+        </div>
+        <div class="pain-grid">
+          <div class="pain-card"><strong>数据孤岛</strong><span>迅捷 ERP、Excel、飞书表多套并存，库存与主数据口径经常不一致</span></div>
+          <div class="pain-card"><strong>预测不准</strong><span>销量预测偏差大，备货决策缺乏可靠输入，计划与执行经常脱节</span></div>
+          <div class="pain-card"><strong>备货效率低</strong><span>评审依赖人工导出整理，效率低、口径不统一，准确性难以保障</span></div>
+          <div class="pain-card"><strong>调拨组柜薄弱</strong><span>调拨/组柜销量占比低，规则与标准不一，跨仓协同与组柜决策困难</span></div>
+          <div class="pain-card"><strong>采购跟单繁琐</strong><span>逐笔查表、重复沟通、进度汇总耗时长，大件待确认与超期靠人工筛选</span></div>
+          <div class="pain-card"><strong>流程断档</strong><span>预测、计划、跟单、到货之间缺少系统串联，进度靠人工盯人</span></div>
+          <div class="pain-card"><strong>时效滞后</strong><span>手工导出上传，补货决策常落后 T+1 甚至更久，断货积压事后才发现</span></div>
+        </div>
+        <div class="grid-3" style="margin-top:16px">
+          <div class="card"><h3>业务诉求</h3><p>PMC 要可解释建议；采购要超期自动找人；管理者要看板漏斗。</p></div>
+          <div class="card"><h3>IT / 飞书诉求</h3><p>统一入口、统一身份、敏感数据可控、对齐妙搭/AI+。</p></div>
+          <div class="card"><h3>不做清单</h3><p>正式 PO/付款、MES、船司 API、供应商门户、SAP 实对接。</p></div>
+        </div>
+      </section>
+
+      <!-- 二、价值 -->
+      <section id="s2">
+        <div class="section-head">
+          <span class="section-num">02</span>
+          <h2>价值模型 · 平台基建 + 能力点量化</h2>
+        </div>
+        <div class="callout callout-warn">
+          <strong>价值记账原则：</strong>系统侧只谈「使能与基建」。金额与工时类收益挂到具体能力点上验收，避免「整平台承诺释放 X 亿」；4 亿等多备货数字仅作「销量预测及备货」点的历史参考基线。
+        </div>
+        <div class="flywheel">
+          效率飞轮：数据自动到位 <span class="arrow">→</span> AI 自动筛推 <span class="arrow">→</span> 人在飞书确认 <span class="arrow">→</span> 闭环回写 <span class="arrow">→</span> 次日再驱动各能力点
+        </div>
+        <div class="grid-3" style="margin-bottom:16px">
+          <div class="cap-card featured">
+            <div class="cap-head"><h4>能力点 A · 销量预测及自动备货</h4><span class="badge badge-a">主价值点</span></div>
+            <p>资金占用 · 转投毛利 · 缺货挽回 · 备货评审工时</p>
+          </div>
+          <div class="cap-card featured">
+            <div class="cap-head"><h4>能力点 B · 采购跟单 / 大件催办</h4><span class="badge badge-b">采购主价值</span></div>
+            <p>降本待量化 · 提效 <strong class="mono">1000+</strong> 工时/年 · 待办/异常清单</p>
+          </div>
+          <div class="cap-card featured">
+            <div class="cap-head"><h4>能力点 C · FOB 分账</h4><span class="badge badge-c">物流节点</span></div>
+            <p>头程费用系统分摊 · 年预计节省 <strong class="mono">480+</strong> 工时</p>
+          </div>
+        </div>
+        <div class="grid-4" style="margin-bottom:16px">
+          <div class="stat"><div class="stat-value">4亿</div><div class="stat-label">多备货历史基线（2025）</div></div>
+          <div class="stat"><div class="stat-value">31,740</div><div class="stat-label">有效备货次数</div></div>
+          <div class="stat"><div class="stat-value">10</div><div class="stat-label">单次节省（分钟）</div></div>
+          <div class="stat"><div class="stat-value green">≈0.53万</div><div class="stat-label">年节省工时（小时）</div></div>
+        </div>
+        <div class="card">
+          <h3>能力点 A · 多备货基线情景（2025）</h3>
+          <ul>
+            <li><strong>保守 5%</strong>：预计释放约 0.20 亿 · 转投毛利示意约 250 万量级</li>
+            <li><strong>基准 10%</strong>：预计释放约 0.40 亿 · 转投毛利示意约 500 万量级</li>
+            <li><strong>进取 20%</strong>：预计释放约 0.80 亿 · 转投毛利示意约 1,000 万量级</li>
+          </ul>
+          <p style="margin-top:12px;font-size:12px;color:var(--text-hint)">口径：大件审批备货约 12 亿 − SKU 预报财务采购成本约 8 亿 = 差额约 4 亿（历史参考，非已实现收益）</p>
+        </div>
+      </section>
+
+      <!-- 三、架构 -->
+      <section id="s3">
+        <div class="section-head">
+          <span class="section-num">03</span>
+          <h2>总体架构 · 飞书 AI+ 五层栈</h2>
+        </div>
+        <div class="stack">
+          <div class="stack-layer">
+            <div class="layer-title">① 访问层 · 妙搭</div>
+            <div class="layer-sub">统一工作台 · 飞书 SSO · 菜单导航</div>
+            <span class="layer-status badge badge-neutral">规划接入 · Face</span>
+          </div>
+          <div class="stack-layer">
+            <div class="layer-title">② 协同层 · 飞书</div>
+            <div class="layer-sub">多维表格 · 群消息 · aily 审批</div>
+            <span class="layer-status status-done status">已落地 · Blood</span>
+          </div>
+          <div class="stack-layer">
+            <div class="layer-title">③ 智能层 · Dify</div>
+            <div class="layer-sub">催办 · 评分 · 预测增强 · RAG</div>
+            <span class="layer-status status-wip status">部分落地 · Neural</span>
+          </div>
+          <div class="stack-layer">
+            <div class="layer-title">④ 引擎层 · scm-agent</div>
+            <div class="layer-sub">算法 · 状态机 · Cron · REST API</div>
+            <span class="layer-status status-done status">已生产 · Brain</span>
+          </div>
+          <div class="stack-layer">
+            <div class="layer-title">⑤ 数据层 · PostgreSQL</div>
+            <div class="layer-sub">日快照 · 权威口径 · 任务审计</div>
+            <span class="layer-status status-done status">已生产 · Memory</span>
+          </div>
+        </div>
+        <div class="callout callout-info" style="margin-top:16px">
+          <strong>妙搭接入路径：</strong>当前引擎 Docker 生产、Web 直连。后续妙搭经 REST API 调用 scm-agent——业务不重写，只换统一入口。
+        </div>
+      </section>
+
+      <!-- 四、引擎 -->
+      <section id="s4">
+        <div class="section-head">
+          <span class="section-num">04</span>
+          <h2>四大核心引擎</h2>
+        </div>
+        <div class="engine-grid">
+          <div class="engine">
+            <h4>数据智能引擎</h4>
+            <div class="q">数据从哪来、是否可信、何时就绪</div>
+            <p>双跳同步 · 字段映射 · 日快照 · 主数据联动 · 任务互斥 → T 日数据就绪，Eliminate 手工导入</p>
+          </div>
+          <div class="engine">
+            <h4>库存规划引擎</h4>
+            <div class="q">该不该补 · 补多少 · 何时下单</div>
+            <p>库存位置 · 覆盖天数 · 健康灯 · 提前期 · metrics → 红黄灯可行动，建议可采纳</p>
+          </div>
+          <div class="engine">
+            <h4>供应商 PMC 引擎</h4>
+            <div class="q">计划如何下发 · 履约到哪步 · 何时可售</div>
+            <p>PMC 计划 · 跟单状态机 · 交期提醒 · 到货回写 → 履约可追踪，到货闭环库存</p>
+          </div>
+          <div class="engine">
+            <h4>AI 增强引擎</h4>
+            <div class="q">谁该处理 · 怎么解释 · SOP 怎查</div>
+            <p>Dify 催办 · 预警摘要 · 评分 · 预测 · RAG → AI 找人，人确认，数量本地算</p>
+          </div>
+        </div>
+        <div class="callout callout-ai" style="margin-top:16px">
+          <strong>规划触发：</strong>覆盖天数 = 库存位置 / 预计日需求；若覆盖 &lt; 提前期+安全库存，或触及 ROP → 建议。<br />
+          <strong>AI 边界：</strong>数量本地算；预测/资讯建议态；推送脱敏。
+        </div>
+      </section>
+
+      <!-- 五、数据 -->
+      <section id="s5">
+        <div class="section-head">
+          <span class="section-num">05</span>
+          <h2>数据路径 · 五条自动化链路</h2>
+        </div>
+        <div class="timeline">
+          <div class="timeline-item"><div class="time">07:00</div><div class="task">缺货预警</div><div class="desc">规划引擎 + AI 摘要推群</div></div>
+          <div class="timeline-item"><div class="time">07:20</div><div class="task">库存查询拉取</div><div class="desc">分仓明细 · 约 200 列 → 日快照归档</div></div>
+          <div class="timeline-item"><div class="time">07:30</div><div class="task">库存周转拉取</div><div class="desc">5800+ SKU 宽表 → 总览 + 补货输入 + 主数据</div></div>
+          <div class="timeline-item"><div class="time">08:00</div><div class="task">大件备货 / 跨境资讯</div><div class="desc">备货申请表全量同步 · 研究 Agent 采集</div></div>
+          <div class="timeline-item"><div class="time">08:05</div><div class="task">采购跟单拉取</div><div class="desc">履约台账 → 与 PMC 跟单对齐</div></div>
+          <div class="timeline-item"><div class="time">09:00</div><div class="task">Dify 催办推送</div><div class="desc">超期/待办 → 企微 · 脱敏摘要</div></div>
+          <div class="timeline-item"><div class="time">周一 09:00</div><div class="task">补货预测任务</div><div class="desc">建议生成 · 可选 Dify 文案增强</div></div>
+        </div>
+      </section>
+
+      <!-- 六、闭环 -->
+      <section id="s6">
+        <div class="section-head">
+          <span class="section-num">06</span>
+          <h2>业务闭环体系</h2>
+        </div>
+        <div class="stepper">
+          <div class="step"><div class="step-id">N1</div><div class="step-name">数据入湖</div><div class="step-desc">Cron 拉取飞书五类台账</div></div>
+          <div class="step"><div class="step-id">N2</div><div class="step-name">主数据对齐</div><div class="step-desc">SKU 创建/更新 · 生命周期</div></div>
+          <div class="step"><div class="step-id">N3</div><div class="step-name">需求发布</div><div class="step-desc">预测版本 + 影响预览</div></div>
+          <div class="step"><div class="step-id">N4</div><div class="step-name">智能规划</div><div class="step-desc">补货建议 · 健康灯 · 预警</div></div>
+          <div class="step"><div class="step-id">N5</div><div class="step-name">计划确认</div><div class="step-desc">PMC 草稿 → 确认 → 跟单</div></div>
+          <div class="step"><div class="step-id">N6</div><div class="step-name">履约协同</div><div class="step-desc">状态推进 · Dify 催办</div></div>
+          <div class="step"><div class="step-id">N7</div><div class="step-name">到货闭环</div><div class="step-desc">登记收货 · 回写库存</div></div>
+          <div class="step"><div class="step-id">N8</div><div class="step-name">经营复盘</div><div class="step-desc">看板漏斗 · 回流预测</div></div>
+        </div>
+        <div class="card" style="margin-top:16px">
+          <h3>子闭环</h3>
+          <ul>
+            <li><strong>库存健康</strong>：快照 → 健康计算 → 补货灯回写 → 07:00 预警推群</li>
+            <li><strong>采购催办</strong>：飞书 → 同步 → Dify 筛超期 → 企微 → 人处理</li>
+            <li><strong>预测准确率</strong>：基线 → 发布 → 补货采用 → 回测 → 纠偏</li>
+            <li><strong>资讯情报</strong>：采集 → 审核 → 采用入飞书</li>
+          </ul>
+        </div>
+      </section>
+
+      <!-- 七、模块 -->
+      <section id="s7">
+        <div class="section-head">
+          <span class="section-num">07</span>
+          <h2>分模块能力地图</h2>
+        </div>
+        <div class="module-list">
+          <span class="module-chip"><span class="dot done"></span>经营看板</span>
+          <span class="module-chip"><span class="dot done"></span>库存总览 / 查询</span>
+          <span class="module-chip"><span class="dot done"></span>安全库存 / 预警</span>
+          <span class="module-chip"><span class="dot wip"></span>SKU 规划 / 驾驶舱</span>
+          <span class="module-chip"><span class="dot done"></span>销售预测</span>
+          <span class="module-chip"><span class="dot done"></span>补货 / PMC / 跟单</span>
+          <span class="module-chip"><span class="dot wip"></span>发运管理</span>
+          <span class="module-chip"><span class="dot done"></span>大件备货 / 采购跟单</span>
+          <span class="module-chip"><span class="dot done"></span>FOB 分账</span>
+          <span class="module-chip"><span class="dot done"></span>客服质量</span>
+          <span class="module-chip"><span class="dot done"></span>跨境资讯</span>
+          <span class="module-chip"><span class="dot wip"></span>AI 助手 / RAG</span>
+        </div>
+      </section>
+
+      <!-- 八、对齐 -->
+      <section id="s8">
+        <div class="section-head">
+          <span class="section-num">08</span>
+          <h2>对齐集团数字化蓝图</h2>
+        </div>
+        <div class="card">
+          <p style="margin-bottom:12px">主轴覆盖：<strong>计划 · 采购 · 物流 · 运营</strong>（八列职能节点：0 未覆盖 / 1 部分 / 2 较强 / 3 主轴核心）</p>
+          <ul>
+            <li><strong>计划</strong>：PMC + 补货建议（部分）· 跟单状态机（已覆盖）· 发运/调拨（建设中/规划中）</li>
+            <li><strong>采购</strong>：飞书同步 + Dify 催办（已覆盖）· 出货/大件备货（部分）</li>
+            <li><strong>运营</strong>：销售预测工作台（已覆盖）· 协同预览（部分）</li>
+            <li><strong>物流</strong>：库存展示（部分）· FOB 头程分账（部分）</li>
+            <li><strong>产研 / 客服</strong>：主数据自动维护 · 回复质量评估</li>
+          </ul>
+        </div>
+      </section>
+
+      <!-- 九、AI -->
+      <section id="s9">
+        <div class="section-head">
+          <span class="section-num">09</span>
+          <h2>AI 能力矩阵</h2>
+        </div>
+        <div class="grid-2">
+          <div class="card">
+            <h3>已交付</h3>
+            <ul>
+              <li>缺货预警摘要（07:00）</li>
+              <li>大件超期催办 · 供应商/采购（09:00）</li>
+              <li>采购跟单催办（每日）</li>
+              <li>客服质量评分（Dify 四维）</li>
+              <li>跨境资讯研究 Agent（08:00）</li>
+            </ul>
+          </div>
+          <div class="card">
+            <h3>进行中 / 规划</h3>
+            <ul>
+              <li>AI 单 SKU 预测（长尾 SKU）</li>
+              <li>知识库 RAG · SOP 问答</li>
+              <li>批量预测智能体（月报）</li>
+              <li>aily 审批（计划确认）</li>
+              <li>补货文案增强（可选，不改数量）</li>
+            </ul>
+          </div>
+        </div>
+      </section>
+
+      <!-- 十、安全 -->
+      <section id="s10">
+        <div class="section-head">
+          <span class="section-num">10</span>
+          <h2>安全与治理</h2>
+        </div>
+        <div class="grid-2">
+          <div class="card"><h3>身份与权限</h3><p>飞书 OAuth + 邮箱 · 菜单级 RBAC · 敏感字段分级可见</p></div>
+          <div class="card"><h3>数据主权</h3><p>PostgreSQL 自建 Docker · Cloudflare Tunnel · 密钥不进仓库</p></div>
+          <div class="card"><h3>任务与审计</h3><p>Cron 需 X-Cron-Secret · 操作日志 + task_runs</p></div>
+          <div class="card"><h3>AI 边界</h3><p>数量本地算 · 建议态人工确认 · 推送脱敏（条数+链接）</p></div>
+        </div>
+      </section>
+
+      <!-- 十一、路线 -->
+      <section id="s11">
+        <div class="section-head">
+          <span class="section-num">11</span>
+          <h2>成熟度路线 · 展望</h2>
+        </div>
+        <div class="card">
+          <div class="roadmap">
+            <div class="road-item">
+              <div class="road-level">L1 数字化底座</div>
+              <span class="status status-done">已交付</span>
+              <div class="road-desc">五条数据链 · 主数据 · PMC · FOB · 预测</div>
+            </div>
+            <div class="road-item">
+              <div class="road-level">L2 自动化协同</div>
+              <span class="status status-done">已交付</span>
+              <div class="road-desc">Cron · Dify 催办 · 预警/补货定时 · 资讯</div>
+            </div>
+            <div class="road-item">
+              <div class="road-level">L3 智能化增强</div>
+              <span class="status status-wip">进行中</span>
+              <div class="road-desc">AI 预测 · 知识库 RAG · 驾驶舱 · 发运</div>
+            </div>
+            <div class="road-item">
+              <div class="road-level">L4 飞书原生入口</div>
+              <span class="status status-plan">规划中</span>
+              <div class="road-desc">妙搭统一访问 · aily 审批 · 经营看板</div>
+            </div>
+            <div class="road-item">
+              <div class="road-level">L5 全链路扩展</div>
+              <span class="status status-plan">展望</span>
+              <div class="road-desc">质检/物流 Agent · 调拨 · 平台 API</div>
+            </div>
+          </div>
+        </div>
+        <div class="callout callout-warn" style="margin-top:16px;background:linear-gradient(135deg,var(--primary-soft),var(--highlight-warm));border-color:rgba(255,80,0,0.2);color:var(--text-main)">
+          <strong>结语：</strong>五条数据链自动入湖、四大引擎分工清晰、八节点主闭环可验收、AI 催办已上线。下一步挂妙搭、启知识库与 AI 预测——从效率工程试点，走向数智供应链主轴平台。
+        </div>
+      </section>
+
+      <footer class="footer">
+        scm-agent · 飞书 AI+ 蓝图报告 · 对齐集团数字化蓝图 · 2026-07-30
+      </footer>
+    </main>
+  </div>
+
+  <script>
+    (function () {
+      const links = document.querySelectorAll(".nav a");
+      const sections = [...links].map((a) => document.querySelector(a.getAttribute("href"))).filter(Boolean);
+
+      function onScroll() {
+        let current = sections[0]?.id;
+        for (const sec of sections) {
+          const top = sec.getBoundingClientRect().top;
+          if (top <= 120) current = sec.id;
+        }
+        links.forEach((a) => {
+          a.classList.toggle("active", a.getAttribute("href") === "#" + current);
+        });
+      }
+
+      window.addEventListener("scroll", onScroll, { passive: true });
+      onScroll();
+    })();
+  </script>
+</body>
+</html>

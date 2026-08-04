@@ -1,7 +1,7 @@
-import { and, desc, eq, gte, sql } from 'drizzle-orm';
-import { db, newsArticles, newsIngestLogs, newsSources } from '@scm/db';
+import { and, desc, eq, gte, or, sql } from 'drizzle-orm';
+import { db, newsArticles, newsIngestLogs, newsSources, taskRuns } from '@scm/db';
 import { buildSummaryFallback, buildRelevanceProbeText, extractArticleBody } from './body-extract.js';
-import { syncArticleToBitable, syncPendingArticlesToBitable } from './bitable-sync.js';
+import { syncPendingArticlesToBitable } from './bitable-sync.js';
 import {
   classifyNewsArticle,
   evaluateNewsRelevance,
@@ -9,14 +9,19 @@ import {
 } from './content-filter.js';
 import {
   getNewsIntelMinRelevance,
-  getRsshubBaseUrl,
+  getNewsIntelRunBudgetMs,
   isNewsIntelEnabled,
 } from './config.js';
 import { buildDedupKeys, shouldSkipAsDuplicate } from './dedup.js';
-import { enrichArticleWithDify } from './enrich-dify.js';
+import {
+  enrichArticleWithDify,
+  isNewsIntelEnrichEnabled,
+} from './enrich-dify.js';
 import { fetchRssFeed, parseRssPubDate } from './rss-fetcher.js';
 import {
   ensureNewsSourcesSeeded,
+  isCollectableNewsSourceType,
+  isLegacyGoogleNewsQueryFeedUrl,
   listNewsSources,
 } from './source-service.js';
 import {
@@ -32,8 +37,117 @@ import type {
   NewsArticleStatus,
   NewsBusinessValidity,
   NewsBitableSyncStatus,
+  NewsCategory,
+  NewsSourceType,
 } from './types.js';
 import { normalizeNewsUrl, normalizeTitle } from './url-normalize.js';
+
+const HARD_DISCARD_REASONS = new Set([
+  'outside_lookback_window',
+  'negative_keyword',
+  'source_exclude_keyword',
+  'source_include_keyword_miss',
+]);
+const BODY_EXTRACTION_STAGE_BUDGET_MS = 75_000;
+const DIFY_STAGE_BUDGET_MS = 125_000;
+
+let newsIngestRunning = false;
+
+export class NewsIngestBusyError extends Error {
+  constructor() {
+    super('News ingest is already running');
+    this.name = 'NewsIngestBusyError';
+  }
+}
+
+export function decideCandidateDisposition(input: {
+  filterReason?: string;
+  relevanceScore: number;
+}): 'discard' | 'pending_review' {
+  return input.filterReason && HARD_DISCARD_REASONS.has(input.filterReason)
+    ? 'discard'
+    : 'pending_review';
+}
+
+export function resolveIngestItemLimit(input: {
+  sourceType: NewsSourceType;
+  maxItemsPerQuery?: number;
+  maxItemsPerSource: number;
+}): number {
+  return input.sourceType === 'query_feed'
+    ? input.maxItemsPerQuery ?? input.maxItemsPerSource
+    : input.maxItemsPerSource;
+}
+
+export function buildNewsDiscoveryMetadata(input: {
+  sourceType: NewsSourceType;
+  isOfficial: boolean;
+  canonicalUrl: string;
+  discoveryQuery?: string;
+  sourceUrl?: string;
+}): {
+  discoveryChannel: 'query_feed' | 'native_feed' | 'official_site';
+  discoveryQuery: string | null;
+  sourceDomain: string | null;
+  aggregatorOnly: boolean;
+} {
+  let sourceDomain: string | null = null;
+  let canonicalDomain: string | null = null;
+  try {
+    sourceDomain = new URL(input.sourceUrl ?? input.canonicalUrl).hostname.toLowerCase();
+    canonicalDomain = new URL(input.canonicalUrl).hostname.toLowerCase();
+  } catch {
+    // Invalid URLs remain domain-less and are handled by the existing fetch flow.
+  }
+  return {
+    discoveryChannel:
+      input.sourceType === 'query_feed'
+        ? 'query_feed'
+        : input.isOfficial
+          ? 'official_site'
+          : 'native_feed',
+    discoveryQuery: input.discoveryQuery ?? null,
+    sourceDomain,
+    aggregatorOnly: canonicalDomain === 'news.google.com',
+  };
+}
+
+export function tryAcquireNewsIngestLock(): (() => void) | null {
+  if (newsIngestRunning) return null;
+  newsIngestRunning = true;
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    newsIngestRunning = false;
+  };
+}
+
+export function isNewsIngestDeadlineExceeded(deadlineAt: number, now = Date.now()): boolean {
+  return now >= deadlineAt;
+}
+
+export function shouldContinueNewsIngest(deadlineAt: number, now = Date.now()): boolean {
+  return !isNewsIngestDeadlineExceeded(deadlineAt, now);
+}
+
+export function hasNewsIngestStageBudget(
+  deadlineAt: number,
+  requiredMs: number,
+  now = Date.now(),
+): boolean {
+  return now + requiredMs < deadlineAt;
+}
+
+export function isPublishedPendingSync(article: {
+  status: string;
+  bitableSyncStatus: string | null;
+}): boolean {
+  return (
+    article.status === 'published' &&
+    (article.bitableSyncStatus === 'pending' || article.bitableSyncStatus === 'failed')
+  );
+}
 
 function bumpReason(bucket: Record<string, number>, reason: string) {
   bucket[reason] = (bucket[reason] ?? 0) + 1;
@@ -55,22 +169,50 @@ function shanghaiDateKey(date = new Date()): string {
   }).format(date);
 }
 
+export function isCompletedSuccessfulIngestTaskRunToday(
+  run: {
+    taskName: string;
+    status: string;
+    startedAt: Date | null;
+    finishedAt: Date | null;
+  },
+  now = new Date(),
+): boolean {
+  if (
+    run.taskName !== 'news_ingest' ||
+    run.status !== 'success' ||
+    !run.startedAt ||
+    !run.finishedAt
+  ) {
+    return false;
+  }
+  const today = shanghaiDateKey(now);
+  return (
+    shanghaiDateKey(run.startedAt) === today &&
+    shanghaiDateKey(run.finishedAt) === today
+  );
+}
+
 export async function hasSuccessfulIngestToday(): Promise<boolean> {
-  const today = shanghaiDateKey();
   const recent = await db
-    .select({ createdAt: newsIngestLogs.createdAt, errorMessage: newsIngestLogs.errorMessage })
-    .from(newsIngestLogs)
-    .orderBy(desc(newsIngestLogs.createdAt))
+    .select({
+      taskName: taskRuns.taskName,
+      status: taskRuns.status,
+      startedAt: taskRuns.startedAt,
+      finishedAt: taskRuns.finishedAt,
+    })
+    .from(taskRuns)
+    .where(eq(taskRuns.taskName, 'news_ingest'))
+    .orderBy(desc(taskRuns.startedAt))
     .limit(200);
 
-  return recent.some(
-    (r) => !r.errorMessage && r.createdAt && shanghaiDateKey(r.createdAt) === today,
-  );
+  return recent.some((run) => isCompletedSuccessfulIngestTaskRunToday(run));
 }
 
 async function processSource(
   source: typeof newsSources.$inferSelect,
   taskRunId?: string,
+  deadlineAt = Number.POSITIVE_INFINITY,
 ): Promise<IngestSourceResult> {
   const started = Date.now();
   const result: IngestSourceResult = {
@@ -96,37 +238,22 @@ async function processSource(
   }
 
   try {
-    if (source.sourceType === 'rsshub' && !getRsshubBaseUrl()) {
-      result.errorMessage = 'RSSHUB_BASE_URL not configured — skip rsshub source';
-      await db
-        .update(newsSources)
-        .set({ lastError: result.errorMessage, updatedAt: new Date() })
-        .where(eq(newsSources.id, source.id));
-      result.durationMs = Date.now() - started;
-      await db.insert(newsIngestLogs).values({
-        sourceId: source.id,
-        taskRunId: taskRunId ?? null,
-        fetchedCount: 0,
-        newCount: 0,
-        skippedDup: 0,
-        skippedLowRelevance: 0,
-        skippedFiltered: 0,
-        translatedCount: 0,
-        bitableSyncFailedCount: 0,
-        errorMessage: result.errorMessage,
-        durationMs: result.durationMs,
-      });
-      return result;
-    }
-
     const items = await fetchRssFeed(source.feedUrl, source.sourceType);
     result.fetchedCount = items.length;
     const policy = loadNewsIntelPolicy();
-    const maxItems = policy.maxItemsPerSource;
+    const maxItems = resolveIngestItemLimit({
+      sourceType: source.sourceType,
+      maxItemsPerQuery: sourceConfig.maxItemsPerQuery,
+      maxItemsPerSource: policy.maxItemsPerSource,
+    });
     const minRelevance = getNewsIntelMinRelevance();
     const filterReasons: Record<string, number> = {};
 
     for (const item of items.slice(0, maxItems)) {
+      if (isNewsIngestDeadlineExceeded(deadlineAt)) {
+        result.errorMessage = 'run_budget_exceeded';
+        break;
+      }
       const titleOriginal = normalizeTitle(item.title);
       const canonicalUrl = normalizeNewsUrl(item.link);
       const snippet = item.contentSnippet ?? '';
@@ -147,29 +274,51 @@ async function processSource(
         isOfficial,
       });
       if (!relevance.pass) {
-        result.skippedFiltered += 1;
+        const disposition = decideCandidateDisposition({
+          filterReason: relevance.reason,
+          relevanceScore: 0,
+        });
         bumpReason(filterReasons, relevance.reason || 'filtered');
-        continue;
+        if (disposition === 'discard') {
+          result.skippedFiltered += 1;
+          continue;
+        }
       }
 
+      if (!hasNewsIngestStageBudget(deadlineAt, BODY_EXTRACTION_STAGE_BUDGET_MS)) {
+        result.errorMessage = 'run_budget_exceeded';
+        break;
+      }
       const bodyText =
         (await extractArticleBody(canonicalUrl, item.content)) ?? snippet;
+      if (!shouldContinueNewsIngest(deadlineAt)) {
+        result.errorMessage = 'run_budget_exceeded';
+        break;
+      }
 
       const english = isPredominantlyEnglish(titleOriginal, bodyText || probeText);
       const classification = classifyNewsArticle(titleOriginal, probeText);
 
-      const enrich = await enrichArticleWithDify({
-        title: titleOriginal,
-        bodyText,
-        sourceName: source.name,
-        language: english ? 'en' : 'zh',
-        sourceTier,
-        isOfficial,
-        // 中文标题改由飞书多维表格 AI 字段补全；Dify 有则用，无则英文原文入表
-        requireTitleZh: false,
-        fallbackCategory: 'other',
-        fallbackPriority: classification.priority,
-      });
+      const enrich =
+        !isNewsIntelEnrichEnabled() ||
+        hasNewsIngestStageBudget(deadlineAt, DIFY_STAGE_BUDGET_MS)
+          ? await enrichArticleWithDify({
+              title: titleOriginal,
+              bodyText,
+              sourceName: source.name,
+              language: english ? 'en' : 'zh',
+              sourceTier,
+              isOfficial,
+              // 中文标题改由飞书多维表格 AI 字段补全；Dify 有则用，无则英文原文入表
+              requireTitleZh: false,
+              fallbackCategory: 'other',
+              fallbackPriority: classification.priority,
+            })
+          : null;
+      if (!shouldContinueNewsIngest(deadlineAt)) {
+        result.errorMessage = 'run_budget_exceeded';
+        break;
+      }
 
       if (english && enrich?.titleZh) result.translatedCount += 1;
 
@@ -185,7 +334,6 @@ async function processSource(
       if (relevanceScore < minRelevance) {
         result.skippedLowRelevance += 1;
         bumpReason(filterReasons, 'low_relevance');
-        continue;
       }
 
       const priority =
@@ -210,10 +358,19 @@ async function processSource(
       const brandTags = classification.brandTags;
       const filterHits = [
         ...relevance.hits,
+        ...(!relevance.pass && relevance.reason ? [relevance.reason] : []),
+        ...(relevanceScore < minRelevance ? ['low_relevance'] : []),
         ...classification.filterHits,
       ].join('; ');
 
       const { urlHash, contentHash } = buildDedupKeys(displayTitle, summary, canonicalUrl);
+      const discovery = buildNewsDiscoveryMetadata({
+        sourceType: source.sourceType,
+        isOfficial,
+        canonicalUrl,
+        discoveryQuery: sourceConfig.discoveryQuery,
+        sourceUrl: item.sourceUrl,
+      });
 
       const [inserted] = await db
         .insert(newsArticles)
@@ -238,7 +395,7 @@ async function processSource(
           tags: enrich?.tags?.length ? enrich.tags : null,
           relevanceScore,
           priority,
-          status: 'published',
+          status: 'pending_review',
           sourceTier,
           isOfficialSource: isOfficial,
           filterHits,
@@ -250,17 +407,12 @@ async function processSource(
           language: english ? 'en' : 'zh',
           bitableSyncStatus: 'pending',
           ingestRunId: taskRunId ?? null,
+          ...discovery,
         })
         .returning({ id: newsArticles.id });
 
       if (inserted) {
         result.newCount += 1;
-        try {
-          await syncArticleToBitable(inserted.id);
-        } catch (err) {
-          result.bitableSyncFailedCount += 1;
-          console.warn('[news-intel] Bitable sync failed for', inserted.id, err);
-        }
       }
     }
 
@@ -278,7 +430,7 @@ async function processSource(
       })
       .where(eq(newsSources.id, source.id));
 
-    if (filterNote) {
+    if (filterNote && !result.errorMessage) {
       result.errorMessage = filterNote;
     }
   } catch (err) {
@@ -313,11 +465,13 @@ async function processSource(
   return result;
 }
 
-export async function runNewsIngest(options?: {
+async function runNewsIngestInner(options?: {
   taskRunId?: string;
   force?: boolean;
   sourceId?: string;
 }): Promise<IngestRunResult> {
+  const deadlineAt = Date.now() + getNewsIntelRunBudgetMs();
+
   if (!isNewsIntelEnabled()) {
     return {
       sourcesProcessed: 0,
@@ -354,17 +508,43 @@ export async function runNewsIngest(options?: {
   }
 
   let sources = await listNewsSources();
-  sources = sources.filter((s) => s.enabled);
+  sources = sources.filter(
+    (source) =>
+      source.enabled &&
+      isCollectableNewsSourceType(source.sourceType) &&
+      !(
+        source.sourceType === 'rss' &&
+        isLegacyGoogleNewsQueryFeedUrl(source.feedUrl)
+      ),
+  );
   if (options?.sourceId) {
     sources = sources.filter((s) => s.id === options.sourceId);
   }
 
   const sourceResults: IngestSourceResult[] = [];
+  let stoppedByBudget = false;
   for (const source of sources) {
-    sourceResults.push(await processSource(source, options?.taskRunId));
+    if (isNewsIngestDeadlineExceeded(deadlineAt)) {
+      stoppedByBudget = true;
+      break;
+    }
+    const result = await processSource(source, options?.taskRunId, deadlineAt);
+    sourceResults.push(result);
+    if (result.errorMessage === 'run_budget_exceeded') {
+      stoppedByBudget = true;
+      break;
+    }
   }
 
-  const bitableSynced = await syncPendingArticlesToBitable(50);
+  if (isNewsIngestDeadlineExceeded(deadlineAt)) {
+    stoppedByBudget = true;
+  }
+  const bitableSynced = stoppedByBudget
+    ? 0
+    : await syncPendingArticlesToBitable(50, deadlineAt);
+  if (isNewsIngestDeadlineExceeded(deadlineAt)) {
+    stoppedByBudget = true;
+  }
   const bitableSyncFailed = sourceResults.reduce((s, r) => s + r.bitableSyncFailedCount, 0);
 
   return {
@@ -376,8 +556,23 @@ export async function runNewsIngest(options?: {
     totalTranslated: sourceResults.reduce((s, r) => s + r.translatedCount, 0),
     bitableSynced,
     bitableSyncFailed,
+    stoppedByBudget,
     sourceResults,
   };
+}
+
+export async function runNewsIngest(options?: {
+  taskRunId?: string;
+  force?: boolean;
+  sourceId?: string;
+}): Promise<IngestRunResult> {
+  const release = tryAcquireNewsIngestLock();
+  if (!release) throw new NewsIngestBusyError();
+  try {
+    return await runNewsIngestInner(options);
+  } finally {
+    release();
+  }
 }
 
 export async function listNewsArticles(params: {
@@ -386,14 +581,26 @@ export async function listNewsArticles(params: {
   category?: string;
   topicCategory?: string;
   status?: string;
+  discoveryChannel?: string;
+  sourceDomain?: string;
 }) {
-  const { page, pageSize, category, topicCategory, status } = params;
+  const {
+    page,
+    pageSize,
+    category,
+    topicCategory,
+    status,
+    discoveryChannel,
+    sourceDomain,
+  } = params;
   const offset = (page - 1) * pageSize;
 
   const filters = [];
   if (category) filters.push(eq(newsArticles.category, category as never));
   if (topicCategory) filters.push(eq(newsArticles.topicCategory, topicCategory));
   if (status) filters.push(eq(newsArticles.status, status as never));
+  if (discoveryChannel) filters.push(eq(newsArticles.discoveryChannel, discoveryChannel));
+  if (sourceDomain) filters.push(eq(newsArticles.sourceDomain, sourceDomain));
 
   const whereClause = filters.length ? and(...filters) : undefined;
 
@@ -454,9 +661,12 @@ export async function updateNewsArticle(
   patch: Partial<{
     status: NewsArticleStatus;
     priority: 'high' | 'medium' | 'low';
-    category: string;
+    category: NewsCategory;
     businessValidity: NewsBusinessValidity;
     bitableSyncStatus: NewsBitableSyncStatus;
+    bitableSyncError: string | null;
+    reviewedAt: Date | null;
+    reviewedBy: string | null;
   }>,
 ) {
   const [row] = await db
@@ -494,7 +704,15 @@ export async function getNewsIntelOverview() {
   const [pendingSync] = await db
     .select({ count: sql<number>`count(*)::int` })
     .from(newsArticles)
-    .where(eq(newsArticles.bitableSyncStatus, 'pending'));
+    .where(
+      and(
+        eq(newsArticles.status, 'published'),
+        or(
+          eq(newsArticles.bitableSyncStatus, 'pending'),
+          eq(newsArticles.bitableSyncStatus, 'failed'),
+        ),
+      ),
+    );
 
   const sources = await listNewsSources();
   const healthySources = sources.filter((s) => s.enabled && (s.consecutiveFailures ?? 0) < 3).length;

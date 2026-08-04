@@ -5,39 +5,33 @@ import {
 } from '@/lib/inventory-overview-columns';
 import { formatTurnoverDateValue, isTurnoverDateColumn } from '@/lib/turnover-date-format';
 
+/** 优先飞书快照字段，再回退 SKU 主数据 / Excel 分仓数量（不含销售占比列） */
+const COLUMN_TO_WAREHOUSE = new Map<string, string>([
+  ['海外仓库存_美东', 'US-EAST'],
+  ['海外仓库存_美南', 'US-SOUTH'],
+  ['海外仓库存_美西', 'US-WEST'],
+  ['海外仓库存_美中', 'US-CENTRAL'],
+  ['海外仓库存_美东南', 'US-SOUTHEAST'],
+  ['海外仓库存_德国', 'DE'],
+  ['海外仓库存_平台仓_美', 'PLATFORM-US'],
+  ['海外仓库存_平台仓_欧', 'PLATFORM-EU'],
+]);
+
 function isTurnoverInventoryQuantityColumn(columnId: string): boolean {
   return (
-    columnId.startsWith('海外仓库存_') ||
-    columnId.startsWith('调拨在途_') ||
-    columnId.startsWith('已调拨未在途_') ||
+    COLUMN_TO_WAREHOUSE.has(columnId) ||
+    columnId === '海外仓在库' ||
+    columnId === '海外仓库存_合计' ||
+    columnId === '调拨在途合计' ||
+    columnId === '调拨在途_合计' ||
+    columnId === '已调拨未在途' ||
+    columnId === '已调拨未在途_合计' ||
     columnId.includes('供应商订单') ||
     columnId === '预下单' ||
     columnId === '全链条合计库存' ||
     (columnId.startsWith('预计') && columnId.includes('上架'))
   );
 }
-
-const WAREHOUSE_TO_OVERSEAS_SUFFIX = new Map<string, string>([
-  ['US-EAST', '海外仓库存_美东'],
-  ['US-SOUTH', '海外仓库存_美南'],
-  ['US-WEST', '海外仓库存_美西'],
-  ['US-CENTRAL', '海外仓库存_美中'],
-  ['US-SOUTHEAST', '海外仓库存_美东南'],
-  ['DE', '海外仓库存_德国'],
-  ['PLATFORM-US', '海外仓库存_平台仓_美'],
-  ['PLATFORM-EU', '海外仓库存_平台仓_欧'],
-]);
-
-const WAREHOUSE_TO_TRANSIT_SUFFIX = new Map<string, string>([
-  ['US-EAST', '调拨在途_美东'],
-  ['US-SOUTH', '调拨在途_美南'],
-  ['US-WEST', '调拨在途_美西'],
-  ['US-CENTRAL', '调拨在途_美中'],
-  ['US-SOUTHEAST', '调拨在途_美东南'],
-  ['DE', '调拨在途_德国'],
-  ['PLATFORM-US', '调拨在途_平台仓_美'],
-  ['PLATFORM-EU', '调拨在途_平台仓_欧'],
-]);
 
 function warehouseStockToColumnValue(
   item: InventoryOverview,
@@ -46,16 +40,21 @@ function warehouseStockToColumnValue(
   const stocks = item.warehouseStocks;
   if (!stocks?.length) return null;
 
-  for (const stock of stocks) {
-    const overseasCol = WAREHOUSE_TO_OVERSEAS_SUFFIX.get(stock.warehouseCode);
-    if (overseasCol === columnId) return String(stock.qtyAvailable);
-    const transitCol = WAREHOUSE_TO_TRANSIT_SUFFIX.get(stock.warehouseCode);
-    if (transitCol === columnId) return String(stock.qtyInTransit);
+  const warehouse = COLUMN_TO_WAREHOUSE.get(columnId);
+  if (warehouse) {
+    const stock = stocks.find((s) => s.warehouseCode === warehouse);
+    if (stock) return String(stock.qtyAvailable);
   }
+
+  if (columnId === '海外仓在库' || columnId === '海外仓库存_合计') {
+    const total = stocks.reduce((sum, s) => sum + (s.qtyAvailable ?? 0), 0);
+    return String(total);
+  }
+
   return null;
 }
 
-/** 优先展示导入快照（A:GR 全列），再回退 SKU 主数据 / 分仓明细 */
+/** 优先飞书快照字段，再回退 SKU 主数据 / Excel 分仓数量 */
 export function getOverviewCellValue(item: InventoryOverview, columnId: string): string {
   if (columnId === 'updatedAt') return formatOverviewUpdatedAt(item.updatedAt);
   if (columnId === 'dataSource') return formatOverviewDataSource(item.dataSource);
@@ -71,7 +70,9 @@ export function getOverviewCellValue(item: InventoryOverview, columnId: string):
   if (isTurnoverInventoryQuantityColumn(columnId)) {
     const fromWarehouse = warehouseStockToColumnValue(item, columnId);
     if (fromWarehouse != null) return fromWarehouse;
-    if (columnId === '供应商订单合计') return String(item.qtyInProduction ?? 0);
+    if (columnId === '供应商订单' || columnId === '供应商订单合计') {
+      return String(item.qtyInProduction ?? 0);
+    }
     if (columnId === '预下单') return String(item.qtyPreOrder ?? 0);
     return '-';
   }
@@ -111,10 +112,12 @@ export function getOverviewCellValue(item: InventoryOverview, columnId: string):
       return String(item.salesQty30d ?? 0);
     case '包装长宽高cm':
       return item.packDimensionsCm ?? item.turnoverExtras?.['包装长宽高cm'] ?? '-';
+    case '体积(m3)':
     case '体积（m3）':
-      return item.volumeM3 ?? item.turnoverExtras?.['体积（m3）'] ?? '-';
+      return item.volumeM3 ?? item.turnoverExtras?.['体积(m3)'] ?? item.turnoverExtras?.['体积（m3）'] ?? '-';
+    case '毛重(Kg)':
     case '毛重（Kg）':
-      return item.grossWeightKg ?? item.turnoverExtras?.['毛重（Kg）'] ?? '-';
+      return item.grossWeightKg ?? item.turnoverExtras?.['毛重(Kg)'] ?? item.turnoverExtras?.['毛重（Kg）'] ?? '-';
     default:
       return '-';
   }
@@ -125,6 +128,7 @@ export function isNumericOverviewColumn(columnId: string): boolean {
   return (
     columnId.includes('销量') ||
     columnId.includes('库存') ||
+    columnId.includes('在库') ||
     columnId.includes('在途') ||
     columnId.includes('订单') ||
     columnId.includes('周转') ||
@@ -134,7 +138,8 @@ export function isNumericOverviewColumn(columnId: string): boolean {
     columnId.includes('体积') ||
     columnId === '预下单' ||
     columnId === '采购周期' ||
-    columnId === '采购价'
+    columnId === '采购价' ||
+    COLUMN_TO_WAREHOUSE.has(columnId)
   );
 }
 
@@ -143,6 +148,7 @@ export function isWideOverviewColumn(columnId: string): boolean {
     columnId === '品类' ||
     columnId === 'SKU名称' ||
     columnId === '产品分类' ||
-    columnId.includes('销售占比')
+    columnId.includes('上架') ||
+    columnId.includes('断货时间')
   );
 }

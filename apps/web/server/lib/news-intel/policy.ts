@@ -15,6 +15,9 @@ export type NewsSourceConfig = {
   sourceTier?: NewsSourceTier;
   isOfficial?: boolean;
   language?: string;
+  region?: string;
+  discoveryQuery?: string;
+  maxItemsPerQuery?: number;
 };
 
 export type BrandPolicy = { name: string; aliases: string[] };
@@ -26,9 +29,24 @@ export type TopicPolicy = {
   keywords: string[];
 };
 
+export type ResearchQueryTemplate = {
+  code: string;
+  label: string;
+  template: string;
+  dimension: 'platform' | 'brand' | 'topic';
+  language: 'zh' | 'en';
+  region: string;
+};
+
 export type NewsIntelPolicy = {
   lookbackDays: number;
   maxItemsPerSource: number;
+  research: {
+    maxQueriesPerRun: number;
+    maxItemsPerQuery: number;
+    providers: Array<'google_news'>;
+    queryTemplates: ResearchQueryTemplate[];
+  };
   requireChineseContent?: boolean;
   channels: Record<string, { enabled: boolean; label: string }>;
   negativeKeywords: string[];
@@ -99,6 +117,12 @@ export function parseSourceConfig(raw: unknown): NewsSourceConfig {
         : undefined,
     isOfficial: typeof obj.isOfficial === 'boolean' ? obj.isOfficial : undefined,
     language: typeof obj.language === 'string' ? obj.language : undefined,
+    region: typeof obj.region === 'string' ? obj.region : undefined,
+    discoveryQuery: typeof obj.discoveryQuery === 'string' ? obj.discoveryQuery : undefined,
+    maxItemsPerQuery:
+      typeof obj.maxItemsPerQuery === 'number' && Number.isFinite(obj.maxItemsPerQuery)
+        ? obj.maxItemsPerQuery
+        : undefined,
   };
 }
 

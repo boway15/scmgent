@@ -12,12 +12,14 @@ import {
   findOpenStockAlert,
   saveHealthSnapshots,
 } from '../lib/inventory-health-store.js';
+import { syncReplenishLightFromHealth } from '../lib/replenish-light-sync.js';
 import { shouldDeferReplenishment } from '../lib/warehouse-domain.js';
 import { getRegionPoolSnapshot } from '../lib/inventory-snapshot.js';
 
 export async function runStockAlert() {
   const healthRows = await computeAllInventoryHealth();
   await saveHealthSnapshots(healthRows);
+  await syncReplenishLightFromHealth(healthRows);
 
   const usPoolCache = new Map<string, Awaited<ReturnType<typeof getRegionPoolSnapshot>>>();
   const usRopCache = new Map<string, number>();

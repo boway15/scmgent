@@ -99,6 +99,15 @@ export function canAccessPath(
     }
   }
 
+  if (
+    normalized.startsWith('/inventory/planning/') &&
+    normalizedAllowed.some(
+      (p) => p === '/inventory/planning' || p === '/inventory/planning-dashboard',
+    )
+  ) {
+    return true;
+  }
+
   return normalizedAllowed.some((p) => normalized === p || normalized.startsWith(`${p}/`));
 }
 

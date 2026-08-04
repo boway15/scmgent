@@ -1,6 +1,9 @@
 # 新版本发布到妙搭（新建应用）
 
-目标：**每个版本用新 ZIP 新建一个妙搭应用，按规范完成 Hono 挂载后即可给同事使用**。
+> **状态：已停用（2026-07-24）** — 请改用 [local-server-release-sop.md](./local-server-release-sop.md)。  
+> 决策：[superpowers/specs/2026-07-24-de-miaoda-docs-baseline-design.md](./superpowers/specs/2026-07-24-de-miaoda-docs-baseline-design.md)
+
+目标（历史）：**每个版本用新 ZIP 新建一个妙搭应用，按规范完成 Hono 挂载后即可给同事使用**。
 
 ```
 本地验收 → pnpm zip:miaoda → 妙搭新建应用导入 → hono-app 迁移 + 注册模块 → env → SQL → 发布

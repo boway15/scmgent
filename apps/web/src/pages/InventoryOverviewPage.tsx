@@ -24,6 +24,7 @@ import {
   saveOverviewViewId,
   type OverviewViewId,
 } from '@/lib/inventory-overview-views';
+import { orderColumnGroups } from '@/lib/inventory-overview-groups';
 import { orderOverviewColumnIds } from '@/lib/inventory-overview-column-order';
 import {
   loadOverviewTableDensity,
@@ -33,7 +34,6 @@ import {
 import { useResizableColumnWidths } from '@/hooks/use-resizable-column-widths';
 import { useMemo, useState, useCallback } from 'react';
 
-const IN_PRODUCTION_WAREHOUSE = 'IN-PRODUCTION';
 const DEFAULT_PAGE_SIZE = 20;
 
 const initialView = loadInitialViewState();
@@ -47,9 +47,11 @@ export function InventoryOverviewPage() {
   const [density, setDensity] = useState<OverviewTableDensity>(() => loadOverviewTableDensity());
   const [drawerSkuId, setDrawerSkuId] = useState<string | null>(null);
   const { open: importOpen, openDrawer: openImportDrawer, closeDrawer: closeImportDrawer } = useImportDrawer();
+  const [feishuMessage, setFeishuMessage] = useState('');
   const [showAdvancedFilters, setShowAdvancedFilters] = useState(false);
   const [columnJumpInput, setColumnJumpInput] = useState('');
   const [columnJumpTarget, setColumnJumpTarget] = useState<string | null>(null);
+  const [snapshotDate, setSnapshotDate] = useState('');
 
   const [q, setQ] = useState('');
   const [category, setCategory] = useState('');
@@ -81,7 +83,15 @@ export function InventoryOverviewPage() {
   const apiColumns = viewId === 'custom' ? appliedColumnIds : undefined;
 
   const { data, isLoading } = useQuery({
-    queryKey: ['inventory-overview', applied, page, pageSize, viewId, appliedColumnIds],
+    queryKey: [
+      'inventory-overview',
+      applied,
+      page,
+      pageSize,
+      viewId,
+      appliedColumnIds,
+      snapshotDate,
+    ],
     queryFn: () =>
       api.getInventoryOverview({
         q: applied.q || undefined,
@@ -95,8 +105,29 @@ export function InventoryOverviewPage() {
         pageSize,
         view: apiView,
         columns: apiColumns,
+        snapshotDate: snapshotDate || undefined,
       }),
   });
+
+  const { data: snapshotDates } = useQuery({
+    queryKey: ['inventory-overview-dates'],
+    queryFn: () => api.getInventorySnapshotDates(),
+  });
+
+  const snapshotDateOptions = useMemo(() => {
+    const items = snapshotDates?.items ?? [];
+    if (items.length > 0) return items;
+    if (data?.selectedSnapshotDate) {
+      return [
+        {
+          snapshotDate: data.selectedSnapshotDate,
+          rowCount: data.total ?? 0,
+          syncedAt: '',
+        },
+      ];
+    }
+    return [];
+  }, [snapshotDates?.items, data?.selectedSnapshotDate, data?.total]);
 
   const items = data?.items ?? [];
   const total = data?.total ?? 0;
@@ -116,6 +147,48 @@ export function InventoryOverviewPage() {
 
   const { getWidth, onResizeStart, resetWidths } = useResizableColumnWidths();
 
+  const { data: bitableStatus } = useQuery({
+    queryKey: ['bitable-status'],
+    queryFn: () => api.getBitableStatus(),
+  });
+  const feishuConfigured = bitableStatus?.inventory_turnover?.configured ?? false;
+
+  const previewFeishu = useMutation({
+    mutationFn: () => api.previewBitableSync('inventory_turnover'),
+    onSuccess: (r) => {
+      const mismatch =
+        typeof r.mismatchCount === 'number' && r.mismatchCount > 0
+          ? `；销售占比合计异常 ${r.mismatchCount} 条`
+          : '';
+      setFeishuMessage(
+        `从飞书预览 ${r.rowCount.toLocaleString()} 行${r.hasBlockingIssues ? '（存在阻断问题，请先处理）' : '，可确认同步'}${mismatch}`,
+      );
+    },
+    onError: (err) => {
+      setFeishuMessage((err as Error).message);
+    },
+  });
+
+  const syncFeishu = useMutation({
+    mutationFn: () => api.executeBitableSync('inventory_turnover'),
+    onSuccess: (r) => {
+      const mismatch =
+        typeof r.mismatchCount === 'number' && r.mismatchCount > 0
+          ? `；销售占比合计异常 ${r.mismatchCount} 条`
+          : '';
+      setFeishuMessage(
+        `从飞书同步完成：写入 ${r.imported.toLocaleString()} 条；批次 ${r.batchStatus ?? '-'}；每日快照：${r.snapshotDate ? `${r.snapshotDate}（${(r.snapshotRowCount ?? 0).toLocaleString()} SKU）` : r.snapshotSkippedReason ?? '未发布'}；错误：${r.errors.slice(0, 3).join('; ') || '无'}${mismatch}`,
+      );
+      void qc.invalidateQueries({ queryKey: ['inventory-overview'] });
+      void qc.invalidateQueries({ queryKey: ['inventory-overview-dates'] });
+      void qc.invalidateQueries({ queryKey: ['import-batches', 'inventory'] });
+      // 飞书同步会回写 skus 主字段与包装快照，需刷新商品主数据列表
+      void qc.invalidateQueries({ queryKey: ['sku-overview'] });
+      void qc.invalidateQueries({ queryKey: ['skus'] });
+    },
+    onError: (err) => setFeishuMessage((err as Error).message),
+  });
+
   const groupedColumns = useMemo(() => {
     const keyword = columnFilter.trim().toLowerCase();
     const groups = new Map<string, OverviewColumnDef[]>();
@@ -132,7 +205,7 @@ export function InventoryOverviewPage() {
       list.push(col);
       groups.set(col.group, list);
     }
-    return Array.from(groups.entries());
+    return orderColumnGroups(Array.from(groups.entries())) as Array<[string, OverviewColumnDef[]]>;
   }, [columnFilter, columnCatalog]);
 
   const applyView = (nextViewId: OverviewViewId) => {
@@ -234,35 +307,8 @@ export function InventoryOverviewPage() {
     developerName: applied.developerName || undefined,
     view: apiView,
     columns: apiColumns,
+    snapshotDate: snapshotDate || undefined,
   };
-
-  const { data: skus = [] } = useQuery({ queryKey: ['skus'], queryFn: api.getSkus });
-  const { data: warehouses = [] } = useQuery({ queryKey: ['warehouses'], queryFn: api.getWarehouses });
-
-  const [showForm, setShowForm] = useState(false);
-  const [skuForm, setSkuForm] = useState({
-    code: '',
-    name: '',
-    unit: 'pcs',
-    category: '',
-    leadTimeDays: 30,
-    moq: 0,
-    unitCost: 0,
-    merchantCode: '',
-    merchantName: '',
-  });
-  const [invForm, setInvForm] = useState({
-    skuId: '',
-    warehouse: 'US-WEST',
-    qtyAvailable: 0,
-    qtyInTransit: 0,
-    recordedDate: new Date().toISOString().slice(0, 10),
-  });
-  const [productionForm, setProductionForm] = useState({
-    skuId: '',
-    qtyInProduction: 0,
-    recordedDate: new Date().toISOString().slice(0, 10),
-  });
 
   const applyFilters = () => {
     setPage(1);
@@ -273,31 +319,6 @@ export function InventoryOverviewPage() {
     setPageSize(next);
     setPage(1);
   };
-
-  const createSku = useMutation({
-    mutationFn: () => api.createSku(skuForm),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['skus'] });
-      qc.invalidateQueries({ queryKey: ['inventory-overview'] });
-      setShowForm(false);
-    },
-  });
-
-  const createInv = useMutation({
-    mutationFn: () => api.createInventoryRecord(invForm),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['inventory-overview'] }),
-  });
-
-  const createProduction = useMutation({
-    mutationFn: () =>
-      api.createInventoryRecord({
-        skuId: productionForm.skuId,
-        warehouse: IN_PRODUCTION_WAREHOUSE,
-        qtyInProduction: productionForm.qtyInProduction,
-        recordedDate: productionForm.recordedDate,
-      }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['inventory-overview'] }),
-  });
 
   if (isLoading) return <p className="text-text-sub">加载中...</p>;
 
@@ -317,23 +338,90 @@ export function InventoryOverviewPage() {
           <Button variant="outline" onClick={() => api.exportInventoryCsv()}>
             导出分仓 CSV
           </Button>
+          <Button
+            variant="outline"
+            onClick={() => previewFeishu.mutate()}
+            disabled={!feishuConfigured || previewFeishu.isPending}
+            title={
+              feishuConfigured
+                ? '预览飞书「SKU周转相关信息」'
+                : '未配置 FEISHU_BITABLE_TABLE_INVENTORY / app token'
+            }
+          >
+            {previewFeishu.isPending ? '预览中…' : '从飞书同步预览'}
+          </Button>
+          <Button
+            onClick={() => {
+              if (
+                !window.confirm(
+                  '将从飞书拉取「SKU周转相关信息」（约数千行）并写入库存总览快照，是否继续？',
+                )
+              ) {
+                return;
+              }
+              syncFeishu.mutate();
+            }}
+            disabled={!feishuConfigured || syncFeishu.isPending}
+          >
+            {syncFeishu.isPending ? '同步中…' : '从飞书同步'}
+          </Button>
           <Button variant="outline" onClick={openImportDrawer}>
             导入库存
           </Button>
-          <Button onClick={() => setShowForm(!showForm)}>{showForm ? '取消' : '新建 SKU'}</Button>
         </div>
       </PageHeader>
+
+      {feishuMessage ? (
+        <p className="rounded-md border border-border bg-muted/20 px-3 py-2 text-sm text-text-sub">
+          {feishuMessage}
+        </p>
+      ) : null}
+
+      {data?.selectedSnapshotDate ? (
+        <div
+          className={`rounded-md border px-3 py-2 text-sm ${
+            data.isStale
+              ? 'border-amber-300 bg-amber-50 text-amber-800'
+              : 'border-border bg-muted/20 text-text-sub'
+          }`}
+        >
+          当前展示库存快照：{data.selectedSnapshotDate}
+          {data.isStale ? '（今日尚无成功快照，已回退最近一次成功数据）' : ''}
+        </div>
+      ) : (
+        <div className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+          尚无每日归档快照，当前展示实时库存数据；下一次飞书完整同步成功后开始归档。
+        </div>
+      )}
 
       <Card>
         <CardHeader>
           <CardTitle>SKU 库存周转</CardTitle>
           <p className="text-sm text-text-sub">
-            字段目录覆盖 Excel A–GR（{TURNOVER_SHEET_COLUMN_COUNT} 列）。默认「补货日常」视图；
+            字段与飞书「SKU周转相关信息」对齐（{TURNOVER_SHEET_COLUMN_COUNT} 列）。默认「补货日常」视图；
             点击行查看全字段详情；列头右缘可拖动调宽。
           </p>
         </CardHeader>
         <CardContent>
           <div className="mb-4 flex flex-wrap items-center gap-2">
+            <label className="flex items-center gap-2 text-sm text-text-sub">
+              更新日期
+              <select
+                className="h-9 rounded-md border border-input bg-card px-2 text-sm text-text-main"
+                value={snapshotDate || data?.selectedSnapshotDate || ''}
+                onChange={(e) => {
+                  setSnapshotDate(e.target.value);
+                  setPage(1);
+                  setDrawerSkuId(null);
+                }}
+              >
+                {(snapshotDateOptions).map((item) => (
+                  <option key={item.snapshotDate} value={item.snapshotDate}>
+                    {item.snapshotDate} · {item.rowCount.toLocaleString()} SKU
+                  </option>
+                ))}
+              </select>
+            </label>
             <select
               className="h-9 rounded-md border border-input bg-card px-2 text-sm"
               value={viewId}
@@ -381,7 +469,7 @@ export function InventoryOverviewPage() {
             </Button>
             <Input
               className="h-9 max-w-[100px]"
-              placeholder="列号 GR"
+              placeholder="列名"
               value={columnJumpInput}
               onChange={(e) => setColumnJumpInput(e.target.value)}
               onKeyDown={(e) => e.key === 'Enter' && handleColumnJump()}
@@ -394,7 +482,11 @@ export function InventoryOverviewPage() {
           {showAdvancedFilters && (
             <div className="mb-4 grid gap-2 rounded-md border border-border bg-muted/20 p-4 md:grid-cols-3 lg:grid-cols-6">
               <Input placeholder="品类" value={category} onChange={(e) => setCategory(e.target.value)} />
-              <Input placeholder="生命周期" value={lifecycle} onChange={(e) => setLifecycle(e.target.value)} />
+              <Input
+                placeholder="生命周期（系统计算）"
+                value={lifecycle}
+                onChange={(e) => setLifecycle(e.target.value)}
+              />
               <Input placeholder="销售国家" value={salesCountry} onChange={(e) => setSalesCountry(e.target.value)} />
               <Input placeholder="供应商编码" value={merchantCode} onChange={(e) => setMerchantCode(e.target.value)} />
               <Input placeholder="负责人" value={ownerName} onChange={(e) => setOwnerName(e.target.value)} />
@@ -417,9 +509,9 @@ export function InventoryOverviewPage() {
                 <Button
                   variant="outline"
                   size="sm"
-                  onClick={() => setDraftColumnIds(getViewColumnIds('excel_full'))}
+                  onClick={() => setDraftColumnIds(getViewColumnIds('feishu_full'))}
                 >
-                  Excel 全字段
+                  飞书全字段
                 </Button>
                 <span className="text-xs text-text-sub">
                   已选 {draftColumnIds.length} 列
@@ -478,23 +570,6 @@ export function InventoryOverviewPage() {
             </div>
           )}
 
-          {showForm && (
-            <div className="mb-4 grid gap-2 rounded-md border border-border bg-muted/20 p-4 md:grid-cols-4 lg:grid-cols-10">
-              <Input placeholder="SKU 编号" value={skuForm.code} onChange={(e) => setSkuForm({ ...skuForm, code: e.target.value })} />
-              <Input placeholder="名称" value={skuForm.name} onChange={(e) => setSkuForm({ ...skuForm, name: e.target.value })} />
-              <Input placeholder="单位" value={skuForm.unit} onChange={(e) => setSkuForm({ ...skuForm, unit: e.target.value })} />
-              <Input placeholder="品类" value={skuForm.category} onChange={(e) => setSkuForm({ ...skuForm, category: e.target.value })} />
-              <Input placeholder="商家编号" value={skuForm.merchantCode} onChange={(e) => setSkuForm({ ...skuForm, merchantCode: e.target.value })} />
-              <Input placeholder="商家名称" value={skuForm.merchantName} onChange={(e) => setSkuForm({ ...skuForm, merchantName: e.target.value })} />
-              <Input type="number" placeholder="交期(天)" value={skuForm.leadTimeDays} onChange={(e) => setSkuForm({ ...skuForm, leadTimeDays: +e.target.value })} />
-              <Input type="number" placeholder="MOQ" value={skuForm.moq} onChange={(e) => setSkuForm({ ...skuForm, moq: +e.target.value })} />
-              <Input type="number" placeholder="单价" value={skuForm.unitCost} onChange={(e) => setSkuForm({ ...skuForm, unitCost: +e.target.value })} />
-              <Button variant="outline" onClick={() => createSku.mutate()} disabled={createSku.isPending}>
-                保存 SKU
-              </Button>
-            </div>
-          )}
-
           <InventoryOverviewTable
             items={items}
             visibleColumns={visibleColumns}
@@ -515,82 +590,21 @@ export function InventoryOverviewPage() {
         </CardContent>
       </Card>
 
-      <InventoryOverviewRowDrawer skuId={drawerSkuId} onClose={() => setDrawerSkuId(null)} />
+      <InventoryOverviewRowDrawer
+        skuId={drawerSkuId}
+        snapshotDate={data?.selectedSnapshotDate ?? undefined}
+        onClose={() => setDrawerSkuId(null)}
+      />
       <ImportDrawer
         open={importOpen}
         type="inventory"
         onClose={closeImportDrawer}
-        onSuccess={() => void qc.invalidateQueries({ queryKey: ['inventory-overview'] })}
+        onSuccess={() => {
+          void qc.invalidateQueries({ queryKey: ['inventory-overview'] });
+          void qc.invalidateQueries({ queryKey: ['sku-overview'] });
+          void qc.invalidateQueries({ queryKey: ['skus'] });
+        }}
       />
-
-      <Card>
-        <CardHeader>
-          <CardTitle>录入分仓库存</CardTitle>
-          <p className="text-sm text-text-sub">可售与在途需指定目的仓；在途表示已发出、指向该仓的货物</p>
-        </CardHeader>
-        <CardContent className="grid gap-2 md:grid-cols-6">
-          <select
-            className="h-10 rounded-md border border-input bg-card px-3 text-sm text-text-main"
-            value={invForm.skuId}
-            onChange={(e) => setInvForm({ ...invForm, skuId: e.target.value })}
-          >
-            <option value="">选择 SKU</option>
-            {skus.map((s) => (
-              <option key={s.id} value={s.id}>
-                {s.code} - {s.name}
-              </option>
-            ))}
-          </select>
-          <select
-            className="h-10 rounded-md border border-input bg-card px-3 text-sm text-text-main"
-            value={invForm.warehouse}
-            onChange={(e) => setInvForm({ ...invForm, warehouse: e.target.value })}
-          >
-            {warehouses.map((w) => (
-              <option key={w.code} value={w.code}>
-                {w.name} ({w.code})
-              </option>
-            ))}
-          </select>
-          <Input type="number" placeholder="可售" value={invForm.qtyAvailable} onChange={(e) => setInvForm({ ...invForm, qtyAvailable: +e.target.value })} />
-          <Input type="number" placeholder="在途" value={invForm.qtyInTransit} onChange={(e) => setInvForm({ ...invForm, qtyInTransit: +e.target.value })} />
-          <Input type="date" value={invForm.recordedDate} onChange={(e) => setInvForm({ ...invForm, recordedDate: e.target.value })} />
-          <Button variant="outline" onClick={() => createInv.mutate()} disabled={!invForm.skuId || createInv.isPending}>
-            保存
-          </Button>
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <CardTitle>录入在产库存</CardTitle>
-          <p className="text-sm text-text-sub">在产不指向仓库；货物发出后请录入对应目的仓的在途数量</p>
-        </CardHeader>
-        <CardContent className="grid gap-2 md:grid-cols-4">
-          <select
-            className="h-10 rounded-md border border-input bg-card px-3 text-sm text-text-main"
-            value={productionForm.skuId}
-            onChange={(e) => setProductionForm({ ...productionForm, skuId: e.target.value })}
-          >
-            <option value="">选择 SKU</option>
-            {skus.map((s) => (
-              <option key={s.id} value={s.id}>
-                {s.code} - {s.name}
-              </option>
-            ))}
-          </select>
-          <Input
-            type="number"
-            placeholder="在产数量"
-            value={productionForm.qtyInProduction}
-            onChange={(e) => setProductionForm({ ...productionForm, qtyInProduction: +e.target.value })}
-          />
-          <Input type="date" value={productionForm.recordedDate} onChange={(e) => setProductionForm({ ...productionForm, recordedDate: e.target.value })} />
-          <Button variant="outline" onClick={() => createProduction.mutate()} disabled={!productionForm.skuId || createProduction.isPending}>
-            保存
-          </Button>
-        </CardContent>
-      </Card>
     </div>
   );
 }

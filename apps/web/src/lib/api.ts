@@ -190,59 +190,6 @@ export type ShipmentMilestoneInput = {
   remark?: string | null;
 };
 
-export type SapMirrorEntityType = 'merchant' | 'sku' | 'purchase_order';
-
-export type SapMirrorIngestResult = {
-  runId: string;
-  inserted: number;
-  updated: number;
-  skipped: number;
-  errors: Array<{ externalId?: string; message: string }>;
-};
-
-export type SapSyncRun = {
-  id: string;
-  sourceSystem: string;
-  entityType: SapMirrorEntityType;
-  status: string;
-  requestedBy?: string | null;
-  startedAt: string;
-  finishedAt?: string | null;
-  summary?: {
-    inserted?: number;
-    updated?: number;
-    skipped?: number;
-    errors?: Array<{ externalId?: string; message: string }>;
-  } | null;
-  errorMessage?: string | null;
-};
-
-export type SapPoMirrorLine = {
-  id: string;
-  mirrorId: string;
-  externalLineId: string;
-  skuExternalId?: string | null;
-  skuId?: string | null;
-  qty?: number | null;
-  uom?: string | null;
-  deliveryDate?: string | null;
-};
-
-export type SapPoMirror = {
-  id: string;
-  sourceSystem: string;
-  externalId: string;
-  externalVersion?: string | null;
-  syncStatus?: string | null;
-  lastSyncAt?: string | null;
-  poNumber?: string | null;
-  vendorExternalId?: string | null;
-  merchantCode?: string | null;
-  orderDate?: string | null;
-  statusRaw?: string | null;
-  lines: SapPoMirrorLine[];
-};
-
 export type InventoryPositionBreakdown = {
   qtyAvailable: number;
   qtyInProduction: number;
@@ -761,6 +708,11 @@ export const api = {
       pageSize: number;
     }>(`/api/audit-logs${qs ? `?${qs}` : ''}`);
   },
+  getTaskRuns: () => request<TaskRunSummary[]>('/api/tasks/runs'),
+  runScheduledTask: (path: string) =>
+    request<Record<string, unknown> & { skipped?: boolean; message?: string }>(path, {
+      method: 'POST',
+    }),
   getNewsIntelStatus: () =>
     request<{
       enabled: boolean;
@@ -1466,6 +1418,7 @@ export const api = {
     pageSize?: number;
     view?: string;
     columns?: string[];
+    snapshotDate?: string;
   }) => {
     const qs = new URLSearchParams();
     if (params?.q) qs.set('q', params.q);
@@ -1478,6 +1431,7 @@ export const api = {
     if (params?.page) qs.set('page', String(params.page));
     if (params?.pageSize) qs.set('pageSize', String(params.pageSize));
     if (params?.view) qs.set('view', params.view);
+    if (params?.snapshotDate) qs.set('snapshotDate', params.snapshotDate);
     if (params?.columns?.length) {
       qs.set('columns', params.columns.map((c) => encodeURIComponent(c)).join(','));
     }
@@ -1487,6 +1441,10 @@ export const api = {
       total: number;
       page: number;
       pageSize: number;
+      selectedSnapshotDate: string | null;
+      latestSnapshotDate: string | null;
+      isLatestSnapshot: boolean;
+      isStale: boolean;
       columns?: Array<{
         id: string;
         label: string;
@@ -1498,8 +1456,74 @@ export const api = {
       defaultVisibleColumns?: string[];
     }>(`/api/inventory/overview${query ? `?${query}` : ''}`);
   },
-  getInventoryOverviewDetail: (skuId: string) =>
-    request<InventoryOverview>(`/api/inventory/overview/${skuId}`),
+  getInventorySnapshotDates: () =>
+    request<{
+      items: Array<{ snapshotDate: string; syncedAt: string; rowCount: number }>;
+    }>('/api/inventory/overview/dates'),
+  getInventoryOverviewDetail: (skuId: string, snapshotDate?: string) => {
+    const qs = snapshotDate ? `?snapshotDate=${encodeURIComponent(snapshotDate)}` : '';
+    return request<InventoryOverview>(`/api/inventory/overview/${skuId}${qs}`);
+  },
+  getInventoryQueryDates: () =>
+    request<{ items: string[] }>('/api/inventory/query/dates'),
+  getInventoryQuery: (params?: {
+    q?: string;
+    category?: string;
+    salesCountry?: string;
+    lifecycle?: string;
+    page?: number;
+    pageSize?: number;
+    snapshotDate?: string;
+  }) => {
+    const qs = new URLSearchParams();
+    if (params?.q) qs.set('q', params.q);
+    if (params?.category) qs.set('category', params.category);
+    if (params?.salesCountry) qs.set('salesCountry', params.salesCountry);
+    if (params?.lifecycle) qs.set('lifecycle', params.lifecycle);
+    if (params?.page) qs.set('page', String(params.page));
+    if (params?.pageSize) qs.set('pageSize', String(params.pageSize));
+    if (params?.snapshotDate) qs.set('snapshotDate', params.snapshotDate);
+    const query = qs.toString();
+    return request<{
+      items: Array<{
+        skuId: string | null;
+        skuCode: string;
+        payload: Record<string, string>;
+      }>;
+      total: number;
+      page: number;
+      pageSize: number;
+      selectedSnapshotDate: string | null;
+      latestSnapshotDate: string | null;
+      isLatestSnapshot: boolean;
+      isStale: boolean;
+      syncedAt: string | null;
+      columns: string[];
+      defaultVisibleColumns: string[];
+    }>(`/api/inventory/query${query ? `?${query}` : ''}`);
+  },
+  exportInventoryQueryCsv: async (params?: {
+    q?: string;
+    category?: string;
+    salesCountry?: string;
+    lifecycle?: string;
+    snapshotDate?: string;
+    columns?: string[];
+  }) => {
+    const qs = new URLSearchParams();
+    if (params?.q) qs.set('q', params.q);
+    if (params?.category) qs.set('category', params.category);
+    if (params?.salesCountry) qs.set('salesCountry', params.salesCountry);
+    if (params?.lifecycle) qs.set('lifecycle', params.lifecycle);
+    if (params?.snapshotDate) qs.set('snapshotDate', params.snapshotDate);
+    if (params?.columns?.length) {
+      qs.set('columns', params.columns.map((c) => encodeURIComponent(c)).join(','));
+    }
+    const query = qs.toString();
+    const res = await apiFetch(apiUrl(`/api/inventory/query/export${query ? `?${query}` : ''}`));
+    if (!res.ok) throw new Error('Export failed');
+    return res.blob();
+  },
   getSkuPlanning: (skuId: string, warehouseCode?: string) => {
     const query = warehouseCode
       ? `?warehouse=${encodeURIComponent(warehouseCode)}`
@@ -1594,15 +1618,6 @@ export const api = {
     request<{ ok: true }>(`/api/lead-time-profiles/${id}`, { method: 'DELETE' }),
   getShipments: (params?: { delayed?: boolean }) =>
     request<{ items: Shipment[] }>(`/api/shipments${params?.delayed ? '?delayed=1' : ''}`),
-  ingestSapMirror: (data: { entityType: SapMirrorEntityType; items: unknown[] }) =>
-    request<SapMirrorIngestResult>('/api/sap-mirror/ingest', {
-      method: 'POST',
-      body: JSON.stringify(data),
-    }),
-  getSapMirrorRuns: (limit = 50) =>
-    request<{ items: SapSyncRun[] }>(`/api/sap-mirror/runs?limit=${limit}`),
-  getSapMirrorPurchaseOrders: (limit = 100) =>
-    request<{ items: SapPoMirror[] }>(`/api/sap-mirror/purchase-orders?limit=${limit}`),
   upsertShipmentMilestone: (shipmentId: string, data: ShipmentMilestoneInput) =>
     request<ShipmentMilestone>(`/api/shipments/${encodeURIComponent(shipmentId)}/milestones`, {
       method: 'POST',

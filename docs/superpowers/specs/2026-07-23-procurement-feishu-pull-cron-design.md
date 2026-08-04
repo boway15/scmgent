@@ -40,4 +40,4 @@ Header：`X-Cron-Secret: {CRON_SECRET}`
 
 ## 6. 文档
 
-在 `docs/miaoda-import-checklist.md`、`docs/feishu-bitable-sync.md` 补充上述两条自动化任务。
+在 `docs/miaoda-import-checklist.md`（已归档，Cron 表仍可参考）、`docs/feishu-bitable-sync.md` 补充上述两条自动化任务。

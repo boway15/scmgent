@@ -212,7 +212,10 @@ export function ProductMasterPage() {
   const updateSkuLight = useMutation({
     mutationFn: ({ id, replenishLight }: { id: string; replenishLight: ReplenishLight }) =>
       api.updateSku(id, { replenishLight }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['sku-overview'] }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['sku-overview'] });
+      void qc.invalidateQueries({ queryKey: ['inventory-overview'] });
+    },
   });
 
   const updateSku = useMutation({
@@ -233,6 +236,7 @@ export function ProductMasterPage() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['sku-overview'] });
       qc.invalidateQueries({ queryKey: ['skus'] });
+      void qc.invalidateQueries({ queryKey: ['inventory-overview'] });
       setEditingSku(null);
     },
   });
@@ -495,7 +499,7 @@ export function ProductMasterPage() {
                 onChange={(e) => setSkuFilters({ ...skuFilters, category: e.target.value })}
               />
               <Input
-                placeholder="生命周期"
+                placeholder="生命周期（系统按销量计算）"
                 value={skuFilters.lifecycle}
                 onChange={(e) => setSkuFilters({ ...skuFilters, lifecycle: e.target.value })}
               />

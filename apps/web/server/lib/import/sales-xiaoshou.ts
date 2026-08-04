@@ -18,6 +18,7 @@ import {
 } from '../sales-report-parser.js';
 import { ASYNC_IMPORT_ROW_THRESHOLD } from './import-constants.js';
 import { pruneSalesHistoryDailyBeyondRetention } from '../sales-history-retention.js';
+import { refreshSkuLifecycles } from '../sku-lifecycle.js';
 
 /** 日宽表按 SKU 行分片导入，避免一次展开数千万日销量行导致 OOM */
 export const SALES_WIDE_IMPORT_CHUNK_SIZE = 25;
@@ -376,6 +377,13 @@ export async function importXiaoshouSalesHistory(
       const pruneResult = await pruneSalesHistoryDailyBeyondRetention();
       prunedDailyRows = pruneResult.deletedRows;
       dailyRetentionCutoff = pruneResult.cutoffDate;
+
+      try {
+        await refreshSkuLifecycles(Array.from(affectedSkuIds));
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        errors.push(`lifecycle refresh: ${message}`);
+      }
     }
 
     return {

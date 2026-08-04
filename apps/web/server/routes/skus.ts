@@ -7,6 +7,7 @@ import { normalizeReplenishLight } from '../lib/replenish-light.js';
 import { ensureSpuFromSkuEncoding } from '../lib/spu-from-sku.js';
 import { skuEncodingToColumns } from '../lib/sku-encoding.js';
 import { markSkuMasterDataManual } from '../lib/ensure-sku-from-import.js';
+import { markReplenishLightManual } from '../lib/replenish-light-sync.js';
 
 export const skuRoutes = new Hono();
 
@@ -128,7 +129,9 @@ skuRoutes.put('/skus/:id', requireMenu('data.products'), async (c) => {
       ...skuFields,
       unitCost: skuFields.unitCost?.toString() ?? body.unitCost?.toString(),
       replenishLight: replenishLight ? normalizeReplenishLight(replenishLight) : undefined,
-      encodingMeta: markSkuMasterDataManual(existing.encodingMeta),
+      encodingMeta: replenishLight
+        ? markReplenishLightManual(existing.encodingMeta)
+        : markSkuMasterDataManual(existing.encodingMeta),
       updatedAt: new Date(),
     })
     .where(eq(skus.id, skuId))

@@ -135,6 +135,105 @@ export const inventoryRecords = pgTable('inventory_records', {
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 });
 
+/** 飞书库存周转整表每日发布批次；同一业务日期仅一个 published 批次生效 */
+export const inventorySnapshotRuns = pgTable(
+  'inventory_snapshot_runs',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    snapshotDate: date('snapshot_date').notNull(),
+    syncedAt: timestamp('synced_at', { withTimezone: true }).notNull().defaultNow(),
+    source: varchar('source', { length: 50 }).notNull().default('feishu-bitable'),
+    status: varchar('status', { length: 20 }).notNull().default('published'),
+    rowCount: integer('row_count').notNull(),
+    importBatchId: uuid('import_batch_id'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    snapshotDateStatusIdx: index('inventory_snapshot_runs_date_status_idx').on(
+      table.snapshotDate,
+      table.status,
+    ),
+  }),
+);
+
+/** 完整 SKU 日快照；payload 固化总览当时全部字段，避免与当前主数据拼接污染历史 */
+export const inventoryDailySnapshots = pgTable(
+  'inventory_daily_snapshots',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    runId: uuid('run_id')
+      .notNull()
+      .references(() => inventorySnapshotRuns.id, { onDelete: 'cascade' }),
+    snapshotDate: date('snapshot_date').notNull(),
+    skuId: uuid('sku_id')
+      .notNull()
+      .references(() => skus.id, { onDelete: 'cascade' }),
+    skuCode: varchar('sku_code', { length: 100 }).notNull(),
+    payload: jsonb('payload').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    dateSkuUnique: uniqueIndex('inventory_daily_snapshots_date_sku_unique_idx').on(
+      table.snapshotDate,
+      table.skuId,
+    ),
+    skuDateIdx: index('inventory_daily_snapshots_sku_date_idx').on(
+      table.skuId,
+      table.snapshotDate,
+    ),
+    runIdx: index('inventory_daily_snapshots_run_id_idx').on(table.runId),
+  }),
+);
+
+/** 库存查询（飞书分仓明细）每日发布批次；与库存总览快照隔离 */
+export const inventoryQuerySnapshotRuns = pgTable(
+  'inventory_query_snapshot_runs',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    snapshotDate: date('snapshot_date').notNull(),
+    syncedAt: timestamp('synced_at', { withTimezone: true }).notNull().defaultNow(),
+    source: varchar('source', { length: 50 }).notNull().default('feishu-bitable'),
+    status: varchar('status', { length: 20 }).notNull().default('published'),
+    rowCount: integer('row_count').notNull(),
+    /** 飞书表字段名顺序（与多维表格列完全对齐） */
+    columns: jsonb('columns').$type<string[]>(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    snapshotDateStatusIdx: index('inventory_query_snapshot_runs_date_status_idx').on(
+      table.snapshotDate,
+      table.status,
+    ),
+  }),
+);
+
+/** 库存查询日快照；payload 为飞书明细列原名；sku_id 可空（未匹配本地主数据仍归档） */
+export const inventoryQueryDailySnapshots = pgTable(
+  'inventory_query_daily_snapshots',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    runId: uuid('run_id')
+      .notNull()
+      .references(() => inventoryQuerySnapshotRuns.id, { onDelete: 'cascade' }),
+    snapshotDate: date('snapshot_date').notNull(),
+    skuId: uuid('sku_id').references(() => skus.id, { onDelete: 'set null' }),
+    skuCode: varchar('sku_code', { length: 100 }).notNull(),
+    payload: jsonb('payload').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    dateSkuCodeUnique: uniqueIndex('inventory_query_daily_snapshots_date_sku_code_unique_idx').on(
+      table.snapshotDate,
+      table.skuCode,
+    ),
+    skuCodeDateIdx: index('inventory_query_daily_snapshots_sku_code_date_idx').on(
+      table.skuCode,
+      table.snapshotDate,
+    ),
+    runIdx: index('inventory_query_daily_snapshots_run_id_idx').on(table.runId),
+  }),
+);
+
 export const salesHistory = pgTable(
   'sales_history',
   {
@@ -322,6 +421,24 @@ export const inventoryRecordsRelations = relations(inventoryRecords, ({ one }) =
   sku: one(skus, { fields: [inventoryRecords.skuId], references: [skus.id] }),
   creator: one(users, { fields: [inventoryRecords.createdBy], references: [users.id] }),
 }));
+
+export const inventorySnapshotRunsRelations = relations(inventorySnapshotRuns, ({ many }) => ({
+  snapshots: many(inventoryDailySnapshots),
+}));
+
+export const inventoryDailySnapshotsRelations = relations(
+  inventoryDailySnapshots,
+  ({ one }) => ({
+    run: one(inventorySnapshotRuns, {
+      fields: [inventoryDailySnapshots.runId],
+      references: [inventorySnapshotRuns.id],
+    }),
+    sku: one(skus, {
+      fields: [inventoryDailySnapshots.skuId],
+      references: [skus.id],
+    }),
+  }),
+);
 
 export const salesHistoryRelations = relations(salesHistory, ({ one }) => ({
   sku: one(skus, { fields: [salesHistory.skuId], references: [skus.id] }),

@@ -19,6 +19,16 @@ import { parseListPagination } from '../lib/list-pagination.js';
 import { getViewColumnIds, resolveOverviewColumnIds } from '../lib/inventory-overview-views.js';
 import { getOverviewCellValue } from '../lib/inventory-overview-cell-value.js';
 import { INVENTORY_OVERVIEW_COLUMN_BY_ID } from '../lib/inventory-turnover-snapshot.js';
+import {
+  DEFAULT_INVENTORY_TREND_FIELDS,
+  listInventorySnapshotDates,
+  loadInventoryTrend,
+} from '../lib/inventory-daily-snapshot.js';
+import {
+  buildInventoryQueryExportRows,
+  listInventoryQueryRows,
+  listInventoryQuerySnapshotDates,
+} from '../lib/inventory-query-service.js';
 
 export const inventoryRoutes = new Hono();
 
@@ -36,16 +46,61 @@ function parseOverviewFilters(c: { req: { query: (k: string) => string | undefin
     ownerName: c.req.query('ownerName')?.trim() || undefined,
     developerName: c.req.query('developerName')?.trim() || undefined,
     view: c.req.query('view')?.trim() || undefined,
+    snapshotDate: c.req.query('snapshotDate')?.trim() || undefined,
     columns,
   };
 }
+
+function parseQueryFilters(c: { req: { query: (k: string) => string | undefined } }) {
+  const columnsRaw = c.req.query('columns')?.trim();
+  const columns = columnsRaw
+    ? columnsRaw.split(',').map((s) => decodeURIComponent(s.trim())).filter(Boolean)
+    : undefined;
+  return {
+    q: c.req.query('q')?.trim() || undefined,
+    category: c.req.query('category')?.trim() || undefined,
+    lifecycle: c.req.query('lifecycle')?.trim() || undefined,
+    salesCountry: c.req.query('salesCountry')?.trim() || undefined,
+    snapshotDate: c.req.query('snapshotDate')?.trim() || undefined,
+    columns,
+  };
+}
+
+inventoryRoutes.get('/inventory/query/export', requireMenu('inventory.query'), async (c) => {
+  const filters = parseQueryFilters(c);
+  const exported = await buildInventoryQueryExportRows(filters);
+  const csv = buildCsv(exported.headers, exported.rows);
+  const date = exported.selectedSnapshotDate ?? new Date().toISOString().slice(0, 10);
+  return csvAttachment(`inventory-query-${date}.csv`, csv);
+});
+
+inventoryRoutes.get('/inventory/query/dates', requireMenu('inventory.query'), async (c) => {
+  return c.json({ items: await listInventoryQuerySnapshotDates() });
+});
+
+inventoryRoutes.get('/inventory/query', requireMenu('inventory.query'), async (c) => {
+  const { page, pageSize, offset } = parseListPagination(
+    c.req.query('page')?.trim(),
+    c.req.query('pageSize')?.trim(),
+    20,
+  );
+  const filters = parseQueryFilters(c);
+  return c.json(
+    await listInventoryQueryRows({
+      page,
+      pageSize,
+      offset,
+      ...filters,
+    }),
+  );
+});
 
 inventoryRoutes.get('/inventory/overview/export', requireMenu('inventory.overview'), async (c) => {
   const filters = parseOverviewFilters(c);
   const full = c.req.query('full') === 'true';
   const columnIds =
     full
-      ? getViewColumnIds('excel_full')
+      ? getViewColumnIds('feishu_full')
       : resolveOverviewColumnIds({ view: filters.view, columns: filters.columns }) ??
         getViewColumnIds('replenish');
 
@@ -57,9 +112,35 @@ inventoryRoutes.get('/inventory/overview/export', requireMenu('inventory.overvie
   return csvAttachment(`inventory-turnover-${new Date().toISOString().slice(0, 10)}.csv`, csv);
 });
 
+inventoryRoutes.get('/inventory/overview/dates', requireMenu('inventory.overview'), async (c) => {
+  return c.json({ items: await listInventorySnapshotDates() });
+});
+
+inventoryRoutes.get(
+  '/inventory/overview/:skuId/trend',
+  requireMenu('inventory.overview'),
+  async (c) => {
+    const skuId = c.req.param('skuId');
+    if (!skuId) return c.json({ message: 'skuId required' }, 400);
+    const requestedFields = c.req
+      .query('fields')
+      ?.split(',')
+      .map((field) => decodeURIComponent(field.trim()))
+      .filter(Boolean);
+    const fields = requestedFields?.length
+      ? requestedFields.slice(0, 12)
+      : [...DEFAULT_INVENTORY_TREND_FIELDS];
+    return c.json({ fields, items: await loadInventoryTrend(skuId, fields) });
+  },
+);
+
 inventoryRoutes.get('/inventory/overview/:skuId', requireMenu('inventory.overview'), async (c) => {
   const skuId = c.req.param('skuId');
-  const item = await buildInventoryOverviewItemBySkuId(skuId);
+  if (!skuId) return c.json({ message: 'skuId required' }, 400);
+  const item = await buildInventoryOverviewItemBySkuId(
+    skuId,
+    c.req.query('snapshotDate')?.trim() || undefined,
+  );
   if (!item) return c.json({ message: 'SKU not found' }, 404);
   return c.json(item);
 });

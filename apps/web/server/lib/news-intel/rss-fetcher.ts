@@ -1,8 +1,13 @@
 import type { RssItem } from './types.js';
-import { getRsshubBaseUrl } from './config.js';
 import { normalizeNewsUrl, stripHtml } from './url-normalize.js';
+import {
+  readResponseTextLimited,
+  safeFetchPublicHttp,
+  type SafeHttpDeps,
+} from './safe-http.js';
 
 const FETCH_TIMEOUT_MS = 30_000;
+const RSS_MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
 
 function decodeXmlEntities(text: string): string {
   return text
@@ -30,6 +35,11 @@ function extractLink(block: string): string | undefined {
   if (alt) return alt;
   const hrefMatch = block.match(/<link[^>]+href=["']([^"']+)["']/i);
   return hrefMatch?.[1];
+}
+
+function extractSourceUrl(block: string): string | undefined {
+  const match = block.match(/<source[^>]+url=["']([^"']+)["']/i);
+  return match?.[1] ? decodeXmlEntities(match[1].trim()) : undefined;
 }
 
 function parseRssOrAtom(xml: string): RssItem[] {
@@ -62,36 +72,19 @@ function parseRssOrAtom(xml: string): RssItem[] {
       pubDate,
       content,
       contentSnippet: snippet,
+      sourceUrl: extractSourceUrl(block),
     });
   }
 
   return items;
 }
 
-export function resolveFeedUrl(feedUrl: string, sourceType: string): string {
-  if (sourceType !== 'rsshub') return feedUrl;
-  const base = getRsshubBaseUrl();
-  if (!base) return feedUrl;
-  if (feedUrl.startsWith('http://') || feedUrl.startsWith('https://')) return feedUrl;
-  const path = feedUrl.startsWith('/') ? feedUrl : `/${feedUrl}`;
-  const encodedPath = path
-    .split('/')
-    .map((segment, index) => {
-      if (index === 0) return '';
-      if (!segment) return '';
-      try {
-        return encodeURIComponent(decodeURIComponent(segment));
-      } catch {
-        return encodeURIComponent(segment);
-      }
-    })
-    .join('/');
-  return `${base}${encodedPath}`;
-}
-
-export async function fetchRssFeed(feedUrl: string, sourceType: string): Promise<RssItem[]> {
-  const url = resolveFeedUrl(feedUrl, sourceType);
-  const res = await fetch(url, {
+export async function fetchRssFeed(
+  feedUrl: string,
+  _sourceType: string,
+  deps: SafeHttpDeps = {},
+): Promise<RssItem[]> {
+  const res = await safeFetchPublicHttp(feedUrl, deps, {
     headers: {
       'User-Agent': 'scm-agent-news-intel/1.0',
       Accept: 'application/rss+xml, application/atom+xml, application/xml, text/xml',
@@ -100,15 +93,12 @@ export async function fetchRssFeed(feedUrl: string, sourceType: string): Promise
   });
 
   if (!res.ok) {
-    throw new Error(`RSS fetch failed ${res.status} for ${url}`);
+    throw new Error(`RSS fetch failed ${res.status} for ${feedUrl}`);
   }
 
-  const xml = await res.text();
-  const items = parseRssOrAtom(xml);
-  if (!items.length) {
-    throw new Error(`RSS parse returned 0 items for ${url}`);
-  }
-  return items;
+  const xml = await readResponseTextLimited(res, RSS_MAX_RESPONSE_BYTES);
+  // Google News / query feeds frequently return a valid empty <channel>; treat as zero results.
+  return parseRssOrAtom(xml);
 }
 
 export function parseRssPubDate(value?: string): Date | undefined {

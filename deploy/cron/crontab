@@ -1,0 +1,10 @@
+# scm-agent HTTP cron (Asia/Shanghai via TZ)
+# Format: standard crontab → supercronic
+
+0 7 * * * /usr/local/bin/run-task.sh /api/tasks/stock-alert
+20 7 * * * /usr/local/bin/run-task.sh /api/tasks/inventory-query-pull
+30 7 * * * /usr/local/bin/run-task.sh /api/tasks/inventory-turnover-pull
+0 8 * * * /usr/local/bin/run-task.sh /api/tasks/news-ingest
+0 8 * * * /usr/local/bin/run-task.sh /api/tasks/procurement-bulk-stock-pull
+5 8 * * * /usr/local/bin/run-task.sh /api/tasks/procurement-follow-up-pull
+0 9 * * 1 /usr/local/bin/run-task.sh /api/tasks/replenishment-forecast

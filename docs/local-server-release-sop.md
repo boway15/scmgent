@@ -1,8 +1,9 @@
 # 本地服务器版发布 SOP
 
 > **适用**：scm-agent 运行在 Win11 专用服务器，公网经 Cloudflare Tunnel 访问。  
-> **不再同步妙搭**：日常只维护本 SOP，无需 `pnpm zip:miaoda`。  
-> **首次安装**：见 [dedicated-host-server-checklist.md](./dedicated-host-server-checklist.md)
+> **部署基线（默认）**：日常只维护本 SOP；**不要** `pnpm zip:miaoda` / 妙搭导入。  
+> **首次安装**：见 [dedicated-host-server-checklist.md](./dedicated-host-server-checklist.md)  
+> **去妙搭决策**：见 [superpowers/specs/2026-07-24-de-miaoda-docs-baseline-design.md](./superpowers/specs/2026-07-24-de-miaoda-docs-baseline-design.md)
 
 ---
 
@@ -53,7 +54,8 @@ git pull
 docker compose -p scm-agent -f docker-compose.yml -f docker-compose.public.yml up -d --build
 ```
 
-> 仅改 `docker-compose.public.yml` 环境变量、未改代码时，用 `--force-recreate web` 代替 `--build`（见第三节）。
+> 仅改 `docker-compose.public.yml` 环境变量、未改代码时，用 `--force-recreate web cron` 代替 `--build`（见第三节）。  
+> **定时任务**：服务 `cron`（`deploy/cron`，Asia/Shanghai → `http://web:8081/api/tasks/*`）。日志：`docker compose -p scm-agent logs -f cron`；停调度：`docker compose -p scm-agent stop cron`。
 
 ### 3. 冒烟验收（发布必做）
 
@@ -201,14 +203,19 @@ cd D:\projects\scm-agent
 
 # 状态
 docker compose -p scm-agent ps
+# 期望：web 为 0.0.0.0:8081->8081/tcp；cron Up 且无 ports 映射
 docker compose -p scm-agent logs -f web
+docker compose -p scm-agent logs -f cron
 docker compose -p scm-agent logs --tail 100 web
+
+# 手动触发一条定时任务（与 cron 相同 Header）
+docker compose -p scm-agent exec cron /usr/local/bin/run-task.sh /api/tasks/stock-alert
 
 # 停止（保留数据）
 docker compose -p scm-agent down
 
 # 完全重建镜像（依赖/Dockerfile 变更）
-docker compose -p scm-agent -f docker-compose.yml -f docker-compose.public.yml build --no-cache web
+docker compose -p scm-agent -f docker-compose.yml -f docker-compose.public.yml build --no-cache web cron
 docker compose -p scm-agent -f docker-compose.yml -f docker-compose.public.yml up -d
 
 # 看资源

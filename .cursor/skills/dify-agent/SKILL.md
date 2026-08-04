@@ -1,21 +1,21 @@
 ---
 name: dify-agent
 description: >-
-  Dify 工作流、RAG 知识库开发与妙搭集成指南。Use when building AI workflows,
-  knowledge base Q&A, replenishment forecast logic, stockout alert pipelines,
-  or integrating Dify REST API with 飞书妙搭/秒搭 backend.
+  Dify 工作流、RAG 知识库开发与 scm-agent（自建 Docker）集成指南。Use when building
+  AI workflows, knowledge base Q&A, replenishment forecast logic, stockout alert
+  pipelines, or integrating Dify REST API with the Hono backend.
 ---
 
 # Dify 开发指南（供应链 AI 引擎）
 
 ## 定位
 
-Dify 作为 AI 引擎层，处理所有需要 LLM 推理、RAG 检索、算法计算的逻辑。
-妙搭后端通过 REST API 调用 Dify；Dify 工作流末尾可通过 HTTP 节点推送飞书消息。
+Dify 作为 AI 引擎层，处理需要 LLM 推理、RAG 检索、算法增强的逻辑。  
+**scm-agent 自建后端**通过 REST API 调用 Dify；Dify 工作流末尾可通过 HTTP 节点推送飞书消息。
 
 ## 部署
 
-自托管（与项目 Docker 环境共存）：
+自托管（与项目 Docker 环境共存或独立 compose）：
 
 ```yaml
 # docker-compose 片段
@@ -27,7 +27,7 @@ services:
       DATABASE_URL: postgresql://...
 ```
 
-生产建议：Dify + Nginx + PostgreSQL（可复用妙搭外的独立 PG 实例）。
+生产建议：Dify + Nginx + PostgreSQL（可与 scm-agent 共用或独立 PG）。
 
 ## 核心场景
 
@@ -39,7 +39,7 @@ Workflow 导入结构（节点 id、边、outputs、变量引用）见 [@dify-cs
 
 - 上传 SOP、政策 PDF / Word / Excel
 - 使用**混合检索**（向量 + 全文 BM25）+ **Cohere/Jina 重排序**
-- 妙搭前端调妙搭后端 → 后端调 Dify Chat API → 返回答案
+- 前端 → scm-agent 后端 → Dify Chat API → 返回答案
 
 ```typescript
 // apps/web/server/integrations/dify.ts
@@ -63,22 +63,22 @@ export async function queryKnowledge(question: string, userId: string) {
 
 ### 2. 补货预测工作流
 
-**触发**：妙搭自动化任务（每日 06:00）或手动触发
+**触发**：自建调度调用 `POST /api/tasks/replenishment-forecast`（或手动）
 
-**Dify Workflow 节点链**：
+**Dify Workflow 节点链（可选增强）**：
 ```
-开始(inputs: sku_list, days) 
-  → HTTP(GET 妙搭库存API /api/stock/history)
+开始(inputs: sku_list, days)
+  → HTTP(GET scm-agent 库存 API)
   → Code(Python: 计算 EOQ/ROP/安全库存)
   → LLM(生成补货建议文本)
-  → HTTP(POST 结果回写妙搭 /api/reorder/suggestions)
+  → HTTP(POST 结果回写 scm-agent)
   → 结束
 ```
 
-**妙搭侧调用**：
+**scm-agent 侧调用示例**：
 
 ```typescript
-// apps/web/server/tasks/replenishment.ts
+// apps/web/server/tasks/replenishmentForecast.ts
 export async function runReplenishmentForecast() {
   const res = await fetch(`${DIFY_BASE_URL}/v1/workflows/run`, {
     method: 'POST',
@@ -120,7 +120,8 @@ DIFY_API_KEY_ALERT=app-zzzz             # 缺货预警工作流
 
 ## 约束
 
-- API Key 只在妙搭后端使用，**不暴露给前端**
-- 妙搭自动化任务 → Dify 的调用放 `server/tasks/`，便于迁移
+- API Key 只在 scm-agent 后端使用，**不暴露给前端**
+- 定时 / 批处理调用放 `apps/web/server/tasks/`，由 HTTP + `CRON_SECRET` 触发
 - Dify 知识库文档变更后需在 Dify 控制台重新索引
 - Dify 工作流超时默认 60s，长计算任务用 `streaming` 或拆分
+- **不要**默认对接飞书妙搭 ZIP / 平台 Cron

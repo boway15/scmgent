@@ -12,30 +12,45 @@ import {
   recommendedActionForException,
 } from './inventory-health-service.js';
 
+/** 大批量 insert 一次 values() 会触发 Maximum call stack size exceeded（SKU×仓可达数万行） */
+export const HEALTH_SNAPSHOT_INSERT_CHUNK = 500;
+
+export function chunkRowsForInsert<T>(items: T[], chunkSize: number): T[][] {
+  if (chunkSize <= 0) throw new Error('chunkSize must be positive');
+  if (!items.length) return [];
+  const chunks: T[][] = [];
+  for (let offset = 0; offset < items.length; offset += chunkSize) {
+    chunks.push(items.slice(offset, offset + chunkSize));
+  }
+  return chunks;
+}
+
 export async function saveHealthSnapshots(
   rows: SkuHealthRow[],
   runId?: string,
 ): Promise<number> {
   if (!rows.length) return 0;
   const computedAt = new Date();
-  await db.insert(inventoryHealthSnapshots).values(
-    rows.map((row) => ({
-      skuId: row.skuId,
-      warehouseCode: row.warehouseCode,
-      healthStatus: row.healthStatus,
-      coverageDays: Number.isFinite(row.coverageDays) ? String(row.coverageDays) : null,
-      effectiveQty: row.effectiveQty,
-      avgDaily: String(row.avgDaily),
-      demandSource: row.demandSource,
-      totalLeadDays: row.totalLeadDays,
-      latestOrderDays: Number.isFinite(row.latestOrderDays)
-        ? String(row.latestOrderDays)
-        : null,
-      metrics: row.metrics,
-      computedAt,
-      runId: runId ?? null,
-    })),
-  );
+  const values = rows.map((row) => ({
+    skuId: row.skuId,
+    warehouseCode: row.warehouseCode,
+    healthStatus: row.healthStatus,
+    coverageDays: Number.isFinite(row.coverageDays) ? String(row.coverageDays) : null,
+    effectiveQty: row.effectiveQty,
+    avgDaily: String(row.avgDaily),
+    demandSource: row.demandSource,
+    totalLeadDays: row.totalLeadDays,
+    latestOrderDays: Number.isFinite(row.latestOrderDays)
+      ? String(row.latestOrderDays)
+      : null,
+    metrics: row.metrics,
+    computedAt,
+    runId: runId ?? null,
+  }));
+
+  for (const chunk of chunkRowsForInsert(values, HEALTH_SNAPSHOT_INSERT_CHUNK)) {
+    await db.insert(inventoryHealthSnapshots).values(chunk);
+  }
   return rows.length;
 }
 

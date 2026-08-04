@@ -1,7 +1,11 @@
 # 飞书妙搭（秒搭）导入清单
 
+> **状态：已停用（2026-07-24）** — 本仓库**不再对接妙搭**，日常发布见 [local-server-release-sop.md](./local-server-release-sop.md)。  
+> 决策记录：[superpowers/specs/2026-07-24-de-miaoda-docs-baseline-design.md](./superpowers/specs/2026-07-24-de-miaoda-docs-baseline-design.md)  
+> 下文仅历史归档。其中 **第七节「自动化任务」的 Cron 时刻与 API 路径** 对自建调度仍可参考；触发方已非妙搭「自动化任务」。
+
 > **命名**：「飞书秒搭」即官方产品 **飞书妙搭（Miaoda）**。  
-> **重要**：ZIP **仅能在新建应用时导入**；已创建项目不可重新导入，只能在线改代码或新建应用。  
+> **重要（历史）**：ZIP **仅能在新建应用时导入**；已创建项目不可重新导入，只能在线改代码或新建应用。  
 > 导入后平台套 **NestJS 全栈外壳**；业务 Hono 须在 **`server/hono-app/`**（参与 `nest build`），经 **`ScmHonoModule`** 挂载。`source_package/` 不参与编译。
 
 ---
@@ -191,6 +195,9 @@ node -e 'import("./dist/server/hono-app/index.js").then(m=>console.log("OK", !!m
 | `FEISHU_OAUTH_REDIRECT_URI` | 正式必填 | `{APP_BASE_URL}/api/auth/feishu/callback` | |
 | `FEISHU_ALERT_CHAT_ID` | — | 群 chat_id | 可选（资讯模块不做群推送） |
 | `FEISHU_BITABLE_APP_TOKEN` | 资讯必填 | 多维表格 app_token | 与旧资讯表可同 app |
+| `FEISHU_BITABLE_PROCUREMENT_APP_TOKEN` | 库存/采购建议 | `HPJzbHdPea7elSs92T8c31BTnxe` | 采购+库存周转同一 Base 时优先 |
+| `FEISHU_BITABLE_TABLE_INVENTORY` | 库存总览建议 | `tblwvSHbqJ3szugE` | SKU周转相关信息 |
+| `FEISHU_BITABLE_TABLE_INVENTORY_QUERY` | 库存查询（可选，默认 `tblubb08s6pe6DXI`） | `tblubb08s6pe6DXI` | SKU库存周转情况查询-明细（分仓）；与总览同 Base/同应用 |
 | `FEISHU_BITABLE_TABLE_NEWS_INTEL` | — | 旧表 table_id | **仅保留历史，禁止新写入** |
 | `FEISHU_BITABLE_TABLE_NEWS_INTEL_V2` | 资讯必填 | 新「跨境资讯总表」table_id | 采集只写此表 |
 | `NEWS_INTEL_ENABLED` | — | `true` | 设为 `false` 可关闭采集 |
@@ -278,29 +285,32 @@ pnpm db:seed
 
 ## 七、自动化任务
 
-发布应用后，在妙搭「自动化任务」中配置：
+> **自建调度（现行）**：Compose 服务 `cron`（`deploy/cron`）按 Asia/Shanghai 调用 `http://web:8081/api/tasks/*` + `X-Cron-Secret`。详见 [superpowers/specs/2026-07-24-self-hosted-cron-sidecar-design.md](./superpowers/specs/2026-07-24-self-hosted-cron-sidecar-design.md)。
 
-| 任务名 | Cron | 执行文件 | 手动调试 API |
-|--------|------|----------|--------------|
+| 任务名 | Cron | 执行文件 | API |
+|--------|------|----------|-----|
 | 缺货预警 | `0 7 * * *`（每天 07:00） | `server/tasks/stockAlert.ts` | `POST /api/tasks/stock-alert` |
-| 补货预测 | `0 6 * * 1`（每周一 06:00） | `server/tasks/replenishmentForecast.ts` | `POST /api/tasks/replenishment-forecast` |
+| 库存查询从飞书拉取 | `20 7 * * *`（每天 07:20） | `server/tasks/inventoryQueryPull.ts` | `POST /api/tasks/inventory-query-pull` |
+| 库存周转从飞书拉取 | `30 7 * * *`（每天 07:30） | `server/tasks/inventoryTurnoverPull.ts` | `POST /api/tasks/inventory-turnover-pull` |
 | 跨境资讯采集 | `0 8 * * *`（每天 08:00） | `server/tasks/newsIngest.ts` | `POST /api/tasks/news-ingest` |
 | 大件备货从飞书拉取 | `0 8 * * *`（每天 08:00） | `server/tasks/procurementFeishuPull.ts` | `POST /api/tasks/procurement-bulk-stock-pull` |
-| 采购跟单从飞书拉取 | `0 8 * * *`（每天 08:00） | `server/tasks/procurementFeishuPull.ts` | `POST /api/tasks/procurement-follow-up-pull` |
+| 采购跟单从飞书拉取 | `5 8 * * *`（每天 08:05） | `server/tasks/procurementFeishuPull.ts` | `POST /api/tasks/procurement-follow-up-pull` |
+| 补货预测 | `0 9 * * 1`（每周一 09:00） | `server/tasks/replenishmentForecast.ts` | `POST /api/tasks/replenishment-forecast` |
 
-手动调试或 HTTP 插件调用时，请求头必须带：
+请求头：
 
 ```
 X-Cron-Secret: {与 CRON_SECRET 环境变量相同的值}
 ```
 
-流程：
+运维：
 
-1. 先 **发布应用**
-2. 配置 `CRON_SECRET` 环境变量
-3. 创建任务 → 选手动触发（附带 `X-Cron-Secret`）→ 确认日志无报错
-4. 再启用 Cron
-5. 配置 `FEISHU_ALERT_CHAT_ID` 后，预警任务可向飞书群推送
+1. 配置 `CRON_SECRET`（web 与 cron 一致）
+2. `docker compose up -d` 后确认 `cron` 服务 Up
+3. 手动：`docker compose exec cron /usr/local/bin/run-task.sh /api/tasks/stock-alert`
+4. 临时停调度：`docker compose stop cron` 或 `CRON_ENABLED=false`
+
+> 以下「妙搭自动化任务」为历史做法，已停用。
 
 ---
 

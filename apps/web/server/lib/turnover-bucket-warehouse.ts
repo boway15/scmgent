@@ -83,6 +83,17 @@ export function parseTurnoverWarehouseBuckets(row: Record<string, string>): Turn
     }
   }
 
+  // 飞书压缩表仅有合计库存时，写入 OVERSEAS 汇总仓（区域列为销售占比，不进 qty）
+  if (buckets.size === 0) {
+    const overseasTotal = pickRowQty(row, '海外仓库存_合计', '海外仓在库');
+    const transitTotal = pickRowQty(row, '调拨在途_合计', '调拨在途合计');
+    if (overseasTotal > 0 || transitTotal > 0) {
+      const bucket = ensure('OVERSEAS');
+      bucket.qtyAvailable = overseasTotal;
+      bucket.qtyInTransit = transitTotal;
+    }
+  }
+
   return Array.from(buckets.values());
 }
 
@@ -92,7 +103,7 @@ export type WarehouseStockLine = {
   qtyInTransit: number;
 };
 
-/** 将分仓库存映射回周转表列名（仅当导入快照缺失时作展示兜底） */
+/** 将 Excel 分仓数量映射回周转表列名（仅当导入快照缺失时作展示兜底；不含飞书销售占比列） */
 export function warehouseStockToTurnoverColumnValue(
   stocks: WarehouseStockLine[] | undefined,
   columnId: string,

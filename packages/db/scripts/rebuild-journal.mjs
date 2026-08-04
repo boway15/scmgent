@@ -74,6 +74,7 @@ const tags = [
   '0065_inventory_planning_role_menus',
   '0066_drop_sap_mirror',
   '0067_system_tasks_menu',
+  '0068_drop_sap_mirror_menu_retry',
 ];
 
 const entries = tags.map((tag, idx) => ({

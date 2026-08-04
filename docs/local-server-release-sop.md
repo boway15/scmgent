@@ -100,6 +100,35 @@ docker compose -p scm-agent restart web
 
 > **勿再手工改** `packages/db/drizzle/meta/_journal.json`；开发机已合并完整 journal，服务器只 `git pull`。
 
+### 5. 飞书同步按钮置灰
+
+按钮依赖容器内环境变量（不是本机 `.env` 文件内容本身）。在服务器执行：
+
+```powershell
+# 看容器实际读到的值（为空则说明未注入）
+docker compose -p scm-agent exec web sh -c "echo APP=\${FEISHU_BITABLE_PROCUREMENT_APP_TOKEN:-\$FEISHU_BITABLE_APP_TOKEN} TABLE=\$FEISHU_BITABLE_TABLE_INVENTORY"
+
+# 看 health 诊断（无需登录）
+curl.exe -s http://localhost:8081/api/health
+```
+
+期望 `runtime.bitableInventoryTurnoverConfigured: true`。若为 `false`：
+
+1. 确认 `docker-compose.yml` 的 `env_file: .env` 存在且路径正确  
+2. **不要在** `docker-compose.public.yml` 里写空的 `FEISHU_BITABLE_*:`（会覆盖 `.env`）  
+3. 修完后 `--force-recreate web`，看日志应有 `Feishu inventory turnover bitable configured`
+
+### 6. 菜单残留「SAP」项
+
+v1.0.1 曾短暂写入 `data.sap_mirror` 菜单；若迁移 `0066`/`0068` 未跑完会残留。升级 v1.0.3+ 后：
+
+```powershell
+docker compose -p scm-agent exec web sh -c "cd /app/packages/db && pnpm exec drizzle-kit migrate"
+docker compose -p scm-agent restart web
+```
+
+或手工：`DELETE FROM menus WHERE code = 'data.sap_mirror';`
+
 ---
 
 ## 二、仅改配置（无代码变更）

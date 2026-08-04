@@ -1,4 +1,5 @@
 import { isDifyEnabled, isReplenishmentWorkflowEnabled, isAlertWorkflowEnabled } from '../integrations/dify.js';
+import { getBitableSyncConfig } from './bitable-sync.js';
 import {
   isAuthBypassLogin,
   isAuthRequired,
@@ -21,6 +22,9 @@ export type RuntimeConfigSummary = {
   alertWorkflow: boolean;
   cronSecretConfigured: boolean;
   feishuConfigured: boolean;
+  bitableInventoryTurnoverConfigured: boolean;
+  bitableAppTokenConfigured: boolean;
+  bitableTableInventoryConfigured: boolean;
   jwtSecretConfigured: boolean;
   productionReady: boolean;
   warnings: string[];
@@ -44,6 +48,10 @@ export function getRuntimeConfigSummary(): RuntimeConfigSummary {
   const serveStatic = process.env.SERVE_STATIC === 'true';
   const cronSecretConfigured = !!process.env.CRON_SECRET?.trim();
   const feishuConfigured = isFeishuCredentialsConfigured();
+  const turnoverBitable = getBitableSyncConfig().inventory_turnover;
+  const bitableInventoryTurnoverConfigured = turnoverBitable.configured;
+  const bitableAppTokenConfigured = turnoverBitable.appTokenConfigured;
+  const bitableTableInventoryConfigured = Boolean(turnoverBitable.tableId);
   const jwtSecretConfigured = !!process.env.JWT_SECRET?.trim();
   const isProd = process.env.NODE_ENV === 'production';
 
@@ -56,6 +64,11 @@ export function getRuntimeConfigSummary(): RuntimeConfigSummary {
   if (authRequired && !emailAuthEnabled) warnings.push('EMAIL_AUTH_ENABLED=false：邮箱登录已关闭');
   if (feishuAuthEnabled && !feishuConfigured) {
     warnings.push('FEISHU_AUTH_ENABLED=true 但 FEISHU_APP_ID/SECRET 未配置');
+  }
+  if (!bitableInventoryTurnoverConfigured) {
+    warnings.push(
+      '库存总览飞书同步未就绪：需 FEISHU_BITABLE_PROCUREMENT_APP_TOKEN（或 FEISHU_BITABLE_APP_TOKEN）与 FEISHU_BITABLE_TABLE_INVENTORY',
+    );
   }
   if (authRequired && !feishuLoginAvailable && !emailAuthEnabled) {
     warnings.push('无可用登录方式：请启用邮箱或飞书登录');
@@ -85,6 +98,9 @@ export function getRuntimeConfigSummary(): RuntimeConfigSummary {
     alertWorkflow: isAlertWorkflowEnabled(),
     cronSecretConfigured,
     feishuConfigured,
+    bitableInventoryTurnoverConfigured,
+    bitableAppTokenConfigured,
+    bitableTableInventoryConfigured,
     jwtSecretConfigured,
     productionReady,
     warnings,

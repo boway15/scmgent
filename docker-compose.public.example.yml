@@ -26,6 +26,11 @@ services:
       # 飞书 OAuth 回调（须与飞书开放平台重定向 URL 完全一致）
       FEISHU_OAUTH_REDIRECT_URI: https://scm.al6s.cn/api/auth/feishu/callback
 
+      # 库存总览 / 采购飞书多维表格（与 .env 二选一；勿留空字符串，否则会覆盖 .env）
+      # FEISHU_BITABLE_PROCUREMENT_APP_TOKEN: "HPJzbHdPea7elSs92T8c31BTnxe"
+      # FEISHU_BITABLE_TABLE_INVENTORY: "tblwvSHbqJ3szugE"
+      # FEISHU_BITABLE_TABLE_INVENTORY_QUERY: "tblubb08s6pe6DXI"
+
   # cron 的 CRON_SECRET 与 web 共用 .env 或 docker-compose.yml 默认值
   cron:
     environment:

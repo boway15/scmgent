@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.3] - 2026-08-04
+
+- `/api/health` 增加 `bitableInventoryTurnoverConfigured` 等诊断字段
+- 库存总览页展示飞书同步不可用的具体原因
+- entrypoint 启动日志提示 bitable 是否配置
+- 迁移 `0068` 幂等清理残留 SAP 镜像菜单
+
 ## [1.0.2] - 2026-08-04
 
 发版热修复：补全 Drizzle migration journal，避免生产机手工 patch。

@@ -147,11 +147,28 @@ export function InventoryOverviewPage() {
 
   const { getWidth, onResizeStart, resetWidths } = useResizableColumnWidths();
 
-  const { data: bitableStatus } = useQuery({
+  const { data: bitableStatus, isError: bitableStatusError, error: bitableStatusLoadError } = useQuery({
     queryKey: ['bitable-status'],
     queryFn: () => api.getBitableStatus(),
   });
-  const feishuConfigured = bitableStatus?.inventory_turnover?.configured ?? false;
+  const turnoverBitable = bitableStatus?.inventory_turnover;
+  const feishuConfigured = turnoverBitable?.configured ?? false;
+  const feishuConfigHint = (() => {
+    if (bitableStatusError) {
+      return (bitableStatusLoadError as Error)?.message ?? '无法读取飞书同步配置';
+    }
+    if (feishuConfigured) return null;
+    const missing: string[] = [];
+    if (!turnoverBitable?.appTokenConfigured) {
+      missing.push('FEISHU_BITABLE_PROCUREMENT_APP_TOKEN 或 FEISHU_BITABLE_APP_TOKEN');
+    }
+    if (!turnoverBitable?.tableId) {
+      missing.push('FEISHU_BITABLE_TABLE_INVENTORY');
+    }
+    return missing.length
+      ? `容器内未读到：${missing.join('、')}（请确认 docker-compose 的 env_file/.environment 已注入，重建 web 后访问 /api/health 查看 runtime.bitableInventoryTurnoverConfigured）`
+      : '飞书多维表格未配置';
+  })();
 
   const previewFeishu = useMutation({
     mutationFn: () => api.previewBitableSync('inventory_turnover'),
@@ -345,7 +362,7 @@ export function InventoryOverviewPage() {
             title={
               feishuConfigured
                 ? '预览飞书「SKU周转相关信息」'
-                : '未配置 FEISHU_BITABLE_TABLE_INVENTORY / app token'
+                : feishuConfigHint ?? '未配置 FEISHU_BITABLE_TABLE_INVENTORY / app token'
             }
           >
             {previewFeishu.isPending ? '预览中…' : '从飞书同步预览'}
@@ -375,6 +392,12 @@ export function InventoryOverviewPage() {
         <p className="rounded-md border border-border bg-muted/20 px-3 py-2 text-sm text-text-sub">
           {feishuMessage}
         </p>
+      ) : null}
+
+      {!feishuConfigured && feishuConfigHint ? (
+        <div className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+          飞书同步不可用：{feishuConfigHint}
+        </div>
       ) : null}
 
       {data?.selectedSnapshotDate ? (

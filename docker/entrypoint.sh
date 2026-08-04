@@ -7,6 +7,12 @@ until pg_isready -h "${DB_HOST:-postgres}" -U "${DB_USER:-scm}" -d "${DB_NAME:-s
 done
 echo "[entrypoint] PostgreSQL is ready."
 
+if [ -z "${FEISHU_BITABLE_PROCUREMENT_APP_TOKEN:-}${FEISHU_BITABLE_APP_TOKEN:-}" ] || [ -z "${FEISHU_BITABLE_TABLE_INVENTORY:-}" ]; then
+  echo "[entrypoint] WARN: Feishu inventory turnover bitable not fully configured (need app token + FEISHU_BITABLE_TABLE_INVENTORY)."
+else
+  echo "[entrypoint] Feishu inventory turnover bitable configured (table=${FEISHU_BITABLE_TABLE_INVENTORY})."
+fi
+
 echo "[entrypoint] Running migrations..."
 cd /app/packages/db
 pnpm exec drizzle-kit migrate

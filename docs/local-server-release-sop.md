@@ -50,10 +50,15 @@ git push origin main
 
 ```powershell
 cd D:\projects\scm-agent
-git pull
-docker compose -p scm-agent -f docker-compose.yml -f docker-compose.public.yml up -d --build
+# 日常发版请跟踪 main，不要长期停在 tag 的 detached HEAD
+git fetch origin
+git checkout main
+git pull origin main
+docker compose -p scm-agent -f docker-compose.yml -f docker-compose.public.yml up -d --build --remove-orphans
 ```
 
+> **发版 tag 验收**（可选）：`git fetch --tags && git checkout v1.0.1` 仅用于一次性核对；验收完成后务必 `git checkout main && git pull`，避免工作区长期 detached HEAD。  
+> **孤儿容器**：旧版 Compose 曾含 `rsshub`，v1.0.1 已移除；首次升级请加 `--remove-orphans` 清理。  
 > 仅改 `docker-compose.public.yml` 环境变量、未改代码时，用 `--force-recreate web cron` 代替 `--build`（见第三节）。  
 > **定时任务**：服务 `cron`（`deploy/cron`，Asia/Shanghai → `http://web:8081/api/tasks/*`）。日志：`docker compose -p scm-agent logs -f cron`；停调度：`docker compose -p scm-agent stop cron`。
 
@@ -74,6 +79,26 @@ curl.exe -s https://scm.al6s.cn/api/health
 - [ ] 本次改动涉及的核心页面可操作
 
 **通过标准**：两条 `/api/health` 均返回 JSON，且 `db` 正常；公网与 localhost 行为一致。
+
+### 4. 迁移完整性核对（v1.0.1 升级必做）
+
+v1.0.1 之前若 `_journal.json` 不完整，可能导致部分 SQL 未自动执行。升级后请在服务器核对：
+
+```powershell
+docker compose -p scm-agent exec postgres psql -U scm -d scm_dev -c "SELECT id, hash, created_at FROM drizzle.__drizzle_migrations ORDER BY created_at DESC LIMIT 15;"
+docker compose -p scm-agent exec postgres psql -U scm -d scm_dev -c "\dt inventory_daily_snapshots"
+docker compose -p scm-agent exec postgres psql -U scm -d scm_dev -c "\dt inventory_query_snapshots"
+```
+
+若上表不存在，在 **v1.0.2+** 拉取完整 journal 后补跑：
+
+```powershell
+docker compose -p scm-agent exec web sh -c "cd /app/packages/db && pnpm exec drizzle-kit migrate"
+docker compose -p scm-agent exec web sh -c "cd /app/packages/db && pnpm exec tsx src/seed.ts"
+docker compose -p scm-agent restart web
+```
+
+> **勿再手工改** `packages/db/drizzle/meta/_journal.json`；开发机已合并完整 journal，服务器只 `git pull`。
 
 ---
 

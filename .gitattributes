@@ -1,0 +1,7 @@
+# Shell scripts must stay LF so Alpine entrypoint/cron do not break on Windows checkout.
+*.sh text eol=lf
+docker/entrypoint.sh text eol=lf
+deploy/cron/*.sh text eol=lf
+
+# SQL migrations: LF for consistent checksums across dev/prod.
+packages/db/drizzle/*.sql text eol=lf

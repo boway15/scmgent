@@ -3,7 +3,7 @@
 自建 Docker 部署的跨境电商供应链智能体平台。本地在 Cursor 中开发，生产运行于 **Win11 专用机 + Docker Compose + Cloudflare Tunnel**。
 
 > **部署基线**：日常发布见 [docs/local-server-release-sop.md](docs/local-server-release-sop.md)。  
-> **当前版本**：v1.0.1 — 迭代说明见 [CHANGELOG.md](CHANGELOG.md)。  
+> **当前版本**：v1.0.2 — 迭代说明见 [CHANGELOG.md](CHANGELOG.md)。  
 > **妙搭**：ZIP / CJS 双轨路径**已停用**（无后续对接计划）；历史材料仅作归档，见文末。
 
 ---

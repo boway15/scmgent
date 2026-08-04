@@ -90,132 +90,139 @@
       "idx": 12,
       "version": "6",
       "when": 1780717058152,
-      "tag": "0012_fob_multi_allocation",
+      "tag": "0011_help_center_menu",
       "breakpoints": true
     },
     {
       "idx": 13,
       "version": "6",
       "when": 1780717058153,
-      "tag": "0013_fob_settlement_split_v2",
+      "tag": "0012_fob_multi_allocation",
       "breakpoints": true
     },
     {
       "idx": 14,
       "version": "6",
       "when": 1780717058154,
-      "tag": "0014_p0_ops",
+      "tag": "0013_fob_settlement_split_v2",
       "breakpoints": true
     },
     {
       "idx": 15,
       "version": "6",
       "when": 1780717058155,
-      "tag": "0015_drop_fob_bill_format",
+      "tag": "0014_p0_ops",
       "breakpoints": true
     },
     {
       "idx": 16,
       "version": "6",
       "when": 1780717058156,
-      "tag": "0016_remove_compliance",
+      "tag": "0015_drop_fob_bill_format",
       "breakpoints": true
     },
     {
       "idx": 17,
       "version": "6",
       "when": 1780717058157,
-      "tag": "0017_email_auth",
+      "tag": "0016_remove_compliance",
       "breakpoints": true
     },
     {
       "idx": 18,
       "version": "6",
       "when": 1780717058158,
-      "tag": "0018_audit_logs",
+      "tag": "0017_email_auth",
       "breakpoints": true
     },
     {
       "idx": 19,
       "version": "6",
       "when": 1780717058159,
-      "tag": "0019_supply_chain_replenishment",
+      "tag": "0018_audit_logs",
       "breakpoints": true
     },
     {
       "idx": 20,
       "version": "6",
       "when": 1780717058160,
-      "tag": "0020_sales_forecast_monthly",
+      "tag": "0019_supply_chain_replenishment",
       "breakpoints": true
     },
     {
       "idx": 21,
       "version": "6",
       "when": 1780717058161,
-      "tag": "0021_sku_encoding",
+      "tag": "0020_sales_forecast_monthly",
       "breakpoints": true
     },
     {
       "idx": 22,
       "version": "6",
       "when": 1780717058162,
-      "tag": "0022_inventory_health_lights",
+      "tag": "0021_sku_encoding",
       "breakpoints": true
     },
     {
       "idx": 23,
       "version": "6",
       "when": 1780717058163,
-      "tag": "0023_inventory_ops_production",
+      "tag": "0022_inventory_health_lights",
       "breakpoints": true
     },
     {
       "idx": 24,
       "version": "6",
       "when": 1780717058164,
-      "tag": "0024_sales_forecast_platform",
+      "tag": "0023_inventory_ops_production",
       "breakpoints": true
     },
     {
       "idx": 25,
       "version": "6",
       "when": 1780717058165,
-      "tag": "0025_sales_forecast_management",
+      "tag": "0024_sales_forecast_platform",
       "breakpoints": true
     },
     {
       "idx": 26,
       "version": "6",
       "when": 1780717058166,
-      "tag": "0026_widen_spu_numeric_code",
+      "tag": "0025_sales_forecast_management",
       "breakpoints": true
     },
     {
       "idx": 27,
       "version": "6",
       "when": 1780717058167,
-      "tag": "0027_widen_variant_no",
+      "tag": "0026_widen_spu_numeric_code",
       "breakpoints": true
     },
     {
       "idx": 28,
       "version": "6",
       "when": 1780717058168,
-      "tag": "0028_ai_runs",
+      "tag": "0027_widen_variant_no",
       "breakpoints": true
     },
     {
       "idx": 29,
       "version": "6",
       "when": 1780717058169,
-      "tag": "0029_purchase_tracking_lifecycle",
+      "tag": "0028_ai_runs",
       "breakpoints": true
     },
     {
       "idx": 30,
       "version": "6",
       "when": 1780717058170,
+      "tag": "0029_purchase_tracking_lifecycle",
+      "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "6",
+      "when": 1780717058171,
       "tag": "0030_sales_forecast_collaboration",
       "breakpoints": true
     },
@@ -223,202 +230,265 @@
       "idx": 32,
       "version": "6",
       "when": 1780717058172,
-      "tag": "0032_sku_inventory_master_fields",
+      "tag": "0031_sales_history_monthly",
       "breakpoints": true
     },
     {
       "idx": 33,
       "version": "6",
       "when": 1780717058173,
-      "tag": "0033_turnover_bucket_warehouses",
+      "tag": "0032_sku_inventory_master_fields",
       "breakpoints": true
     },
     {
       "idx": 34,
       "version": "6",
       "when": 1780717058174,
-      "tag": "0034_sales_history_category",
+      "tag": "0033_turnover_bucket_warehouses",
       "breakpoints": true
     },
     {
       "idx": 35,
       "version": "6",
       "when": 1780717058175,
-      "tag": "0035_news_intel",
+      "tag": "0034_sales_history_category",
       "breakpoints": true
     },
     {
       "idx": 36,
       "version": "6",
       "when": 1780717058176,
-      "tag": "0036_news_article_bitable_category",
+      "tag": "0035_news_intel",
       "breakpoints": true
     },
     {
       "idx": 37,
       "version": "6",
       "when": 1780717058177,
-      "tag": "0037_sales_history_import_perf",
+      "tag": "0036_news_article_bitable_category",
       "breakpoints": true
     },
     {
       "idx": 38,
       "version": "6",
       "when": 1780717058178,
-      "tag": "0038_forecast_horizon_factors",
+      "tag": "0037_sales_history_import_perf",
       "breakpoints": true
     },
     {
       "idx": 39,
       "version": "6",
       "when": 1780717058179,
-      "tag": "0039_forecast_eligibility",
+      "tag": "0038_forecast_horizon_factors",
       "breakpoints": true
     },
     {
       "idx": 40,
       "version": "6",
       "when": 1780717058180,
-      "tag": "0040_forecast_profile_horizon",
+      "tag": "0039_forecast_eligibility",
       "breakpoints": true
     },
     {
       "idx": 41,
       "version": "6",
       "when": 1780717058181,
-      "tag": "0042_cs_reply_quality",
+      "tag": "0040_forecast_profile_horizon",
       "breakpoints": true
     },
     {
       "idx": 42,
       "version": "6",
       "when": 1780717058182,
-      "tag": "0043_cs_reply_menu_rename",
+      "tag": "0041_forecast_exogenous_flags",
       "breakpoints": true
     },
     {
       "idx": 43,
       "version": "6",
       "when": 1780717058183,
-      "tag": "0044_procurement_module",
+      "tag": "0042_cs_reply_quality",
       "breakpoints": true
     },
     {
       "idx": 44,
       "version": "6",
       "when": 1780717058184,
-      "tag": "0045_news_intel_v2",
+      "tag": "0043_cs_reply_menu_rename",
       "breakpoints": true
     },
     {
       "idx": 45,
       "version": "6",
       "when": 1780717058185,
-      "tag": "0046_news_intel_menu",
+      "tag": "0044_procurement_module",
       "breakpoints": true
     },
     {
       "idx": 46,
       "version": "6",
-      "when": 1785216000000,
-      "tag": "0047_drop_creator_ops_menu",
+      "when": 1780717058186,
+      "tag": "0045_news_intel_v2",
       "breakpoints": true
     },
     {
       "idx": 47,
       "version": "6",
-      "when": 1785216000001,
-      "tag": "0052_purchase_draft_eta_available",
+      "when": 1780717058187,
+      "tag": "0046_news_intel_menu",
       "breakpoints": true
     },
     {
       "idx": 48,
       "version": "6",
-      "when": 1785216000002,
-      "tag": "0053_lead_time_profiles",
+      "when": 1780717058188,
+      "tag": "0047_drop_creator_ops_menu",
       "breakpoints": true
     },
     {
       "idx": 49,
       "version": "6",
-      "when": 1785216000003,
-      "tag": "0054_lead_time_menu",
+      "when": 1780717058189,
+      "tag": "0047_inventory_daily_snapshots",
       "breakpoints": true
     },
     {
       "idx": 50,
       "version": "6",
-      "when": 1785216000004,
-      "tag": "0055_purchase_draft_milestones",
+      "when": 1780717058190,
+      "tag": "0048_inventory_query_snapshots",
       "breakpoints": true
     },
     {
       "idx": 51,
       "version": "6",
-      "when": 1785216000005,
-      "tag": "0056_inventory_planning_menu",
+      "when": 1780717058191,
+      "tag": "0049_inventory_query_menu",
       "breakpoints": true
     },
     {
       "idx": 52,
       "version": "6",
-      "when": 1785216000006,
-      "tag": "0057_shipments",
+      "when": 1780717058192,
+      "tag": "0050_inventory_query_run_columns",
       "breakpoints": true
     },
     {
       "idx": 53,
       "version": "6",
-      "when": 1785216000007,
-      "tag": "0058_shipments_menu",
+      "when": 1780717058193,
+      "tag": "0051_news_research_agent",
       "breakpoints": true
     },
     {
       "idx": 54,
       "version": "6",
-      "when": 1785216000008,
-      "tag": "0059_safety_stock_method",
+      "when": 1780717058194,
+      "tag": "0052_purchase_draft_eta_available",
       "breakpoints": true
     },
     {
       "idx": 55,
       "version": "6",
-      "when": 1785216000009,
-      "tag": "0060_external_ids",
+      "when": 1780717058195,
+      "tag": "0053_lead_time_profiles",
       "breakpoints": true
     },
     {
       "idx": 56,
       "version": "6",
-      "when": 1785216000010,
-      "tag": "0062_sync_metadata",
+      "when": 1780717058196,
+      "tag": "0054_lead_time_menu",
       "breakpoints": true
     },
     {
       "idx": 57,
       "version": "6",
-      "when": 1785216000011,
-      "tag": "0063_sap_mirror",
+      "when": 1780717058197,
+      "tag": "0055_purchase_draft_milestones",
       "breakpoints": true
     },
     {
       "idx": 58,
       "version": "6",
-      "when": 1785216000012,
-      "tag": "0065_inventory_planning_role_menus",
+      "when": 1780717058198,
+      "tag": "0056_inventory_planning_menu",
       "breakpoints": true
     },
     {
       "idx": 59,
       "version": "6",
-      "when": 1785216000013,
-      "tag": "0066_drop_sap_mirror",
+      "when": 1780717058199,
+      "tag": "0057_shipments",
       "breakpoints": true
     },
     {
       "idx": 60,
       "version": "6",
-      "when": 1785216000014,
+      "when": 1780717058200,
+      "tag": "0058_shipments_menu",
+      "breakpoints": true
+    },
+    {
+      "idx": 61,
+      "version": "6",
+      "when": 1780717058201,
+      "tag": "0059_safety_stock_method",
+      "breakpoints": true
+    },
+    {
+      "idx": 62,
+      "version": "6",
+      "when": 1780717058202,
+      "tag": "0060_external_ids",
+      "breakpoints": true
+    },
+    {
+      "idx": 63,
+      "version": "6",
+      "when": 1780717058203,
+      "tag": "0061_planning_dashboard_menu",
+      "breakpoints": true
+    },
+    {
+      "idx": 64,
+      "version": "6",
+      "when": 1780717058204,
+      "tag": "0062_sync_metadata",
+      "breakpoints": true
+    },
+    {
+      "idx": 65,
+      "version": "6",
+      "when": 1780717058205,
+      "tag": "0063_sap_mirror",
+      "breakpoints": true
+    },
+    {
+      "idx": 66,
+      "version": "6",
+      "when": 1780717058206,
+      "tag": "0064_sap_mirror_menu",
+      "breakpoints": true
+    },
+    {
+      "idx": 67,
+      "version": "6",
+      "when": 1780717058207,
+      "tag": "0065_inventory_planning_role_menus",
+      "breakpoints": true
+    },
+    {
+      "idx": 68,
+      "version": "6",
+      "when": 1780717058208,
+      "tag": "0066_drop_sap_mirror",
+      "breakpoints": true
+    },
+    {
+      "idx": 69,
+      "version": "6",
+      "when": 1780717058209,
       "tag": "0067_system_tasks_menu",
       "breakpoints": true
     }

@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.0.2] - 2026-08-04
+
+发版热修复：补全 Drizzle migration journal，避免生产机手工 patch。
+
+- 合并完整 `_journal.json`（补 0031/0041/0047 日快照/0048–0051/0061/0064/0011_help_center 等 9+ 条）
+- 新增 `.gitattributes`（`*.sh` / migration SQL 强制 LF）
+- `Dockerfile` entrypoint 构建时 strip CRLF
+- SOP：发版跟踪 `main`、`-remove-orphans` 清理旧 `rsshub`、迁移完整性核对步骤
+
 ## [1.0.1] - 2026-08-04
 
 相对 v0.9.1 的 PMC 库存规划演进 + 飞书同步增强迭代。

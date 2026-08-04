@@ -21,7 +21,7 @@ WORKDIR /app
 
 COPY --from=build /app /app
 COPY docker/entrypoint.sh /entrypoint.sh
-RUN chmod +x /entrypoint.sh
+RUN sed -i 's/\r$//' /entrypoint.sh && chmod +x /entrypoint.sh
 
 ENV NODE_ENV=production
 ENV SERVE_STATIC=true

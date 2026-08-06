@@ -5,6 +5,7 @@ import {
   deriveSkuTrendFactor,
   buildHistoryMonthLabels,
   buildConfiguredHorizonLabels,
+  resolveVersionDisplayHorizon,
   resolveHorizonProfileSegmentFilter,
   resolveAnchorProfileSegment,
   findFirstForecastMonth,
@@ -26,6 +27,58 @@ describe('forecast-horizon', () => {
     assert.deepEqual(
       labels.map((l) => l.monthLabel),
       ['2026-07', '2026-08', '2026-09'],
+    );
+  });
+
+  it('keeps version stored months even when calendar has moved forward', () => {
+    const stored = [
+      { forecastYear: 2026, month: 7, monthLabel: '2026-07' },
+      { forecastYear: 2026, month: 8, monthLabel: '2026-08' },
+      { forecastYear: 2026, month: 9, monthLabel: '2026-09' },
+      { forecastYear: 2026, month: 10, monthLabel: '2026-10' },
+      { forecastYear: 2026, month: 11, monthLabel: '2026-11' },
+      { forecastYear: 2026, month: 12, monthLabel: '2026-12' },
+    ];
+    const labels = resolveVersionDisplayHorizon({
+      dataHorizon: stored,
+      monthCount: 6,
+      asOf: new Date('2026-08-05T00:00:00.000Z'),
+    });
+    assert.deepEqual(
+      labels.map((l) => l.monthLabel),
+      ['2026-07', '2026-08', '2026-09', '2026-10', '2026-11', '2026-12'],
+    );
+  });
+
+  it('slices stored months by monthCount without inventing future months', () => {
+    const stored = [
+      { forecastYear: 2026, month: 7, monthLabel: '2026-07' },
+      { forecastYear: 2026, month: 8, monthLabel: '2026-08' },
+      { forecastYear: 2026, month: 9, monthLabel: '2026-09' },
+      { forecastYear: 2026, month: 10, monthLabel: '2026-10' },
+      { forecastYear: 2026, month: 11, monthLabel: '2026-11' },
+      { forecastYear: 2026, month: 12, monthLabel: '2026-12' },
+    ];
+    const labels = resolveVersionDisplayHorizon({
+      dataHorizon: stored,
+      monthCount: 3,
+      asOf: new Date('2026-08-05T00:00:00.000Z'),
+    });
+    assert.deepEqual(
+      labels.map((l) => l.monthLabel),
+      ['2026-07', '2026-08', '2026-09'],
+    );
+  });
+
+  it('falls back to asOf window only when version has no stored months', () => {
+    const labels = resolveVersionDisplayHorizon({
+      dataHorizon: [],
+      monthCount: 3,
+      asOf: new Date('2026-08-05T00:00:00.000Z'),
+    });
+    assert.deepEqual(
+      labels.map((l) => l.monthLabel),
+      ['2026-08', '2026-09', '2026-10'],
     );
   });
 

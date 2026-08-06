@@ -527,6 +527,76 @@ export function buildConfiguredHorizonLabels(monthCount: number, asOf = new Date
   }));
 }
 
+/**
+ * 已生成版本的预测月列：优先使用落库月份（生成后不再随当前日历滚动）。
+ * monthCount 仅截取该版本前 N 个月；仅在尚无落库行时，才按 asOf 生成占位列。
+ */
+export function resolveVersionDisplayHorizon(input: {
+  dataHorizon: ForecastHorizonMonth[];
+  monthCount?: number;
+  asOf?: Date;
+}): ForecastHorizonMonth[] {
+  const { dataHorizon, monthCount } = input;
+  if (dataHorizon.length > 0) {
+    if (monthCount == null) return dataHorizon;
+    return dataHorizon.slice(0, monthCount);
+  }
+  if (monthCount != null) {
+    return buildConfiguredHorizonLabels(monthCount, input.asOf ?? new Date());
+  }
+  return [];
+}
+
+async function loadVersionStoredHorizon(input: {
+  versionId: string;
+  station: string;
+  platform?: string;
+}): Promise<ForecastHorizonMonth[]> {
+  const conditions = [
+    eq(salesForecastMonthly.versionId, input.versionId),
+    eq(salesForecastMonthly.station, input.station),
+  ];
+  if (input.platform && input.platform !== 'ALL') {
+    conditions.push(eq(salesForecastMonthly.platform, input.platform));
+  } else {
+    conditions.push(inArray(salesForecastMonthly.platform, [...FORECAST_V41_PLATFORM_CODES]));
+  }
+
+  const monthLabelRows = await db
+    .selectDistinct({
+      forecastYear: salesForecastMonthly.forecastYear,
+      month: salesForecastMonthly.month,
+    })
+    .from(salesForecastMonthly)
+    .where(and(...conditions))
+    .orderBy(asc(salesForecastMonthly.forecastYear), asc(salesForecastMonthly.month));
+
+  return buildHorizonLabels(monthLabelRows);
+}
+
+async function resolveHorizonForVersionView(input: {
+  dataHorizon: ForecastHorizonMonth[];
+  versionId: string;
+  station: string;
+  platform?: string;
+  monthCount?: number;
+  asOf: Date;
+}): Promise<ForecastHorizonMonth[]> {
+  let dataHorizon = input.dataHorizon;
+  if (!dataHorizon.length) {
+    dataHorizon = await loadVersionStoredHorizon({
+      versionId: input.versionId,
+      station: input.station,
+      platform: input.platform,
+    });
+  }
+  return resolveVersionDisplayHorizon({
+    dataHorizon,
+    monthCount: input.monthCount,
+    asOf: input.asOf,
+  });
+}
+
 function exogenousReasonShort(reason: unknown): string {
   switch (reason) {
     case 'ad':
@@ -813,9 +883,13 @@ async function listForecastHorizonAggregated(input: {
   });
   if (tierSkuIds !== null) {
     if (!tierSkuIds.length) {
-      const horizon = input.monthCount
-        ? buildConfiguredHorizonLabels(input.monthCount, input.asOf)
-        : [];
+      const horizon = await resolveHorizonForVersionView({
+        dataHorizon: [],
+        versionId: input.versionId,
+        station: stationFilter,
+        monthCount: input.monthCount,
+        asOf: input.asOf,
+      });
       const historyHorizon = buildHistoryMonthLabels(input.historyMonthCount, input.asOf);
       return {
         horizon,
@@ -894,10 +968,13 @@ async function listForecastHorizonAggregated(input: {
     loadSeasonalityLookup(),
   ]);
 
-  const dataHorizon = buildHorizonLabels(monthLabelRows);
-  const horizon = input.monthCount
-    ? buildConfiguredHorizonLabels(input.monthCount, input.asOf)
-    : dataHorizon;
+  const horizon = await resolveHorizonForVersionView({
+    dataHorizon: buildHorizonLabels(monthLabelRows),
+    versionId: input.versionId,
+    station: stationFilter,
+    monthCount: input.monthCount,
+    asOf: input.asOf,
+  });
   const historyHorizon = buildHistoryMonthLabels(input.historyMonthCount, input.asOf);
 
   if (!identityRows.length) {
@@ -1184,10 +1261,14 @@ export async function listForecastHorizon(input: {
     loadSeasonalityLookup(),
   ]);
 
-  const dataHorizon = buildHorizonLabels(monthLabelRows);
-  const horizon = monthCount
-    ? buildConfiguredHorizonLabels(monthCount, asOf)
-    : dataHorizon;
+  const horizon = await resolveHorizonForVersionView({
+    dataHorizon: buildHorizonLabels(monthLabelRows),
+    versionId,
+    station: stationFilter,
+    platform: platformNormalized,
+    monthCount,
+    asOf,
+  });
   const historyHorizon = buildHistoryMonthLabels(historyMonthCount, asOf);
 
   if (!identityRows.length) {

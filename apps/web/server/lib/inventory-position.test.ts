@@ -8,7 +8,9 @@ import {
   mergeInventoryPosition,
   normalizeSnapshotForWarehouse,
   openDraftQty,
+  resolveInventoryPositionFromSnapshot,
 } from './inventory-position.js';
+import { IN_PRODUCTION_WAREHOUSE } from './inventory-constants.js';
 
 describe('inventory-position pure', () => {
   it('maps draft statuses to buckets', () => {
@@ -166,6 +168,58 @@ describe('inventory-position pure', () => {
     });
     assert.equal(result.effectiveQty, 100);
     assert.equal(result.qtyConfirmedOpen, 0);
+  });
+
+  it('resolveInventoryPositionFromSnapshot matches normalize + merge snapshot_only', () => {
+    const fromHelper = resolveInventoryPositionFromSnapshot({
+      warehouseCode: 'US-WEST',
+      qtyAvailable: 100,
+      qtyInTransit: 20,
+      qtyInProduction: 75,
+      qtyReserved: 10,
+      dedupeMode: 'snapshot_only',
+    });
+    const snapshot = normalizeSnapshotForWarehouse(
+      {
+        qtyAvailable: 100,
+        qtyInTransit: 20,
+        qtyInProduction: 75,
+        qtyReserved: 10,
+      },
+      'US-WEST',
+    );
+    const merged = mergeInventoryPosition({
+      dedupeMode: 'snapshot_only',
+      snapshot,
+      draftBuckets: { inProduction: 0, inTransit: 0, confirmedOpen: 0 },
+      sources: [
+        { source: 'snapshot', bucket: 'available', qty: 100 },
+        { source: 'snapshot', bucket: 'inTransit', qty: 20 },
+        { source: 'snapshot', bucket: 'reserved', qty: 10 },
+      ],
+    });
+
+    assert.equal(fromHelper.qtyAvailable, merged.qtyAvailable);
+    assert.equal(fromHelper.qtyInProduction, 0);
+    assert.equal(fromHelper.qtyInTransit, merged.qtyInTransit);
+    assert.equal(fromHelper.effectiveQty, 100 + 20 - 10);
+    assert.equal(fromHelper.dedupeMode, 'snapshot_only');
+    assert.deepEqual(fromHelper.sources, merged.sources);
+  });
+
+  it('resolveInventoryPositionFromSnapshot keeps production qty only on IN-PRODUCTION warehouse', () => {
+    const pos = resolveInventoryPositionFromSnapshot({
+      warehouseCode: IN_PRODUCTION_WAREHOUSE,
+      qtyAvailable: 5,
+      qtyInTransit: 3,
+      qtyInProduction: 40,
+      qtyReserved: 0,
+      dedupeMode: 'snapshot_only',
+    });
+    assert.equal(pos.qtyAvailable, 0);
+    assert.equal(pos.qtyInTransit, 0);
+    assert.equal(pos.qtyInProduction, 40);
+    assert.equal(pos.effectiveQty, 40);
   });
 
   it('sum_both adds drafts on top of snapshot', () => {

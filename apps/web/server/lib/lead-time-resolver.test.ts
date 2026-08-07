@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import * as leadTimeResolver from './lead-time-resolver.js';
+import { resolveLeadTimeFromCaches, type LeadTimeResolveCaches } from './lead-time-resolver.js';
 
 type ProfileRow = {
   id: string;
@@ -31,6 +32,16 @@ const zeros = {
   customsDays: 0,
   inboundDays: 0,
 };
+
+function emptyCaches(overrides?: Partial<LeadTimeResolveCaches>): LeadTimeResolveCaches {
+  return {
+    profilesByWarehouse: new Map(),
+    merchantProductionDays: new Map(),
+    skuDefaultSupplierLeadDays: new Map(),
+    warehouseShipping: new Map(),
+    ...overrides,
+  };
+}
 
 describe('lead-time-resolver', () => {
   const pickLeadTimeProfile = Reflect.get(
@@ -159,5 +170,65 @@ describe('lead-time-resolver', () => {
     );
 
     assert.equal(picked, undefined);
+  });
+
+  it('resolveLeadTimeFromCaches uses matching profile without DB', () => {
+    const resolved = resolveLeadTimeFromCaches(
+      {
+        skuId: 'sku-1',
+        merchantCode: 'M1',
+        warehouseCode: 'US-WEST',
+        skuLeadTimeDays: 10,
+      },
+      emptyCaches({
+        profilesByWarehouse: new Map([
+          [
+            'US-WEST',
+            [
+              {
+                id: 'p1',
+                merchantCode: 'M1',
+                destinationWarehouseCode: 'US-WEST',
+                transportMode: null,
+                productionDays: 30,
+                domesticDays: 2,
+                bookingDays: 3,
+                transitDays: 40,
+                customsDays: 5,
+                inboundDays: 7,
+              },
+            ],
+          ],
+        ]),
+      }),
+    );
+
+    assert.equal(resolved.profileId, 'p1');
+    assert.equal(resolved.productionDays, 30);
+    assert.equal(resolved.totalLeadDays, 30 + 2 + 3 + 40 + 5 + 7);
+  });
+
+  it('resolveLeadTimeFromCaches falls back to merchant/supplier/warehouse caches', () => {
+    const resolved = resolveLeadTimeFromCaches(
+      {
+        skuId: 'sku-1',
+        merchantCode: 'M1',
+        warehouseCode: 'US-WEST',
+        skuLeadTimeDays: 10,
+      },
+      emptyCaches({
+        merchantProductionDays: new Map([['M1', 20]]),
+        skuDefaultSupplierLeadDays: new Map([['sku-1', 25]]),
+        warehouseShipping: new Map([
+          ['US-WEST', { shippingLeadDays: 15, inboundBufferDays: 3 }],
+        ]),
+      }),
+    );
+
+    assert.equal(resolved.profileId, null);
+    assert.equal(resolved.productionDays, 25);
+    assert.equal(resolved.shippingDays, 15);
+    assert.equal(resolved.inboundBufferDays, 3);
+    assert.equal(resolved.totalLeadDays, 25 + 15 + 3);
   });
 });

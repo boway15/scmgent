@@ -255,6 +255,33 @@ function snapshotSources(snapshot: {
     .map(([bucket, qty]) => ({ source: 'snapshot', bucket, qty }));
 }
 
+/** 仅用最新 inventory_records 快照构建仓位（规划/健康全量路径 snapshot_only，不查 drafts）。 */
+export function resolveInventoryPositionFromSnapshot(params: {
+  warehouseCode: string;
+  qtyAvailable?: number | null;
+  qtyInTransit?: number | null;
+  qtyInProduction?: number | null;
+  qtyReserved?: number | null;
+  dedupeMode?: InventoryDedupeMode;
+}): InventoryPositionBreakdown {
+  const snapshot = normalizeSnapshotForWarehouse(
+    {
+      qtyAvailable: params.qtyAvailable ?? 0,
+      qtyInTransit: params.qtyInTransit ?? 0,
+      qtyInProduction: params.qtyInProduction ?? 0,
+      qtyReserved: params.qtyReserved ?? 0,
+    },
+    params.warehouseCode,
+  );
+
+  return mergeInventoryPosition({
+    dedupeMode: params.dedupeMode ?? PLANNING_INVENTORY_DEDUPE_MODE,
+    snapshot,
+    draftBuckets: { inProduction: 0, inTransit: 0, confirmedOpen: 0 },
+    sources: snapshotSources(snapshot),
+  });
+}
+
 export async function resolveInventoryPosition(params: {
   skuId: string;
   warehouseCode: string;
@@ -277,6 +304,19 @@ export async function resolveInventoryPosition(params: {
     .orderBy(desc(inventoryRecords.recordedDate), desc(inventoryRecords.createdAt))
     .limit(1);
 
+  const dedupeMode = params.dedupeMode ?? 'drafts_fill_gap';
+
+  if (dedupeMode === 'snapshot_only' || params.warehouseCode === IN_PRODUCTION_WAREHOUSE) {
+    return resolveInventoryPositionFromSnapshot({
+      warehouseCode: params.warehouseCode,
+      qtyAvailable: record?.qtyAvailable,
+      qtyInTransit: record?.qtyInTransit,
+      qtyInProduction: record?.qtyInProduction,
+      qtyReserved: record?.qtyReserved,
+      dedupeMode,
+    });
+  }
+
   const snapshot = normalizeSnapshotForWarehouse(
     {
       qtyAvailable: record?.qtyAvailable ?? 0,
@@ -286,15 +326,6 @@ export async function resolveInventoryPosition(params: {
     },
     params.warehouseCode,
   );
-
-  if (params.warehouseCode === IN_PRODUCTION_WAREHOUSE) {
-    return mergeInventoryPosition({
-      dedupeMode: params.dedupeMode,
-      snapshot,
-      draftBuckets: { inProduction: 0, inTransit: 0, confirmedOpen: 0 },
-      sources: snapshotSources(snapshot),
-    });
-  }
 
   const draftRows = await db
     .select({
@@ -319,7 +350,7 @@ export async function resolveInventoryPosition(params: {
   const aggregated = aggregateDraftBucketsForWarehouse(draftLines, params.warehouseCode);
 
   return mergeInventoryPosition({
-    dedupeMode: params.dedupeMode,
+    dedupeMode,
     snapshot,
     draftBuckets: aggregated.draftBuckets,
     sources: [...snapshotSources(snapshot), ...aggregated.sources],

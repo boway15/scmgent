@@ -26,6 +26,20 @@ export type LeadTimeProfileRow = {
   inboundDays: number;
 };
 
+export type LeadTimeResolveCaches = {
+  /** destination warehouse → default profiles for that warehouse */
+  profilesByWarehouse: Map<string, LeadTimeProfileRow[]>;
+  /** merchant code → production lead days */
+  merchantProductionDays: Map<string, number | null | undefined>;
+  /** skuId → default supplier leadTimeDays */
+  skuDefaultSupplierLeadDays: Map<string, number | null | undefined>;
+  /** warehouse code → shipping / inbound buffer */
+  warehouseShipping: Map<
+    string,
+    { shippingLeadDays: number | null; inboundBufferDays: number | null }
+  >;
+};
+
 export function pickLeadTimeProfile(
   rows: readonly LeadTimeProfileRow[],
   params: {
@@ -50,6 +64,71 @@ export function pickLeadTimeProfile(
     (mode ? matches(null, mode) : undefined) ??
     matches(null, null)
   );
+}
+
+/** 纯函数：用预加载缓存解析交期，口径与 resolveLeadTimeForSkuWarehouse 一致。 */
+export function resolveLeadTimeFromCaches(
+  params: {
+    skuId: string;
+    merchantCode?: string | null;
+    warehouseCode: string;
+    skuLeadTimeDays?: number | null;
+    transportMode?: string | null;
+  },
+  caches: LeadTimeResolveCaches,
+): ResolvedLeadTime {
+  const profileRows = caches.profilesByWarehouse.get(params.warehouseCode) ?? [];
+  const profile = pickLeadTimeProfile(profileRows, params);
+
+  if (profile) {
+    return {
+      ...calcTotalLeadTime({
+        productionDays: profile.productionDays,
+        domesticDays: profile.domesticDays,
+        bookingDays: profile.bookingDays,
+        transitDays: profile.transitDays,
+        customsDays: profile.customsDays,
+        inboundDays: profile.inboundDays,
+      }),
+      profileId: profile.id,
+      merchantCode: params.merchantCode,
+      warehouseCode: params.warehouseCode,
+    };
+  }
+
+  let productionDays = resolveProductionLeadDays(params.skuLeadTimeDays);
+
+  if (params.merchantCode) {
+    const merchantDays = caches.merchantProductionDays.get(params.merchantCode);
+    if (merchantDays) {
+      productionDays = resolveProductionLeadDays(merchantDays, params.skuLeadTimeDays);
+    }
+  }
+
+  const supplierDays = caches.skuDefaultSupplierLeadDays.get(params.skuId);
+  productionDays = resolveProductionLeadDays(
+    supplierDays,
+    productionDays,
+    params.skuLeadTimeDays,
+  );
+
+  const warehouse = caches.warehouseShipping.get(params.warehouseCode);
+  const shippingDays = resolveShippingLeadDays(
+    params.warehouseCode,
+    warehouse?.shippingLeadDays,
+  );
+  const breakdown = calcTotalLeadTime({
+    productionDays,
+    shippingDays,
+    inboundBufferDays: warehouse?.inboundBufferDays ?? DEFAULT_INBOUND_BUFFER_DAYS,
+  });
+
+  return {
+    ...breakdown,
+    profileId: null,
+    merchantCode: params.merchantCode,
+    warehouseCode: params.warehouseCode,
+  };
 }
 
 export async function resolveLeadTimeForSkuWarehouse(params: {
@@ -79,38 +158,19 @@ export async function resolveLeadTimeForSkuWarehouse(params: {
         eq(leadTimeProfiles.isDefault, true),
       ),
     );
-  const profile = pickLeadTimeProfile(profileRows, params);
 
-  if (profile) {
-    return {
-      ...calcTotalLeadTime({
-        productionDays: profile.productionDays,
-        domesticDays: profile.domesticDays,
-        bookingDays: profile.bookingDays,
-        transitDays: profile.transitDays,
-        customsDays: profile.customsDays,
-        inboundDays: profile.inboundDays,
-      }),
-      profileId: profile.id,
-      merchantCode: params.merchantCode,
-      warehouseCode: params.warehouseCode,
-    };
-  }
+  const profilesByWarehouse = new Map<string, LeadTimeProfileRow[]>([
+    [params.warehouseCode, profileRows],
+  ]);
 
-  let productionDays = resolveProductionLeadDays(params.skuLeadTimeDays);
-
+  const merchantProductionDays = new Map<string, number | null | undefined>();
   if (params.merchantCode) {
     const [merchant] = await db
       .select({ productionLeadDays: merchants.productionLeadDays })
       .from(merchants)
       .where(eq(merchants.code, params.merchantCode))
       .limit(1);
-    if (merchant?.productionLeadDays) {
-      productionDays = resolveProductionLeadDays(
-        merchant.productionLeadDays,
-        params.skuLeadTimeDays,
-      );
-    }
+    merchantProductionDays.set(params.merchantCode, merchant?.productionLeadDays);
   }
 
   const [defaultSupplier] = await db
@@ -118,12 +178,6 @@ export async function resolveLeadTimeForSkuWarehouse(params: {
     .from(skuSuppliers)
     .where(and(eq(skuSuppliers.skuId, params.skuId), eq(skuSuppliers.isDefault, true)))
     .limit(1);
-
-  productionDays = resolveProductionLeadDays(
-    defaultSupplier?.leadTimeDays,
-    productionDays,
-    params.skuLeadTimeDays,
-  );
 
   const [warehouse] = await db
     .select({
@@ -134,20 +188,18 @@ export async function resolveLeadTimeForSkuWarehouse(params: {
     .where(eq(warehouses.code, params.warehouseCode))
     .limit(1);
 
-  const shippingDays = resolveShippingLeadDays(
-    params.warehouseCode,
-    warehouse?.shippingLeadDays,
-  );
-  const breakdown = calcTotalLeadTime({
-    productionDays,
-    shippingDays,
-    inboundBufferDays: warehouse?.inboundBufferDays ?? DEFAULT_INBOUND_BUFFER_DAYS,
+  return resolveLeadTimeFromCaches(params, {
+    profilesByWarehouse,
+    merchantProductionDays,
+    skuDefaultSupplierLeadDays: new Map([[params.skuId, defaultSupplier?.leadTimeDays]]),
+    warehouseShipping: new Map([
+      [
+        params.warehouseCode,
+        {
+          shippingLeadDays: warehouse?.shippingLeadDays ?? null,
+          inboundBufferDays: warehouse?.inboundBufferDays ?? null,
+        },
+      ],
+    ]),
   });
-
-  return {
-    ...breakdown,
-    profileId: null,
-    merchantCode: params.merchantCode,
-    warehouseCode: params.warehouseCode,
-  };
 }

@@ -2,6 +2,9 @@
 
 配合 scm-agent M1：`POST /api/procurement/costing/:id/extract`。
 
+**可导入 DSL**：[`product-costing-bom-extract.yml`](./product-costing-bom-extract.yml)  
+导入路径：Dify 控制台 → 工作室 → 导入 DSL → 发布后把 API Key 配到 `DIFY_API_KEY_COSTING_BOM`。
+
 ## 环境变量
 
 | 变量 | 说明 |

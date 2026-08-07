@@ -124,8 +124,10 @@ curl.exe -s http://localhost:8081/api/me
 | `AUTH_BYPASS_LOGIN` | `"true"` 紧急跳过登录（勿用于生产） |
 | `DATABASE_URL` | 数据库连接（一般不用改） |
 | `DIFY_API_KEY_COSTING_BOM` | 产品成本核算 AI 拆 BOM Workflow Key |
+| `DIFY_WORKFLOW_TIMEOUT_MS` | Dify 工作流超时（毫秒），拆 BOM 建议 `300000`～`600000` |
+| `COSTING_EXTRACT_BATCH_SIZE` | 拆 BOM 每批页数，默认 `2`（越大越容易超时） |
 | `COSTING_DATA_DIR` | 核算附件目录（可选，默认 `data/costing`） |
-| `COSTING_PREPROCESS_MODE` | `fixture` / `libreoffice`（Docker 生产建议 libreoffice） |
+| `COSTING_PREPROCESS_MODE` | `fixture` / `libreoffice` / `auto` |
 
 改完后：
 

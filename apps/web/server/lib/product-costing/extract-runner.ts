@@ -15,7 +15,8 @@ import type { CostingBomLineDraft } from './types.js';
 import { access, readFile } from 'node:fs/promises';
 import { resolveStoragePath } from './storage.js';
 
-const BATCH_SIZE = 4;
+/** 每批页数：过大会拖长单次 LLM 导致超时；可用 COSTING_EXTRACT_BATCH_SIZE 覆盖 */
+const BATCH_SIZE = Math.max(1, Number(process.env.COSTING_EXTRACT_BATCH_SIZE ?? 2) || 2);
 const COSTING_KEY = 'DIFY_API_KEY_COSTING_BOM';
 
 export type ExtractPageRange = { pageFrom?: number; pageTo?: number };

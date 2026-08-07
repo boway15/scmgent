@@ -5,7 +5,8 @@
 
 import { existsSync } from 'fs';
 
-const WORKFLOW_TIMEOUT_MS = Number(process.env.DIFY_WORKFLOW_TIMEOUT_MS ?? 120_000);
+/** 成本核算等多模态工作流建议 ≥ 300000；可用环境变量覆盖 */
+const WORKFLOW_TIMEOUT_MS = Number(process.env.DIFY_WORKFLOW_TIMEOUT_MS ?? 300_000);
 
 function runningInDocker(): boolean {
   return process.env.RUNNING_IN_DOCKER === 'true' || existsSync('/.dockerenv');

@@ -31,8 +31,9 @@ services:
       # FEISHU_BITABLE_TABLE_INVENTORY: "tblwvSHbqJ3szugE"
       # FEISHU_BITABLE_TABLE_INVENTORY_QUERY: "tblubb08s6pe6DXI"
 
-  # cron 的 CRON_SECRET 与 web 共用 .env 或 docker-compose.yml 默认值
+  # cron 须显式注入 CRON_SECRET（与 web/.env 一致）；勿写死默认值以免盖掉 .env
   cron:
     environment:
       CRON_ENABLED: "true"
       CRON_BASE_URL: http://web:8081
+      CRON_SECRET: ${CRON_SECRET}

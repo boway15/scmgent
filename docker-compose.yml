@@ -48,7 +48,8 @@ services:
       BOOTSTRAP_ADMIN_PASSWORD: "admin123456"
       BOOTSTRAP_ADMIN_PASSWORD_FORCE: "true"
       ENFORCE_RBAC: "true"
-      CRON_SECRET: "dev-cron-secret-local"
+      # 允许 .env 的 CRON_SECRET 生效；未设置时本地默认值
+      CRON_SECRET: ${CRON_SECRET:-dev-cron-secret-local}
       NODE_OPTIONS: "--max-old-space-size=4096"
       # DIFY_BASE_URL / DIFY_API_KEY_* 由 .env 注入；容器内 127.0.0.1 会在代码中改写为 host.docker.internal
       RUNNING_IN_DOCKER: "true"
@@ -84,7 +85,7 @@ services:
     environment:
       TZ: Asia/Shanghai
       CRON_BASE_URL: http://web:8081
-      CRON_SECRET: "dev-cron-secret-local"
+      CRON_SECRET: ${CRON_SECRET:-dev-cron-secret-local}
       # 本地临时关掉调度：CRON_ENABLED=false 或 docker compose stop cron
       CRON_ENABLED: "true"
     depends_on:

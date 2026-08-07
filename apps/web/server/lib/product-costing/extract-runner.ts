@@ -12,7 +12,8 @@ import { mergeBomLines } from './merge-lines.js';
 import { parseWorkflowLines } from './parse-workflow-output.js';
 import { preprocessDesignFile } from './preprocess/index.js';
 import type { CostingBomLineDraft } from './types.js';
-import { readFile } from 'node:fs/promises';
+import { access, readFile } from 'node:fs/promises';
+import { resolveStoragePath } from './storage.js';
 
 const BATCH_SIZE = 4;
 const COSTING_KEY = 'DIFY_API_KEY_COSTING_BOM';
@@ -77,10 +78,12 @@ async function callDifyBatch(
   const payload = [];
   for (const page of pages) {
     const img = await readFile(page.imagePath);
+    // Skip 1x1 placeholder PNG noise for text-only preprocess (tiny files)
+    const image_base64 = img.byteLength > 512 ? img.toString('base64') : '';
     payload.push({
       page: page.pageNo,
       text: page.text,
-      image_base64: img.toString('base64'),
+      image_base64,
     });
   }
   const outputs = await runWorkflow(
@@ -158,7 +161,13 @@ export async function executeExtractRun(runId: string): Promise<void> {
     }
 
     const source = await loadSourceAttachment(run.projectId);
-    if (!source) throw new Error('缺少方案原件');
+    if (!source) throw new Error('缺少方案原件，请先上传设计方案');
+
+    try {
+      await access(resolveStoragePath(source.storagePath));
+    } catch {
+      throw new Error('方案原件文件已丢失，请重新上传 PPT/PDF 后再拆解');
+    }
 
     let pages = await preprocessDesignFile({
       projectId: run.projectId,
@@ -190,6 +199,16 @@ export async function executeExtractRun(runId: string): Promise<void> {
 
     const merged = mergeBomLines(allDrafts);
     if (!merged.length) {
+      const linesRaw = lastRaw.lines;
+      const emptyArr =
+        linesRaw === '[]' ||
+        (Array.isArray(linesRaw) && linesRaw.length === 0) ||
+        linesRaw === '[]';
+      if (emptyArr) {
+        throw new Error(
+          'Dify 返回了空清单（lines=[]）。常见原因：预处理未抽到有效文本/页图（请重新上传后重试），或模型未从内容中识别出物料。可在 Dify 日志中查看「抽取物料清单」节点的模型原文。',
+        );
+      }
       const rawHint = Object.keys(lastRaw).length
         ? ` outputs keys=${Object.keys(lastRaw).join(',')}`
         : ' outputs 为空';

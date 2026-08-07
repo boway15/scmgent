@@ -24,9 +24,13 @@ describe('preprocessDesignFile fixture mode', () => {
     else process.env.COSTING_PREPROCESS_MODE = prevMode;
   });
 
-  it('produces at least one page', async () => {
+  it('produces at least one page in fixture mode', async () => {
     const projectId = '22222222-2222-2222-2222-222222222222';
-    const written = await writeProjectFile(projectId, 'source.txt', Buffer.from('台面 1800x800 多层板', 'utf8'));
+    const written = await writeProjectFile(
+      projectId,
+      'source.txt',
+      Buffer.from('台面 1800x800 多层板', 'utf8'),
+    );
     const pages = await preprocessDesignFile({
       projectId,
       sourceStoragePath: written.storagePath,
@@ -37,4 +41,18 @@ describe('preprocessDesignFile fixture mode', () => {
     assert.equal(pages[0].pageNo, 1);
     assert.ok(pages[0].imagePath);
   });
+
+  it('fails clearly when source file is missing', async () => {
+    await assert.rejects(
+      () =>
+        preprocessDesignFile({
+          projectId: '33333333-3333-3333-3333-333333333333',
+          sourceStoragePath: '33333333-3333-3333-3333-333333333333/missing.pptx',
+          contentType: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+          fileName: 'missing.pptx',
+        }),
+      /不存在|重新上传/,
+    );
+  });
 });
+

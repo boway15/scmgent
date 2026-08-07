@@ -81,6 +81,10 @@ export function isSalesForecastWorkflowEnabled(): boolean {
   return isDifyKeyConfigured('DIFY_API_KEY_SALES_FORECAST');
 }
 
+export function isCostingBomWorkflowEnabled(): boolean {
+  return isDifyKeyConfigured('DIFY_API_KEY_COSTING_BOM');
+}
+
 export function getDifyConfigSummary() {
   return {
     mode: isDifyEnabled() ? ('dify' as const) : ('local' as const),
@@ -90,6 +94,7 @@ export function getDifyConfigSummary() {
     newsIntelWorkflow: isNewsIntelWorkflowEnabled(),
     csReplyQualityWorkflow: isCsReplyQualityWorkflowEnabled(),
     salesForecastWorkflow: isSalesForecastWorkflowEnabled(),
+    costingBomWorkflow: isCostingBomWorkflowEnabled(),
     baseUrl: getDifyBaseUrl(),
   };
 }

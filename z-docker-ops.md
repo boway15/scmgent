@@ -123,6 +123,9 @@ curl.exe -s http://localhost:8081/api/me
 | `BOOTSTRAP_ADMIN_PASSWORD` | seed 时为 `admin@scm.local` 设密码 |
 | `AUTH_BYPASS_LOGIN` | `"true"` 紧急跳过登录（勿用于生产） |
 | `DATABASE_URL` | 数据库连接（一般不用改） |
+| `DIFY_API_KEY_COSTING_BOM` | 产品成本核算 AI 拆 BOM Workflow Key |
+| `COSTING_DATA_DIR` | 核算附件目录（可选，默认 `data/costing`） |
+| `COSTING_PREPROCESS_MODE` | `fixture` / `libreoffice`（Docker 生产建议 libreoffice） |
 
 改完后：
 

@@ -176,6 +176,7 @@ bom_ready 之后 M2 可进入 costed
 ## 7. Dify Workflow 约定
 
 - Env：`DIFY_API_KEY_COSTING_BOM`；`isDifyKeyConfigured` / `runWorkflow` 复用 `apps/web/server/integrations/dify.ts`
+- 配置说明：`docs/dify/workflows/product-costing-bom-extract.md`
 - 超时：沿用或单独提高 `DIFY_WORKFLOW_TIMEOUT_MS`（多模态建议 ≥ 180000）
 - **inputs**：`category`（string）、`pages_json`（stringified array of `{ page, text, image_base64 }`）
 - **outputs**：`lines` JSON 数组，字段见下；非法则 run=`failed`，项目 `extract_failed`

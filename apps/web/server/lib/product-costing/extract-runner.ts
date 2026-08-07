@@ -190,7 +190,12 @@ export async function executeExtractRun(runId: string): Promise<void> {
 
     const merged = mergeBomLines(allDrafts);
     if (!merged.length) {
-      throw new Error('AI 未返回有效清单行，请检查 Dify 输出 schema 或重试');
+      const rawHint = Object.keys(lastRaw).length
+        ? ` outputs keys=${Object.keys(lastRaw).join(',')}`
+        : ' outputs 为空';
+      throw new Error(
+        `AI 未返回有效清单行，请检查 Dify 结束节点是否输出 lines，并确认 LLM/Code 节点运行成功。${rawHint}`,
+      );
     }
 
     await db.transaction(async (tx) => {

@@ -498,6 +498,13 @@
       "when": 1780717058210,
       "tag": "0068_drop_sap_mirror_menu_retry",
       "breakpoints": true
+    },
+    {
+      "idx": 71,
+      "version": "6",
+      "when": 1780717058211,
+      "tag": "0069_product_costing",
+      "breakpoints": true
     }
   ]
 }

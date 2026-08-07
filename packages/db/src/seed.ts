@@ -83,6 +83,13 @@ const MENU_SEEDS: MenuSeed[] = [
         sortOrder: 2,
         isLeaf: true,
       },
+      {
+        code: 'procurement.costing',
+        name: '产品成本核算',
+        path: '/procurement/costing',
+        sortOrder: 3,
+        isLeaf: true,
+      },
     ],
   },
   {
@@ -184,11 +191,11 @@ const DEPRECATED_MENU_CODES = [
 ];
 
 const ROLE_MENU_CODES: Record<string, string[]> = {
-  super_admin: ['dashboard', 'inventory', 'inventory.overview', 'inventory.safety', 'inventory.alert', 'inventory.planning', 'inventory.lead_time', 'inventory.planning_dashboard', 'pmc', 'pmc.suggestion', 'pmc.list', 'pmc.tracking', 'pmc.shipments', 'procurement', 'procurement.bulk_stock', 'procurement.follow_up', 'cs', 'cs.quality', 'logistics', 'logistics.fob_settlement', 'data', 'data.products', 'data.sales', 'data.forecast', 'intel', 'intel.news', 'ai', 'ai.chat', 'help', 'system', 'system.users', 'system.roles', 'system.logs', 'system.tasks'],
+  super_admin: ['dashboard', 'inventory', 'inventory.overview', 'inventory.safety', 'inventory.alert', 'inventory.planning', 'inventory.lead_time', 'inventory.planning_dashboard', 'pmc', 'pmc.suggestion', 'pmc.list', 'pmc.tracking', 'pmc.shipments', 'procurement', 'procurement.bulk_stock', 'procurement.follow_up', 'procurement.costing', 'cs', 'cs.quality', 'logistics', 'logistics.fob_settlement', 'data', 'data.products', 'data.sales', 'data.forecast', 'intel', 'intel.news', 'ai', 'ai.chat', 'help', 'system', 'system.users', 'system.roles', 'system.logs', 'system.tasks'],
   pmc_planner: ['dashboard', 'inventory', 'inventory.overview', 'inventory.safety', 'inventory.lead_time', 'inventory.planning', 'inventory.planning_dashboard', 'pmc', 'pmc.suggestion', 'pmc.list', 'pmc.shipments', 'procurement', 'procurement.bulk_stock', 'logistics', 'logistics.fob_settlement', 'cs', 'cs.quality', 'data', 'data.products', 'data.sales', 'data.forecast', 'ai', 'ai.chat', 'help'],
   warehouse: ['dashboard', 'inventory', 'inventory.overview', 'inventory.alert', 'pmc', 'pmc.list', 'logistics', 'logistics.fob_settlement', 'cs', 'cs.quality', 'data', 'data.products', 'data.sales', 'data.forecast', 'ai', 'ai.chat', 'help'],
-  purchaser: ['dashboard', 'inventory', 'inventory.overview', 'inventory.safety', 'inventory.alert', 'inventory.lead_time', 'inventory.planning', 'inventory.planning_dashboard', 'pmc', 'pmc.list', 'pmc.tracking', 'pmc.shipments', 'procurement', 'procurement.bulk_stock', 'procurement.follow_up', 'logistics', 'logistics.fob_settlement', 'cs', 'cs.quality', 'data', 'data.products', 'data.sales', 'data.forecast', 'ai', 'ai.chat', 'help'],
-  viewer: ['dashboard', 'inventory', 'inventory.overview', 'pmc', 'pmc.suggestion', 'pmc.list', 'pmc.tracking', 'procurement', 'procurement.bulk_stock', 'procurement.follow_up', 'logistics', 'logistics.fob_settlement', 'cs', 'cs.quality', 'data', 'data.sales', 'data.forecast', 'ai', 'ai.chat', 'help'],
+  purchaser: ['dashboard', 'inventory', 'inventory.overview', 'inventory.safety', 'inventory.alert', 'inventory.lead_time', 'inventory.planning', 'inventory.planning_dashboard', 'pmc', 'pmc.list', 'pmc.tracking', 'pmc.shipments', 'procurement', 'procurement.bulk_stock', 'procurement.follow_up', 'procurement.costing', 'logistics', 'logistics.fob_settlement', 'cs', 'cs.quality', 'data', 'data.products', 'data.sales', 'data.forecast', 'ai', 'ai.chat', 'help'],
+  viewer: ['dashboard', 'inventory', 'inventory.overview', 'pmc', 'pmc.suggestion', 'pmc.list', 'pmc.tracking', 'procurement', 'procurement.bulk_stock', 'procurement.follow_up', 'procurement.costing', 'logistics', 'logistics.fob_settlement', 'cs', 'cs.quality', 'data', 'data.sales', 'data.forecast', 'ai', 'ai.chat', 'help'],
 };
 
 async function removeMenuTreeByCode(code: string) {

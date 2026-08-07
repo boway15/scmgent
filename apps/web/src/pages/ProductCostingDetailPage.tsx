@@ -110,7 +110,25 @@ export function ProductCostingDetailPage() {
   });
 
   const confirm = useMutation({
-    mutationFn: (force: boolean) => api.confirmProductCostingBom(id, force),
+    mutationFn: async (force: boolean) => {
+      // 先落库当前编辑，避免只改了置信度未保存导致确认仍按旧数据拦截
+      await api.replaceProductCostingBomLines(
+        id,
+        draftLines.map((l) => ({
+          category: l.category,
+          materialName: l.materialName,
+          spec: l.spec,
+          unit: l.unit,
+          qtyNet: Number(l.qtyNet),
+          lossRate: Number(l.lossRate),
+          sourceRef: l.sourceRef,
+          confidence: l.confidence,
+          notes: l.notes,
+          isManual: true,
+        })),
+      );
+      return api.confirmProductCostingBom(id, force);
+    },
     onSuccess: () => {
       setMessage('清单已确认');
       qc.invalidateQueries({ queryKey: ['product-costing', id] });
@@ -267,16 +285,21 @@ export function ProductCostingDetailPage() {
                 size="sm"
                 onClick={() => confirm.mutate(false)}
                 disabled={confirm.isPending || data.status === 'bom_ready'}
+                title="要求无 low 置信度且物料/单位/用量齐全"
               >
                 确认清单
               </Button>
               <Button
                 size="sm"
                 variant="outline"
+                disabled={confirm.isPending || data.status === 'bom_ready'}
                 onClick={() => {
-                  if (window.confirm('存在低置信度或未填完整行时仍强制确认？')) {
-                    confirm.mutate(true);
-                  }
+                  const lowCount = draftLines.filter((l) => l.confidence === 'low').length;
+                  const tip =
+                    lowCount > 0
+                      ? `当前有 ${lowCount} 行置信度为 low（表格中标红）。确认已人工核对后强制确认？`
+                      : '确认清单内容无误并强制确认？';
+                  if (window.confirm(tip)) confirm.mutate(true);
                 }}
               >
                 强制确认

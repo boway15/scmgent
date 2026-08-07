@@ -3724,11 +3724,27 @@ export const api = {
     request<{ ok: boolean }>(`/api/procurement/costing/${id}/bom-lines/${lineId}`, {
       method: 'DELETE',
     }),
-  confirmProductCostingBom: (id: string, force = false) =>
-    request<CostingProject>(`/api/procurement/costing/${id}/confirm-bom`, {
+  confirmProductCostingBom: async (id: string, force = false) => {
+    const res = await apiFetch(apiUrl(`/api/procurement/costing/${id}/confirm-bom`), {
       method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ force }),
-    }),
+    });
+    const body = (await res.json().catch(() => ({}))) as {
+      message?: string;
+      reasons?: string[];
+    };
+    if (!res.ok) {
+      const reasons = Array.isArray(body.reasons) ? body.reasons.filter(Boolean) : [];
+      const detail = reasons.length ? `：${reasons.slice(0, 8).join('；')}` : '';
+      throw new Error(
+        `${body.message ?? '清单尚未可确认'}${detail}${
+          reasons.length > 8 ? '…' : ''
+        }。可先改置信度并保存，或使用「强制确认」。`,
+      );
+    }
+    return body as unknown as CostingProject;
+  },
   exportProductCostingBom: async (id: string) => {
     const res = await apiFetch(apiUrl(`/api/procurement/costing/${id}/export-bom`));
     await downloadAttachment(res, 'bom.xlsx');

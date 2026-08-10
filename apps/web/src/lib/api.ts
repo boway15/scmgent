@@ -1,5 +1,6 @@
 import { apiFetch, apiUrl } from './base-path';
 import type { HorizonBand } from './forecast-horizon-meta';
+import type { SalesAnalyticsCubePayload } from './sales-analytics-types';
 
 export type MenuNode = {
   id: string;
@@ -2570,6 +2571,16 @@ export const api = {
       pageSize: number;
     }>(`/api/sales/history/monthly${query ? `?${query}` : ''}`);
   },
+  getSalesAnalyticsStatus: () =>
+    request<{
+      running: boolean;
+      generatedAt: string | null;
+      meta: SalesAnalyticsCubePayload['meta'] | null;
+      errorMessage: string | null;
+    }>('/api/sales-analytics/status'),
+  getSalesAnalyticsCube: () => request<SalesAnalyticsCubePayload>('/api/sales-analytics/cube'),
+  rebuildSalesAnalyticsCube: () =>
+    request<{ ok: true }>('/api/sales-analytics/rebuild', { method: 'POST' }),
   getSalesForecastStations: () => request<string[]>('/api/sales-forecast/stations'),
   getSalesForecastCategories: (q?: string, limit = 50) => {
     const qs = new URLSearchParams();

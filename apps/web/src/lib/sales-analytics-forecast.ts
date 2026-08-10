@@ -176,3 +176,49 @@ export function modelForecast(
   }
   return fc;
 }
+
+const MONTH_NAME = [
+  '1月',
+  '2月',
+  '3月',
+  '4月',
+  '5月',
+  '6月',
+  '7月',
+  '8月',
+  '9月',
+  '10月',
+  '11月',
+  '12月',
+];
+
+function signed(x: number): string {
+  return `${x >= 0 ? '+' : ''}${x.toFixed(1)}`;
+}
+
+function fmtPieces(n: number): string {
+  return Math.round(n).toLocaleString('zh-CN');
+}
+
+/** Human-readable rationale for the auto-chosen lightweight model. */
+export function modelReason(m: ChosenModel): string {
+  const { type, fit, params, last } = m;
+  const tw = fit.b > 0 ? '整体上升' : fit.b < 0 ? '整体下降' : '基本平稳';
+  if (type === 'trend') {
+    return `线性趋势模型：最小二乘斜率 ${signed(fit.b)} 件/期，拟合优度 R²=${fit.r2.toFixed(2)}，趋势${tw}；按 y = a + b·t 外推未来期。`;
+  }
+  if (type === 'seasonal') {
+    const peakM = params.peakM ?? 1;
+    const troughM = params.troughM ?? 1;
+    const peakF = params.sIdx?.[peakM] ?? 1;
+    const troughF = params.sIdx?.[troughM] ?? 1;
+    return (
+      `趋势+季节(乘法)模型：斜率 ${signed(fit.b)} 件/期(R²=${fit.r2.toFixed(2)})，叠加月度季节因子——峰值 ${MONTH_NAME[peakM - 1]}(因子${peakF.toFixed(2)})、` +
+      `谷值 ${MONTH_NAME[troughM - 1]}(因子${troughF.toFixed(2)})；按 (a+b·t)×季节因子 外推。`
+    );
+  }
+  if (type === 'avg') {
+    return `移动平均模型：趋势弱/波动大(R²=${fit.r2.toFixed(2)})，取最近 ${params.W ?? 0} 期均值 ${fmtPieces(params.base ?? 0)} 件作平稳外推，不假设增长。`;
+  }
+  return `朴素法(最新值外推)：数据无明显趋势(R²=${fit.r2.toFixed(2)})，以最新期 ${fmtPieces(last)} 件直接外推未来期。`;
+}

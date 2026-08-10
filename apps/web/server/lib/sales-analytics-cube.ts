@@ -306,3 +306,10 @@ export async function rebuildSalesAnalyticsCube(
     return { ok: false, error: message };
   }
 }
+
+/** Fire-and-forget after sales import; 409 conflict (already running) is ignored. */
+export function schedulePostImportSalesAnalyticsCubeRebuild(): void {
+  void rebuildSalesAnalyticsCube(null).catch((err) => {
+    console.warn('[sales-analytics] post-import rebuild failed', err);
+  });
+}

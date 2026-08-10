@@ -1,5 +1,6 @@
 import type { ImportResult } from './handlers.js';
 import { persistDailySalesRowsAsHistory } from '../sales-history-import.js';
+import { schedulePostImportSalesAnalyticsCubeRebuild } from '../sales-analytics-cube.js';
 import { aggregateSalesHistoryMonthlyFromDaily } from '../sales-history-monthly.js';
 import { updateImportBatchProgress } from './batch.js';
 import { salesImportMinSaleDate } from '../sales-history-config.js';
@@ -384,6 +385,10 @@ export async function importXiaoshouSalesHistory(
         const message = err instanceof Error ? err.message : String(err);
         errors.push(`lifecycle refresh: ${message}`);
       }
+    }
+
+    if (imported > 0) {
+      schedulePostImportSalesAnalyticsCubeRebuild();
     }
 
     return {

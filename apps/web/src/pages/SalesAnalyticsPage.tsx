@@ -293,6 +293,13 @@ export function SalesAnalyticsPage() {
     });
   }, [filtered, matrixMode, periods, gran, safeStart, safeEnd, fcHorizon]);
 
+  useEffect(() => {
+    if (!pinnedKey) return;
+    if (!matrixRows.some((r) => r.key === pinnedKey)) {
+      setPinnedKey(null);
+    }
+  }, [matrixRows, pinnedKey]);
+
   const pinSeries = useMemo(() => {
     if (!pinnedKey) return series;
     const dims = MATRIX_DIMS[matrixMode];

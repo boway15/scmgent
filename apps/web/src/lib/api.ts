@@ -50,6 +50,71 @@ export type PurchaseDraftStatus =
 
 export type ProcurementListType = 'bulk_stock_request' | 'purchase_follow_up';
 
+export type CostingProjectStatus =
+  | 'draft'
+  | 'extracting'
+  | 'bom_draft'
+  | 'bom_ready'
+  | 'costed'
+  | 'extract_failed';
+
+export type CostingBomConfidence = 'high' | 'medium' | 'low';
+
+export type CostingProject = {
+  id: string;
+  projectNo: string;
+  name: string;
+  category: string | null;
+  skuId: string | null;
+  status: CostingProjectStatus;
+  extractError: string | null;
+  confirmedBomAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type CostingBomLine = {
+  id: string;
+  projectId: string;
+  lineNo: number;
+  category: string;
+  materialName: string;
+  spec: string | null;
+  unit: string;
+  qtyNet: string;
+  lossRate: string;
+  qtyGross: string;
+  sourceRef: string | null;
+  confidence: CostingBomConfidence;
+  notes: string | null;
+  isManual: boolean;
+};
+
+export type CostingExtractRun = {
+  id: string;
+  projectId: string;
+  status: 'pending' | 'running' | 'succeeded' | 'failed';
+  pageFrom: number | null;
+  pageTo: number | null;
+  errorMessage: string | null;
+  startedAt: string | null;
+  finishedAt: string | null;
+  createdAt: string;
+};
+
+export type CostingProjectDetail = CostingProject & {
+  attachments: Array<{
+    id: string;
+    kind: 'source' | 'page_image' | 'page_text';
+    pageNo: number | null;
+    fileName: string;
+    contentType: string;
+  }>;
+  lines: CostingBomLine[];
+  pageCount: number;
+  hasSource: boolean;
+};
+
 export type ProcurementListConfig = {
   listType: ProcurementListType;
   label: string;
@@ -3556,6 +3621,136 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(body ?? {}),
     }),
+
+  getProductCostingStatus: () =>
+    request<{ difyEnabled: boolean; preprocessMode: string }>('/api/procurement/costing/status'),
+  listProductCosting: (params?: { page?: number; pageSize?: number; status?: string; keyword?: string }) => {
+    const q = new URLSearchParams();
+    if (params?.page) q.set('page', String(params.page));
+    if (params?.pageSize) q.set('pageSize', String(params.pageSize));
+    if (params?.status) q.set('status', params.status);
+    if (params?.keyword) q.set('keyword', params.keyword);
+    const suffix = q.toString() ? `?${q}` : '';
+    return request<{
+      items: CostingProject[];
+      total: number;
+      page: number;
+      pageSize: number;
+    }>(`/api/procurement/costing${suffix}`);
+  },
+  createProductCosting: (data: { name: string; category?: string; skuId?: string | null }) =>
+    request<CostingProject>('/api/procurement/costing', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+  getProductCosting: (id: string) => request<CostingProjectDetail>(`/api/procurement/costing/${id}`),
+  updateProductCosting: (
+    id: string,
+    data: { name?: string; category?: string | null; skuId?: string | null },
+  ) =>
+    request<CostingProject>(`/api/procurement/costing/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(data),
+    }),
+  deleteProductCosting: (id: string) =>
+    request<{ ok: boolean }>(`/api/procurement/costing/${id}`, { method: 'DELETE' }),
+  uploadProductCostingAttachment: async (id: string, file: File) => {
+    const form = new FormData();
+    form.append('file', file);
+    const res = await apiFetch(apiUrl(`/api/procurement/costing/${id}/attachments`), {
+      method: 'POST',
+      body: form,
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({ message: res.statusText }));
+      throw new Error(body.message ?? '上传失败');
+    }
+    return res.json();
+  },
+  startProductCostingExtract: (id: string, body?: { pageFrom?: number; pageTo?: number }) =>
+    request<{ runId: string }>(`/api/procurement/costing/${id}/extract`, {
+      method: 'POST',
+      body: JSON.stringify(body ?? {}),
+    }),
+  getProductCostingExtractRun: (id: string, runId: string) =>
+    request<CostingExtractRun>(`/api/procurement/costing/${id}/extract/runs/${runId}`),
+  listProductCostingExtractRuns: (id: string) =>
+    request<{ items: CostingExtractRun[] }>(`/api/procurement/costing/${id}/extract/runs`),
+  listProductCostingBomLines: (id: string) =>
+    request<{ items: CostingBomLine[] }>(`/api/procurement/costing/${id}/bom-lines`),
+  replaceProductCostingBomLines: (
+    id: string,
+    lines: Array<{
+      category: string;
+      materialName: string;
+      spec?: string | null;
+      unit: string;
+      qtyNet: number;
+      lossRate?: number;
+      sourceRef?: string | null;
+      confidence?: CostingBomConfidence;
+      notes?: string | null;
+      isManual?: boolean;
+    }>,
+  ) =>
+    request<{ items: CostingBomLine[] }>(`/api/procurement/costing/${id}/bom-lines`, {
+      method: 'PUT',
+      body: JSON.stringify({ lines }),
+    }),
+  createProductCostingBomLine: (
+    id: string,
+    line: {
+      category: string;
+      materialName: string;
+      spec?: string | null;
+      unit: string;
+      qtyNet: number;
+      lossRate?: number;
+      sourceRef?: string | null;
+      confidence?: CostingBomConfidence;
+      notes?: string | null;
+    },
+  ) =>
+    request<CostingBomLine>(`/api/procurement/costing/${id}/bom-lines`, {
+      method: 'POST',
+      body: JSON.stringify(line),
+    }),
+  updateProductCostingBomLine: (id: string, lineId: string, patch: Record<string, unknown>) =>
+    request<CostingBomLine>(`/api/procurement/costing/${id}/bom-lines/${lineId}`, {
+      method: 'PATCH',
+      body: JSON.stringify(patch),
+    }),
+  deleteProductCostingBomLine: (id: string, lineId: string) =>
+    request<{ ok: boolean }>(`/api/procurement/costing/${id}/bom-lines/${lineId}`, {
+      method: 'DELETE',
+    }),
+  confirmProductCostingBom: async (id: string, force = false) => {
+    const res = await apiFetch(apiUrl(`/api/procurement/costing/${id}/confirm-bom`), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ force }),
+    });
+    const body = (await res.json().catch(() => ({}))) as {
+      message?: string;
+      reasons?: string[];
+    };
+    if (!res.ok) {
+      const reasons = Array.isArray(body.reasons) ? body.reasons.filter(Boolean) : [];
+      const detail = reasons.length ? `：${reasons.slice(0, 8).join('；')}` : '';
+      throw new Error(
+        `${body.message ?? '清单尚未可确认'}${detail}${
+          reasons.length > 8 ? '…' : ''
+        }。可先改置信度并保存，或使用「强制确认」。`,
+      );
+    }
+    return body as unknown as CostingProject;
+  },
+  exportProductCostingBom: async (id: string) => {
+    const res = await apiFetch(apiUrl(`/api/procurement/costing/${id}/export-bom`));
+    await downloadAttachment(res, 'bom.xlsx');
+  },
+  productCostingPageUrl: (id: string, pageNo: number) =>
+    apiUrl(`/api/procurement/costing/${id}/pages/${pageNo}`),
 };
 
 async function downloadAttachment(res: Response, fallbackName: string) {

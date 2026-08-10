@@ -9,9 +9,11 @@ import {
   detectProcurementFeishuPullConflict,
 } from './procurement-feishu-sync-lock.js';
 import { procurementPullTaskName } from './procurement-feishu-task-names.js';
+import { resolveProcurementSyncActorId } from './procurement-sync-actor.js';
 import { finishTaskRun } from './task-runs.js';
 
-export const PROCUREMENT_FEISHU_PULL_ACTOR = 'cron';
+/** @deprecated 定时任务不再写入哨兵字符串；保留导出以免外部引用断裂 */
+export const PROCUREMENT_FEISHU_PULL_ACTOR = null;
 
 export type ProcurementFeishuPullTaskResult = {
   direction: 'from_feishu';
@@ -36,10 +38,11 @@ export function parseProcurementFeishuPullTaskResult(
 export async function runProcurementFeishuPullTask(
   runId: string,
   listType: ProcurementListKey,
-  actorId: string = PROCUREMENT_FEISHU_PULL_ACTOR,
+  actorId?: string | null,
 ) {
   const taskName = procurementPullTaskName(listType);
   const label = labelForProcurementList(listType);
+  const syncActorId = resolveProcurementSyncActorId(actorId);
 
   try {
     const conflict = await detectProcurementFeishuPullConflict(listType, taskName);
@@ -56,7 +59,7 @@ export async function runProcurementFeishuPullTask(
       return { skipped: true as const, reason: message };
     }
 
-    const result = await executeProcurementFeishuSync(listType, actorId);
+    const result = await executeProcurementFeishuSync(listType, syncActorId);
     const payload: ProcurementFeishuPullTaskResult = {
       direction: 'from_feishu',
       mode: 'full_replace',

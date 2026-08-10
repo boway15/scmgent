@@ -53,6 +53,11 @@ services:
       NODE_OPTIONS: "--max-old-space-size=4096"
       # DIFY_BASE_URL / DIFY_API_KEY_* 由 .env 注入；容器内 127.0.0.1 会在代码中改写为 host.docker.internal
       RUNNING_IN_DOCKER: "true"
+      COSTING_DATA_DIR: /data/costing
+      COSTING_PREPROCESS_MODE: ${COSTING_PREPROCESS_MODE:-auto}
+      # 多模态拆 BOM 单批可能较慢；默认 5 分钟，可用 .env 覆盖
+      DIFY_WORKFLOW_TIMEOUT_MS: ${DIFY_WORKFLOW_TIMEOUT_MS:-300000}
+      COSTING_EXTRACT_BATCH_SIZE: ${COSTING_EXTRACT_BATCH_SIZE:-2}
       # 日表 + 月表双轨（见 apps/web/server/lib/sales-history-config.ts）
       # 全量初始化完成后启用：仅展开 >= 该日期的宽表列（上线日常人工导入）
       # SALES_IMPORT_MIN_DATE: "2026-01-01"
@@ -60,6 +65,9 @@ services:
       # SALES_HISTORY_DAILY_RETENTION_DAYS: "365"
       # 补货/健康读取日表回溯天数，默认 90
       # REPLENISHMENT_SALES_LOOKBACK_DAYS: "90"
+    volumes:
+      # 产品成本核算附件（重建容器不丢上传文件）
+      - costing_data:/data/costing
     depends_on:
       postgres:
         condition: service_healthy
@@ -95,3 +103,4 @@ services:
 
 volumes:
   pgdata:
+  costing_data:

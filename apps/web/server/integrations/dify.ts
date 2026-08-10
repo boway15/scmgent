@@ -5,7 +5,8 @@
 
 import { existsSync } from 'fs';
 
-const WORKFLOW_TIMEOUT_MS = Number(process.env.DIFY_WORKFLOW_TIMEOUT_MS ?? 120_000);
+/** 成本核算等多模态工作流建议 ≥ 300000；可用环境变量覆盖 */
+const WORKFLOW_TIMEOUT_MS = Number(process.env.DIFY_WORKFLOW_TIMEOUT_MS ?? 300_000);
 
 function runningInDocker(): boolean {
   return process.env.RUNNING_IN_DOCKER === 'true' || existsSync('/.dockerenv');
@@ -81,6 +82,10 @@ export function isSalesForecastWorkflowEnabled(): boolean {
   return isDifyKeyConfigured('DIFY_API_KEY_SALES_FORECAST');
 }
 
+export function isCostingBomWorkflowEnabled(): boolean {
+  return isDifyKeyConfigured('DIFY_API_KEY_COSTING_BOM');
+}
+
 export function getDifyConfigSummary() {
   return {
     mode: isDifyEnabled() ? ('dify' as const) : ('local' as const),
@@ -90,6 +95,7 @@ export function getDifyConfigSummary() {
     newsIntelWorkflow: isNewsIntelWorkflowEnabled(),
     csReplyQualityWorkflow: isCsReplyQualityWorkflowEnabled(),
     salesForecastWorkflow: isSalesForecastWorkflowEnabled(),
+    costingBomWorkflow: isCostingBomWorkflowEnabled(),
     baseUrl: getDifyBaseUrl(),
   };
 }
@@ -195,6 +201,23 @@ export async function runWorkflow(
     throw new Error(`Dify workflow error ${res.status}: ${text}`);
   }
 
-  const data = (await res.json()) as { data?: { outputs?: Record<string, unknown> } };
-  return data.data?.outputs ?? {};
+  const data = (await res.json()) as {
+    data?: {
+      status?: string;
+      error?: string;
+      outputs?: Record<string, unknown>;
+    };
+  };
+  const payload = data.data;
+  if (payload?.status === 'failed') {
+    const err = (payload.error || 'workflow failed').trim();
+    // Surface model credential issues clearly (e.g. Gemini API_KEY_INVALID)
+    if (/API[_ ]?key not valid|API_KEY_INVALID|INVALID_ARGUMENT/i.test(err)) {
+      throw new Error(
+        `Dify 工作流失败：模型 API Key 无效。请在 Dify 控制台为「产品成本核算-AI拆BOM」的 LLM 节点配置有效模型凭证，或改用已配置好的模型。详情：${err.slice(0, 300)}`,
+      );
+    }
+    throw new Error(`Dify 工作流失败：${err.slice(0, 500)}`);
+  }
+  return payload?.outputs ?? {};
 }

@@ -1,0 +1,420 @@
+# 产品成本核算 · AI 拆原材料清单（多模态）
+# 导入: Dify 控制台 → 工作室 → 导入 DSL
+# 对接: scm-agent POST /api/procurement/costing/:id/extract
+# 环境变量: DIFY_API_KEY_COSTING_BOM=app-xxxx
+# 约定: docs/dify/workflows/product-costing-bom-extract.md
+#
+# 说明:
+# - 输入 pages_json 含 page/text/image_base64（scm-agent 分批，每批最多约 4 页）
+# - 输出 lines：JSON 数组字符串（scm-agent parseWorkflowLines 兼容）
+# - 导入后请将 LLM 换成多模态模型（能看图）；默认 deepseek 插件标识仅保证可导入
+# - 图以 data URL 写入 Prompt（单图 base64 过长会截断），超长页仅保留文本
+
+kind: app
+version: 0.6.0
+app:
+  mode: workflow
+  name: 产品成本核算-AI拆BOM
+  description: 根据设计方案分页文本与页图抽取原材料清单 JSON，供 scm-agent 产品成本核算使用
+  icon: 🪑
+  icon_background: '#FFF7E6'
+dependencies:
+  - type: marketplace
+    value:
+      marketplace_plugin_unique_identifier: langgenius/deepseek:0.0.15@bc5b794a1b0b4f7e9c2d8a1e3f5b7c9d
+workflow:
+  environment_variables: []
+  conversation_variables: []
+  features:
+    file_upload:
+      enabled: false
+    opening_statement: ''
+    retriever_resource:
+      enabled: false
+    sensitive_word_avoidance:
+      enabled: false
+    speech_to_text:
+      enabled: false
+    suggested_questions: []
+    suggested_questions_after_answer:
+      enabled: false
+    text_to_speech:
+      enabled: false
+  graph:
+    edges:
+      - id: edge-start-prepare
+        source: start
+        target: prepare_pages
+        sourceHandle: source
+        targetHandle: target
+        type: custom
+        data:
+          sourceType: start
+          targetType: code
+          isInIteration: false
+          isInLoop: false
+      - id: edge-prepare-llm
+        source: prepare_pages
+        target: extract_bom
+        sourceHandle: source
+        targetHandle: target
+        type: custom
+        data:
+          sourceType: code
+          targetType: llm
+          isInIteration: false
+          isInLoop: false
+      - id: edge-llm-parse
+        source: extract_bom
+        target: parse_lines
+        sourceHandle: source
+        targetHandle: target
+        type: custom
+        data:
+          sourceType: llm
+          targetType: code
+          isInIteration: false
+          isInLoop: false
+      - id: edge-parse-end
+        source: parse_lines
+        target: end
+        sourceHandle: source
+        targetHandle: target
+        type: custom
+        data:
+          sourceType: code
+          targetType: end
+          isInIteration: false
+          isInLoop: false
+    nodes:
+      - id: start
+        type: custom
+        width: 242
+        height: 140
+        position:
+          x: 80
+          y: 280
+        positionAbsolute:
+          x: 80
+          y: 280
+        sourcePosition: right
+        targetPosition: left
+        selected: false
+        data:
+          type: start
+          title: 开始
+          variables:
+            - variable: category
+              label: 品类提示
+              type: text-input
+              required: false
+              max_length: 200
+              options: []
+            - variable: pages_json
+              label: 分页图文JSON
+              type: paragraph
+              required: true
+              max_length: 5000000
+              options: []
+
+      - id: prepare_pages
+        type: custom
+        width: 242
+        height: 90
+        position:
+          x: 380
+          y: 280
+        positionAbsolute:
+          x: 380
+          y: 280
+        sourcePosition: right
+        targetPosition: left
+        selected: false
+        data:
+          type: code
+          title: 解析分页输入
+          code_language: python3
+          error_strategy: fail-branch
+          code: |
+            import json
+
+            MAX_B64 = 120000
+            MAX_IMAGES = 4
+
+            def main(category: str, pages_json: str) -> dict:
+                cat = (category or "家具").strip() or "家具"
+                try:
+                    pages = json.loads(pages_json or "[]")
+                except Exception:
+                    pages = []
+                if not isinstance(pages, list):
+                    pages = []
+
+                text_parts = []
+                img_parts = []
+                for p in pages:
+                    if not isinstance(p, dict):
+                        continue
+                    page = p.get("page") if p.get("page") is not None else p.get("pageNo")
+                    page = page if page is not None else "?"
+                    text = (p.get("text") or "").strip()
+                    text_parts.append(f"===== 第 {page} 页文本 =====\n{text if text else '(无文本，请看图)'}")
+
+                    b64 = p.get("image_base64") or ""
+                    if not isinstance(b64, str) or not b64:
+                        continue
+                    if b64.startswith("data:") and "," in b64[:100]:
+                        b64 = b64.split(",", 1)[1]
+                    if len(img_parts) >= MAX_IMAGES:
+                        continue
+                    if len(b64) > MAX_B64:
+                        text_parts.append(f"（第 {page} 页图片过大已省略，仅依赖文本）")
+                        continue
+                    img_parts.append(
+                        f"第{page}页图片:\n![page_{page}](data:image/png;base64,{b64})"
+                    )
+
+                pages_context = "\n\n".join(text_parts)
+                if len(pages_context) > 100000:
+                    pages_context = pages_context[:100000] + "\n…(文本截断)"
+
+                images_markdown = "\n\n".join(img_parts)
+                return {
+                    "category": cat,
+                    "page_count": float(len(pages)),
+                    "pages_context": pages_context,
+                    "images_markdown": images_markdown or "(本批无可用页图)",
+                }
+          outputs:
+            category:
+              type: string
+              children: null
+            page_count:
+              type: number
+              children: null
+            pages_context:
+              type: string
+              children: null
+            images_markdown:
+              type: string
+              children: null
+          variables:
+            - variable: category
+              value_selector:
+                - start
+                - category
+            - variable: pages_json
+              value_selector:
+                - start
+                - pages_json
+
+      - id: extract_bom
+        type: custom
+        width: 242
+        height: 98
+        position:
+          x: 680
+          y: 280
+        positionAbsolute:
+          x: 680
+          y: 280
+        sourcePosition: right
+        targetPosition: left
+        selected: false
+        data:
+          type: llm
+          title: 抽取物料清单
+          context:
+            enabled: false
+            variable_selector: []
+          vision:
+            enabled: true
+            configs:
+              detail: high
+              variable_selector: []
+          model:
+            mode: chat
+            provider: langgenius/deepseek/deepseek
+            name: deepseek-chat
+            completion_params:
+              temperature: 0.2
+              max_tokens: 4000
+          prompt_template:
+            - id: sys-prompt-costing-bom-001
+              role: system
+              text: |
+                你是家具/办公桌类产品的工艺与采购成本专家。任务：根据设计方案的分页文本与页图，拆出原材料（BOM）清单。
+
+                要求：
+                1. 结合文字与图片中的尺寸、材质、五金、封边、油漆、包装等信息。
+                2. 只输出一个 JSON 数组，不要 markdown 代码块，不要额外说明。
+                3. 每项字段必须为：
+                   category, material_name, spec, unit, qty_net, loss_rate, source_ref, confidence, notes
+                4. category 建议：板材/实木/五金/封边/油漆/辅料/包装/其他
+                5. unit 用常见采购单位：张/米/个/套/kg/升 等
+                6. qty_net 为单套产品净用量（数字）；不确定时给合理估计并把 confidence 设为 low
+                7. loss_rate 为 0~0.3 的小数，默认 0.05~0.1；无法判断用 0.08
+                8. source_ref 用页码，如 p3 或 p3,p5
+                9. confidence 仅允许 high / medium / low
+                10. 图上读不清的尺寸/用量必须 low，并在 notes 说明原因
+                11. 不要输出 qty_gross（由下游系统计算）
+                12. 不要编造与方案无关的物料；可漏不可乱
+
+                输出示例：
+                [{"category":"板材","material_name":"多层实木板","spec":"18mm 1200x600","unit":"张","qty_net":2,"loss_rate":0.08,"source_ref":"p3","confidence":"medium","notes":""}]
+            - id: user-prompt-costing-bom-001
+              role: user
+              text: |
+                【品类】{{#prepare_pages.category#}}
+                【本批页数】{{#prepare_pages.page_count#}}
+
+                【分页文本】
+                {{#prepare_pages.pages_context#}}
+
+                【分页图片】
+                {{#prepare_pages.images_markdown#}}
+
+                请只输出 JSON 数组。
+
+      - id: parse_lines
+        type: custom
+        width: 242
+        height: 90
+        position:
+          x: 980
+          y: 280
+        positionAbsolute:
+          x: 980
+          y: 280
+        sourcePosition: right
+        targetPosition: left
+        selected: false
+        data:
+          type: code
+          title: 规范化lines
+          code_language: python3
+          error_strategy: fail-branch
+          code: |
+            import json
+            import re
+
+            ALLOWED = {"high", "medium", "low"}
+
+            def _extract_array(text: str):
+                if not text:
+                    return []
+                text = text.strip()
+                m = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", text)
+                if m:
+                    text = m.group(1).strip()
+                start = text.find("[")
+                end = text.rfind("]")
+                if start >= 0 and end > start:
+                    text = text[start : end + 1]
+                data = json.loads(text)
+                return data if isinstance(data, list) else []
+
+            def _num(v, default=0.0):
+                try:
+                    return float(v)
+                except Exception:
+                    return default
+
+            def main(text: str) -> dict:
+                try:
+                    raw = _extract_array(text or "")
+                except Exception as e:
+                    return {
+                        "lines": "[]",
+                        "line_count": 0.0,
+                        "parse_ok": False,
+                        "error_message": f"parse failed: {e}",
+                    }
+
+                lines = []
+                for item in raw:
+                    if not isinstance(item, dict):
+                        continue
+                    name = str(item.get("material_name") or item.get("materialName") or "").strip()
+                    unit = str(item.get("unit") or "").strip()
+                    if not name or not unit:
+                        continue
+                    conf = str(item.get("confidence") or "medium").strip().lower()
+                    if conf not in ALLOWED:
+                        conf = "low"
+                    qty = _num(item.get("qty_net", item.get("qtyNet")), -1)
+                    if qty < 0:
+                        continue
+                    loss = _num(item.get("loss_rate", item.get("lossRate")), 0.08)
+                    if loss < 0:
+                        loss = 0.0
+                    if loss > 0.5:
+                        loss = 0.5
+                    lines.append(
+                        {
+                            "category": str(item.get("category") or "未分类").strip() or "未分类",
+                            "material_name": name,
+                            "spec": str(item.get("spec") or "").strip(),
+                            "unit": unit,
+                            "qty_net": qty,
+                            "loss_rate": loss,
+                            "source_ref": str(item.get("source_ref") or item.get("sourceRef") or "").strip(),
+                            "confidence": conf,
+                            "notes": str(item.get("notes") or "").strip(),
+                        }
+                    )
+
+                return {
+                    "lines": json.dumps(lines, ensure_ascii=False),
+                    "line_count": float(len(lines)),
+                    "parse_ok": True,
+                    "error_message": "",
+                }
+          outputs:
+            lines:
+              type: string
+              children: null
+            line_count:
+              type: number
+              children: null
+            parse_ok:
+              type: boolean
+              children: null
+            error_message:
+              type: string
+              children: null
+          variables:
+            - variable: text
+              value_selector:
+                - extract_bom
+                - text
+
+      - id: end
+        type: custom
+        width: 242
+        height: 116
+        position:
+          x: 1280
+          y: 280
+        positionAbsolute:
+          x: 1280
+          y: 280
+        sourcePosition: right
+        targetPosition: left
+        selected: false
+        data:
+          type: end
+          title: 结束
+          outputs:
+            - variable: lines
+              value_selector:
+                - parse_lines
+                - lines
+            - variable: line_count
+              value_selector:
+                - parse_lines
+                - line_count
+            - variable: parse_ok
+              value_selector:
+                - parse_lines
+                - parse_ok

@@ -5,9 +5,18 @@ import {
   procurementPullTaskName,
   procurementPushTaskName,
 } from './procurement-feishu-task-names.js';
-import { parseProcurementFeishuPullTaskResult } from './procurement-feishu-pull-task.js';
+import {
+  parseProcurementFeishuPullTaskResult,
+  PROCUREMENT_FEISHU_PULL_ACTOR,
+} from './procurement-feishu-pull-task.js';
+import { resolveProcurementSyncActorId } from './procurement-sync-actor.js';
 
 describe('procurement-feishu-pull-task', () => {
+  it('does not use cron string as uuid actor for timed pulls', () => {
+    assert.equal(PROCUREMENT_FEISHU_PULL_ACTOR, null);
+    assert.equal(resolveProcurementSyncActorId(PROCUREMENT_FEISHU_PULL_ACTOR), null);
+  });
+
   it('maps list types to distinct pull task names', () => {
     assert.equal(procurementPullTaskName('bulk_stock_request'), 'procurement_bulk_stock_pull');
     assert.equal(procurementPullTaskName('purchase_follow_up'), 'procurement_follow_up_pull');

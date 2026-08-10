@@ -1,5 +1,6 @@
 import { getTenantAccessToken } from './feishu.js';
 import { getMaxRows } from '../lib/upload-guard.js';
+import { withFeishuFetchRetry } from './feishu-fetch-retry.js';
 
 const FEISHU_BASE = 'https://open.feishu.cn/open-apis';
 
@@ -98,13 +99,15 @@ export async function listAllRecords(
     }
     if (pageToken) url.searchParams.set('page_token', pageToken);
 
-    const res = await fetch(url.toString(), {
-      headers: { Authorization: `Bearer ${token}` },
+    const body = await withFeishuFetchRetry(async () => {
+      const res = await fetch(url.toString(), {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      return (await res.json()) as ListRecordsResponse;
     });
 
-    const body = (await res.json()) as ListRecordsResponse;
     if (body.code !== 0) {
-      const msg = body.msg ?? String(res.status);
+      const msg = body.msg ?? 'unknown';
       if (msg === 'RolePermNotAllow' || body.code === 91403) {
         throw new Error(
           `Feishu Bitable list failed: RolePermNotAllow（应用无该表读权限）。请在多维表格「… → 更多 → 添加文档应用 / 协作者」中加入当前飞书应用，并在「高级权限」里允许该应用可读表 ${tableId}（与库存总览同 Base 时，常因明细表单独限制角色导致）。`,

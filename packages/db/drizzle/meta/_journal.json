@@ -505,6 +505,13 @@
       "when": 1780717058211,
       "tag": "0069_product_costing",
       "breakpoints": true
+    },
+    {
+      "idx": 72,
+      "version": "6",
+      "when": 1780717058212,
+      "tag": "0070_drop_safety_stock_sku_unique",
+      "breakpoints": true
     }
   ]
 }

@@ -25,6 +25,7 @@ CREATE INDEX IF NOT EXISTS "sales_history_sku_warehouse_idx" ON "sales_history" 
 
 ALTER TABLE "safety_stock_config" ADD COLUMN IF NOT EXISTS "warehouse_code" varchar(100) DEFAULT 'ALL' NOT NULL;
 UPDATE "safety_stock_config" SET "warehouse_code" = 'ALL' WHERE "warehouse_code" IS NULL;
+ALTER TABLE "safety_stock_config" DROP CONSTRAINT IF EXISTS "safety_stock_config_sku_id_unique";
 DROP INDEX IF EXISTS "safety_stock_config_sku_id_idx";
 CREATE UNIQUE INDEX IF NOT EXISTS "safety_stock_config_sku_warehouse_idx" ON "safety_stock_config" ("sku_id", "warehouse_code");
 

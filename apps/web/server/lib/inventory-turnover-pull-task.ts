@@ -2,7 +2,8 @@ import { executeBitableSync, getBitableSyncConfig } from './bitable-sync.js';
 import { countRunningTaskRuns, finishTaskRun } from './task-runs.js';
 
 export const INVENTORY_TURNOVER_PULL_TASK = 'inventory_turnover_pull' as const;
-export const INVENTORY_TURNOVER_PULL_ACTOR = 'cron';
+/** 定时任务不写 users.id；保留导出以免外部引用断裂 */
+export const INVENTORY_TURNOVER_PULL_ACTOR = null;
 
 export type InventoryTurnoverPullTaskResult = {
   direction: 'from_feishu';

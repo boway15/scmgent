@@ -268,7 +268,8 @@ export async function replaceProcurementListData(params: {
   listType: ProcurementListKey;
   rows: ProcurementListInputRow[];
   source: 'feishu' | 'upload';
-  userId: string;
+  /** 人工同步为用户 uuid；定时任务传 null */
+  userId?: string | null;
   /** @deprecated 列结构已固定，忽略调用方传入的表头 */
   columnOrder?: string[];
 }) {
@@ -276,6 +277,7 @@ export async function replaceProcurementListData(params: {
   const normalized = normalizeInputRows(params.rows, columnOrder);
   const rows = projectRowsToColumns(normalized.rows, columnOrder);
   assertRowCount(rows, `procurement-${params.listType}`);
+  const lastSyncBy = params.userId ?? null;
 
   await db.transaction(async (tx) => {
     await tx.delete(procurementListRows).where(eq(procurementListRows.listType, params.listType));
@@ -299,7 +301,7 @@ export async function replaceProcurementListData(params: {
         rowCount: rows.length,
         lastSyncAt: new Date(),
         lastSyncSource: params.source,
-        lastSyncBy: params.userId,
+        lastSyncBy,
         updatedAt: new Date(),
       })
       .onConflictDoUpdate({
@@ -309,7 +311,7 @@ export async function replaceProcurementListData(params: {
           rowCount: rows.length,
           lastSyncAt: new Date(),
           lastSyncSource: params.source,
-          lastSyncBy: params.userId,
+          lastSyncBy,
           updatedAt: new Date(),
         },
       });
@@ -354,7 +356,10 @@ export async function previewProcurementFeishuSync(listType: ProcurementListKey)
   };
 }
 
-export async function executeProcurementFeishuSync(listType: ProcurementListKey, userId: string) {
+export async function executeProcurementFeishuSync(
+  listType: ProcurementListKey,
+  userId?: string | null,
+) {
   const rows = await fetchProcurementRowsFromFeishu(listType);
   return replaceProcurementListData({
     listType,

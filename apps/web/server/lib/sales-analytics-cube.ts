@@ -54,18 +54,36 @@ function uniqueSorted(values: Iterable<string>): string[] {
   return Array.from(new Set(values)).sort((a, b) => a.localeCompare(b, 'zh-CN'));
 }
 
-/** Pure aggregator: daily sales_history rows → month/week cube payload (no DB). */
-export function accumulateCubeRows(
+type CubeAccState = {
+  monthSet: Set<string>;
+  weekSet: Set<string>;
+  entities: Map<string, EntityAcc>;
+  totalSales: number;
+  dateStart: string | null;
+  dateEnd: string | null;
+  recordCount: number;
+};
+
+function createCubeAccumulator(): CubeAccState {
+  return {
+    monthSet: new Set(),
+    weekSet: new Set(),
+    entities: new Map(),
+    totalSales: 0,
+    dateStart: null,
+    dateEnd: null,
+    recordCount: 0,
+  };
+}
+
+/** Incremental path used by rebuild (page-by-page) and by accumulateCubeRows. */
+function accumulateCubeRowsInto(
+  state: CubeAccState,
   rows: CubeSourceRow[],
   warehouseStationByCode: Map<string, string>,
   platformNameByCode: Map<string, string>,
-): SalesAnalyticsCubePayload {
-  const monthSet = new Set<string>();
-  const weekSet = new Set<string>();
-  const entities = new Map<string, EntityAcc>();
-  let totalSales = 0;
-  let dateStart: string | null = null;
-  let dateEnd: string | null = null;
+): void {
+  state.recordCount += rows.length;
 
   for (const row of rows) {
     const saleDate = String(row.saleDate ?? '').trim().slice(0, 10);
@@ -73,15 +91,15 @@ export function accumulateCubeRows(
 
     const qty = Number(row.qtySold);
     const safeQty = Number.isFinite(qty) ? qty : 0;
-    totalSales += safeQty;
+    state.totalSales += safeQty;
 
-    if (!dateStart || saleDate < dateStart) dateStart = saleDate;
-    if (!dateEnd || saleDate > dateEnd) dateEnd = saleDate;
+    if (!state.dateStart || saleDate < state.dateStart) state.dateStart = saleDate;
+    if (!state.dateEnd || saleDate > state.dateEnd) state.dateEnd = saleDate;
 
     const month = saleDate.slice(0, 7);
-    monthSet.add(month);
+    state.monthSet.add(month);
     const week = isoWeekLabel(saleDate);
-    if (week) weekSet.add(week);
+    if (week) state.weekSet.add(week);
 
     const wh = (row.warehouseCode ?? '').trim();
     const station = wh ? warehouseStationByCode.get(wh) : null;
@@ -91,19 +109,21 @@ export function accumulateCubeRows(
     const p = platformDisplayName(row.channel, platformNameByCode);
 
     const key = dimKey(s, b, c, p);
-    let ent = entities.get(key);
+    let ent = state.entities.get(key);
     if (!ent) {
       ent = { s, b, c, p, monthQty: new Map(), weekQty: new Map() };
-      entities.set(key, ent);
+      state.entities.set(key, ent);
     }
     ent.monthQty.set(month, (ent.monthQty.get(month) ?? 0) + safeQty);
     if (week) ent.weekQty.set(week, (ent.weekQty.get(week) ?? 0) + safeQty);
   }
+}
 
-  const months = Array.from(monthSet).sort();
-  const weeks = Array.from(weekSet).sort();
+function finalizeCubeAccumulator(state: CubeAccState): SalesAnalyticsCubePayload {
+  const months = Array.from(state.monthSet).sort();
+  const weeks = Array.from(state.weekSet).sort();
 
-  const data = Array.from(entities.values()).map((ent) => ({
+  const data = Array.from(state.entities.values()).map((ent) => ({
     s: ent.s,
     b: ent.b,
     c: ent.c,
@@ -114,12 +134,12 @@ export function accumulateCubeRows(
 
   const meta: SalesAnalyticsCubePayload['meta'] = {
     generatedAt: new Date().toISOString(),
-    dateStart,
-    dateEnd,
+    dateStart: state.dateStart,
+    dateEnd: state.dateEnd,
     weekStart: weeks[0] ?? null,
     weekEnd: weeks.length ? weeks[weeks.length - 1]! : null,
-    recordCount: rows.length,
-    totalSales,
+    recordCount: state.recordCount,
+    totalSales: state.totalSales,
     sites: uniqueSorted(data.map((d) => d.s)),
     depts: uniqueSorted(data.map((d) => d.b)),
     categories: uniqueSorted(data.map((d) => d.c)),
@@ -127,6 +147,17 @@ export function accumulateCubeRows(
   };
 
   return { meta, months, weeks, data };
+}
+
+/** Pure aggregator: daily sales_history rows → month/week cube payload (no DB). */
+export function accumulateCubeRows(
+  rows: CubeSourceRow[],
+  warehouseStationByCode: Map<string, string>,
+  platformNameByCode: Map<string, string>,
+): SalesAnalyticsCubePayload {
+  const state = createCubeAccumulator();
+  accumulateCubeRowsInto(state, rows, warehouseStationByCode, platformNameByCode);
+  return finalizeCubeAccumulator(state);
 }
 
 export async function getLatestReadyCube(): Promise<SalesAnalyticsCubePayload | null> {
@@ -155,24 +186,33 @@ export async function getCubeStatus(): Promise<{
       .select({
         generatedAt: salesAnalyticsCubeSnapshots.generatedAt,
         meta: salesAnalyticsCubeSnapshots.meta,
+        createdAt: salesAnalyticsCubeSnapshots.createdAt,
       })
       .from(salesAnalyticsCubeSnapshots)
       .where(eq(salesAnalyticsCubeSnapshots.status, 'ready'))
       .orderBy(desc(salesAnalyticsCubeSnapshots.generatedAt))
       .limit(1),
     db
-      .select({ errorMessage: salesAnalyticsCubeSnapshots.errorMessage })
+      .select({
+        errorMessage: salesAnalyticsCubeSnapshots.errorMessage,
+        createdAt: salesAnalyticsCubeSnapshots.createdAt,
+      })
       .from(salesAnalyticsCubeSnapshots)
       .where(eq(salesAnalyticsCubeSnapshots.status, 'failed'))
       .orderBy(desc(salesAnalyticsCubeSnapshots.createdAt))
       .limit(1),
   ]);
 
+  // Surface failure only when it is newer than the latest ready cube (or no ready exists).
+  const showFailed =
+    Boolean(failed?.errorMessage) &&
+    (!ready?.createdAt || (failed!.createdAt != null && failed!.createdAt > ready.createdAt));
+
   return {
     running: Boolean(running),
     generatedAt: ready?.generatedAt ? ready.generatedAt.toISOString() : null,
     meta: ready?.meta ?? null,
-    errorMessage: failed?.errorMessage ?? null,
+    errorMessage: showFailed ? (failed?.errorMessage ?? null) : null,
   };
 }
 
@@ -198,8 +238,11 @@ async function loadPlatformNameMap(): Promise<Map<string, string>> {
   return new Map(rows.map((r) => [r.code, r.name]));
 }
 
-async function loadSalesHistoryRows(): Promise<CubeSourceRow[]> {
-  const out: CubeSourceRow[] = [];
+async function accumulateSalesHistoryPages(
+  warehouseStationByCode: Map<string, string>,
+  platformNameByCode: Map<string, string>,
+): Promise<SalesAnalyticsCubePayload> {
+  const state = createCubeAccumulator();
   let cursor: string | null = null;
 
   for (;;) {
@@ -220,21 +263,20 @@ async function loadSalesHistoryRows(): Promise<CubeSourceRow[]> {
 
     if (!batch.length) break;
 
-    for (const row of batch) {
-      out.push({
-        saleDate: String(row.saleDate).slice(0, 10),
-        qtySold: Number(row.qtySold) || 0,
-        warehouseCode: row.warehouseCode,
-        channel: row.channel,
-        category: row.category,
-      });
-    }
+    const page: CubeSourceRow[] = batch.map((row) => ({
+      saleDate: String(row.saleDate).slice(0, 10),
+      qtySold: Number(row.qtySold) || 0,
+      warehouseCode: row.warehouseCode,
+      channel: row.channel,
+      category: row.category,
+    }));
+    accumulateCubeRowsInto(state, page, warehouseStationByCode, platformNameByCode);
 
     cursor = batch[batch.length - 1]!.id;
     if (batch.length < HISTORY_PAGE_SIZE) break;
   }
 
-  return out;
+  return finalizeCubeAccumulator(state);
 }
 
 async function pruneOldSnapshots(keep = SNAPSHOT_KEEP): Promise<void> {
@@ -271,13 +313,12 @@ export async function rebuildSalesAnalyticsCube(
   if (!snap) return { ok: false, error: 'failed to create snapshot row' };
 
   try {
-    const [stationMap, nameMap, rows] = await Promise.all([
+    const [stationMap, nameMap] = await Promise.all([
       loadWarehouseStationMap(),
       loadPlatformNameMap(),
-      loadSalesHistoryRows(),
     ]);
 
-    const payload = accumulateCubeRows(rows, stationMap, nameMap);
+    const payload = await accumulateSalesHistoryPages(stationMap, nameMap);
     const generatedAt = new Date();
     payload.meta.generatedAt = generatedAt.toISOString();
 

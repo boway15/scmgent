@@ -197,10 +197,12 @@ export function SalesAnalyticsPage() {
   const hasReadyCube = Boolean(statusQuery.data?.generatedAt ?? statusQuery.data?.meta);
   const rebuilding = Boolean(statusQuery.data?.running);
 
+  // Keep fetching/showing the latest ready cube while a rebuild runs.
+  // Status polling stays independent; only the refresh button shows busy.
   const cubeQuery = useQuery({
     queryKey: ['sales-analytics-cube', statusQuery.data?.generatedAt],
     queryFn: () => api.getSalesAnalyticsCube(),
-    enabled: hasReadyCube && !rebuilding,
+    enabled: hasReadyCube,
     retry: false,
   });
 
@@ -238,6 +240,14 @@ export function SalesAnalyticsPage() {
   });
 
   const busy = rebuild.isPending || rebuilding;
+  const rebuildError =
+    rebuild.error instanceof Error
+      ? rebuild.error.message
+      : rebuild.isError
+        ? '刷新看板数据失败'
+        : null;
+  const statusError = statusQuery.data?.errorMessage?.trim() || null;
+  const errorBanner = rebuildError ?? statusError;
 
   const cube = cubeQuery.data;
   const periods = cube ? (gran === 'week' ? cube.weeks : cube.months) : [];
@@ -352,8 +362,13 @@ export function SalesAnalyticsPage() {
         </div>
       </PageHeader>
 
-      {statusQuery.data?.errorMessage && !hasReadyCube && (
-        <p className="text-sm text-red-600">上次生成失败：{statusQuery.data.errorMessage}</p>
+      {errorBanner && (
+        <div
+          className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700"
+          role="alert"
+        >
+          {rebuildError ? `刷新失败：${rebuildError}` : `上次生成失败：${statusError}`}
+        </div>
       )}
 
       {!hasReadyCube && (

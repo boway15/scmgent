@@ -505,6 +505,13 @@
       "when": 1780717058212,
       "tag": "0069_drop_safety_stock_sku_unique",
       "breakpoints": true
+    },
+    {
+      "idx": 72,
+      "version": "6",
+      "when": 1786356401089,
+      "tag": "0072_sales_analytics_cube",
+      "breakpoints": true
     }
   ]
 }

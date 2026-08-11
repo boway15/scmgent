@@ -9,6 +9,7 @@ import { aggregateSalesHistoryMonthlyFromDaily } from './sales-history-monthly.j
 import { loadSkuCategoryMap, resolveSkuCategoryFromMaster } from './sku-category.js';
 import { sanitizeDbText } from './import/parse.js';
 import { normalizeSalesPlatformSync } from './sales-platform.js';
+import { schedulePostImportSalesAnalyticsCubeRebuild } from './sales-analytics-cube.js';
 
 export type SalesHistoryImportPlanRow = {
   skuId: string;
@@ -198,6 +199,10 @@ export async function persistDailySalesRowsAsHistory(
     : await aggregateSalesHistoryMonthlyFromDaily({
         skuIds: Array.from(new Set(planRows.map((row) => row.skuId))),
       });
+
+  if (insertedSalesRows > 0 && !options?.skipMonthlyAggregate) {
+    schedulePostImportSalesAnalyticsCubeRebuild();
+  }
 
   return {
     ...plan,

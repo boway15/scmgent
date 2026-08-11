@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { formatBaselineWeightsLabel } from './forecast-sku-context.js';
+import {
+  filterMonthLabelsFromStart,
+  formatBaselineWeightsLabel,
+} from './forecast-sku-context.js';
 
 describe('formatBaselineWeightsLabel', () => {
   it('formats lifecycle weights as percentages', () => {
@@ -12,5 +15,26 @@ describe('formatBaselineWeightsLabel', () => {
     expect(
       formatBaselineWeightsLabel({ w90: 0, w30: 0.7, wLy: 0, wCat: 0.3 }),
     ).toBe('0% / 70% / 0% / 30%');
+  });
+});
+
+describe('filterMonthLabelsFromStart', () => {
+  it('slices from exact startMonth match', () => {
+    expect(filterMonthLabelsFromStart(['2026-01', '2026-02', '2026-03'], '2026-02')).toEqual([
+      '2026-02',
+      '2026-03',
+    ]);
+  });
+
+  it('keeps labels >= startMonth when exact match missing', () => {
+    expect(filterMonthLabelsFromStart(['2026-03', '2026-04', '2026-05'], '2026-02')).toEqual([
+      '2026-03',
+      '2026-04',
+      '2026-05',
+    ]);
+  });
+
+  it('returns empty when no labels meet startMonth', () => {
+    expect(filterMonthLabelsFromStart(['2026-01', '2026-02'], '2026-06')).toEqual([]);
   });
 });

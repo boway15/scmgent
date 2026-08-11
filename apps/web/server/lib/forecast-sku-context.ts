@@ -66,6 +66,13 @@ export function formatBaselineWeightsLabel(weights: LifecycleBaselineWeights): s
   return `${pct(weights.w90)} / ${pct(weights.w30)} / ${pct(weights.wLy)} / ${pct(weights.wCat)}`;
 }
 
+/** Keep month labels from startMonth onward (exact match or YYYY-MM >=). */
+export function filterMonthLabelsFromStart(monthLabels: string[], startMonth: string): string[] {
+  const startIdx = monthLabels.indexOf(startMonth);
+  if (startIdx >= 0) return monthLabels.slice(startIdx);
+  return monthLabels.filter((label) => label >= startMonth);
+}
+
 function addDays(date: Date, days: number): Date {
   const next = new Date(date);
   next.setUTCDate(next.getUTCDate() + days);
@@ -163,8 +170,7 @@ export async function getVersionForecastSummary(versionId: string): Promise<Fore
   const startMonth = version?.startMonth?.trim() || '';
   let monthLabels = monthRows.map((row) => formatForecastMonth(row.forecastYear, row.month));
   if (startMonth) {
-    const startIdx = monthLabels.indexOf(startMonth);
-    monthLabels = startIdx >= 0 ? monthLabels.slice(startIdx) : [];
+    monthLabels = filterMonthLabelsFromStart(monthLabels, startMonth);
   }
   const monthCount = monthLabels.length;
   const first = monthLabels[0] ?? '-';

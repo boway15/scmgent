@@ -63,6 +63,13 @@ export function resolveAiAssistHistoryMaxMonth(asOf: Date): { year: number; mont
   return { year: d.getUTCFullYear(), month: d.getUTCMonth() + 1 };
 }
 
+export function resolveAiAssistHistoryStartMonth(asOf: Date): { year: number; month: number } {
+  const d = new Date(
+    Date.UTC(asOf.getUTCFullYear(), asOf.getUTCMonth() - DRAWER_HISTORY_MONTH_COUNT, 1),
+  );
+  return { year: d.getUTCFullYear(), month: d.getUTCMonth() + 1 };
+}
+
 export function resolveAiAssistHistoryCapEnd(asOf: Date): Date {
   return new Date(Date.UTC(asOf.getUTCFullYear(), asOf.getUTCMonth(), 0));
 }
@@ -330,18 +337,12 @@ export async function runDifySingleSkuForecast(
   const asOf = resolveAiAssistBacktestAsOf(version.startMonth);
 
   const historyMax = resolveAiAssistHistoryMaxMonth(asOf);
-  const historyStart = new Date(
-    Date.UTC(
-      asOf.getUTCFullYear(),
-      asOf.getUTCMonth() - (DRAWER_HISTORY_MONTH_COUNT - 1),
-      1,
-    ),
-  );
+  const historyStart = resolveAiAssistHistoryStartMonth(asOf);
   const monthlyBySku = await loadMonthlySalesBySkuIds({
     skuIds: [sku.id],
     platform,
-    minYear: historyStart.getUTCFullYear(),
-    minMonth: historyStart.getUTCMonth() + 1,
+    minYear: historyStart.year,
+    minMonth: historyStart.month,
     maxYear: historyMax.year,
     maxMonth: historyMax.month,
   });

@@ -6,11 +6,13 @@ import {
   resolveAiAssistBacktestAsOf,
   resolveAiAssistHistoryCapEnd,
   resolveAiAssistHistoryMaxMonth,
+  resolveAiAssistHistoryStartMonth,
   resolveAiAssistProfileSegment,
   resolveAiAssistVersionId,
 } from './forecast-dify-single.js';
 import { buildMonthlyForecastHorizon } from './forecast-baseline.js';
 import { buildHistoryMonthLabels } from './forecast-horizon.js';
+import { DRAWER_HISTORY_MONTH_COUNT } from './forecast-limits.js';
 import { serializeExogenousJson } from './forecast-exogenous-input.js';
 
 describe('forecast-dify-single', () => {
@@ -130,6 +132,15 @@ describe('forecast-dify-single', () => {
       const history = buildHistoryMonthLabels(3, asOf);
       assert.ok(!history.some((h) => h.monthLabel === '2026-02'));
       assert.equal(history.at(-1)?.monthLabel, '2026-01');
+    });
+
+    it('history query min matches earliest history label month', () => {
+      const asOf = resolveAiAssistBacktestAsOf('2026-02');
+      const earliest = buildHistoryMonthLabels(DRAWER_HISTORY_MONTH_COUNT, asOf)[0];
+      const queryMin = resolveAiAssistHistoryStartMonth(asOf);
+      assert.equal(queryMin.year, earliest.forecastYear);
+      assert.equal(queryMin.month, earliest.month);
+      assert.equal(earliest.monthLabel, '2024-02');
     });
   });
 

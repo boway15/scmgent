@@ -1,7 +1,10 @@
 import { Link, useNavigate } from 'react-router-dom';
 import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { api, type LayeredForecastVersion } from '@/lib/api';
+import {
+  layeredForecastApi,
+  type LayeredForecastVersion,
+} from '@/lib/layered-forecast-api';
 import { PageHeader } from '@/components/PageHeader';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -21,12 +24,12 @@ export function LayeredForecastListPage() {
 
   const { data, isLoading } = useQuery({
     queryKey: ['layered-forecast-versions'],
-    queryFn: api.listLayeredForecastVersions,
+    queryFn: layeredForecastApi.listVersions,
   });
 
   const generate = useMutation({
     mutationFn: () =>
-      api.generateLayeredForecast({
+      layeredForecastApi.generate({
         startMonth,
         horizonMonths,
         projectGroup: projectGroup.trim() || undefined,

@@ -2,11 +2,11 @@ import { useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
-  api,
+  layeredForecastApi,
   type LayeredForecastNode,
   type LayeredForecastNodeLevel,
   type LayeredForecastNodesQuery,
-} from '@/lib/api';
+} from '@/lib/layered-forecast-api';
 import { PageHeader } from '@/components/PageHeader';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -56,19 +56,19 @@ export function LayeredForecastDetailPage() {
 
   const versionQuery = useQuery({
     queryKey: ['layered-forecast-version', versionId],
-    queryFn: () => api.getLayeredForecastVersion(versionId),
+    queryFn: () => layeredForecastApi.getVersion(versionId),
     enabled: Boolean(versionId),
   });
   const nodeQueryParams: LayeredForecastNodesQuery = scope;
   const nodesQuery = useQuery({
     queryKey: ['layered-forecast-nodes', versionId, scope],
-    queryFn: () => api.listLayeredForecastNodes(versionId, nodeQueryParams),
+    queryFn: () => layeredForecastApi.listNodes(versionId, nodeQueryParams),
     enabled: Boolean(versionId),
   });
   const platformSkuQuery = useQuery({
     queryKey: ['layered-forecast-platform-skus', versionId, scope],
     queryFn: () =>
-      api.listLayeredForecastNodes(versionId, {
+      layeredForecastApi.listNodes(versionId, {
         level: 'sku',
         projectGroup: scope.projectGroup,
         category: scope.category,
@@ -86,7 +86,7 @@ export function LayeredForecastDetailPage() {
 
   const saveNode = useMutation({
     mutationFn: ({ node, qty }: { node: LayeredForecastNode; qty: number }) =>
-      api.patchLayeredForecastNode(versionId, node.id, {
+      layeredForecastApi.patchNode(versionId, node.id, {
         qty,
         cascade: node.level !== 'sku',
       }),
@@ -95,7 +95,7 @@ export function LayeredForecastDetailPage() {
   });
   const lockNode = useMutation({
     mutationFn: (node: LayeredForecastNode) =>
-      api.lockLayeredForecastNode(versionId, node.id, !node.locked),
+      layeredForecastApi.lockNode(versionId, node.id, !node.locked),
     onSuccess: invalidateNodes,
     onError: (mutationError) => setError(mutationErrorMessage(mutationError)),
   });
@@ -106,12 +106,12 @@ export function LayeredForecastDetailPage() {
     }: {
       mode: 'from_parent' | 'reset_parent_from_children';
       nodeId: string;
-    }) => api.reconcileLayeredForecast(versionId, { mode, nodeId }),
+    }) => layeredForecastApi.reconcile(versionId, { mode, nodeId }),
     onSuccess: invalidateNodes,
     onError: (mutationError) => setError(mutationErrorMessage(mutationError)),
   });
   const publish = useMutation({
-    mutationFn: () => api.publishLayeredForecast(versionId),
+    mutationFn: () => layeredForecastApi.publish(versionId),
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ['layered-forecast-version', versionId] });
       await queryClient.invalidateQueries({ queryKey: ['layered-forecast-versions'] });

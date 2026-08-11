@@ -1,4 +1,5 @@
-import { describe, expect, it } from 'vitest';
+import { describe, it } from 'node:test';
+import assert from 'node:assert/strict';
 import {
   filterMonthLabelsFromStart,
   formatBaselineWeightsLabel,
@@ -6,28 +7,30 @@ import {
 
 describe('formatBaselineWeightsLabel', () => {
   it('formats lifecycle weights as percentages', () => {
-    expect(
+    assert.equal(
       formatBaselineWeightsLabel({ w90: 0.5, w30: 0.3, wLy: 0.2, wCat: 0 }),
-    ).toBe('50% / 30% / 20% / 0%');
+      '50% / 30% / 20% / 0%',
+    );
   });
 
   it('formats new product weights', () => {
-    expect(
+    assert.equal(
       formatBaselineWeightsLabel({ w90: 0, w30: 0.7, wLy: 0, wCat: 0.3 }),
-    ).toBe('0% / 70% / 0% / 30%');
+      '0% / 70% / 0% / 30%',
+    );
   });
 });
 
 describe('filterMonthLabelsFromStart', () => {
   it('slices from exact startMonth match', () => {
-    expect(filterMonthLabelsFromStart(['2026-01', '2026-02', '2026-03'], '2026-02')).toEqual([
+    assert.deepEqual(filterMonthLabelsFromStart(['2026-01', '2026-02', '2026-03'], '2026-02'), [
       '2026-02',
       '2026-03',
     ]);
   });
 
   it('keeps labels >= startMonth when exact match missing', () => {
-    expect(filterMonthLabelsFromStart(['2026-03', '2026-04', '2026-05'], '2026-02')).toEqual([
+    assert.deepEqual(filterMonthLabelsFromStart(['2026-03', '2026-04', '2026-05'], '2026-02'), [
       '2026-03',
       '2026-04',
       '2026-05',
@@ -35,6 +38,6 @@ describe('filterMonthLabelsFromStart', () => {
   });
 
   it('returns empty when no labels meet startMonth', () => {
-    expect(filterMonthLabelsFromStart(['2026-01', '2026-02'], '2026-06')).toEqual([]);
+    assert.deepEqual(filterMonthLabelsFromStart(['2026-01', '2026-02'], '2026-06'), []);
   });
 });

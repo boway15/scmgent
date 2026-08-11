@@ -407,7 +407,7 @@ export function ForecastAssistPanel({
           {aiMutation.data.missingMonths?.length
             ? `；Dify 未返回：${aiMutation.data.missingMonths.join('、')}`
             : ''}
-          。下方预测明细已刷新。
+          ；数量已收敛至系统建议水位 ±10%（有外生因素时 ±12%）。下方预测明细已刷新。
         </p>
       )}
       {systemRecompute.isSuccess && systemRecompute.data && !('async' in systemRecompute.data && systemRecompute.data.async) && (

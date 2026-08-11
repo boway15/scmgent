@@ -160,39 +160,49 @@ export function suggestBlendDaily(input: {
   };
 }
 
-/** 服务端硬封顶：Dify 输出不得超过 suggestedBlend×capRatio */
-export function applyAiAssistForecastGuard(
-  difyDaily: number,
-  ref: Pick<AiAssistSystemReferenceMonth, 'suggestedBlendDaily' | 'blendMode'> | null | undefined,
-  capRatio = 1.05,
-): number {
-  if (!(difyDaily > 0)) return 0;
-  const suggested = ref?.suggestedBlendDaily ?? 0;
-  if (!(suggested > 0)) return roundDaily(difyDaily);
-  return roundDaily(Math.min(difyDaily, suggested * capRatio));
+/** 默认 ±10%；有外生因素时 ±12% */
+export const AI_ASSIST_BLEND_BAND_EPSILON = 0.1;
+export const AI_ASSIST_BLEND_BAND_EPSILON_EXOGENOUS = 0.12;
+
+export function resolveAiAssistBandEpsilon(hasExogenousFactors: boolean): number {
+  return hasExogenousFactors
+    ? AI_ASSIST_BLEND_BAND_EPSILON_EXOGENOUS
+    : AI_ASSIST_BLEND_BAND_EPSILON;
 }
 
 /**
- * 解析 Dify 月值；若缺失/为 0 则回退到 suggestedBlendDaily。
- * 避免 LLM 只写 summary、monthly_forecast_json=[] 时页面写 0 月。
+ * 解析 Dify 月值并对称收敛到 suggestedBlend × [1-ε, 1+ε]；缺失则回退 suggested。
  */
 export function resolveAiAssistMonthDaily(input: {
   difyDaily?: number | null;
   ref?: Pick<AiAssistSystemReferenceMonth, 'suggestedBlendDaily' | 'blendMode'> | null;
-  capRatio?: number;
-}): { forecastDailyAvg: number; usedFallback: boolean } {
+  /** 半宽，默认 0.10；有外生因素传 0.12 */
+  epsilon?: number;
+}): { forecastDailyAvg: number; usedFallback: boolean; clamped: boolean } {
   const difyDaily = Number(input.difyDaily ?? 0);
   const suggested = input.ref?.suggestedBlendDaily ?? 0;
-  if (difyDaily > 0) {
-    return {
-      forecastDailyAvg: applyAiAssistForecastGuard(difyDaily, input.ref, input.capRatio),
-      usedFallback: false,
-    };
+  const epsilon = input.epsilon ?? AI_ASSIST_BLEND_BAND_EPSILON;
+
+  if (!(difyDaily > 0)) {
+    if (suggested > 0) {
+      return { forecastDailyAvg: roundDaily(suggested), usedFallback: true, clamped: false };
+    }
+    return { forecastDailyAvg: 0, usedFallback: false, clamped: false };
   }
-  if (suggested > 0) {
-    return { forecastDailyAvg: roundDaily(suggested), usedFallback: true };
+
+  if (!(suggested > 0)) {
+    return { forecastDailyAvg: roundDaily(difyDaily), usedFallback: false, clamped: false };
   }
-  return { forecastDailyAvg: 0, usedFallback: false };
+
+  const lo = suggested * (1 - epsilon);
+  const hi = suggested * (1 + epsilon);
+  const clampedDaily = Math.min(hi, Math.max(lo, difyDaily));
+  const forecastDailyAvg = roundDaily(clampedDaily);
+  return {
+    forecastDailyAvg,
+    usedFallback: false,
+    clamped: forecastDailyAvg !== roundDaily(difyDaily),
+  };
 }
 
 export function buildAiAssistSystemReference(input: {

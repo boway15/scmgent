@@ -187,7 +187,7 @@ workflow:
 
                 锚定优先级（从高到低）：
                 1) 优先贴近该月 suggestedBlendDaily（已含 V4.1 系统锚 + 同比回拉）；无参考时再用 systemDailyAvg。
-                2) 服务端会对输出硬封顶到约 1.05×suggestedBlendDaily，超高无效；勿贴 recentLevelDaily 高点。
+                2) 服务端会将数值对称收敛到 suggestedBlendDaily 的 ±10%（有外生因素时 ±12%）；超出无效；勿贴 recentLevelDaily 高点。
                 3) blendMode 含 system_primary / system_yoy_cap / system_low_yoy_lift / yoy_anomaly_soft 等，rationale 点名采用的模式。
                 4) 有 yoySameMonthDaily>0 时，禁止把「最近旺季高点」当作稳态。
                 5) 品类 combinedFactor 只作方向参考。

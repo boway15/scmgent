@@ -41,6 +41,7 @@ import {
 } from './forecast-start-month.js';
 import {
   buildAiAssistSystemReference,
+  resolveAiAssistBandEpsilon,
   resolveAiAssistMonthDaily,
 } from './forecast-ai-assist-reference.js';
 
@@ -503,6 +504,7 @@ export async function runDifySingleSkuForecast(
 
   const difyByLabel = new Map(workflowResult.monthly.map((row) => [row.monthLabel, row]));
   const refByLabel = new Map(systemReference.months.map((m) => [m.monthLabel, m]));
+  const bandEpsilon = resolveAiAssistBandEpsilon((exogenousFactors?.factors.length ?? 0) > 0);
 
   const monthlyForecasts: DifySingleForecastMonth[] = forecastHorizon.map((h) => {
     const row = difyByLabel.get(h.monthLabel);
@@ -510,6 +512,7 @@ export async function runDifySingleSkuForecast(
     const resolved = resolveAiAssistMonthDaily({
       difyDaily: row?.forecastDailyAvg,
       ref,
+      epsilon: bandEpsilon,
     });
     const fallbackNote =
       resolved.usedFallback && ref

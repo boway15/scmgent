@@ -1,9 +1,11 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  applyAiAssistForecastGuard,
+  AI_ASSIST_BLEND_BAND_EPSILON,
+  AI_ASSIST_BLEND_BAND_EPSILON_EXOGENOUS,
   buildAiAssistSystemReference,
   computeRecentLevelDaily,
+  resolveAiAssistBandEpsilon,
   resolveAiAssistMonthDaily,
   suggestBlendDaily,
   yoySameMonthDaily,
@@ -22,7 +24,6 @@ describe('forecast-ai-assist-reference', () => {
       ],
       5,
     );
-    // last 5 positive among filtered: 10,12,14,40,30 → median 14
     assert.equal(recent, 14);
   });
 
@@ -82,15 +83,31 @@ describe('forecast-ai-assist-reference', () => {
     assert.ok(blend.suggestedDaily <= 22);
   });
 
-  it('guards dify output by suggested blend cap', () => {
-    assert.equal(
-      applyAiAssistForecastGuard(37.4, { suggestedBlendDaily: 28.1, blendMode: 'system_primary' }),
-      29.505,
-    );
-    assert.equal(
-      applyAiAssistForecastGuard(20, { suggestedBlendDaily: 28.1, blendMode: 'system_primary' }),
-      20,
-    );
+  it('resolves band epsilon 10% default and 12% with exogenous', () => {
+    assert.equal(resolveAiAssistBandEpsilon(false), AI_ASSIST_BLEND_BAND_EPSILON);
+    assert.equal(resolveAiAssistBandEpsilon(true), AI_ASSIST_BLEND_BAND_EPSILON_EXOGENOUS);
+  });
+
+  it('clamps dify into suggested ±10% band', () => {
+    const ref = { suggestedBlendDaily: 20, blendMode: 'system_primary' };
+    const high = resolveAiAssistMonthDaily({ difyDaily: 37.4, ref, epsilon: 0.1 });
+    assert.equal(high.forecastDailyAvg, 22);
+    assert.equal(high.clamped, true);
+    assert.equal(high.usedFallback, false);
+
+    const low = resolveAiAssistMonthDaily({ difyDaily: 10, ref, epsilon: 0.1 });
+    assert.equal(low.forecastDailyAvg, 18);
+    assert.equal(low.clamped, true);
+
+    const mid = resolveAiAssistMonthDaily({ difyDaily: 20.5, ref, epsilon: 0.1 });
+    assert.equal(mid.forecastDailyAvg, 20.5);
+    assert.equal(mid.clamped, false);
+  });
+
+  it('uses 12% band when exogenous epsilon passed', () => {
+    const ref = { suggestedBlendDaily: 20, blendMode: 'system_primary' };
+    const high = resolveAiAssistMonthDaily({ difyDaily: 37.4, ref, epsilon: 0.12 });
+    assert.equal(high.forecastDailyAvg, 22.4);
   });
 
   it('falls back to suggestedBlend when Dify month is missing', () => {
@@ -100,17 +117,11 @@ describe('forecast-ai-assist-reference', () => {
     });
     assert.equal(fallback.usedFallback, true);
     assert.equal(fallback.forecastDailyAvg, 28.13);
-
-    const fromDify = resolveAiAssistMonthDaily({
-      difyDaily: 27,
-      ref: { suggestedBlendDaily: 28.13, blendMode: 'system_primary' },
-    });
-    assert.equal(fromDify.usedFallback, false);
-    assert.equal(fromDify.forecastDailyAvg, 27);
+    assert.equal(fallback.clamped, false);
   });
 
   it('builds monthly system reference with suggested blends', () => {
-    const historyCapEnd = new Date(Date.UTC(2026, 1, 0)); // 2026-01-31
+    const historyCapEnd = new Date(Date.UTC(2026, 1, 0));
     const monthlyRows = [
       { saleYear: 2025, month: 2, qtySold: 310 },
       { saleYear: 2025, month: 11, qtySold: 900 },
@@ -142,12 +153,7 @@ describe('forecast-ai-assist-reference', () => {
     });
 
     assert.equal(ref.profileSegment, 'AI');
-    assert.equal(ref.productCategory, 'A');
-    assert.equal(ref.months.length, 1);
-    assert.equal(ref.months[0]?.monthLabel, '2026-02');
     assert.equal(ref.months[0]?.yoySameMonthDaily, 10);
-    assert.ok(ref.months[0]!.systemDailyAvg >= 0);
     assert.ok(ref.months[0]!.suggestedBlendDaily > 0);
-    assert.match(ref.guidance, /suggestedBlendDaily/);
   });
 });

@@ -265,6 +265,70 @@ describe('forecast-allcat-v41', () => {
     assert.equal(result.horizonFactors.tierSystem, 'AllCategory-KPI-CoreFirst-T99-V41');
   });
 
+  it('computeAllCatV41BoundedDaily applies T99 system floor with far-month decay', () => {
+    const metrics = {
+      q1: 0, q3: 0, q6: 0, q12: 0,
+      d2: 0, d3: 0, d6: 0, d12: 0,
+      active2: 0, active6: 0, active12: 0,
+      cv6: 9, trendRatio: 1,
+    };
+    const near = computeAllCatV41BoundedDaily({
+      tier: 'T99',
+      baseDaily: 0,
+      productCategory: 'U',
+      forecastMonth: 7,
+      horizonIndex: 0,
+      metrics,
+      recent30DailyAvg: 2,
+      recent90DailyAvg: 4,
+    });
+    const far = computeAllCatV41BoundedDaily({
+      tier: 'T99',
+      baseDaily: 0,
+      productCategory: 'U',
+      forecastMonth: 7,
+      horizonIndex: 3,
+      metrics,
+      recent30DailyAvg: 2,
+      recent90DailyAvg: 4,
+    });
+    const gated = computeAllCatV41BoundedDaily({
+      tier: 'T99',
+      baseDaily: 0,
+      productCategory: 'U',
+      forecastMonth: 7,
+      horizonIndex: 0,
+      metrics,
+      recent30DailyAvg: 0,
+      recent90DailyAvg: 4,
+    });
+    assert.equal(near.forecastDaily, 2.4);
+    assert.equal(far.forecastDaily, 1.728);
+    assert.equal(gated.forecastDaily, 0);
+  });
+
+  it('computeAllCatV41ForecastForMonth writes T99 floor into horizonFactors', () => {
+    const monthlyRows = Array.from({ length: 3 }, (_, i) => ({
+      saleYear: 2026,
+      month: i + 1,
+      qtySold: i === 2 ? 0 : 1,
+    }));
+    const result = computeAllCatV41ForecastForMonth({
+      productCategory: 'U',
+      platform: 'AMAZON',
+      forecastYear: 2026,
+      forecastMonth: 7,
+      horizonIndex: 0,
+      monthlyRows,
+      recent30DailyAvg: 3,
+      recent90DailyAvg: 2,
+    });
+    assert.equal(result.tier, 'T99');
+    assert.equal(result.forecastDaily, 1.8); // max(3,2)*0.6
+    assert.equal(result.horizonFactors.t99FloorMode, 'recent_max06');
+    assert.equal(result.horizonFactors.t99FloorDaily, 1.8);
+  });
+
   it('classifies stable unclassified SKU as T4B with positive forecast', () => {
     const monthlyRows = Array.from({ length: 12 }, (_, i) => ({
       saleYear: 2025 + Math.floor((6 + i) / 12),

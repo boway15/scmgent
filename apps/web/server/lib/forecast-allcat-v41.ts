@@ -3,6 +3,7 @@
  */
 
 import { roundDaily } from './forecast-baseline.js';
+import { resolveT99SystemFloorDaily, type T99FloorMode } from './forecast-demand.js';
 import { horizonBandFromIndex } from './forecast-horizon-band.js';
 import {
   monthlyQtyToDailyAvg,
@@ -38,7 +39,7 @@ export const ALLCAT_V41_TIER_LABEL: Record<AllCatV41Tier, string> = {
   T3P: 'T3P 非亚马逊稳定',
   T4A: 'T4A 亚马逊边界',
   T4B: 'T4B 稳定保底',
-  T99: 'T99 不预测',
+  T99: 'T99 保守保底',
 };
 
 export function formatAllCatV41TierLabel(tier?: string | null): string {
@@ -836,6 +837,8 @@ export type AllCatV41BoundedDailyResult = {
   tierCeiling: number;
   nearHorizonFloor: number | null;
   ghostGated?: boolean;
+  t99FloorMode?: T99FloorMode;
+  t99FloorDaily?: number;
 };
 
 function zeroBoundedDailyResult(ghostGated = false): AllCatV41BoundedDailyResult {
@@ -864,7 +867,17 @@ export function computeAllCatV41BoundedDaily(input: {
   recent90DailyAvg?: number | null;
 }): AllCatV41BoundedDailyResult {
   if (input.tier === 'T99') {
-    return zeroBoundedDailyResult(false);
+    const floor = resolveT99SystemFloorDaily({
+      recent30DailyAvg: input.recent30DailyAvg,
+      recent90DailyAvg: input.recent90DailyAvg,
+      horizonIndex: input.horizonIndex ?? 0,
+    });
+    return {
+      ...zeroBoundedDailyResult(false),
+      forecastDaily: floor.daily,
+      t99FloorMode: floor.mode,
+      t99FloorDaily: floor.daily,
+    };
   }
   if (
     (input.tier === 'T4A' || input.tier === 'T4B') &&
@@ -1051,7 +1064,7 @@ function tierKpiTarget(tier: AllCatV41Tier): string {
     case 'T4B':
       return 'KPI_FLOOR_WMAPE_LE_50_BIAS_PM25';
     default:
-      return 'NO_FORECAST_T99_EXCEPTION';
+      return 'T99_CONSERVATIVE_FLOOR';
   }
 }
 
@@ -1202,6 +1215,10 @@ export function computeAllCatV41ForecastForMonth(input: {
     horizonFactors.peerPlatformFloor = peerLift.peerPlatformFloor;
   }
   horizonFactors.tierCeiling = bounded.tierCeiling;
+  if (tier === 'T99') {
+    horizonFactors.t99FloorDaily = bounded.t99FloorDaily;
+    horizonFactors.t99FloorMode = bounded.t99FloorMode;
+  }
   if (bounded.ghostGated) {
     horizonFactors.zeroSalesGhostGate = true;
     horizonFactors.model = 'zero_sales_ghost_gate';
@@ -1242,10 +1259,16 @@ export function buildT99ReviewMessage(input: {
   productCategory: string;
   platform: string;
   metrics: AllCatV41Metrics;
+  floorMode?: T99FloorMode;
+  floorDaily?: number;
 }): string {
   const platformLabel = formatAllCatV41PlatformLabel(input.platform);
+  const floorNote =
+    input.floorMode === 'zero_gate_recent30' || (input.floorDaily != null && input.floorDaily <= 0)
+      ? '近30天断销，系统归零'
+      : `系统保守保底日均 ${roundDaily(input.floorDaily ?? 0)}（max(近30,近90)×0.6，远月衰减）`;
   return (
-    `T99 系统不预测（全品类 V4.1）：${input.skuCode}，商品分类 ${input.productCategory}，平台 ${platformLabel}；` +
+    `T99 ${floorNote}（全品类 V4.1）：${input.skuCode}，商品分类 ${input.productCategory}，平台 ${platformLabel}；` +
     `波动较大 / 销量连续性不足 / 核心渠道信号不足；` +
     `近6月变异系数 cv6=${roundDaily(input.metrics.cv6)}，趋势比 trend=${roundDaily(input.metrics.trendRatio)}`
   );

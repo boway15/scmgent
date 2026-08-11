@@ -1,5 +1,5 @@
 /**
- * AI 辅助预测：系统参考水位与近端/同比混合建议（供 Dify Prompt 约束）。
+ * AI 辅助预测：系统参考水位与近端/同比混合建议（供 Dify Prompt 约束 + 服务端硬封顶）。
  */
 
 import {
@@ -45,15 +45,26 @@ function monthLabel(year: number, month: number): string {
   return `${year}-${String(month).padStart(2, '0')}`;
 }
 
-/** 近端水位：历史中最近 take 个正销量月的日均均值 */
+function median(values: number[]): number {
+  if (values.length === 0) return 0;
+  const sorted = [...values].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  if (sorted.length % 2 === 0) {
+    return (sorted[mid - 1]! + sorted[mid]!) / 2;
+  }
+  return sorted[mid]!;
+}
+
+/**
+ * 近端水位：最近 take 个正销量月的日均中位数（避免旺季均值虚高）。
+ */
 export function computeRecentLevelDaily(
   history: AiAssistHistoryCell[],
-  take = 3,
+  take = 6,
 ): number {
   const positive = history.filter((h) => h.actualDailyAvg > 0).slice(-take);
   if (positive.length === 0) return 0;
-  const sum = positive.reduce((acc, h) => acc + h.actualDailyAvg, 0);
-  return roundDaily(sum / positive.length);
+  return roundDaily(median(positive.map((h) => h.actualDailyAvg)));
 }
 
 /** 预测月对应的去年同月日均 */
@@ -67,10 +78,11 @@ export function yoySameMonthDaily(
 }
 
 /**
- * 近端 ≫ 同比时向同比回拉，避免把短期冲高当稳态。
- * - near/yoy ≥ 1.35 → 35% 近端 + 65% 同比
- * - 否则有同比 → 55% 近端 + 45% 同比
- * - 再相对系统水位做软夹紧
+ * 混合建议：
+ * 1) 有 V4.1 系统水位时以系统为锚（不再用 recent×1.15 抬高封顶）
+ * 2) 近端 ≫ 可靠同比时向同比回拉
+ * 3) 系统明显低于同比（疑似过度保守）时向同比抬
+ * 4) 同比相对近端过低（疑似缺货异常月）时不强制跟同比
  */
 export function suggestBlendDaily(input: {
   recentLevelDaily: number;
@@ -81,33 +93,64 @@ export function suggestBlendDaily(input: {
   const yoy = input.yoySameMonthDaily;
   const system = input.systemDailyAvg;
 
-  let blendMode = 'recent_primary';
-  let suggested = recent;
-  let nearOverYoyRatio: number | null = null;
+  const nearOverYoyRatio =
+    yoy > 0 && recent > 0 ? roundDaily(recent / yoy) : null;
+  const yoyAnomalous = yoy > 0 && recent > 0 && yoy < recent * 0.35;
+  const yoyReliable = yoy > 0 && !yoyAnomalous;
 
-  if (yoy > 0 && recent > 0) {
-    nearOverYoyRatio = roundDaily(recent / yoy);
-    if (nearOverYoyRatio >= 1.35) {
-      blendMode = 'yoy_pull';
-      suggested = 0.35 * recent + 0.65 * yoy;
-    } else {
-      blendMode = 'balanced';
-      suggested = 0.55 * recent + 0.45 * yoy;
-    }
-  } else if (yoy > 0) {
-    blendMode = 'yoy_only';
-    suggested = yoy;
-  } else if (system > 0) {
-    blendMode = 'system_fallback';
+  let blendMode = 'recent_primary';
+  let suggested = recent > 0 ? recent : 0;
+
+  if (system > 0) {
+    blendMode = 'system_primary';
     suggested = system;
   }
 
+  if (yoyAnomalous && system > 0 && recent > 0) {
+    // 同比疑似缺货异常：软回拉，但不跌破系统 75%
+    const pulled = 0.25 * recent + 0.75 * yoy;
+    suggested = Math.min(system, Math.max(pulled, system * 0.75));
+    blendMode = 'yoy_anomaly_soft';
+  } else if (yoyReliable && recent > 0 && nearOverYoyRatio != null && nearOverYoyRatio >= 1.25) {
+    const pulled = 0.25 * recent + 0.75 * yoy;
+    const towardYoy = system > 0 && yoy < system ? 0.45 * system + 0.55 * yoy : pulled;
+    blendMode = system > 0 ? 'system_yoy_cap' : 'yoy_pull';
+    const capped = Math.min(pulled, towardYoy);
+    suggested = suggested > 0 ? Math.min(suggested, capped) : capped;
+  } else if (system > 0 && yoyReliable && yoy < system) {
+    const towardYoy = 0.45 * system + 0.55 * yoy;
+    blendMode = 'system_toward_yoy';
+    suggested = Math.min(suggested, towardYoy);
+  } else if (!system && yoyReliable) {
+    blendMode = 'balanced';
+    suggested = recent > 0 ? 0.4 * recent + 0.6 * yoy : yoy;
+  } else if (!system && yoy > 0) {
+    blendMode = yoyAnomalous ? 'yoy_anomaly_skip' : 'yoy_only';
+    suggested = yoyAnomalous && recent > 0 ? recent : yoy;
+  }
+
+  if (system > 0 && yoyReliable && system < yoy * 0.55) {
+    blendMode = 'system_low_yoy_lift';
+    suggested = 0.3 * system + 0.7 * yoy;
+  }
+
   if (system > 0) {
-    const lo = system * 0.7;
-    const hi = Math.max(system * 1.2, recent > 0 ? recent * 1.15 : system * 1.2);
-    suggested = Math.min(hi, Math.max(lo, suggested));
+    const hi = system * 1.15;
+    if (blendMode === 'system_low_yoy_lift') {
+      // 抬升后不再被系统 hi 压回
+      suggested = Math.max(suggested * 0.95, suggested);
+    } else if (blendMode === 'yoy_anomaly_soft' || blendMode === 'system_yoy_cap' || blendMode === 'system_toward_yoy') {
+      // 已相对系统下调，勿再用 system*0.75 抬回去
+      suggested = Math.min(hi, suggested);
+    } else {
+      suggested = Math.min(hi, Math.max(system * 0.75, suggested));
+    }
   } else if (recent > 0) {
-    suggested = Math.min(suggested, recent * 1.15);
+    suggested = Math.min(suggested, recent * 1.05);
+  }
+
+  if (recent > 0) {
+    suggested = Math.min(suggested, recent * 1.05);
   }
 
   return {
@@ -115,6 +158,18 @@ export function suggestBlendDaily(input: {
     nearOverYoyRatio,
     blendMode,
   };
+}
+
+/** 服务端硬封顶：Dify 输出不得超过 suggestedBlend×capRatio */
+export function applyAiAssistForecastGuard(
+  difyDaily: number,
+  ref: Pick<AiAssistSystemReferenceMonth, 'suggestedBlendDaily' | 'blendMode'> | null | undefined,
+  capRatio = 1.05,
+): number {
+  if (!(difyDaily > 0)) return 0;
+  const suggested = ref?.suggestedBlendDaily ?? 0;
+  if (!(suggested > 0)) return roundDaily(difyDaily);
+  return roundDaily(Math.min(difyDaily, suggested * capRatio));
 }
 
 export function buildAiAssistSystemReference(input: {
@@ -176,10 +231,8 @@ export function buildAiAssistSystemReference(input: {
     };
   });
 
-  const anyYoyPull = months.some((m) => m.blendMode === 'yoy_pull');
-  const guidance = anyYoyPull
-    ? '近端明显高于去年同月：优先按 suggestedBlendDaily / 同比水位锚定，勿贴近近端高点'
-    : '按 suggestedBlendDaily 与 systemDailyAvg 综合；允许小幅偏离系统但需说明理由';
+  const guidance =
+    '优先按 suggestedBlendDaily 输出；已含系统锚+同比回拉。服务端会硬封顶，勿贴近期高点。';
 
   return {
     profileSegment: input.profileSegment,

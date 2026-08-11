@@ -39,7 +39,10 @@ import {
   isForecastStartMonthBacktest,
   resolveForecastStartMonthAsOf,
 } from './forecast-start-month.js';
-import { buildAiAssistSystemReference } from './forecast-ai-assist-reference.js';
+import {
+  applyAiAssistForecastGuard,
+  buildAiAssistSystemReference,
+} from './forecast-ai-assist-reference.js';
 
 export const AI_ASSIST_START_MONTH_REQUIRED_MESSAGE =
   'AI 辅助预测需要版本开始月；请带开始月重新生成草稿后再试';
@@ -499,14 +502,17 @@ export async function runDifySingleSkuForecast(
   );
 
   const difyByLabel = new Map(workflowResult.monthly.map((row) => [row.monthLabel, row]));
+  const refByLabel = new Map(systemReference.months.map((m) => [m.monthLabel, m]));
 
   const monthlyForecasts: DifySingleForecastMonth[] = forecastHorizon.map((h) => {
     const row = difyByLabel.get(h.monthLabel);
+    const rawDaily = row?.forecastDailyAvg ?? 0;
+    const forecastDailyAvg = applyAiAssistForecastGuard(rawDaily, refByLabel.get(h.monthLabel));
     return {
       monthLabel: h.monthLabel,
       forecastYear: h.forecastYear,
       month: h.month,
-      forecastDailyAvg: row?.forecastDailyAvg ?? 0,
+      forecastDailyAvg,
       confidence: row?.confidence,
       rationale: row?.rationale,
     };

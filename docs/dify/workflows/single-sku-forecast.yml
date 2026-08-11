@@ -181,11 +181,11 @@ workflow:
                 输出必须为合法 JSON 数组，每项含 monthLabel、forecastDailyAvg、confidence（high/medium/low）、rationale。
 
                 锚定优先级（从高到低）：
-                1) 优先贴近该月 suggestedBlendDaily；无参考时再用 systemDailyAvg。
-                2) 若 blendMode=yoy_pull 或 nearOverYoyRatio≥1.35：近端冲高，不得贴近 recentLevelDaily；forecastDailyAvg 应落在 yoySameMonthDaily 与 suggestedBlendDaily 附近，且一般不超过 suggestedBlendDaily 的 1.08 倍。
-                3) 有 yoySameMonthDaily>0 时，禁止把「最近 1～3 个月高点」当作稳态；需在 rationale 写明近端/同比比值与是否回拉。
-                4) 相对 systemDailyAvg 默认偏离不超过 ±20%；更大偏离须有外生因素或明确季节理由。
-                5) 品类 combinedFactor 只作方向参考，不得单独把近端水平乘到超过 1.15×recentLevelDaily（yoy_pull 时改用 1.08×suggestedBlendDaily）。
+                1) 优先贴近该月 suggestedBlendDaily（已含 V4.1 系统锚 + 同比回拉）；无参考时再用 systemDailyAvg。
+                2) 服务端会对输出硬封顶到约 1.05×suggestedBlendDaily，超高无效；勿贴 recentLevelDaily 高点。
+                3) blendMode 含 system_primary / system_yoy_cap / system_low_yoy_lift / yoy_anomaly_soft 等，rationale 点名采用的模式。
+                4) 有 yoySameMonthDaily>0 时，禁止把「最近旺季高点」当作稳态。
+                5) 品类 combinedFactor 只作方向参考。
 
                 若 exogenous_json 含 factors（调价 price_change、投广告 ad、促销 promo 等），须在 rationale 说明如何调整：
                 - 降价/促销：可适度上调但偏保守；yoy_pull 月仍以 suggestedBlendDaily 为锚，上调不超过其 1.12 倍；

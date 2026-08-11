@@ -20,7 +20,6 @@ import { isSalesForecastWorkflowEnabled } from '../integrations/dify.js';
 import {
   assertVersionIsDraft,
   getForecastVersionById,
-  getOrCreateDraftVersion,
 } from './forecast-version.js';
 import { loadMonthlySalesBySkuIds } from './sales-history-query.js';
 import { resolveAllCatProductCategory, computeAllCatV41ForecastForMonth } from './forecast-allcat-v41.js';
@@ -38,6 +37,16 @@ import { resolveForecastStartMonthAsOf } from './forecast-start-month.js';
 
 export const AI_ASSIST_START_MONTH_REQUIRED_MESSAGE =
   'AI 辅助预测需要版本开始月；请带开始月重新生成草稿后再试';
+
+export function resolveAiAssistVersionId(versionId: string | null | undefined): string {
+  const trimmed = versionId?.trim();
+  if (!trimmed) {
+    const err = new Error('versionId is required for AI assist forecast');
+    (err as Error & { status: number }).status = 400;
+    throw err;
+  }
+  return trimmed;
+}
 
 export function resolveAiAssistBacktestAsOf(startMonth: string | null | undefined): Date {
   const trimmed = startMonth?.trim();
@@ -100,9 +109,9 @@ function buildCategoryTrendForHorizon(
   lookup: Awaited<ReturnType<typeof loadSeasonalityLookup>>,
   category: string | null | undefined,
   monthCount: number,
-  today = new Date(),
+  asOf = new Date(),
 ) {
-  const horizon = buildMonthlyForecastHorizon(today, monthCount);
+  const horizon = buildMonthlyForecastHorizon(asOf, monthCount);
   return horizon.map((h) => {
     const resolved = resolveSeasonalityFactors(lookup, category, h.month);
     const rawCombined = resolved.seasonalityFactor * resolved.trendFactor;
@@ -291,7 +300,6 @@ export async function runDifySingleSkuForecast(
     MAX_FORECAST_MONTH_COUNT,
     Math.max(1, Math.floor(input.monthCount ?? MAX_FORECAST_MONTH_COUNT)),
   );
-  const today = new Date();
 
   const [sku] = await db
     .select({
@@ -311,31 +319,37 @@ export async function runDifySingleSkuForecast(
     throw err;
   }
 
-  let version = input.versionId ? await getForecastVersionById(input.versionId) : null;
-  if (input.versionId && !version) {
+  const versionId = resolveAiAssistVersionId(input.versionId);
+  const version = await getForecastVersionById(versionId);
+  if (!version) {
     const err = new Error('预测版本不存在');
     (err as Error & { status: number }).status = 404;
     throw err;
   }
-  if (!version) {
-    version = await getOrCreateDraftVersion({});
-  }
-  assertVersionIsDraft(version.id);
+  await assertVersionIsDraft(version.id);
+  const asOf = resolveAiAssistBacktestAsOf(version.startMonth);
 
-  const historyStart = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth() - (DRAWER_HISTORY_MONTH_COUNT - 1), 1));
+  const historyMax = resolveAiAssistHistoryMaxMonth(asOf);
+  const historyStart = new Date(
+    Date.UTC(
+      asOf.getUTCFullYear(),
+      asOf.getUTCMonth() - (DRAWER_HISTORY_MONTH_COUNT - 1),
+      1,
+    ),
+  );
   const monthlyBySku = await loadMonthlySalesBySkuIds({
     skuIds: [sku.id],
     platform,
     minYear: historyStart.getUTCFullYear(),
     minMonth: historyStart.getUTCMonth() + 1,
-    maxYear: today.getUTCFullYear(),
-    maxMonth: today.getUTCMonth() + 1,
+    maxYear: historyMax.year,
+    maxMonth: historyMax.month,
   });
   const monthlyRows = monthlyBySku.get(sku.id) ?? [];
-  const salesHistory = buildSalesHistory24(monthlyRows, today);
+  const salesHistory = buildSalesHistory24(monthlyRows, asOf);
   const seasonalityLookup = await loadSeasonalityLookup();
-  const categoryTrend = buildCategoryTrendForHorizon(seasonalityLookup, sku.category, monthCount, today);
-  const forecastHorizon = buildMonthlyForecastHorizon(today, monthCount).map((h) => ({
+  const categoryTrend = buildCategoryTrendForHorizon(seasonalityLookup, sku.category, monthCount, asOf);
+  const forecastHorizon = buildMonthlyForecastHorizon(asOf, monthCount).map((h) => ({
     monthLabel: monthLabel(h.forecastYear, h.month),
     forecastYear: h.forecastYear,
     month: h.month,
@@ -373,12 +387,12 @@ export async function runDifySingleSkuForecast(
   const reviewTier =
     reviewItem?.message && /T99|no-forecast/i.test(reviewItem.message) ? 'T99' : null;
 
-  const historyCapEnd = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), 0));
+  const historyCapEnd = resolveAiAssistHistoryCapEnd(asOf);
   const anchorV41 = computeAllCatV41ForecastForMonth({
     productCategory: sku.productCategory ?? sku.category,
     platform,
-    forecastYear: forecastHorizon[0]?.forecastYear ?? today.getUTCFullYear(),
-    forecastMonth: forecastHorizon[0]?.month ?? today.getUTCMonth() + 1,
+    forecastYear: forecastHorizon[0]?.forecastYear ?? asOf.getUTCFullYear(),
+    forecastMonth: forecastHorizon[0]?.month ?? asOf.getUTCMonth() + 1,
     horizonIndex: 0,
     monthlyRows,
     historyCapEnd,

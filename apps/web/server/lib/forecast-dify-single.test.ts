@@ -7,7 +7,10 @@ import {
   resolveAiAssistHistoryCapEnd,
   resolveAiAssistHistoryMaxMonth,
   resolveAiAssistProfileSegment,
+  resolveAiAssistVersionId,
 } from './forecast-dify-single.js';
+import { buildMonthlyForecastHorizon } from './forecast-baseline.js';
+import { buildHistoryMonthLabels } from './forecast-horizon.js';
 import { serializeExogenousJson } from './forecast-exogenous-input.js';
 
 describe('forecast-dify-single', () => {
@@ -81,6 +84,16 @@ describe('forecast-dify-single', () => {
   });
 
   describe('AI assist start-month backtest helpers', () => {
+    it('requires a non-empty versionId', () => {
+      assert.equal(resolveAiAssistVersionId(' version-1 '), 'version-1');
+      assert.throws(
+        () => resolveAiAssistVersionId(undefined),
+        (err: Error & { status?: number }) =>
+          err.message === 'versionId is required for AI assist forecast' && err.status === 400,
+      );
+      assert.throws(() => resolveAiAssistVersionId('  '));
+    });
+
     it('rejects missing startMonth', () => {
       assert.throws(
         () => resolveAiAssistBacktestAsOf(null),
@@ -105,6 +118,18 @@ describe('forecast-dify-single', () => {
       const asOf = resolveAiAssistBacktestAsOf('2026-02');
       const cap = resolveAiAssistHistoryCapEnd(asOf);
       assert.equal(cap.toISOString().slice(0, 10), '2026-01-31');
+    });
+
+    it('aligns horizon and history labels to startMonth asOf', () => {
+      const asOf = resolveAiAssistBacktestAsOf('2026-02');
+      const horizon = buildMonthlyForecastHorizon(asOf, 3);
+      assert.deepEqual(
+        horizon.map((h) => `${h.forecastYear}-${String(h.month).padStart(2, '0')}`),
+        ['2026-02', '2026-03', '2026-04'],
+      );
+      const history = buildHistoryMonthLabels(3, asOf);
+      assert.ok(!history.some((h) => h.monthLabel === '2026-02'));
+      assert.equal(history.at(-1)?.monthLabel, '2026-01');
     });
   });
 

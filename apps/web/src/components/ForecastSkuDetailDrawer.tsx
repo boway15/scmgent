@@ -342,6 +342,8 @@ export function ForecastSkuDetailDrawer({
     qc.invalidateQueries({ queryKey: ['sales-forecasts'] });
   };
 
+  const monthsForActual = (row?.months ?? []).map((m) => m.monthLabel);
+
   const { data: detail, isLoading: detailLoading } = useQuery({
     queryKey: [
       'sales-forecast-sku-detail',
@@ -350,6 +352,7 @@ export function ForecastSkuDetailDrawer({
       row?.skuCode,
       row?.station,
       row?.platform,
+      monthsForActual.join(','),
     ],
     queryFn: () =>
       api.getSalesForecastSkuDetail({
@@ -358,6 +361,7 @@ export function ForecastSkuDetailDrawer({
         skuCode: row!.skuId ? undefined : row!.skuCode,
         station: row!.station,
         platform: row!.platform,
+        months: monthsForActual.length > 0 ? monthsForActual : undefined,
       }),
     enabled: Boolean(versionId && row && (row.skuId || row.skuCode)),
   });
@@ -475,6 +479,9 @@ export function ForecastSkuDetailDrawer({
 
   const ctx = detail?.context;
   const reviewItems = detail?.reviewItems ?? [];
+  const actualByMonth = new Map(
+    (detail?.actualByMonth ?? []).map((cell) => [cell.monthLabel, cell]),
+  );
   const specAttrsEntries =
     skuMaster?.specAttrs && typeof skuMaster.specAttrs === 'object'
       ? Object.entries(skuMaster.specAttrs)
@@ -611,6 +618,7 @@ export function ForecastSkuDetailDrawer({
                       ? ' T99 层系统预测为 0.00，锚定/季节/混合水平仅供诊断，与列表矩阵一致。'
                       : null}
                     {canEditCalibration ? ' 当前为草稿，可编辑校准。' : ' 已发布版本只读。'}
+                    {' 已发生月份展示实际日均，便于对照生效值；未来月份为 -。'}
                   </p>
                   <div className="overflow-auto">
                     <table className="min-w-full text-sm">
@@ -728,6 +736,11 @@ export function ForecastSkuDetailDrawer({
                             className="whitespace-nowrap"
                             label="生效"
                             help={getForecastHorizonColumnHelp('effective', columnHelpCtx)}
+                          />
+                          <ForecastColumnHeader
+                            className="whitespace-nowrap"
+                            label="实际日均"
+                            help={getForecastHorizonColumnHelp('actual', columnHelpCtx)}
                           />
                         </tr>
                       </thead>
@@ -863,6 +876,22 @@ export function ForecastSkuDetailDrawer({
                               onSaved={invalidateForecast}
                               systemCellTitle={v41SystemTitle}
                             />
+                            <td className="p-2 align-middle font-numeric whitespace-nowrap">
+                              {(() => {
+                                const actual = actualByMonth.get(cell.monthLabel);
+                                if (!actual || actual.actualDailyAvg == null) return '-';
+                                return (
+                                  <span className="inline-flex items-center gap-1">
+                                    <span>{formatNumber(actual.actualDailyAvg)}</span>
+                                    {actual.inProgress ? (
+                                      <span className="text-[10px] font-normal text-text-sub">
+                                        进行中
+                                      </span>
+                                    ) : null}
+                                  </span>
+                                );
+                              })()}
+                            </td>
                           </tr>
                           );
                         })}

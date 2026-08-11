@@ -445,6 +445,7 @@ export type ForecastVersionSummary = {
   monthCount: number;
   monthLabels: string[];
   description: string;
+  startMonth: string | null;
 };
 
 export type ForecastVersionStats = {

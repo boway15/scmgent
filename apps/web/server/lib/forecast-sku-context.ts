@@ -1,5 +1,5 @@
 import { and, asc, eq, inArray } from 'drizzle-orm';
-import { db, salesForecastMonthly, skus } from '@scm/db';
+import { db, salesForecastMonthly, salesForecastVersions, skus } from '@scm/db';
 import {
   classifySalesLifecycle,
   collectStockoutExcludedDates,
@@ -30,6 +30,7 @@ export type ForecastVersionSummary = {
   monthCount: number;
   monthLabels: string[];
   description: string;
+  startMonth: string | null;
 };
 
 export type SkuForecastContext = {
@@ -143,16 +144,28 @@ async function loadWarehouseStationMap(): Promise<Map<string, string>> {
 }
 
 export async function getVersionForecastSummary(versionId: string): Promise<ForecastVersionSummary> {
-  const monthRows = await db
-    .selectDistinct({
-      forecastYear: salesForecastMonthly.forecastYear,
-      month: salesForecastMonthly.month,
-    })
-    .from(salesForecastMonthly)
-    .where(eq(salesForecastMonthly.versionId, versionId))
-    .orderBy(asc(salesForecastMonthly.forecastYear), asc(salesForecastMonthly.month));
+  const [[version], monthRows] = await Promise.all([
+    db
+      .select({ startMonth: salesForecastVersions.startMonth })
+      .from(salesForecastVersions)
+      .where(eq(salesForecastVersions.id, versionId))
+      .limit(1),
+    db
+      .selectDistinct({
+        forecastYear: salesForecastMonthly.forecastYear,
+        month: salesForecastMonthly.month,
+      })
+      .from(salesForecastMonthly)
+      .where(eq(salesForecastMonthly.versionId, versionId))
+      .orderBy(asc(salesForecastMonthly.forecastYear), asc(salesForecastMonthly.month)),
+  ]);
 
-  const monthLabels = monthRows.map((row) => formatForecastMonth(row.forecastYear, row.month));
+  const startMonth = version?.startMonth?.trim() || '';
+  let monthLabels = monthRows.map((row) => formatForecastMonth(row.forecastYear, row.month));
+  if (startMonth) {
+    const startIdx = monthLabels.indexOf(startMonth);
+    monthLabels = startIdx >= 0 ? monthLabels.slice(startIdx) : [];
+  }
   const monthCount = monthLabels.length;
   const first = monthLabels[0] ?? '-';
   const last = monthLabels[monthLabels.length - 1] ?? first;
@@ -160,10 +173,13 @@ export async function getVersionForecastSummary(versionId: string): Promise<Fore
   return {
     monthCount,
     monthLabels,
+    startMonth: startMonth || null,
     description:
       monthCount > 0
         ? `共 ${monthCount} 个自然月（${first} 至 ${last}），每月输出一条预测日均（件/天）。`
-        : '暂无预测月份明细。',
+        : startMonth
+          ? `开始月为 ${startMonth}，但尚无该地平线内的预测明细（请按开始月重新生成）。`
+          : '暂无预测月份明细。',
   };
 }
 

@@ -177,6 +177,51 @@ export function resolveHorizonConsumptionDailyDetailed(input: {
 }
 
 /** T99 系统不预测时的补货兜底日均（不进主 KPI） */
+export type T99FloorMode = 'zero_gate_recent30' | 'recent_max06';
+
+export const T99_SYSTEM_FLOOR_DISCOUNT = 0.6;
+export const T99_SYSTEM_FLOOR_FLEX_DECAY_FROM_K = 3;
+export const T99_SYSTEM_FLOOR_FLEX_DECAY_FACTOR = 0.72;
+
+function nonNegDaily(value?: number | null): number {
+  if (value == null || !Number.isFinite(value)) return 0;
+  return Math.max(0, value);
+}
+
+export function resolveT99SystemFloorDaily(input: {
+  recent30DailyAvg?: number | null;
+  recent90DailyAvg?: number | null;
+  horizonIndex?: number;
+  discount?: number;
+  flexDecayFromK?: number;
+  flexDecayFactor?: number;
+}): { daily: number; mode: T99FloorMode } {
+  const recent30 = nonNegDaily(input.recent30DailyAvg);
+  const recent90 = nonNegDaily(input.recent90DailyAvg);
+  if (recent30 <= 0) {
+    return { daily: 0, mode: 'zero_gate_recent30' };
+  }
+  const discount =
+    input.discount != null && Number.isFinite(input.discount) && input.discount > 0
+      ? input.discount
+      : T99_SYSTEM_FLOOR_DISCOUNT;
+  const decayFrom =
+    input.flexDecayFromK != null && Number.isFinite(input.flexDecayFromK)
+      ? Math.max(0, Math.floor(input.flexDecayFromK))
+      : T99_SYSTEM_FLOOR_FLEX_DECAY_FROM_K;
+  const decayFactor =
+    input.flexDecayFactor != null && Number.isFinite(input.flexDecayFactor) && input.flexDecayFactor > 0
+      ? input.flexDecayFactor
+      : T99_SYSTEM_FLOOR_FLEX_DECAY_FACTOR;
+  const k = Math.max(0, Math.floor(input.horizonIndex ?? 0));
+  let daily = Math.max(recent30, recent90) * discount;
+  if (k >= decayFrom) daily *= decayFactor;
+  return {
+    daily: Math.round(daily * 10_000) / 10_000,
+    mode: 'recent_max06',
+  };
+}
+
 export function resolveT99ReplenishmentFallbackDaily(input: {
   recent30DailyAvg?: number | null;
   recent90DailyAvg?: number | null;
@@ -192,6 +237,7 @@ export function resolveT99ReplenishmentFallbackDaily(input: {
     input.recent30DailyAvg != null && Number.isFinite(input.recent30DailyAvg)
       ? Math.max(0, input.recent30DailyAvg)
       : 0;
+  if (recent30 <= 0) return 0;
   const recent90 =
     input.recent90DailyAvg != null && Number.isFinite(input.recent90DailyAvg)
       ? Math.max(0, input.recent90DailyAvg)

@@ -15,6 +15,7 @@ import {
   resolveHorizonConsumptionDaily,
   resolveHorizonConsumptionDailyDetailed,
   resolveT99ReplenishmentFallbackDaily,
+  resolveT99SystemFloorDaily,
 } from './forecast-demand.js';
 
 describe('forecast-demand', () => {
@@ -131,6 +132,52 @@ describe('forecast-demand', () => {
       profileClass: 'B',
     });
     assert.equal(daily, 14);
+  });
+
+  it('resolveT99SystemFloorDaily zero-gates when recent30 is 0 even if recent90 > 0', () => {
+    const near = resolveT99SystemFloorDaily({
+      recent30DailyAvg: 0,
+      recent90DailyAvg: 5,
+      horizonIndex: 0,
+    });
+    const far = resolveT99SystemFloorDaily({
+      recent30DailyAvg: 0,
+      recent90DailyAvg: 5,
+      horizonIndex: 4,
+    });
+    assert.equal(near.daily, 0);
+    assert.equal(near.mode, 'zero_gate_recent30');
+    assert.equal(far.daily, 0);
+    assert.equal(far.mode, 'zero_gate_recent30');
+  });
+
+  it('resolveT99SystemFloorDaily uses max(r30,r90)*0.6 near and *0.72 far', () => {
+    // max(2, 4) * 0.6 = 2.4; far = 2.4 * 0.72 = 1.728
+    const near = resolveT99SystemFloorDaily({
+      recent30DailyAvg: 2,
+      recent90DailyAvg: 4,
+      horizonIndex: 1,
+    });
+    const far = resolveT99SystemFloorDaily({
+      recent30DailyAvg: 2,
+      recent90DailyAvg: 4,
+      horizonIndex: 3,
+    });
+    assert.equal(near.daily, 2.4);
+    assert.equal(near.mode, 'recent_max06');
+    assert.equal(far.daily, 1.728);
+    assert.equal(far.mode, 'recent_max06');
+  });
+
+  it('resolveT99ReplenishmentFallbackDaily zero-gates when recent30 is 0', () => {
+    assert.equal(
+      resolveT99ReplenishmentFallbackDaily({
+        recent30DailyAvg: 0,
+        recent90DailyAvg: 10,
+        categoryPoolFloorDaily: 3,
+      }),
+      0,
+    );
   });
 
   it('T99 zero forecast falls back to recent sales for replenishment', () => {

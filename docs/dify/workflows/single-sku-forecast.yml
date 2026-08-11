@@ -8,7 +8,7 @@ version: 0.6.0
 app:
   mode: workflow
   name: T99单条销量预测
-  description: 接收 24 月销、品类趋势、预测周期与外生因素 JSON，由 LLM 输出逐月预测
+  description: 接收截止开始月之前的月销、品类趋势、预测周期与外生因素 JSON，由 LLM 输出逐月预测（支持严格回测）
   icon: 📈
   icon_background: '#FFF7E6'
 dependencies:
@@ -105,7 +105,7 @@ workflow:
               max_length: 500
               options: []
             - variable: sales_history_json
-              label: 24月销JSON
+              label: 截止开始月前月销JSON
               type: paragraph
               required: true
               max_length: 50000
@@ -168,6 +168,8 @@ workflow:
               role: system
               text: |
                 你是跨境电商供应链销量预测专家。T99 类商品系统不做自动预测，需你基于历史与品类趋势做保守人工辅助预测。
+                严格回测口径：sales_history_json 仅含预测开始月之前的销量，已截止至 context_json.historyCapEnd；不得使用该日之后的信息，也不得假设「今天」为观测日。
+                context_json 含 startMonth（地平线首月）、asOf、historyCapEnd、isBacktest；若 isBacktest=true，forecast_horizon_json 可为历史自然月，仍按未来预测任务输出。
                 请为 forecast_horizon_json 中的每一个 monthLabel 各输出一条记录，不得遗漏或新增月份。
                 输出必须为合法 JSON 数组，每项含 monthLabel、forecastDailyAvg、confidence（high/medium/low）、rationale。
                 原则：保守测算，避免冲高；参考品类 combinedFactor 但不超过历史近期水平的 1.15 倍。
@@ -181,8 +183,8 @@ workflow:
               text: |
                 SKU: {{#start.sku_code#}} {{#start.sku_name#}}
                 品类: {{#start.category#}}
-                上下文: {{#start.context_json#}}
-                近24月销量: {{#start.sales_history_json#}}
+                上下文(含 startMonth/asOf/historyCapEnd/isBacktest): {{#start.context_json#}}
+                截止开始月之前的月销: {{#start.sales_history_json#}}
                 品类趋势: {{#start.category_trend_json#}}
                 预测周期: {{#start.forecast_horizon_json#}}
                 外生因素: {{#start.exogenous_json#}}

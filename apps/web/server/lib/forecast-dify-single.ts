@@ -1,5 +1,6 @@
 /**
- * T99 / forecast_skipped SKU 单条 Dify LLM 预测：组装 24 月销 + 品类趋势 + 预测周期
+ * T99 / forecast_skipped SKU 单条 Dify LLM 预测：
+ * 按版本 startMonth 严格回测组装历史月销 + 品类趋势 + 预测周期 + context_json
  */
 
 import { and, eq, inArray } from 'drizzle-orm';
@@ -33,7 +34,11 @@ import {
   type ForecastExogenousInput,
 } from './forecast-exogenous-input.js';
 import { isPersistedProfileSegment, resolveAnchorProfileSegment } from './forecast-horizon.js';
-import { resolveForecastStartMonthAsOf } from './forecast-start-month.js';
+import {
+  formatForecastStartMonth,
+  isForecastStartMonthBacktest,
+  resolveForecastStartMonthAsOf,
+} from './forecast-start-month.js';
 
 export const AI_ASSIST_START_MONTH_REQUIRED_MESSAGE =
   'AI 辅助预测需要版本开始月；请带开始月重新生成草稿后再试';
@@ -72,6 +77,47 @@ export function resolveAiAssistHistoryStartMonth(asOf: Date): { year: number; mo
 
 export function resolveAiAssistHistoryCapEnd(asOf: Date): Date {
   return new Date(Date.UTC(asOf.getUTCFullYear(), asOf.getUTCMonth(), 0));
+}
+
+export type AiAssistContextJson = {
+  tier: string;
+  productCategory: string | null;
+  skipReason: string;
+  station: string;
+  platform: string;
+  startMonth: string;
+  asOf: string;
+  historyCapEnd: string;
+  isBacktest: boolean;
+};
+
+/** Dify context_json：回测口径字段与原有 tier/station 一并下发 */
+export function buildAiAssistContextJson(input: {
+  tier: string;
+  productCategory: string | null;
+  skipReason: string;
+  station: string;
+  platform: string;
+  startMonth: string;
+  asOf: Date;
+  historyCapEnd: Date;
+  now?: Date;
+}): AiAssistContextJson {
+  const startMonth = formatForecastStartMonth(input.asOf);
+  return {
+    tier: input.tier,
+    productCategory: input.productCategory,
+    skipReason: input.skipReason,
+    station: input.station,
+    platform: input.platform,
+    startMonth: input.startMonth.trim() || startMonth,
+    asOf: input.asOf.toISOString().slice(0, 10),
+    historyCapEnd: input.historyCapEnd.toISOString().slice(0, 10),
+    isBacktest: isForecastStartMonthBacktest(
+      input.startMonth.trim() || startMonth,
+      input.now ?? new Date(),
+    ),
+  };
 }
 
 export type { ForecastAssistMode, ForecastExogenousInput };
@@ -334,7 +380,8 @@ export async function runDifySingleSkuForecast(
     throw err;
   }
   await assertVersionIsDraft(version.id);
-  const asOf = resolveAiAssistBacktestAsOf(version.startMonth);
+  const startMonth = version.startMonth?.trim() || '';
+  const asOf = resolveAiAssistBacktestAsOf(startMonth);
 
   const historyMax = resolveAiAssistHistoryMaxMonth(asOf);
   const historyStart = resolveAiAssistHistoryStartMonth(asOf);
@@ -409,13 +456,16 @@ export async function runDifySingleSkuForecast(
     computedTier: anchorV41.tier,
   });
 
-  const contextJson = {
+  const contextJson = buildAiAssistContextJson({
     tier: reviewTier ?? 'SKU',
     productCategory,
     skipReason: reviewItem?.message ?? 'manual AI forecast requested',
     station,
     platform,
-  };
+    startMonth,
+    asOf,
+    historyCapEnd,
+  });
 
   const workflowResult = await runSingleSkuForecastWorkflow(
     {

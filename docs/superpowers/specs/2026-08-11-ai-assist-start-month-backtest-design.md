@@ -16,7 +16,8 @@
 | 无开始月 | **拒绝** AI（HTTP 400）；前端禁用并提示重新生成 |
 | 写入范围 | 地平线内 Dify 日均 > 0 的月份 **整段覆盖**（替换系统值） |
 | 草稿 | 仍仅草稿可写 |
-| 非范围 | 准确率落库、偏差列、改 Dify 工作流 DSL、已发布可写 |
+| 非范围 | 准确率落库、偏差列、已发布可写、`sales-forecast-agent.yml` |
+| DSL | **纳入**：`single-sku-forecast.yml` Prompt + `context_json` 补 `startMonth`/`asOf`/`historyCapEnd`/`isBacktest`（不新增 start 变量） |
 
 ---
 
@@ -82,3 +83,25 @@
 | versionSummary | `apps/web/server/lib/forecast-sku-context.ts` |
 | API 类型 | `apps/web/src/lib/api.ts` |
 | UI | `apps/web/src/components/ForecastAssistPanel.tsx` 和/或 `ForecastSkuDetailDrawer.tsx` |
+| Dify DSL | `docs/dify/workflows/single-sku-forecast.yml` |
+
+---
+
+## 6. DSL 与 context_json（补丁）
+
+**服务端** `context_json` 在原有字段上增加：
+
+| 字段 | 说明 |
+|------|------|
+| `startMonth` | 版本开始月 `YYYY-MM` |
+| `asOf` | UTC 月初 ISO 日期，如 `2026-02-01` |
+| `historyCapEnd` | 历史上界日 `YYYY-MM-DD`（开始月上月末） |
+| `isBacktest` | `startMonth` 早于当前自然月时为 `true` |
+
+**DSL**（`single-sku-forecast.yml`）：
+
+1. System/User Prompt：历史已截断至 `historyCapEnd`；地平线来自 `forecast_horizon_json`（可为回测过去月）；禁止假设「今天」或使用截止日之后信息。  
+2. 「近24月销量」改为「截止开始月之前的月销」。  
+3. 明确 `context_json` 含上述回测字段。  
+4. **不新增** start 节点变量；骨架/边/输出不变。  
+5. 仓库 DSL 更新后需在 Dify 控制台重新导入方可生效。 |

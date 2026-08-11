@@ -2,6 +2,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   AI_ASSIST_START_MONTH_REQUIRED_MESSAGE,
+  buildAiAssistContextJson,
   distributeAiForecastAcrossPlatforms,
   resolveAiAssistBacktestAsOf,
   resolveAiAssistHistoryCapEnd,
@@ -141,6 +142,27 @@ describe('forecast-dify-single', () => {
       assert.equal(queryMin.year, earliest.forecastYear);
       assert.equal(queryMin.month, earliest.month);
       assert.equal(earliest.monthLabel, '2024-02');
+    });
+
+    it('builds context_json with startMonth/asOf/historyCapEnd/isBacktest', () => {
+      const asOf = resolveAiAssistBacktestAsOf('2026-02');
+      const historyCapEnd = resolveAiAssistHistoryCapEnd(asOf);
+      const ctx = buildAiAssistContextJson({
+        tier: 'T99',
+        productCategory: 'Furniture',
+        skipReason: 'manual',
+        station: 'US',
+        platform: 'ALL',
+        startMonth: '2026-02',
+        asOf,
+        historyCapEnd,
+        now: new Date('2026-08-11T00:00:00.000Z'),
+      });
+      assert.equal(ctx.startMonth, '2026-02');
+      assert.equal(ctx.asOf, '2026-02-01');
+      assert.equal(ctx.historyCapEnd, '2026-01-31');
+      assert.equal(ctx.isBacktest, true);
+      assert.equal(ctx.tier, 'T99');
     });
   });
 

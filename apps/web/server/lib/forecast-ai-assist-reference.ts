@@ -172,6 +172,29 @@ export function applyAiAssistForecastGuard(
   return roundDaily(Math.min(difyDaily, suggested * capRatio));
 }
 
+/**
+ * 解析 Dify 月值；若缺失/为 0 则回退到 suggestedBlendDaily。
+ * 避免 LLM 只写 summary、monthly_forecast_json=[] 时页面写 0 月。
+ */
+export function resolveAiAssistMonthDaily(input: {
+  difyDaily?: number | null;
+  ref?: Pick<AiAssistSystemReferenceMonth, 'suggestedBlendDaily' | 'blendMode'> | null;
+  capRatio?: number;
+}): { forecastDailyAvg: number; usedFallback: boolean } {
+  const difyDaily = Number(input.difyDaily ?? 0);
+  const suggested = input.ref?.suggestedBlendDaily ?? 0;
+  if (difyDaily > 0) {
+    return {
+      forecastDailyAvg: applyAiAssistForecastGuard(difyDaily, input.ref, input.capRatio),
+      usedFallback: false,
+    };
+  }
+  if (suggested > 0) {
+    return { forecastDailyAvg: roundDaily(suggested), usedFallback: true };
+  }
+  return { forecastDailyAvg: 0, usedFallback: false };
+}
+
 export function buildAiAssistSystemReference(input: {
   profileSegment: string;
   productCategory: string | null | undefined;

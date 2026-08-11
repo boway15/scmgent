@@ -40,8 +40,8 @@ import {
   resolveForecastStartMonthAsOf,
 } from './forecast-start-month.js';
 import {
-  applyAiAssistForecastGuard,
   buildAiAssistSystemReference,
+  resolveAiAssistMonthDaily,
 } from './forecast-ai-assist-reference.js';
 
 export const AI_ASSIST_START_MONTH_REQUIRED_MESSAGE =
@@ -506,21 +506,28 @@ export async function runDifySingleSkuForecast(
 
   const monthlyForecasts: DifySingleForecastMonth[] = forecastHorizon.map((h) => {
     const row = difyByLabel.get(h.monthLabel);
-    const rawDaily = row?.forecastDailyAvg ?? 0;
-    const forecastDailyAvg = applyAiAssistForecastGuard(rawDaily, refByLabel.get(h.monthLabel));
+    const ref = refByLabel.get(h.monthLabel);
+    const resolved = resolveAiAssistMonthDaily({
+      difyDaily: row?.forecastDailyAvg,
+      ref,
+    });
+    const fallbackNote =
+      resolved.usedFallback && ref
+        ? `fallback suggestedBlend (${ref.blendMode})`
+        : undefined;
     return {
       monthLabel: h.monthLabel,
       forecastYear: h.forecastYear,
       month: h.month,
-      forecastDailyAvg,
-      confidence: row?.confidence,
-      rationale: row?.rationale,
+      forecastDailyAvg: resolved.forecastDailyAvg,
+      confidence: row?.confidence ?? (resolved.usedFallback ? 'medium' : undefined),
+      rationale: row?.rationale ?? fallbackNote,
     };
   });
 
-  const missingMonths = forecastHorizon
-    .filter((h) => !difyByLabel.has(h.monthLabel))
-    .map((h) => h.monthLabel);
+  const missingMonths = monthlyForecasts
+    .filter((row) => !(row.forecastDailyAvg > 0))
+    .map((row) => row.monthLabel);
 
   let writtenRows = 0;
   for (const [index, row] of monthlyForecasts.entries()) {

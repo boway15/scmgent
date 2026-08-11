@@ -4,6 +4,7 @@ import {
   applyAiAssistForecastGuard,
   buildAiAssistSystemReference,
   computeRecentLevelDaily,
+  resolveAiAssistMonthDaily,
   suggestBlendDaily,
   yoySameMonthDaily,
 } from './forecast-ai-assist-reference.js';
@@ -90,6 +91,22 @@ describe('forecast-ai-assist-reference', () => {
       applyAiAssistForecastGuard(20, { suggestedBlendDaily: 28.1, blendMode: 'system_primary' }),
       20,
     );
+  });
+
+  it('falls back to suggestedBlend when Dify month is missing', () => {
+    const fallback = resolveAiAssistMonthDaily({
+      difyDaily: 0,
+      ref: { suggestedBlendDaily: 28.13, blendMode: 'system_primary' },
+    });
+    assert.equal(fallback.usedFallback, true);
+    assert.equal(fallback.forecastDailyAvg, 28.13);
+
+    const fromDify = resolveAiAssistMonthDaily({
+      difyDaily: 27,
+      ref: { suggestedBlendDaily: 28.13, blendMode: 'system_primary' },
+    });
+    assert.equal(fromDify.usedFallback, false);
+    assert.equal(fromDify.forecastDailyAvg, 27);
   });
 
   it('builds monthly system reference with suggested blends', () => {

@@ -178,7 +178,12 @@ workflow:
                 context_json 含 startMonth、asOf、historyCapEnd、isBacktest、profileSegment、productCategory（ABCD）；若 isBacktest=true，forecast_horizon_json 可为历史自然月，仍按未来预测任务输出。
                 system_reference_json.months 按月给出：systemDailyAvg（V4.1）、anchorDaily、seasonalDaily、yoySameMonthDaily、recentLevelDaily、nearOverYoyRatio、suggestedBlendDaily、blendMode。
                 请为 forecast_horizon_json 中的每一个 monthLabel 各输出一条记录，不得遗漏或新增月份。
-                输出必须为合法 JSON 数组，每项含 monthLabel、forecastDailyAvg、confidence（high/medium/low）、rationale。
+
+                【输出格式（必须严格遵守，否则解析失败）】
+                第 1 行：summary: <一句中文结论>
+                第 2 行起：仅输出一个合法 JSON 数组（可包在 ```json 代码块中），不要输出其它解释文字。
+                数组每项字段：monthLabel、forecastDailyAvg（数字）、confidence（high/medium/low）、rationale（短中文）。
+                错误示例（禁止）：只写 summary、把数字写成 28/25/17、输出空数组 []、复述本段格式说明。
 
                 锚定优先级（从高到低）：
                 1) 优先贴近该月 suggestedBlendDaily（已含 V4.1 系统锚 + 同比回拉）；无参考时再用 systemDailyAvg。
@@ -204,7 +209,12 @@ workflow:
                 预测周期: {{#start.forecast_horizon_json#}}
                 外生因素: {{#start.exogenous_json#}}
 
-                请输出 JSON 数组（字段 monthLabel、forecastDailyAvg、confidence、rationale），monthLabel 必须与预测周期 JSON 完全一致且覆盖全部月份，并在数组前用一行 summary: 开头给出整体结论。rationale 请点名是否采用 yoy_pull/suggestedBlend。
+                请严格按格式输出：
+                第一行 summary: ...
+                随后仅输出 JSON 数组，覆盖预测周期全部 monthLabel，字段 monthLabel、forecastDailyAvg、confidence、rationale。
+                示例（数值请按本 SKU 重算，勿照抄）：
+                summary: 按 suggestedBlend 锚定，整体保守
+                [{"monthLabel":"2026-02","forecastDailyAvg":28.13,"confidence":"medium","rationale":"system_primary"},{"monthLabel":"2026-03","forecastDailyAvg":25.8,"confidence":"medium","rationale":"system_yoy_cap"}]
 
       - id: format_json
         type: custom
@@ -228,19 +238,31 @@ workflow:
             import json
             import re
 
+            def _extract_array(text: str):
+                if not text:
+                    return []
+                fence = re.search(r'```(?:json)?\s*(\[[\s\S]*?\])\s*```', text, re.I)
+                candidates = []
+                if fence:
+                    candidates.append(fence.group(1))
+                for m in re.finditer(r'\[[\s\S]*?\]', text):
+                    candidates.append(m.group(0))
+                for raw in candidates:
+                    try:
+                        arr = json.loads(raw)
+                        if isinstance(arr, list) and arr:
+                            return arr
+                    except Exception:
+                        continue
+                return []
+
             def main(llm_text: str) -> dict:
                 text = llm_text or ""
                 summary = text[:500]
-                arr = []
-                m = re.search(r'\[[\s\S]*\]', text)
-                if m:
-                    try:
-                        arr = json.loads(m.group(0))
-                    except Exception:
-                        arr = []
+                arr = _extract_array(text)
                 sm = re.search(r'summary\s*[:：]\s*(.+)', text, re.I)
                 if sm:
-                    summary = sm.group(1).strip()[:500]
+                    summary = sm.group(1).strip().splitlines()[0][:500]
                 return {
                     "monthly_forecast_json": json.dumps(arr, ensure_ascii=False),
                     "summary": summary

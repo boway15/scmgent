@@ -2774,6 +2774,7 @@ export const api = {
     skuCode?: string;
     station: string;
     platform: string;
+    months?: string[];
   }) => {
     const qs = new URLSearchParams({
       versionId: params.versionId,
@@ -2782,10 +2783,16 @@ export const api = {
     });
     if (params.skuId) qs.set('skuId', params.skuId);
     if (params.skuCode) qs.set('skuCode', params.skuCode);
+    if (params.months?.length) qs.set('months', params.months.join(','));
     return request<{
       versionSummary: ForecastVersionSummary;
       context: SkuForecastContext | null;
       reviewItems: ForecastReviewItem[];
+      actualByMonth: Array<{
+        monthLabel: string;
+        actualDailyAvg: number | null;
+        inProgress: boolean;
+      }>;
       sku: {
         id: string;
         code: string;

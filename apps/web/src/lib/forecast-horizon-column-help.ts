@@ -24,6 +24,8 @@ const COMMON = {
   calibration:
     '运营手工校准 manual_daily_avg。草稿版本可编辑；留空则沿用系统值，失焦或回车保存。可附备注说明调整原因。',
   effective: '生效日均 = 校准值 ?? 系统预测。矩阵主数字、补货与库存健康均消费此口径。',
+  actual:
+    '实际日均：销售历史月表件数折算。已完整月份 ÷ 当月天数；当前月 ÷ 已过去天数并标「进行中」；尚未到达的预测月为空（—）。与「生效」同口径便于回看偏差。',
 } as const;
 
 const V41 = {
@@ -84,7 +86,8 @@ export function getForecastHorizonColumnHelp(
     | 'categoryCombined'
     | 'system'
     | 'calibration'
-    | 'effective',
+    | 'effective'
+    | 'actual',
   ctx: ForecastHorizonColumnHelpContext,
 ): string {
   const { mode, anchorFormula, tier, t99Diagnostic } = ctx;
@@ -133,6 +136,8 @@ export function getForecastHorizonColumnHelp(
       return COMMON.calibration;
     case 'effective':
       return COMMON.effective;
+    case 'actual':
+      return COMMON.actual;
     default:
       return '';
   }

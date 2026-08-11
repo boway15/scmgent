@@ -80,7 +80,11 @@ import {
   type ProfileClass,
   type ProfileSegment,
 } from './forecast-profile-class.js';
-import { normalizeSalesPlatform, stationForWarehouse } from './forecast-demand.js';
+import {
+  normalizeSalesPlatform,
+  resolveT99SystemFloorDaily,
+  stationForWarehouse,
+} from './forecast-demand.js';
 import { DEFAULT_MONTHLY_HISTORY_LOOKBACK_MONTHS } from './sales-history-monthly.js';
 import {
   loadDailySalesBySkuIdsInRange,
@@ -1312,14 +1316,15 @@ async function generateBaselineForStationPlatform(input: {
         });
 
         if (!anchorForecastable) {
+          if (v41.forecastDaily > 0) wroteForecast = true;
           forecastDrafts.push({
             skuId: sku.id,
             station,
             platform,
             forecastYear: horizonMonth.forecastYear,
             month: horizonMonth.month,
-            baselineDailyAvg: 0,
-            forecastDailyAvg: 0,
+            baselineDailyAvg: v41.baseDaily,
+            forecastDailyAvg: v41.forecastDaily,
             lifecycle,
             confidenceLevel: v41.confidenceLevel,
             versionId: version.id,
@@ -1329,8 +1334,8 @@ async function generateBaselineForStationPlatform(input: {
             horizonBand: v41.horizonBand,
             continuity12m: v41.metrics.active12 / 12,
             cv12m: v41.metrics.cv6,
-            forecastDailyP10: 0,
-            forecastDailyP90: 0,
+            forecastDailyP10: v41.forecastDailyP10,
+            forecastDailyP90: v41.forecastDailyP90,
             forecastModel: ALLCAT_V41_MODEL,
           });
           continue;
@@ -1381,6 +1386,11 @@ async function generateBaselineForStationPlatform(input: {
       }
 
       if (!anchorForecastable) {
+        const floor = resolveT99SystemFloorDaily({
+          recent30DailyAvg,
+          recent90DailyAvg,
+          horizonIndex: 0,
+        });
         reviewDrafts.push({
           skuId: sku.id,
           station,
@@ -1392,8 +1402,10 @@ async function generateBaselineForStationPlatform(input: {
             productCategory,
             platform,
             metrics: anchorV41.metrics,
+            floorMode: floor.mode,
+            floorDaily: floor.daily,
           }),
-          suggestedDailyAvg: 0,
+          suggestedDailyAvg: floor.daily,
         });
       }
       continue;

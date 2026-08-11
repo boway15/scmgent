@@ -55,9 +55,9 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     let message = res.statusText || `HTTP ${res.status}`;
     try {
       const body = (await res.json()) as { error?: string; message?: string };
-      message = body.error || body.message || message;
+      message = body.error ?? body.message ?? message;
     } catch {
-      /* ignore */
+      /* ignore non-JSON error bodies */
     }
     throw new Error(message);
   }

@@ -54,6 +54,7 @@ import {
   type SalesLifecycle,
 } from './forecast-baseline.js';
 import { horizonBandFromIndex } from './forecast-horizon-band.js';
+import { resolveBaselineGenerationAsOf } from './forecast-start-month.js';
 import {
   buildCategoryPoolKey,
   computePoolDailyFromSkus,
@@ -675,6 +676,41 @@ async function purgeSkuForecastScopeForVersion(versionId: string, skuIds: string
     );
 }
 
+/** 删除不在目标地平线内的预测月行（防止更换开始月后残留旧回测月） */
+export async function purgeForecastMonthsOutsideHorizon(
+  versionId: string,
+  horizon: Array<{ forecastYear: number; month: number }>,
+): Promise<number> {
+  if (!horizon.length) return 0;
+  const allowed = new Set(horizon.map((h) => `${h.forecastYear}-${h.month}`));
+  const existing = await db
+    .selectDistinct({
+      forecastYear: salesForecastMonthly.forecastYear,
+      month: salesForecastMonthly.month,
+    })
+    .from(salesForecastMonthly)
+    .where(eq(salesForecastMonthly.versionId, versionId));
+
+  const stale = existing.filter((row) => !allowed.has(`${row.forecastYear}-${row.month}`));
+  if (!stale.length) return 0;
+
+  let deleted = 0;
+  for (const row of stale) {
+    const removed = await db
+      .delete(salesForecastMonthly)
+      .where(
+        and(
+          eq(salesForecastMonthly.versionId, versionId),
+          eq(salesForecastMonthly.forecastYear, row.forecastYear),
+          eq(salesForecastMonthly.month, row.month),
+        ),
+      )
+      .returning({ id: salesForecastMonthly.id });
+    deleted += removed.length;
+  }
+  return deleted;
+}
+
 export async function purgeForecastVersionScope(
   versionId: string,
   scope?: { station?: string; platform?: string },
@@ -746,6 +782,37 @@ export function resolveBaselinePurgePlatformScope(input: {
   return undefined;
 }
 
+/**
+ * 是否整版删除地平线外月份。
+ * 单 SKU 重算（purgeSkuScope）禁止整版清理——否则会把其它 SKU 的历史/回测月一并删光。
+ * 全量生成仅在开始月实际变更时清理旧回测月。
+ */
+export function shouldPurgeMonthsOutsideHorizon(input: {
+  previousStartMonth: string | null | undefined;
+  nextStartMonth: string;
+  purgeSkuScope?: boolean;
+}): boolean {
+  if (input.purgeSkuScope) return false;
+  const prev = input.previousStartMonth?.trim() || null;
+  const next = input.nextStartMonth.trim();
+  return prev !== next;
+}
+
+/** 单 SKU 写入已有草稿时：未显式传 startMonth 则沿用版本上的开始月，避免被默认成「当月」 */
+export function resolveBaselineStartMonthForVersion(input: {
+  requestedStartMonth?: string | null;
+  versionStartMonth?: string | null;
+  purgeSkuScope?: boolean;
+}): string | undefined {
+  const requested = input.requestedStartMonth?.trim();
+  if (requested) return requested;
+  if (input.purgeSkuScope) {
+    const existing = input.versionStartMonth?.trim();
+    return existing || undefined;
+  }
+  return undefined;
+}
+
 import { assertForecastWriteAllowed } from './forecast-reset.js';
 
 export async function generateBaselineForecastVersion(input: {
@@ -755,7 +822,8 @@ export async function generateBaselineForecastVersion(input: {
   skuCode?: string;
   versionName?: string;
   monthCount?: number;
-  today?: Date;
+  today?: Date | string;
+  startMonth?: string;
   createdBy?: string;
   /** legacy | monthly_abcd；默认读 FORECAST_ALGO_MODE */
   algoMode?: ForecastAlgoMode;
@@ -783,7 +851,8 @@ async function generateBaselineForecastVersionForStation(input: {
   skuCode?: string;
   versionName?: string;
   monthCount?: number;
-  today?: Date;
+  today?: Date | string;
+  startMonth?: string;
   createdBy?: string;
   algoMode?: ForecastAlgoMode;
   existingVersionId?: string;
@@ -855,7 +924,8 @@ async function generateBaselineForStationPlatform(input: {
   skuCode?: string;
   versionName?: string;
   monthCount?: number;
-  today?: Date;
+  today?: Date | string;
+  startMonth?: string;
   createdBy?: string;
   algoMode?: ForecastAlgoMode;
   existingVersionId?: string;
@@ -888,7 +958,14 @@ async function generateBaselineForStationPlatform(input: {
           })
         : await findOrCreateDraftVersionForImport(input.useGlobalVersion ? undefined : station);
   }
-  const today = input.today ?? new Date();
+  const { startMonth, asOf: today } = resolveBaselineGenerationAsOf({
+    startMonth: resolveBaselineStartMonthForVersion({
+      requestedStartMonth: input.startMonth,
+      versionStartMonth: version.startMonth,
+      purgeSkuScope: input.purgeSkuScope,
+    }),
+    today: input.today,
+  });
   const algoMode = input.algoMode ?? resolveForecastAlgoMode();
   const useMonthlyAbcd = isMonthlyAbcdAlgoMode(algoMode);
   const useAllCatV41 = isAllCatV41AlgoMode(algoMode);
@@ -897,6 +974,25 @@ async function generateBaselineForStationPlatform(input: {
   const aCoreConfig = calibration.aCore;
   const horizon = buildMonthlyForecastHorizon(today, input.monthCount ?? 12);
   const warehouseStationByCode = await loadWarehouseStationMap();
+  {
+    const previousStartMonth = version.startMonth ?? null;
+    const [updated] = await db
+      .update(salesForecastVersions)
+      .set({ startMonth, updatedAt: new Date() })
+      .where(eq(salesForecastVersions.id, version.id))
+      .returning();
+    if (updated) version = updated;
+    // 全量生成且开始月变更时清掉版本内旧回测月；单 SKU 重算不得整版 purge
+    if (
+      shouldPurgeMonthsOutsideHorizon({
+        previousStartMonth,
+        nextStartMonth: startMonth,
+        purgeSkuScope: input.purgeSkuScope,
+      })
+    ) {
+      await purgeForecastMonthsOutsideHorizon(version.id, horizon);
+    }
+  }
   if (!useMonthlyAbcd && !useAllCatV41) {
     await rebuildSeasonalityFromSalesHistoryMonthly({ createdBy: input.createdBy, asOf: today }).catch((err) => {
       console.warn('[forecast] seasonality rebuild skipped:', err instanceof Error ? err.message : err);
@@ -957,13 +1053,19 @@ async function generateBaselineForStationPlatform(input: {
   }> = [];
 
   const recentWindowEnd = effectiveRecentWindowEnd(today);
+  /**
+   * 批量地平线冻结特征截止（上月末）。过去开始月回测同样需要：
+   * 严格无泄漏靠 today/recentWindowEnd 截断历史；若省略 historyCapEnd，
+   * 后续月会把未加载月份当 0 销，导致 forecastDaily≤0 被跳过。
+   */
+  const historyCapEnd = recentWindowEnd;
   const lookbackFrom = toDateOnly(addDays(today, -DEFAULT_SALES_HISTORY_LOOKBACK_DAYS));
   const lookbackTo = toDateOnly(today);
   const monthlyCutoff = subtractMonthsUtc(today, DEFAULT_MONTHLY_HISTORY_LOOKBACK_MONTHS);
   const monthlyMaxYear = recentWindowEnd.getUTCFullYear();
   const monthlyMaxMonth = recentWindowEnd.getUTCMonth() + 1;
   const skuIds = skuRows.map((sku) => sku.id);
-  const [dailyBySku, monthlyBySku, firstSaleBySku] = await Promise.all([
+  const [dailyBySku, monthlyBySku, firstSaleBySku, dailyAllBySku] = await Promise.all([
     loadDailySalesBySkuIdsInRange({
       skuIds,
       fromDate: lookbackFrom,
@@ -982,6 +1084,14 @@ async function generateBaselineForStationPlatform(input: {
       skuIds,
       platform,
     }),
+    useAllCatV41
+      ? loadDailySalesBySkuIdsInRange({
+          skuIds,
+          fromDate: lookbackFrom,
+          toDate: lookbackTo,
+          platform: 'ALL',
+        })
+      : Promise.resolve(new Map()),
   ]);
 
   const recent30Since = addDays(recentWindowEnd, -29);
@@ -1101,6 +1211,13 @@ async function generateBaselineForStationPlatform(input: {
 
     const recent30DailyAvg = roundDaily(sumQtySince(salesRows, recent30Since) / 30);
     const recent90DailyAvg = recent90BySkuId.get(sku.id) ?? 0;
+    const allChannelRows = filterSalesRowsByStation(
+      dailyAllBySku.get(sku.id) ?? [],
+      station,
+      warehouseStationByCode,
+    );
+    const allRecent30DailyAvg = roundDaily(sumQtySince(allChannelRows, recent30Since) / 30);
+    const peerPlatformRecentDaily = roundDaily(Math.max(0, allRecent30DailyAvg - recent30DailyAvg));
     const salesDays90 = countSalesDaysSince(salesRows, recent90Since);
     const salesDays365 = countSalesDaysSince(
       salesRows,
@@ -1149,7 +1266,8 @@ async function generateBaselineForStationPlatform(input: {
         monthlyRows: monthlySalesRows,
         recent30DailyAvg,
         recent90DailyAvg,
-        historyCapEnd: recentWindowEnd,
+        peerPlatformRecentDaily,
+        historyCapEnd,
       });
       const anchorTier = anchorV41.tier;
       const anchorForecastable = isAllCatV41Forecastable(anchorTier);
@@ -1189,7 +1307,8 @@ async function generateBaselineForStationPlatform(input: {
           monthlyRows: monthlySalesRows,
           recent30DailyAvg,
           recent90DailyAvg,
-          historyCapEnd: recentWindowEnd,
+          peerPlatformRecentDaily,
+          historyCapEnd,
         });
 
         if (!anchorForecastable) {

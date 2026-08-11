@@ -173,7 +173,10 @@ export function ForecastAssistPanel({
       api.generateSalesForecastBaseline({
         skuCode,
         platform,
-        monthCount: horizonMonthCount,
+        // 与弹窗展示月对齐；勿回落默认 12，避免改写版本周期
+        monthCount: Math.max(1, monthLabels.length || horizonMonthCount),
+        // 必须带版本开始月，否则服务端会默认「当月」并误清其它 SKU 地平线
+        startMonth: startMonth?.trim() || undefined,
         targetVersionId: versionId,
       }),
     onSuccess: async () => {

@@ -11,7 +11,9 @@ import {
   filterSalesRowsByStation,
   resolveBaselineGenerateStations,
   resolveBaselinePurgePlatformScope,
+  resolveBaselineStartMonthForVersion,
   resolveSeasonalityFactors,
+  shouldPurgeMonthsOutsideHorizon,
   type SeasonalityLookup,
 } from './forecast-collaboration.js';
 import { resolveBaselineForecastPlatforms } from './forecast-platform-scope.js';
@@ -351,6 +353,70 @@ describe('forecast-collaboration', () => {
         purgeSkuScope: true,
         platformCount: 5,
         platformIndex: 0,
+      }),
+      undefined,
+    );
+  });
+
+  it('never purges outside-horizon months for single-SKU recompute', () => {
+    assert.equal(
+      shouldPurgeMonthsOutsideHorizon({
+        previousStartMonth: '2026-02',
+        nextStartMonth: '2026-08',
+        purgeSkuScope: true,
+      }),
+      false,
+    );
+    assert.equal(
+      shouldPurgeMonthsOutsideHorizon({
+        previousStartMonth: '2026-02',
+        nextStartMonth: '2026-02',
+        purgeSkuScope: true,
+      }),
+      false,
+    );
+  });
+
+  it('purges outside-horizon months only when full generate changes startMonth', () => {
+    assert.equal(
+      shouldPurgeMonthsOutsideHorizon({
+        previousStartMonth: '2026-02',
+        nextStartMonth: '2026-08',
+        purgeSkuScope: false,
+      }),
+      true,
+    );
+    assert.equal(
+      shouldPurgeMonthsOutsideHorizon({
+        previousStartMonth: '2026-08',
+        nextStartMonth: '2026-08',
+      }),
+      false,
+    );
+  });
+
+  it('single-SKU recompute keeps version startMonth when request omits it', () => {
+    assert.equal(
+      resolveBaselineStartMonthForVersion({
+        requestedStartMonth: undefined,
+        versionStartMonth: '2026-02',
+        purgeSkuScope: true,
+      }),
+      '2026-02',
+    );
+    assert.equal(
+      resolveBaselineStartMonthForVersion({
+        requestedStartMonth: '2026-08',
+        versionStartMonth: '2026-02',
+        purgeSkuScope: true,
+      }),
+      '2026-08',
+    );
+    assert.equal(
+      resolveBaselineStartMonthForVersion({
+        requestedStartMonth: undefined,
+        versionStartMonth: '2026-02',
+        purgeSkuScope: false,
       }),
       undefined,
     );

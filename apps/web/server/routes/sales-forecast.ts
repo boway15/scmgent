@@ -29,6 +29,7 @@ import {
   getOrCreateDraftVersion,
   publishForecastVersion,
   archiveForecastVersion,
+  deleteDraftForecastVersion,
   listForecastVersions,
   listForecastVersionsWithStats,
   getForecastVersionWithStats,
@@ -57,6 +58,10 @@ import {
 } from '../lib/forecast-agent.js';
 import { buildForecastImpactPreview, compareForecastDemandChange } from '../lib/forecast-impact.js';
 import { generateBaselineForecastVersion } from '../lib/forecast-collaboration.js';
+import {
+  parseAndValidateForecastStartMonth,
+  resolveForecastStartMonthAsOf,
+} from '../lib/forecast-start-month.js';
 import { runDifySingleSkuForecast } from '../lib/forecast-dify-single.js';
 import { normalizeForecastExogenousInput } from '../lib/forecast-exogenous-input.js';
 import { isSalesForecastWorkflowEnabled } from '../integrations/dify.js';
@@ -299,6 +304,7 @@ salesForecastRoutes.post('/sales-forecasts/generate-baseline', requireMenu('data
     versionName?: string;
     targetVersionId?: string;
     monthCount?: number;
+    startMonth?: string;
     background?: boolean;
   }>();
 
@@ -314,6 +320,12 @@ salesForecastRoutes.post('/sales-forecasts/generate-baseline', requireMenu('data
       },
       400,
     );
+  }
+  let startMonthResolved: ReturnType<typeof parseAndValidateForecastStartMonth>;
+  try {
+    startMonthResolved = parseAndValidateForecastStartMonth(body.startMonth);
+  } catch (err) {
+    return c.json({ message: err instanceof Error ? err.message : 'startMonth 无效' }, 400);
   }
   const skuCode = body.skuCode?.trim() || undefined;
   const perStationSkuCount = await countActiveSkus({ category: body.category?.trim(), skuCode });
@@ -348,6 +360,7 @@ salesForecastRoutes.post('/sales-forecasts/generate-baseline', requireMenu('data
 
   let existingVersionId: string | undefined;
   let forceNewVersion: boolean;
+  let targetDraftStartMonth: string | null = null;
   if (skuCode) {
     forceNewVersion = false;
     if (targetVersionId) {
@@ -357,13 +370,31 @@ salesForecastRoutes.post('/sales-forecasts/generate-baseline', requireMenu('data
         return c.json({ message: '仅可向草稿版本写入单 SKU 预测' }, 400);
       }
       existingVersionId = targetVersionId;
+      targetDraftStartMonth = target.startMonth?.trim() || null;
     } else {
       const latestDraft = await getLatestDraftVersion();
       existingVersionId = latestDraft?.id;
+      targetDraftStartMonth = latestDraft?.startMonth?.trim() || null;
     }
   } else {
     forceNewVersion = true;
     existingVersionId = undefined;
+  }
+
+  // 单 SKU 写入草稿且请求未显式传 startMonth：沿用草稿开始月，避免默认「当月」误改版本地平线
+  const effectiveStartMonth =
+    body.startMonth?.trim() ||
+    (skuCode ? targetDraftStartMonth : null) ||
+    startMonthResolved.startMonth;
+  let effectiveAsOf = startMonthResolved.asOf;
+  if (effectiveStartMonth !== startMonthResolved.startMonth) {
+    try {
+      const remapped = parseAndValidateForecastStartMonth(effectiveStartMonth);
+      effectiveAsOf = remapped.asOf;
+    } catch {
+      // 历史草稿开始月可能超出「当月往前 6 个月」校验窗；仍用 resolve 的 asOf 供生成链路
+      effectiveAsOf = resolveForecastStartMonthAsOf(effectiveStartMonth);
+    }
   }
 
   const taskInput = {
@@ -372,6 +403,8 @@ salesForecastRoutes.post('/sales-forecasts/generate-baseline', requireMenu('data
     skuCode,
     versionName: versionName ?? autoVersionName,
     monthCount,
+    startMonth: effectiveStartMonth,
+    today: effectiveAsOf,
     createdBy: user.id,
     existingVersionId,
     forceNewVersion,
@@ -1288,6 +1321,36 @@ salesForecastRoutes.post(
       user,
     });
     return c.json(row);
+  },
+);
+
+salesForecastRoutes.delete(
+  '/sales-forecast-versions/:id',
+  requireMenu('data.forecast'),
+  requireForecastWrite,
+  async (c) => {
+    const user = await getCurrentUser(c);
+    try {
+      const result = await deleteDraftForecastVersion(c.req.param('id'));
+      await writeAuditLog(c, {
+        action: 'forecast_version.delete',
+        resourceType: 'sales_forecast_version',
+        resourceId: result.id,
+        detail: { versionNo: result.versionNo, deleted: result.deleted },
+        user,
+      });
+      return c.json(result);
+    } catch (err) {
+      const status =
+        err && typeof err === 'object' && 'status' in err && typeof err.status === 'number'
+          ? err.status
+          : 500;
+      const message = err instanceof Error ? err.message : '删除失败';
+      if (status === 404 || status === 400 || status === 409) {
+        return c.json({ message }, status);
+      }
+      throw err;
+    }
   },
 );
 

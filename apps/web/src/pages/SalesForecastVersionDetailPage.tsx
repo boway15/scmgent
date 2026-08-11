@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Link, useParams, useSearchParams } from 'react-router-dom';
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -38,6 +38,7 @@ function isViewAllowed(view: DetailView, status: string): boolean {
 
 export function SalesForecastVersionDetailPage() {
   const { versionId = '' } = useParams<{ versionId: string }>();
+  const navigate = useNavigate();
   const qc = useQueryClient();
   const [searchParams, setSearchParams] = useSearchParams();
   const [reviewSummary, setReviewSummary] = useState<string | null>(null);
@@ -153,6 +154,16 @@ export function SalesForecastVersionDetailPage() {
     },
   });
 
+  const deleteDraftVersion = useMutation({
+    mutationFn: () => api.deleteSalesForecastVersion(versionId),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['sales-forecast-versions'] });
+      qc.invalidateQueries({ queryKey: ['sales-forecasts'] });
+      qc.invalidateQueries({ queryKey: ['sales-forecast-review-items'] });
+      navigate('/data/forecast');
+    },
+  });
+
   const reviewVersion = useMutation({
     mutationFn: () => api.getSalesForecastReviewSummary(versionId),
     onMutate: () => setReviewSummary(null),
@@ -248,6 +259,7 @@ export function SalesForecastVersionDetailPage() {
       <PageHeader title={formatForecastVersionTitle(version.versionNo, version.versionName)}>
         <div className="flex flex-wrap items-center gap-2">
           <ForecastVersionStatusBadge status={version.status} />
+          <span className="text-xs text-text-sub">开始月：{version.startMonth ?? '—'}</span>
           {version.status === 'published' && (
             <span className="inline-flex items-center rounded-md bg-muted px-2 py-1 text-xs text-text-sub">
               已发布 · 同 SKU 冲突时以最新发布为准
@@ -301,6 +313,24 @@ export function SalesForecastVersionDetailPage() {
               <Button
                 size="sm"
                 variant="outline"
+                className="text-destructive"
+                disabled={deleteDraftVersion.isPending}
+                onClick={() => {
+                  const label = version.versionName || version.versionNo;
+                  if (
+                    window.confirm(
+                      `确定删除草稿「${label}」？将同步删除其预测明细与复核项，且不可恢复。`,
+                    )
+                  ) {
+                    deleteDraftVersion.mutate();
+                  }
+                }}
+              >
+                {deleteDraftVersion.isPending ? '删除中…' : '删除草稿'}
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
                 onClick={() => {
                   impactPreviewMutation.reset();
                   setImpactPreview(null);
@@ -328,6 +358,9 @@ export function SalesForecastVersionDetailPage() {
               <pre className="whitespace-pre-wrap rounded-md border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">
                 {mutationErrorMessage(publishVersion.error)}
               </pre>
+            )}
+            {deleteDraftVersion.isError && (
+              <p className="text-sm text-destructive">{mutationErrorMessage(deleteDraftVersion.error)}</p>
             )}
             {impactPreviewMutation.isError && (
               <p className="text-sm text-destructive">{mutationErrorMessage(impactPreviewMutation.error)}</p>
@@ -570,6 +603,7 @@ export function SalesForecastVersionDetailPage() {
           setSelectedHorizonPlatform('ALL');
         }}
         calibrationEditable={version.status === 'draft'}
+        forecastMonthCount={version.stats.monthCount > 0 ? version.stats.monthCount : undefined}
       />
     </div>
   );

@@ -1,6 +1,13 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { distributeAiForecastAcrossPlatforms, resolveAiAssistProfileSegment } from './forecast-dify-single.js';
+import {
+  AI_ASSIST_START_MONTH_REQUIRED_MESSAGE,
+  distributeAiForecastAcrossPlatforms,
+  resolveAiAssistBacktestAsOf,
+  resolveAiAssistHistoryCapEnd,
+  resolveAiAssistHistoryMaxMonth,
+  resolveAiAssistProfileSegment,
+} from './forecast-dify-single.js';
 import { serializeExogenousJson } from './forecast-exogenous-input.js';
 
 describe('forecast-dify-single', () => {
@@ -71,6 +78,34 @@ describe('forecast-dify-single', () => {
       }),
       'T4A',
     );
+  });
+
+  describe('AI assist start-month backtest helpers', () => {
+    it('rejects missing startMonth', () => {
+      assert.throws(
+        () => resolveAiAssistBacktestAsOf(null),
+        (err: Error) => err.message === AI_ASSIST_START_MONTH_REQUIRED_MESSAGE,
+      );
+      assert.throws(() => resolveAiAssistBacktestAsOf('  '));
+    });
+
+    it('resolves asOf to UTC month start', () => {
+      const asOf = resolveAiAssistBacktestAsOf('2026-02');
+      assert.equal(asOf.toISOString(), '2026-02-01T00:00:00.000Z');
+    });
+
+    it('history max is month before start', () => {
+      const asOf = resolveAiAssistBacktestAsOf('2026-02');
+      assert.deepEqual(resolveAiAssistHistoryMaxMonth(asOf), { year: 2026, month: 1 });
+      const asOfJan = resolveAiAssistBacktestAsOf('2026-01');
+      assert.deepEqual(resolveAiAssistHistoryMaxMonth(asOfJan), { year: 2025, month: 12 });
+    });
+
+    it('historyCapEnd is last day of prior month', () => {
+      const asOf = resolveAiAssistBacktestAsOf('2026-02');
+      const cap = resolveAiAssistHistoryCapEnd(asOf);
+      assert.equal(cap.toISOString().slice(0, 10), '2026-01-31');
+    });
   });
 
   it('resolveAiAssistProfileSegment falls back to computed tier when no persisted segment', () => {

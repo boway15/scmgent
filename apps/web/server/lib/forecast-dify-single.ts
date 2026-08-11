@@ -34,6 +34,29 @@ import {
   type ForecastExogenousInput,
 } from './forecast-exogenous-input.js';
 import { isPersistedProfileSegment, resolveAnchorProfileSegment } from './forecast-horizon.js';
+import { resolveForecastStartMonthAsOf } from './forecast-start-month.js';
+
+export const AI_ASSIST_START_MONTH_REQUIRED_MESSAGE =
+  'AI 辅助预测需要版本开始月；请带开始月重新生成草稿后再试';
+
+export function resolveAiAssistBacktestAsOf(startMonth: string | null | undefined): Date {
+  const trimmed = startMonth?.trim();
+  if (!trimmed) {
+    const err = new Error(AI_ASSIST_START_MONTH_REQUIRED_MESSAGE);
+    (err as Error & { status: number }).status = 400;
+    throw err;
+  }
+  return resolveForecastStartMonthAsOf(trimmed);
+}
+
+export function resolveAiAssistHistoryMaxMonth(asOf: Date): { year: number; month: number } {
+  const d = new Date(Date.UTC(asOf.getUTCFullYear(), asOf.getUTCMonth() - 1, 1));
+  return { year: d.getUTCFullYear(), month: d.getUTCMonth() + 1 };
+}
+
+export function resolveAiAssistHistoryCapEnd(asOf: Date): Date {
+  return new Date(Date.UTC(asOf.getUTCFullYear(), asOf.getUTCMonth(), 0));
+}
 
 export type { ForecastAssistMode, ForecastExogenousInput };
 

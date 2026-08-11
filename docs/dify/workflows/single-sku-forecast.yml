@@ -128,6 +128,12 @@ workflow:
               required: false
               max_length: 5000
               options: []
+            - variable: system_reference_json
+              label: 系统参考水位JSON
+              type: paragraph
+              required: false
+              max_length: 50000
+              options: []
             - variable: exogenous_json
               label: 外生因素JSON
               type: paragraph
@@ -167,29 +173,38 @@ workflow:
             - id: sys-prompt-t99-forecast-001
               role: system
               text: |
-                你是跨境电商供应链销量预测专家。T99 类商品系统不做自动预测，需你基于历史与品类趋势做保守人工辅助预测。
+                你是跨境电商供应链销量预测专家。对系统跳过或人工辅助的 SKU，基于历史、品类趋势与系统参考水位做保守预测。
                 严格回测口径：sales_history_json 仅含预测开始月之前的销量，已截止至 context_json.historyCapEnd；不得使用该日之后的信息，也不得假设「今天」为观测日。
-                context_json 含 startMonth（地平线首月）、asOf、historyCapEnd、isBacktest；若 isBacktest=true，forecast_horizon_json 可为历史自然月，仍按未来预测任务输出。
+                context_json 含 startMonth、asOf、historyCapEnd、isBacktest、profileSegment、productCategory（ABCD）；若 isBacktest=true，forecast_horizon_json 可为历史自然月，仍按未来预测任务输出。
+                system_reference_json.months 按月给出：systemDailyAvg（V4.1）、anchorDaily、seasonalDaily、yoySameMonthDaily、recentLevelDaily、nearOverYoyRatio、suggestedBlendDaily、blendMode。
                 请为 forecast_horizon_json 中的每一个 monthLabel 各输出一条记录，不得遗漏或新增月份。
                 输出必须为合法 JSON 数组，每项含 monthLabel、forecastDailyAvg、confidence（high/medium/low）、rationale。
-                原则：保守测算，避免冲高；参考品类 combinedFactor 但不超过历史近期水平的 1.15 倍。
+
+                锚定优先级（从高到低）：
+                1) 优先贴近该月 suggestedBlendDaily；无参考时再用 systemDailyAvg。
+                2) 若 blendMode=yoy_pull 或 nearOverYoyRatio≥1.35：近端冲高，不得贴近 recentLevelDaily；forecastDailyAvg 应落在 yoySameMonthDaily 与 suggestedBlendDaily 附近，且一般不超过 suggestedBlendDaily 的 1.08 倍。
+                3) 有 yoySameMonthDaily>0 时，禁止把「最近 1～3 个月高点」当作稳态；需在 rationale 写明近端/同比比值与是否回拉。
+                4) 相对 systemDailyAvg 默认偏离不超过 ±20%；更大偏离须有外生因素或明确季节理由。
+                5) 品类 combinedFactor 只作方向参考，不得单独把近端水平乘到超过 1.15×recentLevelDaily（yoy_pull 时改用 1.08×suggestedBlendDaily）。
+
                 若 exogenous_json 含 factors（调价 price_change、投广告 ad、促销 promo 等），须在 rationale 说明如何调整：
-                - 降价/促销：可适度上调预测但偏保守，不超过近期水平 1.15 倍；
+                - 降价/促销：可适度上调但偏保守；yoy_pull 月仍以 suggestedBlendDaily 为锚，上调不超过其 1.12 倍；
                 - 涨价：可适度下调；
-                - 加投广告 ad（intensity 为倍数）：可上调对应月份，但单月不超过近期水平 1.25 倍；
-                - factors 为空或未提供时，按纯历史+品类趋势保守预测。
+                - 加投广告 ad（intensity 为倍数）：可上调对应月份，但单月不超过近期水平 1.25 倍（yoy_pull 月不超过 suggestedBlendDaily 的 1.15 倍）；
+                - factors 为空或未提供时，按历史+系统参考+品类趋势保守预测。
             - id: user-prompt-t99-forecast-001
               role: user
               text: |
                 SKU: {{#start.sku_code#}} {{#start.sku_name#}}
                 品类: {{#start.category#}}
-                上下文(含 startMonth/asOf/historyCapEnd/isBacktest): {{#start.context_json#}}
+                上下文(含 startMonth/asOf/historyCapEnd/isBacktest/profileSegment/productCategory): {{#start.context_json#}}
+                系统参考水位(含 suggestedBlendDaily/yoy/system): {{#start.system_reference_json#}}
                 截止开始月之前的月销: {{#start.sales_history_json#}}
                 品类趋势: {{#start.category_trend_json#}}
                 预测周期: {{#start.forecast_horizon_json#}}
                 外生因素: {{#start.exogenous_json#}}
 
-                请输出 JSON 数组（字段 monthLabel、forecastDailyAvg、confidence、rationale），monthLabel 必须与预测周期 JSON 完全一致且覆盖全部月份，并在数组前用一行 summary: 开头给出整体结论。
+                请输出 JSON 数组（字段 monthLabel、forecastDailyAvg、confidence、rationale），monthLabel 必须与预测周期 JSON 完全一致且覆盖全部月份，并在数组前用一行 summary: 开头给出整体结论。rationale 请点名是否采用 yoy_pull/suggestedBlend。
 
       - id: format_json
         type: custom

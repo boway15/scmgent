@@ -149,6 +149,7 @@ describe('forecast-dify-single', () => {
       const historyCapEnd = resolveAiAssistHistoryCapEnd(asOf);
       const ctx = buildAiAssistContextJson({
         tier: 'T99',
+        profileSegment: 'AI',
         productCategory: 'Furniture',
         skipReason: 'manual',
         station: 'US',
@@ -163,6 +164,7 @@ describe('forecast-dify-single', () => {
       assert.equal(ctx.historyCapEnd, '2026-01-31');
       assert.equal(ctx.isBacktest, true);
       assert.equal(ctx.tier, 'T99');
+      assert.equal(ctx.profileSegment, 'AI');
     });
   });
 

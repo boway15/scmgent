@@ -39,6 +39,7 @@ import {
   isForecastStartMonthBacktest,
   resolveForecastStartMonthAsOf,
 } from './forecast-start-month.js';
+import { buildAiAssistSystemReference } from './forecast-ai-assist-reference.js';
 
 export const AI_ASSIST_START_MONTH_REQUIRED_MESSAGE =
   'AI 辅助预测需要版本开始月；请带开始月重新生成草稿后再试';
@@ -81,6 +82,7 @@ export function resolveAiAssistHistoryCapEnd(asOf: Date): Date {
 
 export type AiAssistContextJson = {
   tier: string;
+  profileSegment: string | null;
   productCategory: string | null;
   skipReason: string;
   station: string;
@@ -94,6 +96,7 @@ export type AiAssistContextJson = {
 /** Dify context_json：回测口径字段与原有 tier/station 一并下发 */
 export function buildAiAssistContextJson(input: {
   tier: string;
+  profileSegment?: string | null;
   productCategory: string | null;
   skipReason: string;
   station: string;
@@ -106,6 +109,7 @@ export function buildAiAssistContextJson(input: {
   const startMonth = formatForecastStartMonth(input.asOf);
   return {
     tier: input.tier,
+    profileSegment: input.profileSegment ?? null,
     productCategory: input.productCategory,
     skipReason: input.skipReason,
     station: input.station,
@@ -457,13 +461,25 @@ export async function runDifySingleSkuForecast(
   });
 
   const contextJson = buildAiAssistContextJson({
-    tier: reviewTier ?? 'SKU',
+    tier: reviewTier ?? profileSegment,
+    profileSegment,
     productCategory,
     skipReason: reviewItem?.message ?? 'manual AI forecast requested',
     station,
     platform,
     startMonth,
     asOf,
+    historyCapEnd,
+  });
+
+  const systemReference = buildAiAssistSystemReference({
+    profileSegment,
+    productCategory,
+    platform,
+    monthlyRows,
+    history: salesHistory,
+    categoryTrend,
+    forecastHorizon,
     historyCapEnd,
   });
 
@@ -476,6 +492,7 @@ export async function runDifySingleSkuForecast(
       category_trend_json: JSON.stringify(categoryTrend),
       forecast_horizon_json: JSON.stringify(forecastHorizon),
       context_json: JSON.stringify(contextJson),
+      system_reference_json: JSON.stringify(systemReference),
       exogenous_json: serializeExogenousJson(exogenousFactors),
     },
     input.userId ?? 'forecast-dify-single',

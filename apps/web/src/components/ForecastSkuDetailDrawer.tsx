@@ -342,8 +342,6 @@ export function ForecastSkuDetailDrawer({
     qc.invalidateQueries({ queryKey: ['sales-forecasts'] });
   };
 
-  const monthsForActual = (row?.months ?? []).map((m) => m.monthLabel);
-
   const { data: detail, isLoading: detailLoading } = useQuery({
     queryKey: [
       'sales-forecast-sku-detail',
@@ -352,7 +350,6 @@ export function ForecastSkuDetailDrawer({
       row?.skuCode,
       row?.station,
       row?.platform,
-      monthsForActual.join(','),
     ],
     queryFn: () =>
       api.getSalesForecastSkuDetail({
@@ -361,7 +358,8 @@ export function ForecastSkuDetailDrawer({
         skuCode: row!.skuId ? undefined : row!.skuCode,
         station: row!.station,
         platform: row!.platform,
-        months: monthsForActual.length > 0 ? monthsForActual : undefined,
+        // 使用版本完整 monthLabels，覆盖抽屉按预测周期扩展出的月份。
+        months: undefined,
       }),
     enabled: Boolean(versionId && row && (row.skuId || row.skuCode)),
   });

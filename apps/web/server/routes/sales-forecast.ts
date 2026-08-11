@@ -17,7 +17,12 @@ import {
   userCanWriteForecast,
 } from '../lib/rbac.js';
 import { writeAuditLog } from '../lib/audit-log.js';
-import { formatForecastMonth, mapForecastDailyFields } from '../lib/forecast-demand.js';
+import {
+  formatForecastMonth,
+  mapForecastDailyFields,
+  normalizeSalesPlatform,
+  parseForecastMonth,
+} from '../lib/forecast-demand.js';
 import { resolveSalesPlatformCode, listActiveSalesPlatforms } from '../lib/sales-platform.js';
 import { countBaselineForecastPlatforms, isForecastV41PlatformCode, resolveBaselineForecastPlatforms } from '../lib/forecast-platform-scope.js';
 import {
@@ -82,6 +87,11 @@ import {
   buildSkuMonthlyForecastMap,
   getVersionForecastSummary,
 } from '../lib/forecast-sku-context.js';
+import {
+  buildForecastDrawerActualByMonth,
+  parseMonthsQuery,
+} from '../lib/forecast-drawer-actual.js';
+import { loadMonthlySalesBySkuIds } from '../lib/sales-history-query.js';
 import { MAX_FORECAST_MONTH_COUNT } from '../lib/forecast-limits.js';
 
 export const salesForecastRoutes = new Hono();
@@ -755,10 +765,54 @@ salesForecastRoutes.get('/sales-forecasts/sku-detail', requireMenu('data.forecas
       .orderBy(desc(salesForecastReviewItems.createdAt)),
   ]);
 
+  const monthsFromQuery = parseMonthsQuery(c.req.query('months'));
+  const monthLabels =
+    monthsFromQuery.length > 0 ? monthsFromQuery : versionSummary.monthLabels;
+  let actualByMonth = buildForecastDrawerActualByMonth({
+    monthLabels,
+    qtyByMonthLabel: new Map(),
+  });
+
+  if (monthLabels.length > 0) {
+    const parsedMonths = monthLabels
+      .map((label) => ({ label, parsed: parseForecastMonth(label) }))
+      .filter(
+        (row): row is { label: string; parsed: { year: number; month: number } } =>
+          row.parsed != null,
+      );
+
+    if (parsedMonths.length > 0) {
+      const sorted = [...parsedMonths].sort(
+        (a, b) =>
+          a.parsed.year - b.parsed.year || a.parsed.month - b.parsed.month,
+      );
+      const first = sorted[0]!.parsed;
+      const last = sorted[sorted.length - 1]!.parsed;
+      const monthlyBySku = await loadMonthlySalesBySkuIds({
+        skuIds: [resolvedSkuId],
+        platform: normalizeSalesPlatform(platform),
+        minYear: first.year,
+        minMonth: first.month,
+        maxYear: last.year,
+        maxMonth: last.month,
+      });
+      const qtyByMonthLabel = new Map<string, number>();
+      for (const row of monthlyBySku.get(resolvedSkuId) ?? []) {
+        const label = formatForecastMonth(row.saleYear, row.month);
+        qtyByMonthLabel.set(label, (qtyByMonthLabel.get(label) ?? 0) + row.qtySold);
+      }
+      actualByMonth = buildForecastDrawerActualByMonth({
+        monthLabels,
+        qtyByMonthLabel,
+      });
+    }
+  }
+
   return c.json({
     versionSummary,
     context: contexts[contextKey] ?? null,
     reviewItems: reviewRows.map(mapReviewItemRow),
+    actualByMonth,
     sku: {
       id: skuRow.id,
       code: skuRow.code,

@@ -41,7 +41,7 @@ const ALL_CATEGORY_V41_TIERS = [
   ['T3P', '非 AMAZON 优质稳定层', '仅 B/C 的 UNKNOWN/WALMART/TEMU/TIKTOK，要求 d6≥6~8、active6=6、active2=2、cv6≤0.50~0.55', '0.45*d3 + 0.45*d6 + 0.10*d12，非核心渠道更偏近3/6月', '主预测 KPI：WMAPE≤35%，Bias±15%'],
   ['T4A', 'AMAZON 边界可预测层', 'A/B/C: 仅 AMAZON，销量较低但仍有连续性；V4.1 对 B/C 要求 active2=2；D 仅极少稳定品可进 T4A', '0.50*d3 + 0.45*d6 + 0.05*d12，低置信并设置更宽 P10/P90', '边界 KPI：WMAPE≤40%，Bias±20%'],
   ['T4B', '稳定连续保底层', '未进 T1–T4A：长历史 active12≥8；新品/短历史近2月连续有销且 active6≥2', '长历史 0.35*d3+0.45*d6+0.20*d12；短历史 0.55*d3+0.45*d6', '保底 KPI：WMAPE≤50%，不计入主准确率'],
-  ['T99', '异常/低规律/不预测层', '连续性不足、cv 过高或近端断销；系统不做点预测', '系统预测写入 0.00，待 AI 辅助或人工校准后更新', '不计入主准确率统计'],
+  ['T99', '异常/低规律保守保底层', '连续性不足、cv 过高或近端弱信号；近30≈0 时归零', 'max(近30,近90)×0.6，远月×0.72；不进主 KPI', '不计入主准确率统计'],
 ] as const;
 
 function AllCategoryV41StrategySummary() {
@@ -54,10 +54,10 @@ function AllCategoryV41StrategySummary() {
   return (
     <div className="mb-6 space-y-4 rounded-lg border border-primary/20 bg-primary/5 p-4 text-sm">
       <div>
-        <h3 className="text-base font-semibold text-text-main">当前生效策略：全品类 V4.1 分层 KPI + T4B 保底 + T99 不预测</h3>
+        <h3 className="text-base font-semibold text-text-main">当前生效策略：全品类 V4.1 分层 KPI + T4B 保底 + T99 保守保底</h3>
         <p className="mt-1 leading-relaxed text-text-sub">
           运行时默认 <span className="font-medium text-text-main">FORECAST_ALGO_MODE=allcat_v41</span>。
-          T1–T4A 按 d2/d3/d6/d12 加权生成系统预测；T4B 对连续有销但未达主层门槛的 SKU 给出保守保底预测；T99 写入 0.00 待校准。
+          T1–T4A 按 d2/d3/d6/d12 加权生成系统预测；T4B 对连续有销但未达主层门槛的 SKU 给出保守保底预测；T99 有近期动销时写保守保底数，近30=0 归零，Dify 可选覆盖。
           选择「全平台」生成时，按 V4.1 支持渠道分别写入预测行，列表查询 ALL 为分渠道汇总，不写入 platform=ALL 物理行。销量导入无站点维度，预测统一 station=ALL（全站合并）。
           模型标识 <span className="font-medium text-text-main">allcat_kpi_corefirst_v41</span>。
           {latestDraft ? (
@@ -78,8 +78,8 @@ function AllCategoryV41StrategySummary() {
       <div className="rounded-md border border-border bg-background p-3">
         <p className="font-medium text-text-main">T99 与 Dify 单条辅助预测</p>
         <ul className="mt-2 list-disc space-y-1 pl-5 text-text-sub">
-          <li>T99：波动大、连续性不足或近端断销 — 系统不做点预测；T4B 连续有销 SKU 由系统直接给保守保底数。</li>
-          <li>版本详情 → 复核与发布：矩阵中 T99 行显示 0.00，点击 SKU 可触发 Dify 工作流或人工校准，入参含近 24 月销、品类趋势、预测周期。</li>
+          <li>T99：波动大、连续性不足或近端弱信号 — 有近期动销时系统写保守保底数（近30=0 归零）；T4B 连续有销 SKU 由系统直接给保守保底数。</li>
+          <li>版本详情 → 复核与发布：矩阵中 T99 行展示系统保守数（断销时为 0 且悬停「待校准」），点击 SKU 可触发 Dify 工作流或人工校准，入参含近 24 月销、品类趋势、预测周期。</li>
           <li>LLM 输出写入草稿版 sales_forecast_monthly（source=dify），可在 SKU 抽屉查看 rationale 并手工校准。</li>
           <li>SKU 抽屉提供三种辅助：<strong>AI 自动</strong>（直调 Dify）、<strong>AI+人工</strong>（外生因素：调价/投广告等）、<strong>系统运算</strong>（单 SKU 本地算法重算）。</li>
           <li>工作流 DSL：<code className="text-xs">docs/dify/workflows/single-sku-forecast.yml</code></li>

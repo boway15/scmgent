@@ -45,7 +45,7 @@ export const FORECAST_ALLCAT_V41_TIER_LABEL: Record<string, string> = {
   T3P: 'T3P 非亚马逊稳定',
   T4A: 'T4A 亚马逊边界',
   T4B: 'T4B 稳定保底',
-  T99: 'T99 不预测',
+  T99: 'T99 保守保底',
 };
 
 export const FORECAST_ALLCAT_V41_TIER_OPTIONS = [
@@ -119,7 +119,7 @@ export function formatT99ReviewMessage(message: string): string {
   const [, skuCode, category, platform, cv6, trend] = legacy;
   const platformLabel = formatForecastPlatformLabel(platform);
   return (
-    `T99 系统不预测（全品类 V4.1）：${skuCode}，商品分类 ${category}，平台 ${platformLabel}；` +
+    `T99 系统保守保底（全品类 V4.1）：${skuCode}，商品分类 ${category}，平台 ${platformLabel}；` +
     `波动较大 / 销量连续性不足 / 核心渠道信号不足；` +
     `近6月变异系数 cv6=${cv6}，趋势比 trend=${trend}`
   );

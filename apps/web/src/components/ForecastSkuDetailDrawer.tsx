@@ -614,7 +614,7 @@ export function ForecastSkuDetailDrawer({
                         ? ' AI 辅助预测无 legacy 近端/同比混合因子，表中仅展示品类季节趋势与预测结果。'
                         : ' legacy 模式展示近端/同比混合权重与品类季节趋势系数。'}
                     {isT99ForecastTier(profileSegment)
-                      ? ' T99 层系统预测为 0.00，锚定/季节/混合水平仅供诊断，与列表矩阵一致。'
+                      ? ' T99 为系统保守保底（断销时为 0）；锚定/季节/混合水平仅供诊断，与列表矩阵一致。'
                       : null}
                     {canEditCalibration ? ' 当前为草稿，可编辑校准。' : ' 已发布版本只读。'}
                     {' 已发生月份展示实际日均，便于对照生效值；未来月份为 -。'}

@@ -18,6 +18,7 @@ const COMMON = {
     '算法置信度：high 高 / medium 中 / low 低。V4.1 由商品 T 层决定（T1 高，T2–T3P 中，T4 低）；legacy 由近 90 天动销与品类系数是否裁剪等综合判定。',
   system:
     '系统预测日均 = 混合水平 × 趋势衰减 × 月折减 × T层保守系数，再夹在 [下限, 上限] 内。' +
+    '全渠道汇总时为各渠道系统值求和，悬停说明合计口径；切换单渠道可看公式拆解。' +
     ' 趋势比 <0.85 → ×0.85；0.85–1.35 → ×1.00；>1.35 逐级上调；growth 时改用 recent30/recent90 滚动口径。' +
     ' 4–12 月按地平线序号折减；T1 保守 ×0.88（B 类 ×0.86）。' +
     ' 悬停系统数值可看逐月拆解，末行与单元格展示一致。',
@@ -92,7 +93,7 @@ export function getForecastHorizonColumnHelp(
 ): string {
   const { mode, anchorFormula, tier, t99Diagnostic } = ctx;
   const t99Note = t99Diagnostic
-    ? ' T99 层系统预测为 0，锚定/季节/混合水平仅供诊断。'
+    ? ' T99 为系统保守保底（断销时为 0）；锚定/季节/混合水平仅供诊断。'
     : '';
 
   switch (column) {
@@ -131,7 +132,7 @@ export function getForecastHorizonColumnHelp(
     case 'categoryCombined':
       return LEGACY.categoryCombined;
     case 'system':
-      return COMMON.system + (t99Diagnostic ? ' T99 层固定为 0.00。' : '');
+      return COMMON.system;
     case 'calibration':
       return COMMON.calibration;
     case 'effective':

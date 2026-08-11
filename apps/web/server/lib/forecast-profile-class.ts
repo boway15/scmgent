@@ -206,7 +206,7 @@ const ALLCAT_V41_TIER_LABEL: Record<string, string> = {
   T3P: 'T3P 非亚马逊稳定',
   T4A: 'T4A 亚马逊边界',
   T4B: 'T4B 稳定保底',
-  T99: 'T99 不预测',
+  T99: 'T99 保守保底',
 };
 
 export function computeContinuity(monthlyQty: number[]): number {

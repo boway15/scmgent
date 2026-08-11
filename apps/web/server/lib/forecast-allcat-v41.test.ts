@@ -23,6 +23,7 @@ import {
   applyV41CoreUpperBiasCap,
   applyV41MicroSalesUpperCap,
   applyV41TailUpperBiasCap,
+  buildT99ReviewMessage,
   V41_T4B_NEAR_CONSERVATIVE_FACTOR,
   V41_T4B_CONSERVATIVE_FACTOR,
 } from './forecast-allcat-v41.js';
@@ -325,8 +326,55 @@ describe('forecast-allcat-v41', () => {
     });
     assert.equal(result.tier, 'T99');
     assert.equal(result.forecastDaily, 1.8); // max(3,2)*0.6
+    assert.equal(result.algorithm, 't99_conservative_floor');
+    assert.equal(result.formula, 'max(recent30,recent90)*0.6 with far decay');
+    assert.equal(result.kpiTarget, 'T99_CONSERVATIVE_FLOOR');
     assert.equal(result.horizonFactors.t99FloorMode, 'recent_max06');
     assert.equal(result.horizonFactors.t99FloorDaily, 1.8);
+  });
+
+  it('buildT99ReviewMessage uses neutral copy when floor params omitted', () => {
+    const metrics = {
+      q1: 0, q3: 0, q6: 0, q12: 0,
+      d2: 0, d3: 0, d6: 0, d12: 0,
+      active2: 0, active6: 0, active12: 0,
+      cv6: 9, trendRatio: 1,
+    };
+    const message = buildT99ReviewMessage({
+      skuCode: 'SKU-1',
+      productCategory: 'U',
+      platform: 'AMAZON',
+      metrics,
+    });
+    assert.match(message, /系统保守保底（有近30动销时出数，断销归零）/);
+    assert.doesNotMatch(message, /保守保底日均 0/);
+  });
+
+  it('buildT99ReviewMessage shows zero gate and positive floor explicitly', () => {
+    const metrics = {
+      q1: 0, q3: 0, q6: 0, q12: 0,
+      d2: 0, d3: 0, d6: 0, d12: 0,
+      active2: 0, active6: 0, active12: 0,
+      cv6: 9, trendRatio: 1,
+    };
+    const zeroGate = buildT99ReviewMessage({
+      skuCode: 'SKU-1',
+      productCategory: 'U',
+      platform: 'AMAZON',
+      metrics,
+      floorMode: 'zero_gate_recent30',
+    });
+    assert.match(zeroGate, /近30天断销，系统归零/);
+
+    const positive = buildT99ReviewMessage({
+      skuCode: 'SKU-1',
+      productCategory: 'U',
+      platform: 'AMAZON',
+      metrics,
+      floorMode: 'recent_max06',
+      floorDaily: 2.4,
+    });
+    assert.match(positive, /系统保守保底日均 2\.4/);
   });
 
   it('classifies stable unclassified SKU as T4B with positive forecast', () => {

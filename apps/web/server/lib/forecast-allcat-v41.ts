@@ -1016,6 +1016,8 @@ function tierAlgorithm(tier: AllCatV41Tier): string {
       return 'amazon_boundary_blend';
     case 'T4B':
       return 'stable_continuity_floor_blend';
+    case 'T99':
+      return 't99_conservative_floor';
     default:
       return 'no_forecast';
   }
@@ -1045,6 +1047,8 @@ function tierFormula(tier: AllCatV41Tier, metrics?: Pick<AllCatV41Metrics, 'acti
         return '0.55*d3 + 0.45*d6';
       }
       return '0.35*d3 + 0.45*d6 + 0.20*d12';
+    case 'T99':
+      return 'max(recent30,recent90)*0.6 with far decay';
     default:
       return 'no_forecast';
   }
@@ -1263,10 +1267,17 @@ export function buildT99ReviewMessage(input: {
   floorDaily?: number;
 }): string {
   const platformLabel = formatAllCatV41PlatformLabel(input.platform);
-  const floorNote =
-    input.floorMode === 'zero_gate_recent30' || (input.floorDaily != null && input.floorDaily <= 0)
-      ? '近30天断销，系统归零'
-      : `系统保守保底日均 ${roundDaily(input.floorDaily ?? 0)}（max(近30,近90)×0.6，远月衰减）`;
+  let floorNote: string;
+  if (
+    input.floorMode === 'zero_gate_recent30' ||
+    (input.floorDaily != null && input.floorDaily <= 0)
+  ) {
+    floorNote = '近30天断销，系统归零';
+  } else if (input.floorDaily != null && input.floorDaily > 0) {
+    floorNote = `系统保守保底日均 ${roundDaily(input.floorDaily)}（max(近30,近90)×0.6，远月衰减）`;
+  } else {
+    floorNote = '系统保守保底（有近30动销时出数，断销归零）';
+  }
   return (
     `T99 ${floorNote}（全品类 V4.1）：${input.skuCode}，商品分类 ${input.productCategory}，平台 ${platformLabel}；` +
     `波动较大 / 销量连续性不足 / 核心渠道信号不足；` +

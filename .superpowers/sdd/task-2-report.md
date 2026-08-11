@@ -1,85 +1,41 @@
-# Task 2 Report: 库存位置纯函数（桶映射 + fill_gap）
+# Task 2 Report: V4.1 bounded T99 output + horizon factors
 
 ## Status
 
-**COMPLETE** — 纯函数模块已创建，5/5 单测通过，已提交。
+**DONE_WITH_CONCERNS** — Task 2 implementation, TDD cycle, scoped commit, and self-review are complete. The required tests pass; repository-wide server type-check remains red from pre-existing diagnostics.
 
-## Branch & Commit
+## Commit
 
-- Branch: `feat/inventory-planning-boundary-p0`
-- Commit: `fd22298` — `feat: add inventory position merge helpers for P0`
+- `46912b3` — `feat(forecast): apply T99 system floor in V4.1 bounded daily`
+- Commit scope: only `forecast-allcat-v41.ts` and its test; Task 3 persistence and Task 4 frontend copy were not changed.
 
-## Files Created
+## Implementation
 
-| File | Purpose |
-|------|---------|
-| `apps/web/server/lib/inventory-position.ts` | 类型定义 + `mapDraftStatusToBucket` / `openDraftQty` / `mergeInventoryPosition` |
-| `apps/web/server/lib/inventory-position.test.ts` | 5 个纯函数单测 |
+- Imported Task 1's `resolveT99SystemFloorDaily` and `T99FloorMode`.
+- T99 bounded output now applies the recent30 zero gate, `max(recent30,recent90) × 0.6`, and far-horizon decay.
+- Added `t99FloorDaily` / `t99FloorMode` to bounded results and persisted audit values into `horizonFactors`.
+- Updated the T99 tier label, KPI target, and review message to conservative-floor semantics.
+- Preserved zero output when recent30 is absent or zero.
 
-## TDD Evidence
+## TDD and verification
 
-### RED (Step 2)
+- RED: required test command failed in exactly 2 new tests because T99 still returned `0`.
+- GREEN: `pnpm --filter @scm/web exec tsx --test server/lib/forecast-allcat-v41.test.ts` — PASS, 43 tests, 0 failures.
+- IDE lint: no errors in either changed file.
+- `git diff --check`: PASS.
+- `pnpm --filter @scm/web exec tsc -p tsconfig.node.json --noEmit`: FAIL with 219 existing diagnostics; the sole hit in this test file is an older fixture missing `trendRatio`, not a new Task 2 line.
 
-Command:
+## Self-review
 
-```bash
-pnpm --filter @scm/web exec tsx --test server/lib/inventory-position.test.ts
-```
+- Verified near/far/gated values are `2.4`, `1.728`, and `0`, respectively.
+- Verified forecast output and audit factors reuse the same bounded floor result without duplicate calculation.
+- Verified T99 remains excluded from peer-platform lift and existing no-recent-sales behavior remains zero.
+- Verified no changes to `forecast-collaboration.ts` or frontend files.
 
-Result: **FAIL** — `ERR_MODULE_NOT_FOUND: Cannot find module '.../inventory-position.js'`
+## Review fix (Task 2 follow-up)
 
-```
-ℹ tests 1
-ℹ pass 0
-ℹ fail 1
-```
+**Issue 1 — T99 algorithm/formula still `no_forecast`:** Updated `tierAlgorithm` / `tierFormula` so T99 emits `t99_conservative_floor` and `max(recent30,recent90)*0.6 with far decay`, aligned with `kpiTarget: T99_CONSERVATIVE_FLOOR`.
 
-### GREEN (Step 4)
+**Issue 2 — `buildT99ReviewMessage` invented zero when floor params omitted:** When `floorMode` / `floorDaily` are both omitted, message now uses neutral copy `系统保守保底（有近30动销时出数，断销归零）`; zero gate and explicit positive floor paths unchanged.
 
-Same command after implementing `inventory-position.ts`:
-
-Result: **PASS**
-
-```
-▶ inventory-position pure
-  ✔ maps draft statuses to buckets
-  ✔ computes open qty
-  ✔ drafts_fill_gap only fills zero snapshot buckets
-  ✔ snapshot_only ignores drafts
-  ✔ sum_both adds drafts on top of snapshot
-✔ inventory-position pure
-
-ℹ tests 5
-ℹ pass 5
-ℹ fail 0
-```
-
-## Implementation Summary
-
-- **`mapDraftStatusToBucket`**: 跟单状态 → 桶映射（`draft`/`confirmed`/`exception` → `confirmedOpen`；`in_production`/`ready_to_ship` → `inProduction`；`in_transit`/`partial_received` → `inTransit`；`received`/`cancelled` → `null`）
-- **`openDraftQty`**: `max(0, qty - receivedQty)`
-- **`mergeInventoryPosition`**: 三种去重模式
-  - `drafts_fill_gap`（默认）：快照权威，跟单仅补 snapshot 为 0 的 `inProduction`/`inTransit` 桶；`confirmedOpen` 始终来自跟单
-  - `snapshot_only`：忽略跟单桶
-  - `sum_both`：快照 + 跟单叠加
-- **`effectiveQty`**: `available + inProduction + inTransit + confirmedOpen - reserved - backorder`
-
-## Test Coverage
-
-| Test | Assertion focus |
-|------|-----------------|
-| maps draft statuses to buckets | 9 状态映射 |
-| computes open qty | 开放量计算（含超收归零） |
-| drafts_fill_gap | 快照非零桶保留、零桶补齐、effectiveQty |
-| snapshot_only | 跟单被忽略 |
-| sum_both | 快照与跟单叠加 |
-
-## Concerns / Notes for Task 3+
-
-- 本任务仅纯函数；`resolveInventoryPosition`（DB 聚合）留给 Task 3
-- `qtyBackorder` 固定为 0；`sources` / `unassignedOpenQty` 透传但未在本任务单测中覆盖
-- `confirmedOpen` 在 `drafts_fill_gap` 模式下不与快照去重（设计如此：快照无此桶）
-
-## Out of Scope (not committed)
-
-Working tree 其余脏文件未纳入本次 commit。
+**Verification:** `pnpm --filter @scm/web exec tsx --test server/lib/forecast-allcat-v41.test.ts` — PASS, 45 tests, 0 failures (+2 new review-message / metadata assertions).

@@ -6,6 +6,20 @@ export function normalizeCategoryPath(value: string | null | undefined): string 
   return (value ?? '').trim().replace(/\\/g, '/');
 }
 
+const PROJECT_GROUP_RE = /项目\d+组/;
+
+/** 从品类路径第二段提取核心项目组名，如 `项目1组`；匹配不到返回 null。 */
+export function extractProjectGroupFromCategory(
+  category: string | null | undefined,
+): string | null {
+  const normalized = normalizeCategoryPath(category);
+  if (!normalized) return null;
+  const segments = normalized.split('/').filter(Boolean);
+  if (segments.length < 2) return null;
+  const match = segments[1].match(PROJECT_GROUP_RE);
+  return match?.[0] ?? null;
+}
+
 /** Match SKU category against a filter (exact or parent path prefix). */
 export function skuMatchesCategoryFilter(
   skuCategory: string | null | undefined,

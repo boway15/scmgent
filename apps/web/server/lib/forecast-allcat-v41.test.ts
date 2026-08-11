@@ -1,6 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  applyPeerPlatformNearFloor,
   computeAllCatV41BoundedDaily,
   computeAllCatV41ForecastForMonth,
   computeWalkForwardMetrics,
@@ -18,9 +19,12 @@ import {
   shouldBypassT99Classification,
   T99_RECENT_MONTH_DAILY_MIN,
   trendDecayFactor,
+  tierConservativeFactor,
   applyV41CoreUpperBiasCap,
   applyV41MicroSalesUpperCap,
   applyV41TailUpperBiasCap,
+  V41_T4B_NEAR_CONSERVATIVE_FACTOR,
+  V41_T4B_CONSERVATIVE_FACTOR,
 } from './forecast-allcat-v41.js';
 
 function buildSeasonalMonthlyRows(): Array<{ saleYear: number; month: number; qtySold: number }> {
@@ -857,5 +861,90 @@ describe('forecast-allcat-v41', () => {
     });
     assert.equal(bounded.forecastDaily, 0);
     assert.equal(bounded.ghostGated, true);
+  });
+
+  it('T4B near horizon uses relaxed conservative factor and blend floor', () => {
+    assert.equal(tierConservativeFactor('T4B', 'C', 0), V41_T4B_NEAR_CONSERVATIVE_FACTOR);
+    assert.equal(tierConservativeFactor('T4B', 'C', 3), V41_T4B_CONSERVATIVE_FACTOR);
+
+    const metrics = {
+      q1: 300,
+      q3: 900,
+      q6: 1800,
+      q12: 3600,
+      d2: 12,
+      d3: 11,
+      d6: 10,
+      d12: 9,
+      active2: 2,
+      active6: 6,
+      active12: 12,
+      cv6: 0.35,
+      trendRatio: 1.05,
+    };
+    const near = computeAllCatV41BoundedDaily({
+      tier: 'T4B',
+      baseDaily: 10,
+      productCategory: 'C',
+      forecastMonth: 7,
+      horizonIndex: 0,
+      metrics,
+      recent30DailyAvg: 11,
+      recent90DailyAvg: 10,
+    });
+    const far = computeAllCatV41BoundedDaily({
+      tier: 'T4B',
+      baseDaily: 10,
+      productCategory: 'C',
+      forecastMonth: 7,
+      horizonIndex: 4,
+      metrics,
+      recent30DailyAvg: 11,
+      recent90DailyAvg: 10,
+    });
+    assert.equal(near.conservativeFactor, V41_T4B_NEAR_CONSERVATIVE_FACTOR);
+    assert.ok(near.nearHorizonFloor != null && near.nearHorizonFloor >= 7);
+    assert.ok(near.forecastDaily >= near.nearHorizonFloor! - 0.0001);
+    assert.ok(far.forecastDaily < near.forecastDaily);
+  });
+
+  it('applyPeerPlatformNearFloor lifts weak side platform toward peer Amazon volume', () => {
+    const lifted = applyPeerPlatformNearFloor({
+      forecastDaily: 0.23,
+      horizonIndex: 0,
+      peerPlatformRecentDaily: 20,
+    });
+    assert.equal(lifted.peerPlatformFloor, 4);
+    assert.equal(lifted.forecastDaily, 4);
+
+    const far = applyPeerPlatformNearFloor({
+      forecastDaily: 0.23,
+      horizonIndex: 4,
+      peerPlatformRecentDaily: 20,
+    });
+    assert.equal(far.peerPlatformFloor, null);
+    assert.equal(far.forecastDaily, 0.23);
+  });
+
+  it('computeAllCatV41ForecastForMonth applies peer platform floor into horizon_factors', () => {
+    const result = computeAllCatV41ForecastForMonth({
+      productCategory: 'B',
+      platform: 'TIKTOK',
+      forecastYear: 2026,
+      forecastMonth: 7,
+      horizonIndex: 0,
+      monthlyRows: Array.from({ length: 12 }, (_, i) => ({
+        saleYear: 2025 + (i >= 6 ? 1 : 0),
+        month: ((i + 6) % 12) + 1,
+        qtySold: 40 + i * 2,
+      })),
+      recent30DailyAvg: 1.5,
+      recent90DailyAvg: 1.2,
+      peerPlatformRecentDaily: 25,
+      historyCapEnd: new Date('2026-06-30T00:00:00Z'),
+    });
+    assert.notEqual(result.tier, 'T99');
+    assert.ok(result.forecastDaily >= 5);
+    assert.equal(result.horizonFactors.peerPlatformFloor, 5);
   });
 });

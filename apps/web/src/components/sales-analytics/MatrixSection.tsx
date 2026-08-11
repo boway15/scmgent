@@ -132,9 +132,9 @@ export function MatrixSection({
             </Button>
           </div>
           <p className="text-sm text-text-sub">
-            粒度：{dimName} · 共 {rows.length} 行（点击行可锁定下方走势图）。预测列为
+            粒度：{dimName} · 共 {rows.length} 行（点击行可锁定下方走势图）。预测列与底部预估同口径（月：趋势×季节；周：线性趋势），为
             <span className="font-medium text-amber-700">看板粗估，非系统发布预测</span>
-            。
+            ；悬停「预测模型」可查看拟合 R² / 可信度。
           </p>
         </CardHeader>
         <CardContent>

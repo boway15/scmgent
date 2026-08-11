@@ -1,6 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  extractProjectGroupFromCategory,
   normalizeCategoryPath,
   resolveEffectiveSkuCategory,
   skuMatchesCategoryFilter,
@@ -45,5 +46,24 @@ describe('sku-category', () => {
       skuMatchesCategoryFilter(path, 'DJ02-家具事业1部/Amazon项目1组-第一曲线-US'),
       true,
     );
+  });
+
+  it('extracts 项目x组 from category path second segment', () => {
+    assert.equal(
+      extractProjectGroupFromCategory(
+        'DJ02-家具事业1部\\Amazon项目1组-第一曲线-US\\卧室-床头柜Nightstands',
+      ),
+      '项目1组',
+    );
+    assert.equal(
+      extractProjectGroupFromCategory(
+        'DJ01-郑州大件/非Amazon项目6组-第二曲线-US/客厅-电视柜',
+      ),
+      '项目6组',
+    );
+    assert.equal(extractProjectGroupFromCategory('Outdoor/Patio'), null);
+    assert.equal(extractProjectGroupFromCategory('单段品类'), null);
+    assert.equal(extractProjectGroupFromCategory(null), null);
+    assert.equal(extractProjectGroupFromCategory(''), null);
   });
 });

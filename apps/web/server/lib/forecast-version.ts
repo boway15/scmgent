@@ -138,6 +138,62 @@ export async function archiveForecastVersion(versionId: string) {
   return row;
 }
 
+export type DeleteDraftForecastVersionResult = {
+  id: string;
+  versionNo: string;
+  deleted: {
+    forecastMonthly: number;
+    forecastAccuracy: number;
+    reviewItems: number;
+  };
+};
+
+/** 仅草稿可硬删除；先清子表再删版本 */
+export async function deleteDraftForecastVersion(
+  versionId: string,
+): Promise<DeleteDraftForecastVersionResult> {
+  const version = await getForecastVersionById(versionId);
+  if (!version) {
+    throw Object.assign(new Error('预测版本不存在'), { status: 404 as const });
+  }
+  if (version.status !== 'draft') {
+    throw Object.assign(new Error('仅草稿版本可删除'), { status: 400 as const });
+  }
+
+  return db.transaction(async (tx) => {
+    const forecastMonthly = await tx
+      .delete(salesForecastMonthly)
+      .where(eq(salesForecastMonthly.versionId, versionId))
+      .returning({ id: salesForecastMonthly.id });
+    const forecastAccuracy = await tx
+      .delete(forecastAccuracyMonthly)
+      .where(eq(forecastAccuracyMonthly.versionId, versionId))
+      .returning({ id: forecastAccuracyMonthly.id });
+    const reviewItems = await tx
+      .delete(salesForecastReviewItems)
+      .where(eq(salesForecastReviewItems.versionId, versionId))
+      .returning({ id: salesForecastReviewItems.id });
+    const [deleted] = await tx
+      .delete(salesForecastVersions)
+      .where(and(eq(salesForecastVersions.id, versionId), eq(salesForecastVersions.status, 'draft')))
+      .returning({ id: salesForecastVersions.id, versionNo: salesForecastVersions.versionNo });
+
+    if (!deleted) {
+      throw Object.assign(new Error('删除失败：版本不存在或已非草稿'), { status: 409 as const });
+    }
+
+    return {
+      id: deleted.id,
+      versionNo: deleted.versionNo,
+      deleted: {
+        forecastMonthly: forecastMonthly.length,
+        forecastAccuracy: forecastAccuracy.length,
+        reviewItems: reviewItems.length,
+      },
+    };
+  });
+}
+
 export async function listForecastVersions(status?: ForecastVersionStatus) {
   const base = db.select().from(salesForecastVersions).$dynamic();
   if (status) {
@@ -168,6 +224,8 @@ export type ForecastVersionListItem = {
   status: ForecastVersionStatus;
   createdAt: Date;
   publishedAt: Date | null;
+  /** 预测地平线首月 YYYY-MM；历史版本可能为空 */
+  startMonth: string | null;
   /** 单渠道生成草稿时的渠道码；全平台或未识别时为 null */
   generationPlatform: string | null;
   stats: ForecastVersionStats;
@@ -325,6 +383,7 @@ function toVersionListItem(
     status: version.status as ForecastVersionStatus,
     createdAt: version.createdAt,
     publishedAt: version.publishedAt,
+    startMonth: version.startMonth ?? null,
     generationPlatform,
     stats,
   };

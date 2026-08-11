@@ -8,14 +8,26 @@ const STATIC_ALIASES: Record<string, string> = {
   全平台: 'ALL',
   AMZ: 'AMAZON',
   AMAZON: 'AMAZON',
+  'AMAZON.COM': 'AMAZON',
+  'AMAZON US': 'AMAZON',
+  'AMAZON-US': 'AMAZON',
   WALMART: 'WALMART',
+  WM: 'WALMART',
   EBAY: 'EBAY',
   SHOPIFY: 'SHOPIFY',
   DTC: 'DTC',
   TEMU: 'TEMU',
   TIKTOK: 'TIKTOK',
+  TT: 'TIKTOK',
+  'TIK TOK': 'TIKTOK',
+  'TIKTOK SHOP': 'TIKTOK',
   ALL: 'ALL',
+  未知: 'UNKNOWN',
+  UNKNOWN: 'UNKNOWN',
 };
+
+/** 导入批次 UNKNOWN 渠道占比告警阈值（0–1） */
+export const SALES_IMPORT_UNKNOWN_CHANNEL_WARN_RATIO = 0.05;
 
 let aliasCache: Map<string, string> | null = null;
 let aliasCacheAt = 0;
@@ -141,6 +153,25 @@ export async function validateSalesPlatform(raw?: string | null): Promise<{
     };
   }
   return { code };
+}
+
+/** 统计导入计划中 UNKNOWN 渠道占比，超阈值返回告警文案 */
+export function assessUnknownChannelShare(input: {
+  totalRows: number;
+  unknownRows: number;
+  warnRatio?: number;
+}): { ratio: number; warning?: string } {
+  const total = Math.max(0, input.totalRows);
+  const unknown = Math.max(0, input.unknownRows);
+  const ratio = total > 0 ? unknown / total : 0;
+  const threshold = input.warnRatio ?? SALES_IMPORT_UNKNOWN_CHANNEL_WARN_RATIO;
+  if (total > 0 && ratio > threshold) {
+    return {
+      ratio,
+      warning: `UNKNOWN 渠道占比 ${(ratio * 100).toFixed(1)}%（${unknown}/${total}）超过阈值 ${(threshold * 100).toFixed(0)}%，请补全 sales_platform_aliases 后回刷`,
+    };
+  }
+  return { ratio };
 }
 
 export async function listActiveSalesPlatforms(station?: string) {

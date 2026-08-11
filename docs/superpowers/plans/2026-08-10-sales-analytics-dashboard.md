@@ -663,7 +663,7 @@ git commit -m "feat(sales-analytics): add dashboard shell with KPI and charts"
 - [ ] **Step 2: 底部预估面板**
 
 - `fcScope`: filter | all
-- `fcHorizon`: 月 5–12 默认 5；周 20–52 默认 20
+- `fcHorizon`: 月 5–12 默认 12；周 20–52 默认 20
 - 历史+预估折线；表：预估期、销量、环比、依据
 
 - [ ] **Step 3: 矩阵 CSV 导出**

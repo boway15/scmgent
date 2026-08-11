@@ -13,6 +13,8 @@ import {
   mapForecastDailyFields,
   sumEffectiveForecastDailyAcrossPlatforms,
   resolveHorizonConsumptionDaily,
+  resolveHorizonConsumptionDailyDetailed,
+  resolveT99ReplenishmentFallbackDaily,
 } from './forecast-demand.js';
 
 describe('forecast-demand', () => {
@@ -129,5 +131,34 @@ describe('forecast-demand', () => {
       profileClass: 'B',
     });
     assert.equal(daily, 14);
+  });
+
+  it('T99 zero forecast falls back to recent sales for replenishment', () => {
+    assert.equal(
+      resolveT99ReplenishmentFallbackDaily({
+        recent30DailyAvg: 2,
+        recent90DailyAvg: 1,
+        categoryPoolFloorDaily: 0.1,
+      }),
+      1.2,
+    );
+    const detailed = resolveHorizonConsumptionDailyDetailed({
+      forecastDailyAvg: 0,
+      horizonMonthIndex: 0,
+      profileSegment: 'T99',
+      recent30DailyAvg: 2,
+      recent90DailyAvg: 1,
+    });
+    assert.equal(detailed.demandSource, 't99_fallback');
+    assert.equal(detailed.daily, 1.2);
+    assert.equal(
+      resolveHorizonConsumptionDaily({
+        forecastDailyAvg: 0,
+        horizonMonthIndex: 0,
+        profileSegment: 'T1',
+        recent30DailyAvg: 2,
+      }),
+      0,
+    );
   });
 });

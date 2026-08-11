@@ -18,6 +18,7 @@ export const PRODUCT_MASTER_SKU_COLUMNS: ProductMasterSkuColumnDef[] = [
   { id: 'code', label: 'SKU', excelCol: 'B', kind: 'mono' },
   { id: 'name', label: 'SKU名称', excelCol: 'D', kind: 'text' },
   { id: 'category', label: '品类', excelCol: 'A', kind: 'text' },
+  { id: 'projectGroup', label: '项目组', kind: 'text' },
   { id: 'lifecycle', label: '生命周期', excelCol: 'C', kind: 'text' },
   { id: 'salesCountry', label: '销售国家', excelCol: 'E', kind: 'text' },
   { id: 'productCategory', label: '产品分类', excelCol: 'F', kind: 'text' },
@@ -59,6 +60,7 @@ export function defaultProductMasterSkuColumnWidth(columnId: string): number {
     case 'volumeM3':
     case 'grossWeightKg':
     case 'lifecycle':
+    case 'projectGroup':
     case 'salesCountry':
     case 'ownerName':
     case 'developerName':

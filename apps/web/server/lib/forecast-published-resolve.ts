@@ -3,6 +3,8 @@ import { db, salesForecastMonthly, salesForecastVersions } from '@scm/db';
 import {
   aggregateForecastRows,
   mapForecastDailyFields,
+  resolveT99ReplenishmentFallbackDaily,
+  type HorizonDemandSource,
 } from './forecast-demand.js';
 import { FORECAST_GLOBAL_STATION } from './forecast-station-scope.js';
 
@@ -10,7 +12,20 @@ export type PublishedForecastEntry = {
   map: Map<string, number>;
   lifecycle?: string;
   versionId: string | null;
+  /** 若任一 T99 月用了近期动销兜底，标记便于补货审计 */
+  demandSource?: HorizonDemandSource;
 };
+
+function t99FallbackFromHorizonFactors(raw: unknown): number {
+  if (!raw || typeof raw !== 'object') return 0;
+  const value = raw as Record<string, unknown>;
+  const recent30 = Number(value.recent30DailyAvg);
+  const recent90 = Number(value.recent90DailyAvg);
+  return resolveT99ReplenishmentFallbackDaily({
+    recent30DailyAvg: Number.isFinite(recent30) ? recent30 : null,
+    recent90DailyAvg: Number.isFinite(recent90) ? recent90 : null,
+  });
+}
 
 /** 纯函数：同一 SKU 在多个已发布版本中取 publishedAt 最新者 */
 export function pickLatestPublishedVersionPerSku(
@@ -119,6 +134,8 @@ export async function loadMergedPublishedForecastBySkuIds(
         manualDailyAvg: string | null;
         lifecycle: string | null;
         platform: string | null;
+        profileSegment: string | null;
+        horizonFactors: unknown;
       }>
     >();
 
@@ -133,6 +150,8 @@ export async function loadMergedPublishedForecastBySkuIds(
           manualDailyAvg: salesForecastMonthly.manualDailyAvg,
           lifecycle: salesForecastMonthly.lifecycle,
           platform: salesForecastMonthly.platform,
+          profileSegment: salesForecastMonthly.profileSegment,
+          horizonFactors: salesForecastMonthly.horizonFactors,
         })
         .from(salesForecastMonthly)
         .where(
@@ -152,21 +171,38 @@ export async function loadMergedPublishedForecastBySkuIds(
     for (const skuId of ids) {
       const skuRows = rowsBySku.get(skuId) ?? [];
       const lifecycle = skuRows.find((r) => r.lifecycle)?.lifecycle ?? undefined;
+      let usedT99Fallback = false;
       const map = aggregateForecastRows(
         skuRows.map((r) => {
           const daily = mapForecastDailyFields({
             forecastDailyAvg: r.forecastDailyAvg,
             manualDailyAvg: r.manualDailyAvg,
           });
+          let forecastDailyAvg = daily.effectiveDailyAvg;
+          if (
+            forecastDailyAvg <= 0 &&
+            (r.profileSegment ?? '').trim().toUpperCase() === 'T99'
+          ) {
+            const fallback = t99FallbackFromHorizonFactors(r.horizonFactors);
+            if (fallback > 0) {
+              forecastDailyAvg = fallback;
+              usedT99Fallback = true;
+            }
+          }
           return {
             forecastYear: r.forecastYear,
             month: r.month,
-            forecastDailyAvg: daily.effectiveDailyAvg,
+            forecastDailyAvg,
             platform: r.platform,
           };
         }),
       );
-      result.set(skuId, { map, lifecycle, versionId });
+      result.set(skuId, {
+        map,
+        lifecycle,
+        versionId,
+        demandSource: usedT99Fallback ? 't99_fallback' : 'forecast',
+      });
     }
   }
 

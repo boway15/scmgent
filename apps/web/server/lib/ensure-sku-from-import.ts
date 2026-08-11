@@ -11,6 +11,7 @@ import {
   type InventorySkuMasterFields,
 } from './inventory-sku-master.js';
 import { readTurnoverSnapshot } from './inventory-turnover-snapshot.js';
+import { extractProjectGroupFromCategory } from './sku-category.js';
 
 export type SkuImportSource = 'daily_sales' | 'inventory' | 'sku_import';
 
@@ -112,6 +113,7 @@ export async function ensureSkuFromImport(input: EnsureSkuInput): Promise<Ensure
   if (!existing) {
     let created: { id: string; code: string; unit: string } | undefined;
     try {
+      const insertCategory = inventoryCols?.category ?? input.category;
       [created] = await db
         .insert(skus)
         .values({
@@ -119,7 +121,8 @@ export async function ensureSkuFromImport(input: EnsureSkuInput): Promise<Ensure
           name: displayName,
           unit: input.unit?.trim() || 'pcs',
           spuId,
-          category: inventoryCols?.category ?? input.category,
+          category: insertCategory,
+          projectGroup: extractProjectGroupFromCategory(insertCategory),
           // 生命周期默认为空，有销量后再由系统刷新
           lifecycle: input.source === 'inventory' ? null : inventoryCols?.lifecycle,
           salesCountry: inventoryCols?.salesCountry,
@@ -246,6 +249,7 @@ export async function ensureSkuFromImport(input: EnsureSkuInput): Promise<Ensure
     const patch: Record<string, unknown> = {
       name: nextState.name,
       category: nextState.category,
+      projectGroup: extractProjectGroupFromCategory(nextState.category),
       lifecycle: nextState.lifecycle,
       salesCountry: nextState.salesCountry,
       productCategory: nextState.productCategory,
@@ -275,7 +279,10 @@ export async function ensureSkuFromImport(input: EnsureSkuInput): Promise<Ensure
   if (input.name && (existing.name === existing.code || existing.name.trim() === '')) {
     patch.name = input.name.trim();
   }
-  if (input.category && !existing.category) patch.category = input.category;
+  if (input.category && !existing.category) {
+    patch.category = input.category;
+    patch.projectGroup = extractProjectGroupFromCategory(input.category);
+  }
   if (input.unitCost && !existing.unitCost) patch.unitCost = input.unitCost;
   if (!existing.spuId && spuId) patch.spuId = spuId;
 

@@ -261,6 +261,8 @@ export type SkuOverview = {
   name: string;
   unit: string;
   category?: string | null;
+  /** 从品类派生的项目组，如 项目1组 */
+  projectGroup?: string | null;
   /** A 品类 */
   lifecycle?: string | null;
   /** C 生命周期 */
@@ -468,6 +470,8 @@ export type ForecastVersionListItem = {
   status: 'draft' | 'published' | 'archived';
   createdAt: string;
   publishedAt?: string | null;
+  /** 预测地平线首月 YYYY-MM；历史版本可能为空 */
+  startMonth?: string | null;
   /** 单渠道生成草稿时的渠道码；全平台或未识别时为 null */
   generationPlatform?: string | null;
   stats: ForecastVersionStats;
@@ -478,8 +482,58 @@ export type ForecastVersionBasic = {
   versionNo: string;
   versionName: string;
   station?: string | null;
+  startMonth?: string | null;
   status: string;
   publishedAt?: string | null;
+};
+
+export type LayeredForecastVersion = {
+  id: string;
+  versionNo: string;
+  versionName: string;
+  status: 'draft' | 'published' | 'archived';
+  startMonth: string;
+  horizonMonths: number;
+  station: string;
+  algoMeta?: Record<string, unknown> | null;
+  createdBy?: string | null;
+  publishedBy?: string | null;
+  publishedAt?: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type LayeredForecastNodeLevel = 'project_group' | 'category' | 'platform' | 'sku';
+
+export type LayeredForecastNode = {
+  id: string;
+  versionId: string;
+  level: LayeredForecastNodeLevel;
+  projectGroup: string;
+  category: string;
+  platform: string;
+  skuId: string | null;
+  period: string;
+  qty: number;
+  systemQty: number;
+  draftQty: number | null;
+  locked: boolean;
+  seasonalityFactor: number | null;
+  trendFactor: number | null;
+  peakMonth: number | null;
+  manualEdited: boolean;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type LayeredForecastNodesQuery = {
+  level?: LayeredForecastNodeLevel;
+  projectGroup?: string;
+  category?: string;
+  platform?: string;
+  period?: string;
+  limit?: number;
+  offset?: number;
 };
 
 export type SkuMonthlyForecastCell = {
@@ -1119,6 +1173,7 @@ export const api = {
   getSkuOverview: (params?: {
     q?: string;
     category?: string;
+    projectGroup?: string;
     lifecycle?: string;
     salesCountry?: string;
     merchantCode?: string;
@@ -1130,6 +1185,7 @@ export const api = {
     const qs = new URLSearchParams();
     if (params?.q) qs.set('q', params.q);
     if (params?.category) qs.set('category', params.category);
+    if (params?.projectGroup) qs.set('projectGroup', params.projectGroup);
     if (params?.lifecycle) qs.set('lifecycle', params.lifecycle);
     if (params?.salesCountry) qs.set('salesCountry', params.salesCountry);
     if (params?.merchantCode) qs.set('merchantCode', params.merchantCode);
@@ -1198,6 +1254,7 @@ export const api = {
     to?: string;
     channel?: string;
     warehouse?: string;
+    station?: string;
     category?: string;
     page?: number;
     pageSize?: number;
@@ -1208,6 +1265,7 @@ export const api = {
     if (params?.to) qs.set('to', params.to);
     if (params?.channel) qs.set('channel', params.channel);
     if (params?.warehouse) qs.set('warehouse', params.warehouse);
+    if (params?.station) qs.set('station', params.station);
     if (params?.category) qs.set('category', params.category);
     if (params?.page) qs.set('page', String(params.page));
     if (params?.pageSize) qs.set('pageSize', String(params.pageSize));
@@ -1222,6 +1280,7 @@ export const api = {
         saleDate: string;
         qtySold: number;
         channel?: string | null;
+        station?: string | null;
         warehouseCode?: string | null;
         source: string;
       }>;
@@ -1237,6 +1296,7 @@ export const api = {
     to?: string;
     channel?: string;
     warehouse?: string;
+    station?: string;
     category?: string;
   }) => {
     const qs = new URLSearchParams();
@@ -1245,6 +1305,7 @@ export const api = {
     if (params?.to) qs.set('to', params.to);
     if (params?.channel) qs.set('channel', params.channel);
     if (params?.warehouse) qs.set('warehouse', params.warehouse);
+    if (params?.station) qs.set('station', params.station);
     if (params?.category) qs.set('category', params.category);
     const query = qs.toString();
     const res = await apiFetch(apiUrl(`/api/sales/history/export${query ? `?${query}` : ''}`));
@@ -2598,6 +2659,7 @@ export const api = {
     versionName?: string;
     targetVersionId?: string;
     monthCount?: number;
+    startMonth?: string;
     background?: boolean;
   }) => {
     const url = apiUrl('/api/sales-forecasts/generate-baseline');
@@ -3052,6 +3114,60 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ confirmAll: true }),
     }),
+  listLayeredForecastVersions: () =>
+    request<{ items: LayeredForecastVersion[] }>('/api/layered-forecasts/versions'),
+  getLayeredForecastVersion: (id: string) =>
+    request<LayeredForecastVersion>(`/api/layered-forecasts/versions/${id}`),
+  listLayeredForecastNodes: (id: string, params: LayeredForecastNodesQuery = {}) => {
+    const qs = new URLSearchParams();
+    if (params.level) qs.set('level', params.level);
+    if (params.projectGroup) qs.set('projectGroup', params.projectGroup);
+    if (params.category) qs.set('category', params.category);
+    if (params.platform) qs.set('platform', params.platform);
+    if (params.period) qs.set('period', params.period);
+    if (params.limit != null) qs.set('limit', String(params.limit));
+    if (params.offset != null) qs.set('offset', String(params.offset));
+    const query = qs.toString();
+    return request<{ items: LayeredForecastNode[]; total: number }>(
+      `/api/layered-forecasts/versions/${id}/nodes${query ? `?${query}` : ''}`,
+    );
+  },
+  generateLayeredForecast: (body: {
+    startMonth?: string;
+    horizonMonths?: number;
+    projectGroup?: string;
+    category?: string;
+  }) =>
+    request<{ versionId: string; versionNo: string; nodeCount: number }>('/api/layered-forecasts/generate', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+  patchLayeredForecastNode: (
+    versionId: string,
+    nodeId: string,
+    body: { qty: number; cascade?: boolean },
+  ) =>
+    request<{ ok: true }>(`/api/layered-forecasts/versions/${versionId}/nodes/${nodeId}`, {
+      method: 'PATCH',
+      body: JSON.stringify(body),
+    }),
+  lockLayeredForecastNode: (versionId: string, nodeId: string, locked: boolean) =>
+    request<{ ok: true }>(`/api/layered-forecasts/versions/${versionId}/nodes/${nodeId}/lock`, {
+      method: 'POST',
+      body: JSON.stringify({ locked }),
+    }),
+  reconcileLayeredForecast: (
+    versionId: string,
+    body: { mode: 'from_parent' | 'reset_parent_from_children'; nodeId: string },
+  ) =>
+    request<{ ok: true }>(`/api/layered-forecasts/versions/${versionId}/reconcile`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+  publishLayeredForecast: (versionId: string) =>
+    request<{ ok: true }>(`/api/layered-forecasts/versions/${versionId}/publish`, {
+      method: 'POST',
+    }),
   getSalesForecastVersions: (params?: {
     status?: 'draft' | 'published' | 'archived';
     includeStats?: boolean;
@@ -3071,6 +3187,16 @@ export const api = {
   },
   getSalesForecastVersion: (id: string) =>
     request<ForecastVersionListItem>(`/api/sales-forecast-versions/${id}`),
+  deleteSalesForecastVersion: (id: string) =>
+    request<{
+      id: string;
+      versionNo: string;
+      deleted: {
+        forecastMonthly: number;
+        forecastAccuracy: number;
+        reviewItems: number;
+      };
+    }>(`/api/sales-forecast-versions/${id}`, { method: 'DELETE' }),
   createSalesForecastVersion: (body?: { versionName?: string; station?: string }) =>
     request<{
       id: string;

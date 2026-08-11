@@ -14,6 +14,22 @@ import { cn } from '@/lib/utils';
 const DEFAULT_PAGE_SIZE = 20;
 type SalesDimension = 'daily' | 'monthly';
 
+const STATION_OPTIONS = ['US', 'EU', 'UK', '其他'] as const;
+
+function CellText({
+  value,
+  className,
+}: {
+  value: string;
+  className?: string;
+}) {
+  return (
+    <td className={cn('p-2', className)} title={value}>
+      <span className="block truncate">{value}</span>
+    </td>
+  );
+}
+
 function defaultDailyTo() {
   return new Date().toISOString().slice(0, 10);
 }
@@ -45,6 +61,7 @@ export function SalesHistoryPage() {
   const [monthTo, setMonthTo] = useState(defaultMonthlyTo);
   const [channel, setChannel] = useState('');
   const [warehouse, setWarehouse] = useState('');
+  const [station, setStation] = useState('');
   const [category, setCategory] = useState('');
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE);
@@ -56,6 +73,7 @@ export function SalesHistoryPage() {
     monthTo: defaultMonthlyTo(),
     channel: '',
     warehouse: '',
+    station: '',
     category: '',
   });
 
@@ -76,6 +94,7 @@ export function SalesHistoryPage() {
         to: applied.to || undefined,
         channel: applied.channel || undefined,
         warehouse: applied.warehouse || undefined,
+        station: applied.station || undefined,
         category: applied.category || undefined,
         page,
         pageSize,
@@ -108,6 +127,7 @@ export function SalesHistoryPage() {
       monthTo,
       channel,
       warehouse,
+      station,
       category,
     });
   };
@@ -133,6 +153,7 @@ export function SalesHistoryPage() {
         to: applied.to || undefined,
         channel: applied.channel || undefined,
         warehouse: applied.warehouse || undefined,
+        station: applied.station || undefined,
         category: applied.category || undefined,
       });
       return;
@@ -236,12 +257,26 @@ export function SalesHistoryPage() {
             onChange={(e) => setChannel(e.target.value)}
           />
           {dimension === 'daily' ? (
-            <Input
-              placeholder="发货仓"
-              className="h-9 w-32"
-              value={warehouse}
-              onChange={(e) => setWarehouse(e.target.value)}
-            />
+            <>
+              <select
+                className="h-9 rounded-md border border-border bg-background px-2 text-sm"
+                value={station}
+                onChange={(e) => setStation(e.target.value)}
+              >
+                <option value="">全部站点</option>
+                {STATION_OPTIONS.map((s) => (
+                  <option key={s} value={s}>
+                    {s}
+                  </option>
+                ))}
+              </select>
+              <Input
+                placeholder="发货仓"
+                className="h-9 w-32"
+                value={warehouse}
+                onChange={(e) => setWarehouse(e.target.value)}
+              />
+            </>
           ) : null}
           <CategorySearchSelect value={category} onChange={setCategory} />
           <Button variant="outline" onClick={applyFilters}>
@@ -277,75 +312,111 @@ export function SalesHistoryPage() {
           {isLoading ? (
             <p className="text-text-sub">加载中...</p>
           ) : dimension === 'daily' ? (
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-border text-left text-text-sub">
-                  <th className="p-2 font-normal">日期</th>
-                  <th className="p-2 font-normal">SKU</th>
-                  <th className="p-2 font-normal">名称</th>
-                  <th className="p-2 font-normal">品类</th>
-                  <th className="p-2 font-normal">销量</th>
-                  <th className="p-2 font-normal">渠道</th>
-                  <th className="p-2 font-normal">发货仓</th>
-                  <th className="p-2 font-normal">来源</th>
-                </tr>
-              </thead>
-              <tbody>
-                {dailyData?.items.map((row) => (
-                  <tr key={row.id} className="border-b border-border/60">
-                    <td className="p-2">{String(row.saleDate).slice(0, 10)}</td>
-                    <td className="p-2 font-mono">{row.skuCode}</td>
-                    <td className="p-2">{row.skuName}</td>
-                    <td className="p-2 text-text-sub">{row.category ?? '-'}</td>
-                    <td className="p-2 font-numeric text-primary">{row.qtySold}</td>
-                    <td className="p-2 text-text-sub">{row.channel ?? '-'}</td>
-                    <td className="p-2 font-mono text-text-sub">{row.warehouseCode ?? '-'}</td>
-                    <td className="p-2 text-text-sub">{row.source}</td>
+            <div className="overflow-x-auto">
+              <table className="w-full table-fixed text-sm">
+                <colgroup>
+                  <col className="w-[7rem]" />
+                  <col className="w-[8rem]" />
+                  <col className="w-[12rem]" />
+                  <col className="w-[14rem]" />
+                  <col className="w-[4.5rem]" />
+                  <col className="w-[4rem]" />
+                  <col className="w-[6rem]" />
+                  <col className="w-[6rem]" />
+                  <col className="w-[4.5rem]" />
+                </colgroup>
+                <thead>
+                  <tr className="border-b border-border text-left text-text-sub">
+                    <th className="p-2 font-normal">日期</th>
+                    <th className="p-2 font-normal">SKU</th>
+                    <th className="p-2 font-normal">名称</th>
+                    <th className="p-2 font-normal">品类</th>
+                    <th className="p-2 font-normal">销量</th>
+                    <th className="p-2 font-normal">站点</th>
+                    <th className="p-2 font-normal">渠道</th>
+                    <th className="p-2 font-normal">发货仓</th>
+                    <th className="p-2 font-normal">来源</th>
                   </tr>
-                ))}
-                {!dailyData?.items.length && (
-                  <tr>
-                    <td colSpan={8} className="p-4 text-center text-text-hint">
-                      暂无日销量数据，请点击上方「导入销量」
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {dailyData?.items.map((row) => (
+                    <tr key={row.id} className="border-b border-border/60">
+                      <td className="p-2 whitespace-nowrap">{String(row.saleDate).slice(0, 10)}</td>
+                      <td className="p-2 font-mono" title={row.skuCode}>
+                        <span className="block truncate">{row.skuCode}</span>
+                      </td>
+                      <CellText value={row.skuName || '-'} />
+                      <CellText value={row.category ?? '-'} className="text-text-sub" />
+                      <td className="p-2 font-numeric text-primary">{row.qtySold}</td>
+                      <td className="p-2 font-mono text-text-sub">{row.station ?? '-'}</td>
+                      <td className="p-2 text-text-sub" title={row.channel ?? undefined}>
+                        <span className="block truncate">{row.channel ?? '-'}</span>
+                      </td>
+                      <td className="p-2 font-mono text-text-sub" title={row.warehouseCode ?? undefined}>
+                        <span className="block truncate">{row.warehouseCode ?? '-'}</span>
+                      </td>
+                      <td className="p-2 text-text-sub">{row.source}</td>
+                    </tr>
+                  ))}
+                  {!dailyData?.items.length && (
+                    <tr>
+                      <td colSpan={9} className="p-4 text-center text-text-hint">
+                        暂无日销量数据，请点击上方「导入销量」
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
           ) : (
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-border text-left text-text-sub">
-                  <th className="p-2 font-normal">月份</th>
-                  <th className="p-2 font-normal">SKU</th>
-                  <th className="p-2 font-normal">名称</th>
-                  <th className="p-2 font-normal">品类</th>
-                  <th className="p-2 font-normal">月销量</th>
-                  <th className="p-2 font-normal">渠道</th>
-                  <th className="p-2 font-normal">来源</th>
-                </tr>
-              </thead>
-              <tbody>
-                {monthlyData?.items.map((row) => (
-                  <tr key={row.id} className="border-b border-border/60">
-                    <td className="p-2 font-mono">{row.saleMonth}</td>
-                    <td className="p-2 font-mono">{row.skuCode}</td>
-                    <td className="p-2">{row.skuName}</td>
-                    <td className="p-2 text-text-sub">{row.category ?? '-'}</td>
-                    <td className="p-2 font-numeric text-primary">{row.qtySold}</td>
-                    <td className="p-2 text-text-sub">{row.channel ?? '-'}</td>
-                    <td className="p-2 text-text-sub">{row.source}</td>
+            <div className="overflow-x-auto">
+              <table className="w-full table-fixed text-sm">
+                <colgroup>
+                  <col className="w-[6rem]" />
+                  <col className="w-[8rem]" />
+                  <col className="w-[12rem]" />
+                  <col className="w-[16rem]" />
+                  <col className="w-[5rem]" />
+                  <col className="w-[7rem]" />
+                  <col className="w-[5rem]" />
+                </colgroup>
+                <thead>
+                  <tr className="border-b border-border text-left text-text-sub">
+                    <th className="p-2 font-normal">月份</th>
+                    <th className="p-2 font-normal">SKU</th>
+                    <th className="p-2 font-normal">名称</th>
+                    <th className="p-2 font-normal">品类</th>
+                    <th className="p-2 font-normal">月销量</th>
+                    <th className="p-2 font-normal">渠道</th>
+                    <th className="p-2 font-normal">来源</th>
                   </tr>
-                ))}
-                {!monthlyData?.items.length && (
-                  <tr>
-                    <td colSpan={7} className="p-4 text-center text-text-hint">
-                      暂无月销量数据，请先完成日销量导入（系统自动聚合月表）
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {monthlyData?.items.map((row) => (
+                    <tr key={row.id} className="border-b border-border/60">
+                      <td className="p-2 font-mono whitespace-nowrap">{row.saleMonth}</td>
+                      <td className="p-2 font-mono" title={row.skuCode}>
+                        <span className="block truncate">{row.skuCode}</span>
+                      </td>
+                      <CellText value={row.skuName || '-'} />
+                      <CellText value={row.category ?? '-'} className="text-text-sub" />
+                      <td className="p-2 font-numeric text-primary">{row.qtySold}</td>
+                      <td className="p-2 text-text-sub" title={row.channel}>
+                        <span className="block truncate">{row.channel}</span>
+                      </td>
+                      <td className="p-2 text-text-sub">{row.source}</td>
+                    </tr>
+                  ))}
+                  {!monthlyData?.items.length && (
+                    <tr>
+                      <td colSpan={7} className="p-4 text-center text-text-hint">
+                        暂无月销量数据，请先完成日销量导入（系统自动聚合月表）
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
           )}
           {data && (
             <ListPagination

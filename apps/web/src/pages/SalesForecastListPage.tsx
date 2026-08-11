@@ -9,7 +9,12 @@ import { PageHeader } from '@/components/PageHeader';
 import { ForecastStrategySection } from '@/components/ForecastStrategySection';
 import { ForecastVersionStatusBadge } from '@/components/ForecastVersionStatusBadge';
 import { CategorySearchSelect } from '@/components/CategorySearchSelect';
-import { FORECAST_GENERATION_MONTH_OPTIONS, FORECAST_GENERATION_PLATFORM_CODES } from '@/lib/forecast-horizon-meta';
+import {
+  buildForecastStartMonthOptions,
+  FORECAST_GENERATION_MONTH_OPTIONS,
+  FORECAST_GENERATION_PLATFORM_CODES,
+  formatForecastStartMonth,
+} from '@/lib/forecast-horizon-meta';
 import {
   formatForecastDateTime,
   formatForecastWmape,
@@ -36,8 +41,11 @@ export function SalesForecastListPage() {
   const [generationCategory, setGenerationCategory] = useState('');
   const [generationSkuCode, setGenerationSkuCode] = useState('');
   const [generationMonthCount, setGenerationMonthCount] = useState(6);
+  const [generationStartMonth, setGenerationStartMonth] = useState(() => formatForecastStartMonth());
+  const startMonthOptions = useMemo(() => buildForecastStartMonthOptions(), []);
   const [baselineProgress, setBaselineProgress] = useState<string | null>(null);
   const [generationSummary, setGenerationSummary] = useState<string | null>(null);
+  const isBacktestStartMonth = generationStartMonth < formatForecastStartMonth();
 
   const { data: versions = [], isLoading } = useQuery({
     queryKey: ['sales-forecast-versions', 'stats'],
@@ -116,6 +124,7 @@ export function SalesForecastListPage() {
         category: generationCategory.trim() || undefined,
         skuCode: generationSkuCode.trim() || undefined,
         monthCount: generationMonthCount,
+        startMonth: generationStartMonth,
       });
 
       if (!initial.async) {
@@ -189,6 +198,18 @@ export function SalesForecastListPage() {
       qc.invalidateQueries({ queryKey: ['sales-forecast-review-items'] });
       qc.invalidateQueries({ queryKey: ['sales-forecast-review-stats'] });
       qc.invalidateQueries({ queryKey: ['sales-forecast-trends-horizon'] });
+      qc.invalidateQueries({ queryKey: ['sales-forecast-horizon'] });
+      qc.invalidateQueries({ queryKey: ['sales-forecast-accuracy'] });
+    },
+  });
+
+  const deleteDraftVersion = useMutation({
+    mutationFn: (id: string) => api.deleteSalesForecastVersion(id),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['sales-forecast-versions'] });
+      qc.invalidateQueries({ queryKey: ['sales-forecasts'] });
+      qc.invalidateQueries({ queryKey: ['sales-forecast-review-items'] });
+      qc.invalidateQueries({ queryKey: ['sales-forecast-review-stats'] });
       qc.invalidateQueries({ queryKey: ['sales-forecast-horizon'] });
       qc.invalidateQueries({ queryKey: ['sales-forecast-accuracy'] });
     },
@@ -360,6 +381,24 @@ export function SalesForecastListPage() {
                   />
                 </label>
                 <label className="space-y-1 text-sm">
+                  <span className="text-text-sub">开始月</span>
+                  <select
+                    className="flex h-9 rounded-md border border-border bg-card px-2 text-sm"
+                    value={generationStartMonth}
+                    onChange={(e) => {
+                      setGenerationStartMonth(e.target.value);
+                      generateBaseline.reset();
+                    }}
+                  >
+                    {startMonthOptions.map((month) => (
+                      <option key={month} value={month}>
+                        {month}
+                        {month === formatForecastStartMonth() ? '（当月）' : ''}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="space-y-1 text-sm">
                   <span className="text-text-sub">预测月数</span>
                   <select
                     className="flex h-9 rounded-md border border-border bg-card px-2 text-sm"
@@ -386,6 +425,9 @@ export function SalesForecastListPage() {
                   {generateBaseline.isPending ? '生成中…' : generationSkuCode.trim() ? '生成单 SKU' : '生成草稿'}
                 </Button>
               </div>
+              {isBacktestStartMonth && (
+                <p className="text-xs text-text-sub">训练数据截止至开始月之前（严格回测）</p>
+              )}
               {baselineProgress && <p className="text-sm text-text-sub">{baselineProgress}</p>}
               {generationSummary && !generateBaseline.isPending && (
                 <p className="text-sm text-primary">{generationSummary}</p>
@@ -419,6 +461,11 @@ export function SalesForecastListPage() {
               </div>
             </CardHeader>
             <CardContent>
+              {deleteDraftVersion.isError && (
+                <p className="mb-3 text-sm text-destructive">
+                  {mutationErrorMessage(deleteDraftVersion.error)}
+                </p>
+              )}
               {isLoading ? (
                 <p className="text-sm text-text-sub">加载中…</p>
               ) : filteredVersions.length === 0 ? (
@@ -430,7 +477,7 @@ export function SalesForecastListPage() {
                       <tr className="border-b border-border text-left text-text-sub">
                         <th className="p-2 font-normal">版本</th>
                         <th className="p-2 font-normal">状态</th>
-                        <th className="p-2 font-normal">范围</th>
+                        <th className="p-2 font-normal">开始月 / 月数</th>
                         <th className="p-2 font-normal">SKU / 行数</th>
                         <th className="p-2 font-normal">准确率</th>
                         <th className="p-2 font-normal">创建 / 发布</th>
@@ -439,7 +486,22 @@ export function SalesForecastListPage() {
                     </thead>
                     <tbody>
                       {filteredVersions.map((version) => (
-                        <VersionRow key={version.id} version={version} />
+                        <VersionRow
+                          key={version.id}
+                          version={version}
+                          deleting={deleteDraftVersion.isPending && deleteDraftVersion.variables === version.id}
+                          onDelete={(id) => {
+                            const target = versions.find((v) => v.id === id);
+                            const label = target?.versionName || target?.versionNo || id;
+                            if (
+                              window.confirm(
+                                `确定删除草稿「${label}」？将同步删除其预测明细与复核项，且不可恢复。`,
+                              )
+                            ) {
+                              deleteDraftVersion.mutate(id);
+                            }
+                          }}
+                        />
                       ))}
                     </tbody>
                   </table>
@@ -455,7 +517,15 @@ export function SalesForecastListPage() {
   );
 }
 
-function VersionRow({ version }: { version: ForecastVersionListItem }) {
+function VersionRow({
+  version,
+  deleting,
+  onDelete,
+}: {
+  version: ForecastVersionListItem;
+  deleting?: boolean;
+  onDelete?: (id: string) => void;
+}) {
   const scopeLabel =
     version.versionName && version.versionName !== version.versionNo
       ? version.versionName
@@ -483,7 +553,10 @@ function VersionRow({ version }: { version: ForecastVersionListItem }) {
       <td className="p-2">
         <ForecastVersionStatusBadge status={version.status} />
       </td>
-      <td className="p-2 font-numeric">{version.stats.monthCount || '-'} 月</td>
+      <td className="p-2 font-numeric">
+        <span>{version.startMonth ?? '—'}</span>
+        <span className="text-text-sub"> · {version.stats.monthCount || '-'} 月</span>
+      </td>
       <td className="p-2 font-numeric">
         {version.stats.skuCount.toLocaleString()} / {version.stats.forecastRowCount.toLocaleString()}
       </td>
@@ -511,6 +584,16 @@ function VersionRow({ version }: { version: ForecastVersionListItem }) {
             >
               去复核
             </Link>
+          )}
+          {version.status === 'draft' && onDelete && (
+            <button
+              type="button"
+              className="text-destructive hover:underline disabled:opacity-50"
+              disabled={deleting}
+              onClick={() => onDelete(version.id)}
+            >
+              {deleting ? '删除中…' : '删除'}
+            </button>
           )}
           {(version.status === 'published' || version.status === 'archived') && (
             <Link

@@ -10,10 +10,9 @@ import {
 } from 'recharts';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import {
-  MODEL_NAME,
-  chooseModel,
-  modelForecast,
-  modelReason,
+  trendSeasonalForecast,
+  trendSeasonalPanelTag,
+  trendSeasonalRowBasis,
 } from '@/lib/sales-analytics-forecast';
 import type { SalesAnalyticsGranularity } from '@/lib/sales-analytics-types';
 import { cn } from '@/lib/utils';
@@ -37,6 +36,21 @@ function pctTone(n: number | null): string {
   if (n < 0) return 'text-green-600';
   return 'text-text-main';
 }
+
+const MONTH_NAME = [
+  '1月',
+  '2月',
+  '3月',
+  '4月',
+  '5月',
+  '6月',
+  '7月',
+  '8月',
+  '9月',
+  '10月',
+  '11月',
+  '12月',
+];
 
 export type FcScope = 'filter' | 'all';
 
@@ -66,15 +80,10 @@ export function ForecastPanel({
     (_, i) => horizonMin + i,
   );
 
-  const lastLbl = periods[periods.length - 1] ?? '';
-  const hasSeries = series.length > 0 && periods.length > 0 && lastLbl;
-  const model = hasSeries ? chooseModel(series, isWeek, periods) : null;
-  const fc =
-    model && hasSeries
-      ? modelForecast(model, series.length, horizon, lastLbl, isWeek)
-      : [];
-  const reason = model ? modelReason(model) : '';
-  const lastActual = series[series.length - 1] ?? 0;
+  const hasSeries = series.length > 0 && periods.length > 0;
+  const f = hasSeries ? trendSeasonalForecast(series, periods, horizon, isWeek) : null;
+  const fc = f?.fc ?? [];
+  const lastActual = f?.last ?? 0;
 
   const chartData = [
     ...periods.map((period, i) => ({
@@ -89,11 +98,45 @@ export function ForecastPanel({
     })),
   ];
 
-  const tableRows = fc.map((p, i) => {
-    const prev = i === 0 ? lastActual : fc[i - 1]!.val;
-    const mom = prev ? ((p.val - prev) / prev) * 100 : null;
-    return { ...p, mom };
-  });
+  const tableRows = f
+    ? fc.map((p, i) => {
+        const prev = i === 0 ? lastActual : fc[i - 1]!.val;
+        const mom = prev ? ((p.val - prev) / prev) * 100 : null;
+        return {
+          ...p,
+          mom,
+          basis: trendSeasonalRowBasis(f, p.ym, isWeek),
+        };
+      })
+    : [];
+
+  const fcSum = fc.reduce((s, x) => s + x.val, 0);
+  const last5 = series.slice(-5);
+  const last5avg = last5.length
+    ? last5.reduce((s, x) => s + x, 0) / last5.length
+    : 0;
+  const vsAvg =
+    last5avg && fc.length
+      ? (fcSum / fc.length - last5avg) / last5avg * 100
+      : null;
+  const trendWord =
+    !f ? '' : f.b > 0 ? '整体呈上升趋势' : f.b < 0 ? '整体呈下降趋势' : '整体基本平稳';
+  const scopeWord =
+    scope === 'all'
+      ? '（整体预测，基于全量数据，不随上方筛选变化）'
+      : '（当前筛选预测，随上方筛选动态变化）';
+  const reason =
+    f && hasSeries
+      ? [
+          `基于 ${periods[0]} ~ ${periods[periods.length - 1]} 共 ${series.length} 个${granWord}的实际数据，采用「线性趋势${isWeek ? '' : ' + 月度季节性'}」乘法模型拟合。`,
+          `① 趋势项：最小二乘斜率 ${(f.b >= 0 ? '+' : '') + f.b.toFixed(1)} 件/期，R²=${f.r2.toFixed(2)}，即 ${trendWord}；`,
+          isWeek
+            ? '（周度粒度不做月度季节性分解，按线性趋势外推）'
+            : `② 季节性：峰值 ${MONTH_NAME[f.peakM - 1]}(因子 ${(f.sIdx[f.peakM] ?? 1).toFixed(2)})、谷值 ${MONTH_NAME[f.troughM - 1]}(因子 ${(f.sIdx[f.troughM] ?? 1).toFixed(2)})；`,
+          `③ 预估结果：最新期实际 ${fmtQty(f.last)} 件为起点，未来 ${fc.length} ${granWord}合计约 ${fmtQty(fcSum)} 件` +
+            (vsAvg == null ? '。' : `；较近 5 ${granWord}均值 ${vsAvg >= 0 ? '上升' : '下降'} ${fmtPct(Math.abs(vsAvg))}。`),
+        ].join('')
+      : '';
 
   return (
     <Card>
@@ -120,11 +163,9 @@ export function ForecastPanel({
               </option>
             ))}
           </select>
-          {model && (
-            <span className="rounded-md bg-muted px-2 py-1 text-xs text-text-sub">
-              {MODEL_NAME[model.type]}
-            </span>
-          )}
+          <span className="rounded-md bg-muted px-2 py-1 text-xs text-text-sub">
+            {trendSeasonalPanelTag(isWeek)}
+          </span>
         </div>
         <p className="text-sm text-amber-800">
           看板粗估，非系统发布预测
@@ -198,7 +239,7 @@ export function ForecastPanel({
                     <td className={cn('px-3 py-2 text-right tabular-nums', pctTone(r.mom))}>
                       {fmtPct(r.mom)}
                     </td>
-                    <td className="max-w-xl px-3 py-2 text-xs text-text-sub">{reason}</td>
+                    <td className="max-w-xl px-3 py-2 text-xs text-text-sub">{r.basis}</td>
                   </tr>
                 ))
               )}
@@ -208,7 +249,7 @@ export function ForecastPanel({
 
         {reason && (
           <p className="rounded-md border border-border bg-muted/40 px-3 py-2 text-xs leading-relaxed text-text-sub">
-            <span className="font-medium text-text-main">模型与依据：</span>
+            <span className="font-medium text-text-main">模型与依据{scopeWord}：</span>
             {reason}
             <br />
             <span className="text-text-hint">

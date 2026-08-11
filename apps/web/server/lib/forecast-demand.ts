@@ -115,7 +115,32 @@ export function resolveHorizonConsumptionDaily(input: {
   horizonMonthIndex: number;
   profileClass?: string | null;
   useP90ForVolatile?: boolean;
+  /** V4.1 分层；T99 且系统/生效为 0 时启用历史兜底 */
+  profileSegment?: string | null;
+  recent30DailyAvg?: number | null;
+  recent90DailyAvg?: number | null;
+  categoryPoolFloorDaily?: number | null;
+  t99FallbackDiscount?: number;
 }): number {
+  return resolveHorizonConsumptionDailyDetailed(input).daily;
+}
+
+export type HorizonDemandSource = 'forecast' | 't99_fallback';
+
+/** 带 demandSource 的地平线消费日均（补货审计） */
+export function resolveHorizonConsumptionDailyDetailed(input: {
+  forecastDailyAvg: number;
+  effectiveDailyAvg?: number;
+  forecastDailyP90?: number | null;
+  horizonMonthIndex: number;
+  profileClass?: string | null;
+  useP90ForVolatile?: boolean;
+  profileSegment?: string | null;
+  recent30DailyAvg?: number | null;
+  recent90DailyAvg?: number | null;
+  categoryPoolFloorDaily?: number | null;
+  t99FallbackDiscount?: number;
+}): { daily: number; demandSource: HorizonDemandSource } {
   const k = Math.max(0, Math.floor(input.horizonMonthIndex));
   const base =
     k <= 2 && input.effectiveDailyAvg != null && input.effectiveDailyAvg > 0
@@ -128,10 +153,55 @@ export function resolveHorizonConsumptionDaily(input: {
     input.forecastDailyP90 != null &&
     input.forecastDailyP90 > 0
   ) {
-    return input.forecastDailyP90;
+    return { daily: input.forecastDailyP90, demandSource: 'forecast' };
   }
 
-  return base;
+  if (base > 0) {
+    return { daily: base, demandSource: 'forecast' };
+  }
+
+  const segment = input.profileSegment?.trim().toUpperCase();
+  if (segment === 'T99') {
+    const fallback = resolveT99ReplenishmentFallbackDaily({
+      recent30DailyAvg: input.recent30DailyAvg,
+      recent90DailyAvg: input.recent90DailyAvg,
+      categoryPoolFloorDaily: input.categoryPoolFloorDaily,
+      discount: input.t99FallbackDiscount,
+    });
+    if (fallback > 0) {
+      return { daily: fallback, demandSource: 't99_fallback' };
+    }
+  }
+
+  return { daily: base, demandSource: 'forecast' };
+}
+
+/** T99 系统不预测时的补货兜底日均（不进主 KPI） */
+export function resolveT99ReplenishmentFallbackDaily(input: {
+  recent30DailyAvg?: number | null;
+  recent90DailyAvg?: number | null;
+  categoryPoolFloorDaily?: number | null;
+  /** 相对近期动销的折扣，默认 0.6 */
+  discount?: number;
+}): number {
+  const discount =
+    input.discount != null && Number.isFinite(input.discount) && input.discount > 0
+      ? input.discount
+      : 0.6;
+  const recent30 =
+    input.recent30DailyAvg != null && Number.isFinite(input.recent30DailyAvg)
+      ? Math.max(0, input.recent30DailyAvg)
+      : 0;
+  const recent90 =
+    input.recent90DailyAvg != null && Number.isFinite(input.recent90DailyAvg)
+      ? Math.max(0, input.recent90DailyAvg)
+      : 0;
+  const pool =
+    input.categoryPoolFloorDaily != null && Number.isFinite(input.categoryPoolFloorDaily)
+      ? Math.max(0, input.categoryPoolFloorDaily)
+      : 0;
+  const fromRecent = Math.max(recent30, recent90) * discount;
+  return Math.round(Math.max(fromRecent, pool) * 10_000) / 10_000;
 }
 
 export function horizonMonthIndexFromDate(forecastDate: Date, asOf = new Date()): number {
@@ -150,6 +220,10 @@ export function getForecastDailyForHorizon(
     p90Forecasts?: Map<string, number>;
     profileClass?: string | null;
     asOf?: Date;
+    profileSegment?: string | null;
+    recent30DailyAvg?: number | null;
+    recent90DailyAvg?: number | null;
+    categoryPoolFloorDaily?: number | null;
   },
 ): number {
   const key = forecastMonthKey(date.getFullYear(), date.getMonth() + 1);
@@ -161,6 +235,10 @@ export function getForecastDailyForHorizon(
     forecastDailyP90: p90,
     horizonMonthIndex: k,
     profileClass: opts?.profileClass,
+    profileSegment: opts?.profileSegment,
+    recent30DailyAvg: opts?.recent30DailyAvg,
+    recent90DailyAvg: opts?.recent90DailyAvg,
+    categoryPoolFloorDaily: opts?.categoryPoolFloorDaily,
   });
 }
 

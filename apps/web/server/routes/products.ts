@@ -48,6 +48,7 @@ function buildMerchantWhere(query: { q?: string }): SQL | undefined {
 function buildSkuOverviewWhere(query: {
   q?: string;
   category?: string;
+  projectGroup?: string;
   lifecycle?: string;
   salesCountry?: string;
   merchantCode?: string;
@@ -61,6 +62,9 @@ function buildSkuOverviewWhere(query: {
   }
   if (query.category?.trim()) {
     parts.push(ilike(skus.category, ilikeContains(query.category)));
+  }
+  if (query.projectGroup?.trim()) {
+    parts.push(ilike(skus.projectGroup, ilikeContains(query.projectGroup)));
   }
   if (query.lifecycle?.trim()) {
     parts.push(ilike(skus.lifecycle, ilikeContains(query.lifecycle)));
@@ -392,6 +396,7 @@ productRoutes.get('/products/sku-overview', async (c) => {
   const where = buildSkuOverviewWhere({
     q: c.req.query('q')?.trim(),
     category: c.req.query('category')?.trim(),
+    projectGroup: c.req.query('projectGroup')?.trim(),
     lifecycle: c.req.query('lifecycle')?.trim(),
     salesCountry: c.req.query('salesCountry')?.trim(),
     merchantCode: c.req.query('merchantCode')?.trim(),
@@ -406,6 +411,7 @@ productRoutes.get('/products/sku-overview', async (c) => {
       name: skus.name,
       unit: skus.unit,
       category: skus.category,
+      projectGroup: skus.projectGroup,
       lifecycle: skus.lifecycle,
       salesCountry: skus.salesCountry,
       productCategory: skus.productCategory,
@@ -456,6 +462,7 @@ productRoutes.get('/products/sku-overview', async (c) => {
       name: row.name,
       unit: row.unit,
       category: row.category,
+      projectGroup: row.projectGroup,
       lifecycle: row.lifecycle,
       salesCountry: row.salesCountry,
       productCategory: row.productCategory,

@@ -17,6 +17,7 @@ import { normalizeReplenishLight, parseReplenishLight } from '../replenish-light
 import { ensureSpuFromSkuEncoding } from '../spu-from-sku.js';
 import { skuEncodingToColumns } from '../sku-encoding.js';
 import { ensureSkuFromImport } from '../ensure-sku-from-import.js';
+import { extractProjectGroupFromCategory } from '../sku-category.js';
 import { refreshSkuLifecycles } from '../sku-lifecycle.js';
 import {
   expandFobInventoryRows,
@@ -90,13 +91,15 @@ export async function importSkuRows(
 
     const [existing] = await db.select().from(skus).where(eq(skus.code, code)).limit(1);
     if (existing) {
+      const nextCategory = category || existing.category;
       await db
         .update(skus)
         .set({
           name,
           unit,
           spuId: spuId ?? existing.spuId,
-          category: category || existing.category,
+          category: nextCategory,
+          projectGroup: extractProjectGroupFromCategory(nextCategory),
           leadTimeDays: leadTimeDays ?? existing.leadTimeDays,
           moq: moq ?? existing.moq,
           unitCost: unitCost || existing.unitCost,
@@ -127,6 +130,7 @@ export async function importSkuRows(
           unit,
           spuId,
           category,
+          projectGroup: extractProjectGroupFromCategory(category),
           leadTimeDays,
           moq,
           unitCost: unitCost || undefined,

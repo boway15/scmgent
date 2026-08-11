@@ -186,7 +186,7 @@ export function SalesAnalyticsPage() {
   const [matrixMode, setMatrixMode] = useState<MatrixMode>('b');
   const [pinnedKey, setPinnedKey] = useState<string | null>(null);
   const [fcScope, setFcScope] = useState<FcScope>('filter');
-  const [fcHorizon, setFcHorizon] = useState(5);
+  const [fcHorizon, setFcHorizon] = useState(12);
 
   const statusQuery = useQuery({
     queryKey: ['sales-analytics-status'],
@@ -224,7 +224,7 @@ export function SalesAnalyticsPage() {
     const periods = gran === 'week' ? cube.weeks : cube.months;
     setRangeStart(0);
     setRangeEnd(Math.max(0, periods.length - 1));
-    setFcHorizon(gran === 'week' ? 20 : 5);
+    setFcHorizon(gran === 'week' ? 20 : 12);
     setPinnedKey(null);
   }, [gran, cubeQuery.data?.months.length, cubeQuery.data?.weeks.length]);
 

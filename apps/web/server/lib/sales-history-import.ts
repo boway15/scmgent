@@ -8,14 +8,17 @@ import {
 import { aggregateSalesHistoryMonthlyFromDaily } from './sales-history-monthly.js';
 import { loadSkuCategoryMap, resolveSkuCategoryFromMaster } from './sku-category.js';
 import { sanitizeDbText } from './import/parse.js';
-import { normalizeSalesPlatformSync } from './sales-platform.js';
+import { assessUnknownChannelShare, normalizeSalesPlatformSync } from './sales-platform.js';
 import { schedulePostImportSalesAnalyticsCubeRebuild } from './sales-analytics-cube.js';
+import { classifyAnalyticsSiteFromReport } from './sales-analytics-dims.js';
 
 export type SalesHistoryImportPlanRow = {
   skuId: string;
   saleDate: string;
   qtySold: number;
   channel: string;
+  /** Canonical analytics site: US / EU / UK / 其他 */
+  station: string;
   category: string | null;
 };
 
@@ -23,6 +26,8 @@ export type SalesHistoryImportPlan = {
   rows: SalesHistoryImportPlanRow[];
   unmatchedSkuCount: number;
   errors: string[];
+  warnings?: string[];
+  unknownChannelRows?: number;
 };
 
 export type SalesHistoryImportStats = SalesHistoryImportPlan & {
@@ -73,7 +78,7 @@ function registerDailySalesSkuCodeAliases(
 function dedupeSalesHistoryPlanRows(rows: SalesHistoryImportPlanRow[]): SalesHistoryImportPlanRow[] {
   const merged = new Map<string, SalesHistoryImportPlanRow>();
   for (const row of rows) {
-    const key = `${row.skuId}::${row.saleDate}::${row.channel ?? ''}`;
+    const key = `${row.skuId}::${row.saleDate}::${row.channel ?? ''}::${row.station ?? ''}`;
     const existing = merged.get(key);
     if (existing) {
       existing.qtySold += row.qtySold;
@@ -108,8 +113,9 @@ export function buildSalesHistoryImportPlan(
     }
 
     const channel = sanitizeDbText(normalizeSalesPlatformSync(row.platformRaw));
+    const station = classifyAnalyticsSiteFromReport(row.station);
     const categoryFromImport = row.category.trim() || null;
-    const key = `${skuId}::${row.saleDate}::${channel}`;
+    const key = `${skuId}::${row.saleDate}::${channel}::${station}`;
     const existing = planned.get(key);
     if (existing) {
       existing.qtySold += row.qtySold;
@@ -122,6 +128,7 @@ export function buildSalesHistoryImportPlan(
         saleDate: row.saleDate,
         qtySold: row.qtySold,
         channel,
+        station,
         category: categoryFromImport || resolveSkuCategoryFromMaster(categoryBySkuId, skuId),
       });
     }
@@ -130,6 +137,13 @@ export function buildSalesHistoryImportPlan(
   return {
     rows: Array.from(planned.values()),
     unmatchedSkuCount: unmatchedSkuCodes.size,
+    unknownChannelRows: Array.from(planned.values()).filter((r) => r.channel === 'UNKNOWN').length,
+    warnings: (() => {
+      const rows = Array.from(planned.values());
+      const unknownRows = rows.filter((r) => r.channel === 'UNKNOWN').length;
+      const assessed = assessUnknownChannelShare({ totalRows: rows.length, unknownRows });
+      return assessed.warning ? [assessed.warning] : [];
+    })(),
     errors: Array.from(unmatchedSkuCodes)
       .sort((a, b) => a.localeCompare(b))
       .map((skuCode) => `SKU could not be created for daily sales row: ${skuCode}`),
@@ -180,13 +194,19 @@ export async function persistDailySalesRowsAsHistory(
           saleDate: row.saleDate,
           qtySold: row.qtySold,
           channel: row.channel,
+          station: row.station,
           category: row.category,
           source: 'import' as const,
           importBatchId: importBatchId || undefined,
         })),
       )
       .onConflictDoNothing({
-        target: [salesHistory.skuId, salesHistory.saleDate, salesHistory.channel],
+        target: [
+          salesHistory.skuId,
+          salesHistory.saleDate,
+          salesHistory.channel,
+          salesHistory.station,
+        ],
       })
       .returning({ id: salesHistory.id });
 

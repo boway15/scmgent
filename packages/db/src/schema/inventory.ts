@@ -44,6 +44,8 @@ export const skus = pgTable(
     name: varchar('name', { length: 200 }).notNull(),
     unit: varchar('unit', { length: 20 }).notNull(),
     category: varchar('category', { length: 500 }),
+    /** 从品类路径第二段派生的项目组，如 项目1组 */
+    projectGroup: varchar('project_group', { length: 20 }),
     /** C 生命周期（库存周转表） */
     lifecycle: varchar('lifecycle', { length: 50 }),
     /** E 销售国家（库存周转表） */
@@ -94,6 +96,7 @@ export const skus = pgTable(
     spuIdx: index('skus_spu_id_idx').on(table.spuId),
     internalCodeIdx: index('skus_internal_code_idx').on(table.internalCode),
     externalCodeIdx: index('skus_external_code_idx').on(table.externalCode),
+    projectGroupIdx: index('skus_project_group_idx').on(table.projectGroup),
   }),
 );
 
@@ -244,6 +247,8 @@ export const salesHistory = pgTable(
     saleDate: date('sale_date').notNull(),
     qtySold: integer('qty_sold').notNull(),
     channel: varchar('channel', { length: 100 }),
+    /** 报表「站点」归桶：US / EU / UK / 其他 */
+    station: varchar('station', { length: 20 }).notNull().default(''),
     /** 实际发货仓 code，如 US-WEST */
     warehouseCode: varchar('warehouse_code', { length: 100 }),
     /** 品类快照，导入时从 SKU 主数据写入 */
@@ -257,17 +262,16 @@ export const salesHistory = pgTable(
     skuWarehouseIdx: index('sales_history_sku_warehouse_idx').on(table.skuId, table.warehouseCode),
     categoryIdx: index('sales_history_category_idx').on(table.category),
     saleDateIdx: index('sales_history_sale_date_idx').on(table.saleDate),
+    stationIdx: index('sales_history_station_idx').on(table.station),
     importBatchIdx: index('sales_history_import_batch_id_idx').on(table.importBatchId),
     sourceSkuDateIdx: index('sales_history_source_sku_date_idx').on(
       table.source,
       table.skuId,
       table.saleDate,
     ),
-    skuDateChannelUnique: uniqueIndex('sales_history_sku_date_channel_unique_idx').on(
-      table.skuId,
-      table.saleDate,
-      table.channel,
-    ),
+    skuDateChannelStationUnique: uniqueIndex(
+      'sales_history_sku_date_channel_station_unique_idx',
+    ).on(table.skuId, table.saleDate, table.channel, table.station),
   }),
 );
 

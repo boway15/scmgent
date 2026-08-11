@@ -1,4 +1,4 @@
-import { desc, eq, gt, notInArray, sql } from 'drizzle-orm';
+import { and, desc, eq, gt, lt, notInArray, sql } from 'drizzle-orm';
 import {
   db,
   salesAnalyticsCubeSnapshots,
@@ -11,15 +11,18 @@ import {
 import { stationForWarehouse } from './forecast-demand.js';
 import { normalizeSalesPlatformSync } from './sales-platform.js';
 import {
-  bucketAnalyticsSite,
+  ANALYTICS_SITE_ORDER,
   extractAnalyticsCategoryLeaf,
   extractAnalyticsDept,
   isoWeekLabel,
+  resolveAnalyticsSite,
+  type AnalyticsSite,
 } from './sales-analytics-dims.js';
 
 export type CubeSourceRow = {
   saleDate: string;
   qtySold: number;
+  station?: string | null;
   warehouseCode?: string | null;
   channel?: string | null;
   category?: string | null;
@@ -36,6 +39,30 @@ type EntityAcc = {
 
 const HISTORY_PAGE_SIZE = 5_000;
 const SNAPSHOT_KEEP = 5;
+/** Rebuilds interrupted by process restart leave status=running forever without this TTL. */
+const STALE_RUNNING_MS = 10 * 60 * 1000;
+
+/** Mark long-stuck running snapshots as failed so UI / rebuild can proceed. */
+export async function clearStaleRunningCubeSnapshots(
+  now = new Date(),
+  maxAgeMs = STALE_RUNNING_MS,
+): Promise<number> {
+  const cutoff = new Date(now.getTime() - maxAgeMs);
+  const updated = await db
+    .update(salesAnalyticsCubeSnapshots)
+    .set({
+      status: 'failed',
+      errorMessage: `rebuild timed out or process restarted (running > ${Math.round(maxAgeMs / 60000)} min)`,
+    })
+    .where(
+      and(
+        eq(salesAnalyticsCubeSnapshots.status, 'running'),
+        lt(salesAnalyticsCubeSnapshots.createdAt, cutoff),
+      ),
+    )
+    .returning({ id: salesAnalyticsCubeSnapshots.id });
+  return updated.length;
+}
 
 function dimKey(s: string, b: string, c: string, p: string): string {
   return `${s}\0${b}\0${c}\0${p}`;
@@ -101,9 +128,12 @@ function accumulateCubeRowsInto(
     const week = isoWeekLabel(saleDate);
     if (week) state.weekSet.add(week);
 
-    const wh = (row.warehouseCode ?? '').trim();
-    const station = wh ? warehouseStationByCode.get(wh) : null;
-    const s = bucketAnalyticsSite(station);
+    const s = resolveAnalyticsSite({
+      station: row.station,
+      category: row.category,
+      warehouseCode: row.warehouseCode,
+      warehouseStationByCode,
+    });
     const b = extractAnalyticsDept(row.category);
     const c = extractAnalyticsCategoryLeaf(row.category);
     const p = platformDisplayName(row.channel, platformNameByCode);
@@ -140,13 +170,20 @@ function finalizeCubeAccumulator(state: CubeAccState): SalesAnalyticsCubePayload
     weekEnd: weeks.length ? weeks[weeks.length - 1]! : null,
     recordCount: state.recordCount,
     totalSales: state.totalSales,
-    sites: uniqueSorted(data.map((d) => d.s)),
+    sites: orderSites(data.map((d) => d.s)),
     depts: uniqueSorted(data.map((d) => d.b)),
     categories: uniqueSorted(data.map((d) => d.c)),
     platforms: uniqueSorted(data.map((d) => d.p)),
   };
 
   return { meta, months, weeks, data };
+}
+
+function orderSites(sites: string[]): string[] {
+  const present = new Set(sites);
+  const ordered = ANALYTICS_SITE_ORDER.filter((s) => present.has(s));
+  const rest = uniqueSorted(sites.filter((s) => !ANALYTICS_SITE_ORDER.includes(s as AnalyticsSite)));
+  return [...ordered, ...rest];
 }
 
 /** Pure aggregator: daily sales_history rows → month/week cube payload (no DB). */
@@ -176,6 +213,8 @@ export async function getCubeStatus(): Promise<{
   meta: SalesAnalyticsCubePayload['meta'] | null;
   errorMessage: string | null;
 }> {
+  await clearStaleRunningCubeSnapshots();
+
   const [[running], [ready], [failed]] = await Promise.all([
     db
       .select({ id: salesAnalyticsCubeSnapshots.id })
@@ -251,6 +290,7 @@ async function accumulateSalesHistoryPages(
         id: salesHistory.id,
         saleDate: salesHistory.saleDate,
         qtySold: salesHistory.qtySold,
+        station: salesHistory.station,
         warehouseCode: salesHistory.warehouseCode,
         channel: salesHistory.channel,
         category: sql<string | null>`coalesce(${salesHistory.category}, ${skus.category})`,
@@ -266,6 +306,7 @@ async function accumulateSalesHistoryPages(
     const page: CubeSourceRow[] = batch.map((row) => ({
       saleDate: String(row.saleDate).slice(0, 10),
       qtySold: Number(row.qtySold) || 0,
+      station: row.station,
       warehouseCode: row.warehouseCode,
       channel: row.channel,
       category: row.category,
@@ -295,6 +336,8 @@ async function pruneOldSnapshots(keep = SNAPSHOT_KEEP): Promise<void> {
 export async function rebuildSalesAnalyticsCube(
   createdBy?: string | null,
 ): Promise<{ ok: true } | { ok: false; conflict: true } | { ok: false; error: string }> {
+  await clearStaleRunningCubeSnapshots();
+
   const [existingRunning] = await db
     .select({ id: salesAnalyticsCubeSnapshots.id })
     .from(salesAnalyticsCubeSnapshots)

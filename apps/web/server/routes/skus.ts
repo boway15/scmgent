@@ -8,6 +8,7 @@ import { ensureSpuFromSkuEncoding } from '../lib/spu-from-sku.js';
 import { skuEncodingToColumns } from '../lib/sku-encoding.js';
 import { markSkuMasterDataManual } from '../lib/ensure-sku-from-import.js';
 import { markReplenishLightManual } from '../lib/replenish-light-sync.js';
+import { extractProjectGroupFromCategory } from '../lib/sku-category.js';
 
 export const skuRoutes = new Hono();
 
@@ -73,6 +74,7 @@ skuRoutes.post('/skus', requireMenu('data.products'), async (c) => {
       unit: body.unit.trim(),
       spuId,
       category: body.category,
+      projectGroup: extractProjectGroupFromCategory(body.category),
       specAttrs: body.specAttrs,
       barcode: body.barcode?.trim(),
       leadTimeDays: body.leadTimeDays,
@@ -118,7 +120,12 @@ skuRoutes.put('/skus/:id', requireMenu('data.products'), async (c) => {
     replenishLight: 'red' | 'yellow' | 'green';
   }>>();
 
-  const { merchantCode, merchantName, unitCost, leadTimeDays, moq, replenishLight, ...skuFields } = body;
+  const { merchantCode, merchantName, unitCost, leadTimeDays, moq, replenishLight, ...skuFields } =
+    body;
+  // projectGroup 只读派生，忽略客户端传入
+  const { projectGroup: _ignoredProjectGroup, ...safeSkuFields } = skuFields as typeof skuFields & {
+    projectGroup?: string | null;
+  };
 
   const [existing] = await db.select().from(skus).where(eq(skus.id, skuId)).limit(1);
   if (!existing) return c.json({ message: 'SKU not found' }, 404);
@@ -126,8 +133,11 @@ skuRoutes.put('/skus/:id', requireMenu('data.products'), async (c) => {
   const [row] = await db
     .update(skus)
     .set({
-      ...skuFields,
-      unitCost: skuFields.unitCost?.toString() ?? body.unitCost?.toString(),
+      ...safeSkuFields,
+      ...(Object.prototype.hasOwnProperty.call(body, 'category')
+        ? { projectGroup: extractProjectGroupFromCategory(body.category ?? null) }
+        : {}),
+      unitCost: safeSkuFields.unitCost?.toString() ?? body.unitCost?.toString(),
       replenishLight: replenishLight ? normalizeReplenishLight(replenishLight) : undefined,
       encodingMeta: replenishLight
         ? markReplenishLightManual(existing.encodingMeta)

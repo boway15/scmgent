@@ -28,6 +28,30 @@ export const DRAWER_HISTORY_MONTH_COUNT = 24;
 
 export const FORECAST_GENERATION_MONTH_OPTIONS = [3, 6, 12] as const;
 
+/** 生成预测可选开始月：当月 + 往前 N 个月（与后端 FORECAST_START_MONTH_LOOKBACK 对齐） */
+export const FORECAST_START_MONTH_LOOKBACK = 6;
+
+export function formatForecastStartMonth(date = new Date()): string {
+  const year = date.getUTCFullYear();
+  const month = date.getUTCMonth() + 1;
+  return `${year}-${String(month).padStart(2, '0')}`;
+}
+
+/** 当月起往前 lookback 个月，新→旧 */
+export function buildForecastStartMonthOptions(
+  now = new Date(),
+  lookback = FORECAST_START_MONTH_LOOKBACK,
+): string[] {
+  const options: string[] = [];
+  const year = now.getUTCFullYear();
+  const monthIndex = now.getUTCMonth();
+  for (let offset = 0; offset <= lookback; offset++) {
+    const date = new Date(Date.UTC(year, monthIndex - offset, 1));
+    options.push(formatForecastStartMonth(date));
+  }
+  return options;
+}
+
 export const FORECAST_HORIZON_FUTURE_MONTH_OPTIONS = [3, 6, 12] as const;
 
 export const FORECAST_HORIZON_HISTORY_MONTH_OPTIONS = [6, 12, 18, 24] as const;

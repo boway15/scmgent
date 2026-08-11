@@ -70,6 +70,53 @@ describe('forecast-horizon', () => {
     );
   });
 
+  it('honors version startMonth when stored months include earlier backtest months', () => {
+    const stored = [
+      { forecastYear: 2026, month: 2, monthLabel: '2026-02' },
+      { forecastYear: 2026, month: 3, monthLabel: '2026-03' },
+      { forecastYear: 2026, month: 4, monthLabel: '2026-04' },
+      { forecastYear: 2026, month: 5, monthLabel: '2026-05' },
+      { forecastYear: 2026, month: 6, monthLabel: '2026-06' },
+      { forecastYear: 2026, month: 7, monthLabel: '2026-07' },
+      { forecastYear: 2026, month: 8, monthLabel: '2026-08' },
+      { forecastYear: 2026, month: 9, monthLabel: '2026-09' },
+      { forecastYear: 2026, month: 10, monthLabel: '2026-10' },
+      { forecastYear: 2026, month: 11, monthLabel: '2026-11' },
+      { forecastYear: 2026, month: 12, monthLabel: '2026-12' },
+      { forecastYear: 2027, month: 1, monthLabel: '2027-01' },
+    ];
+    const labels = resolveVersionDisplayHorizon({
+      dataHorizon: stored,
+      monthCount: 6,
+      startMonth: '2026-08',
+      asOf: new Date('2026-08-05T00:00:00.000Z'),
+    });
+    assert.deepEqual(
+      labels.map((l) => l.monthLabel),
+      ['2026-08', '2026-09', '2026-10', '2026-11', '2026-12', '2027-01'],
+    );
+  });
+
+  it('falls back to startMonth window when stored months do not include startMonth', () => {
+    const stored = [
+      { forecastYear: 2026, month: 2, monthLabel: '2026-02' },
+      { forecastYear: 2026, month: 3, monthLabel: '2026-03' },
+      { forecastYear: 2026, month: 4, monthLabel: '2026-04' },
+      { forecastYear: 2026, month: 5, monthLabel: '2026-05' },
+      { forecastYear: 2026, month: 6, monthLabel: '2026-06' },
+      { forecastYear: 2026, month: 7, monthLabel: '2026-07' },
+    ];
+    const labels = resolveVersionDisplayHorizon({
+      dataHorizon: stored,
+      monthCount: 6,
+      startMonth: '2026-08',
+    });
+    assert.deepEqual(
+      labels.map((l) => l.monthLabel),
+      ['2026-08', '2026-09', '2026-10', '2026-11', '2026-12', '2027-01'],
+    );
+  });
+
   it('falls back to asOf window only when version has no stored months', () => {
     const labels = resolveVersionDisplayHorizon({
       dataHorizon: [],

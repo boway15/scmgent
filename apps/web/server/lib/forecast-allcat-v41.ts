@@ -152,27 +152,33 @@ export const V41_Q2_SEASONAL_DISCOUNT = 0.92;
 /** T2/T3 在 Q2 目标月再叠一层折减（压右尾高估） */
 export const V41_Q2_MID_TIER_EXTRA_DISCOUNT = 0.95;
 
-/** T4A 边界层保守化（四轮：上界再贴 recent + 弱动销扩闸） */
+/** T4A 边界层保守化（四轮：上界再贴 recent + 弱动销扩闸）；远月更保守，近端 k≤2 放宽 */
 export const V41_T4A_CONSERVATIVE_FACTOR = 0.58;
+export const V41_T4A_NEAR_CONSERVATIVE_FACTOR = 0.72;
 export const V41_T4A_FLOOR_MIN_DAILY = 0;
 export const V41_T4A_FLOOR_D6_RATIO = 0.08;
-export const V41_T4A_NEAR_BLEND_FLOOR = 0;
-export const V41_T4A_NEAR_D6_FLOOR = 0;
-export const V41_T4A_NEAR_RECENT90_FLOOR = 0;
+export const V41_T4A_NEAR_BLEND_FLOOR = 0.65;
+export const V41_T4A_NEAR_D6_FLOOR = 0.7;
+export const V41_T4A_NEAR_RECENT90_FLOOR = 0.6;
 export const V41_T4A_FLEX_DECAY_FROM_K = 3;
 export const V41_T4A_FLEX_DECAY_FACTOR = 0.72;
 export const V41_T4A_MIN_TREND_RATIO = 0.8;
 export const V41_T4_TAIL_MONTH_DISCOUNT = 0.8;
 
-/** T4B 稳定保底层：优先压 ghost，无近端抬底 */
+/** T4B 稳定保底层：远月压 ghost；近端 k≤2 放宽保守系数并抬底（缓解系统性低估） */
 export const V41_T4B_CONSERVATIVE_FACTOR = 0.6;
+export const V41_T4B_NEAR_CONSERVATIVE_FACTOR = 0.8;
 export const V41_T4B_FLOOR_MIN_DAILY = 0;
 export const V41_T4B_FLOOR_D6_RATIO = 0.08;
-export const V41_T4B_NEAR_BLEND_FLOOR = 0;
-export const V41_T4B_NEAR_D6_FLOOR = 0;
-export const V41_T4B_NEAR_RECENT90_FLOOR = 0;
+export const V41_T4B_NEAR_BLEND_FLOOR = 0.7;
+export const V41_T4B_NEAR_D6_FLOOR = 0.75;
+export const V41_T4B_NEAR_RECENT90_FLOOR = 0.65;
 export const V41_T4B_FLEX_DECAY_FROM_K = 3;
 export const V41_T4B_FLEX_DECAY_FACTOR = 0.72;
+
+/** 跨平台近端抬底：本平台过低时，不低于其他平台近端日均的 α 倍 */
+export const V41_PEER_PLATFORM_FLOOR_ALPHA = 0.2;
+export const V41_PEER_PLATFORM_MIN_DAILY = 1;
 /** T4 弱动销：日销低于此视为不可预测（ghost gate，四轮扩闸） */
 export const V41_T4_WEAK_RECENT30_MIN = 0.35;
 export const V41_T4_WEAK_RECENT90_MIN = 0.55;
@@ -545,7 +551,12 @@ export function resolveV41MonthFactor(
   return factor;
 }
 
-export function tierConservativeFactor(tier: AllCatV41Tier, productCategory: string): number {
+export function tierConservativeFactor(
+  tier: AllCatV41Tier,
+  productCategory: string,
+  horizonIndex = 0,
+): number {
+  const near = Math.max(0, Math.floor(horizonIndex)) <= 2;
   if (productCategory === 'C' && tier === 'T2') return 0.85;
   if (productCategory === 'B' && tier === 'T1') return 0.82;
   switch (tier) {
@@ -556,9 +567,9 @@ export function tierConservativeFactor(tier: AllCatV41Tier, productCategory: str
     case 'T3':
       return 0.9;
     case 'T4A':
-      return V41_T4A_CONSERVATIVE_FACTOR;
+      return near ? V41_T4A_NEAR_CONSERVATIVE_FACTOR : V41_T4A_CONSERVATIVE_FACTOR;
     case 'T4B':
-      return V41_T4B_CONSERVATIVE_FACTOR;
+      return near ? V41_T4B_NEAR_CONSERVATIVE_FACTOR : V41_T4B_CONSERVATIVE_FACTOR;
     default:
       return 1.0;
   }
@@ -752,7 +763,6 @@ function applyNearHorizonFloor(input: {
 }): number {
   const k = Math.max(0, Math.floor(input.horizonIndex));
   if (k > 2) return input.result;
-  if (input.tier === 'T4A' || input.tier === 'T4B') return input.result;
 
   if (input.tier === 'T1' || input.tier === 'T2') {
     const collapseThreshold = input.blendLevel * V41_CORE_COLLAPSE_THRESHOLD;
@@ -764,6 +774,27 @@ function applyNearHorizonFloor(input: {
   const floor = resolveNearHorizonFloor(input);
   if (floor <= 0) return input.result;
   return Math.max(input.result, roundDaily(floor));
+}
+
+/** 同 SKU 其他平台近端动销抬底（仅 k≤2）；写入 horizon_factors.peerPlatformFloor */
+export function applyPeerPlatformNearFloor(input: {
+  forecastDaily: number;
+  horizonIndex: number;
+  peerPlatformRecentDaily?: number | null;
+  alpha?: number;
+  peerMinDaily?: number;
+}): { forecastDaily: number; peerPlatformFloor: number | null } {
+  const k = Math.max(0, Math.floor(input.horizonIndex));
+  if (k > 2) return { forecastDaily: input.forecastDaily, peerPlatformFloor: null };
+  const peer = nonNegative(input.peerPlatformRecentDaily);
+  const alpha = input.alpha ?? V41_PEER_PLATFORM_FLOOR_ALPHA;
+  const peerMin = input.peerMinDaily ?? V41_PEER_PLATFORM_MIN_DAILY;
+  if (peer < peerMin) return { forecastDaily: input.forecastDaily, peerPlatformFloor: null };
+  const floor = roundDaily(peer * alpha);
+  if (floor <= 0 || input.forecastDaily >= floor) {
+    return { forecastDaily: input.forecastDaily, peerPlatformFloor: null };
+  }
+  return { forecastDaily: floor, peerPlatformFloor: floor };
 }
 
 function p10Multiplier(tier: AllCatV41Tier): number {
@@ -867,7 +898,7 @@ export function computeAllCatV41BoundedDaily(input: {
     recent90DailyAvg: input.recent90DailyAvg,
   });
   const monthFactor = resolveV41MonthFactor(forecastMonth, horizonIndex, tier);
-  const conservativeFactor = tierConservativeFactor(tier, productCategory);
+  const conservativeFactor = tierConservativeFactor(tier, productCategory, horizonIndex);
   const adjusted = baseDaily * trend.factor * monthFactor * conservativeFactor;
   const floor = tierFloorDaily(tier, metrics.d6);
   const ceiling = tierCeilingDaily(
@@ -1075,9 +1106,14 @@ export function computeAllCatV41ForecastForMonth(input: {
   /** 滚动近 90 天日均；用于 T4 上限与近端地板 */
   recent90DailyAvg?: number | null;
   /**
+   * 同 SKU 其他平台近端日均（≈ 全渠道近30 − 本平台近30）。
+   * 近端 k≤2 时若本平台过低则抬底到 peer×α。
+   */
+  peerPlatformRecentDaily?: number | null;
+  /**
    * 批量向前预测时传入 effectiveRecentWindowEnd（上月末）。
-   * 特征截止于此，避免未完成自然月（零销量）进入走步窗口导致 T99。
-   * 回测场景勿传，以保持 strict walk-forward。
+   * 特征截止于此，避免未完成/未加载自然月（零销量）进入走步窗口导致后续月被置 0。
+   * 单月 walk-forward 评估脚本可不传；批量生成（含过去开始月）必须传。
    */
   historyCapEnd?: Date;
 }): AllCatV41ForecastResult {
@@ -1120,7 +1156,15 @@ export function computeAllCatV41ForecastForMonth(input: {
     recent30DailyAvg: input.recent30DailyAvg,
     recent90DailyAvg: input.recent90DailyAvg,
   });
-  const forecastDaily = bounded.forecastDaily;
+  const peerLift =
+    tier === 'T99' || bounded.ghostGated
+      ? { forecastDaily: bounded.forecastDaily, peerPlatformFloor: null as number | null }
+      : applyPeerPlatformNearFloor({
+          forecastDaily: bounded.forecastDaily,
+          horizonIndex: input.horizonIndex,
+          peerPlatformRecentDaily: input.peerPlatformRecentDaily,
+        });
+  const forecastDaily = peerLift.forecastDaily;
   const effectiveTarget = resolveWalkForwardMetricsTarget(
     input.forecastYear,
     input.forecastMonth,
@@ -1143,6 +1187,9 @@ export function computeAllCatV41ForecastForMonth(input: {
   if (input.recent90DailyAvg != null && input.recent90DailyAvg > 0) {
     horizonFactors.recent90DailyAvg = roundDaily(input.recent90DailyAvg);
   }
+  if (input.peerPlatformRecentDaily != null && input.peerPlatformRecentDaily > 0) {
+    horizonFactors.peerPlatformRecentDaily = roundDaily(input.peerPlatformRecentDaily);
+  }
   horizonFactors.effectiveTrendDecay = bounded.trendDecay;
   horizonFactors.monthFactor = bounded.monthFactor;
   horizonFactors.conservativeFactor = bounded.conservativeFactor;
@@ -1150,6 +1197,9 @@ export function computeAllCatV41ForecastForMonth(input: {
   horizonFactors.rollingRatio = bounded.rollingRatio;
   if (bounded.nearHorizonFloor != null) {
     horizonFactors.nearHorizonFloor = bounded.nearHorizonFloor;
+  }
+  if (peerLift.peerPlatformFloor != null) {
+    horizonFactors.peerPlatformFloor = peerLift.peerPlatformFloor;
   }
   horizonFactors.tierCeiling = bounded.tierCeiling;
   if (bounded.ghostGated) {

@@ -47,11 +47,56 @@ describe('sales-history-import', () => {
         saleDate: '2026-06-26',
         qtySold: 5,
         channel: 'AMAZON',
+        station: 'US',
         category: 'Outdoor/Patio',
       },
     ]);
     assert.equal(plan.unmatchedSkuCount, 1);
     assert.deepEqual(plan.errors, ['SKU could not be created for daily sales row: MISSING']);
+  });
+
+  it('keeps same SKU/date/channel separate when report stations differ', () => {
+    const plan = buildSalesHistoryImportPlan(
+      [
+        {
+          skuCode: 'SKU1',
+          skuName: 'Desk',
+          station: 'Amazon美国',
+          platformRaw: 'Amazon',
+          firstOrderAt: '',
+          category: '',
+          saleDate: '2026-06-26',
+          qtySold: 2,
+        },
+        {
+          skuCode: 'SKU1',
+          skuName: 'Desk',
+          station: 'Amazon英国',
+          platformRaw: 'Amazon',
+          firstOrderAt: '',
+          category: '',
+          saleDate: '2026-06-26',
+          qtySold: 3,
+        },
+        {
+          skuCode: 'SKU1',
+          skuName: 'Desk',
+          station: 'Amazon德国',
+          platformRaw: 'Amazon',
+          firstOrderAt: '',
+          category: '',
+          saleDate: '2026-06-26',
+          qtySold: 4,
+        },
+      ],
+      new Map([['SKU1', 'sku-1']]),
+      new Map([['sku-1', null]]),
+    );
+
+    assert.equal(plan.rows.length, 3);
+    assert.equal(plan.rows.find((r) => r.station === 'US')?.qtySold, 2);
+    assert.equal(plan.rows.find((r) => r.station === 'UK')?.qtySold, 3);
+    assert.equal(plan.rows.find((r) => r.station === 'EU')?.qtySold, 4);
   });
 
   it('normalizes Chinese platform labels to standard channel codes', () => {

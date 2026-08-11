@@ -1,13 +1,13 @@
 import {
-  MODEL_NAME,
-  chooseModel,
-  modelForecast,
-  modelReason,
   nextPeriodLabel,
+  trendSeasonalForecast,
+  trendSeasonalModelLabel,
+  trendSeasonalModelReason,
+  fitConfidenceFromR2,
+  type FitConfidence,
 } from './sales-analytics-forecast.js';
 import { momPct, sumSeries, yoyPct } from './sales-analytics-metrics.js';
 import type {
-  ChosenModel,
   ForecastPoint,
   SalesAnalyticsEntity,
   SalesAnalyticsGranularity,
@@ -52,9 +52,10 @@ export type MatrixRow = {
   yoy: number | null;
   peak: { period: string; qty: number };
   trough: { period: string; qty: number };
-  model: ChosenModel;
   modelLabel: string;
   reason: string;
+  r2: number;
+  confidence: FitConfidence;
   fc: ForecastPoint[];
   series: number[];
 };
@@ -116,14 +117,29 @@ export function buildMatrixRows(args: {
         troughI = i;
       }
     });
-    // Fit on full series with full period labels (current gran) so seasonal indices align.
-    const model = chooseModel(series, isWeek, periods);
-    const fc = lastLbl
-      ? modelForecast(model, series.length, horizon, lastLbl, isWeek)
-      : Array.from({ length: horizon }, (_, i) => ({
-          ym: nextPeriodLabel(lastLbl, i + 1, isWeek),
-          val: 0,
-        }));
+
+    // Same path as ForecastPanel: always trend × monthly seasonal (weeks: linear only).
+    let fc: ForecastPoint[];
+    let modelLabel: string;
+    let reason: string;
+    let r2 = 0;
+    let confidence: FitConfidence = '偏低';
+
+    if (series.length >= 2 && lastLbl) {
+      const panel = trendSeasonalForecast(series, periods, horizon, isWeek);
+      fc = panel.fc;
+      r2 = panel.r2;
+      confidence = fitConfidenceFromR2(panel.r2);
+      modelLabel = trendSeasonalModelLabel(isWeek, panel.r2);
+      reason = trendSeasonalModelReason(panel, isWeek, series.length);
+    } else {
+      fc = Array.from({ length: horizon }, (_, i) => ({
+        ym: nextPeriodLabel(lastLbl, i + 1, isWeek),
+        val: 0,
+      }));
+      modelLabel = isWeek ? '线性趋势' : '趋势+季节';
+      reason = '历史期不足，无法拟合趋势；预测置 0。看板粗估，非系统发布预测。';
+    }
 
     rows.push({
       key,
@@ -136,9 +152,10 @@ export function buildMatrixRows(args: {
         period: windowPeriods[troughI] ?? '—',
         qty: Number.isFinite(troughV) ? troughV : 0,
       },
-      model,
-      modelLabel: MODEL_NAME[model.type],
-      reason: modelReason(model),
+      modelLabel,
+      reason,
+      r2,
+      confidence,
       fc,
       series,
     });

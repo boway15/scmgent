@@ -9,6 +9,9 @@ export type BaselineTaskInput = {
   skuCode?: string;
   versionName?: string;
   monthCount: number;
+  /** 预测地平线首月对应 asOf（UTC） */
+  today?: Date;
+  startMonth?: string;
   createdBy?: string;
   existingVersionId?: string;
   forceNewVersion?: boolean;

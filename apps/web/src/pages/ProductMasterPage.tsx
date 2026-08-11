@@ -45,6 +45,7 @@ type SkuEditForm = {
 type SkuFilters = {
   q: string;
   category: string;
+  projectGroup: string;
   lifecycle: string;
   salesCountry: string;
   merchantCode: string;
@@ -61,6 +62,7 @@ type SpuFilters = {
 const EMPTY_SKU_FILTERS: SkuFilters = {
   q: '',
   category: '',
+  projectGroup: '',
   lifecycle: '',
   salesCountry: '',
   merchantCode: '',
@@ -78,6 +80,7 @@ function toSkuFilterParams(filters: SkuFilters) {
   return {
     q: filters.q || undefined,
     category: filters.category || undefined,
+    projectGroup: filters.projectGroup || undefined,
     lifecycle: filters.lifecycle || undefined,
     salesCountry: filters.salesCountry || undefined,
     merchantCode: filters.merchantCode || undefined,
@@ -497,6 +500,11 @@ export function ProductMasterPage() {
                 placeholder="品类"
                 value={skuFilters.category}
                 onChange={(e) => setSkuFilters({ ...skuFilters, category: e.target.value })}
+              />
+              <Input
+                placeholder="项目组"
+                value={skuFilters.projectGroup}
+                onChange={(e) => setSkuFilters({ ...skuFilters, projectGroup: e.target.value })}
               />
               <Input
                 placeholder="生命周期（系统按销量计算）"

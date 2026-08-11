@@ -22,6 +22,7 @@ import { getForecastVersionById } from './forecast-version.js';
 import { categoryMatchesFilterCondition } from './sku-category.js';
 import { loadMonthlySalesBySkuIds } from './sales-history-query.js';
 import { MAX_FORECAST_MONTH_COUNT } from './forecast-limits.js';
+import { resolveForecastStartMonthAsOf } from './forecast-start-month.js';
 
 const ALLCAT_V41_PROFILE_SEGMENTS = new Set(['T1', 'T2', 'T3', 'T3P', 'T4A', 'T4B', 'T99']);
 
@@ -527,22 +528,50 @@ export function buildConfiguredHorizonLabels(monthCount: number, asOf = new Date
   }));
 }
 
+function horizonMonthKey(year: number, month: number): string {
+  return `${year}-${String(month).padStart(2, '0')}`;
+}
+
 /**
  * 已生成版本的预测月列：优先使用落库月份（生成后不再随当前日历滚动）。
- * monthCount 仅截取该版本前 N 个月；仅在尚无落库行时，才按 asOf 生成占位列。
+ * 若版本有 startMonth，从该月起截取（避免回测旧月污染后仍显示 2 月起）。
+ * monthCount 仅截取地平线前 N 个月；仅在尚无可用落库行时，才按 startMonth/asOf 生成占位列。
  */
 export function resolveVersionDisplayHorizon(input: {
   dataHorizon: ForecastHorizonMonth[];
   monthCount?: number;
   asOf?: Date;
+  startMonth?: string | null;
 }): ForecastHorizonMonth[] {
-  const { dataHorizon, monthCount } = input;
-  if (dataHorizon.length > 0) {
-    if (monthCount == null) return dataHorizon;
-    return dataHorizon.slice(0, monthCount);
+  const { dataHorizon, monthCount, startMonth } = input;
+  const startKey = startMonth?.trim() || '';
+  let horizon = dataHorizon;
+
+  if (startKey && horizon.length > 0) {
+    const startIdx = horizon.findIndex(
+      (h) => (h.monthLabel || horizonMonthKey(h.forecastYear, h.month)) === startKey,
+    );
+    if (startIdx >= 0) {
+      horizon = horizon.slice(startIdx);
+    } else if (monthCount != null) {
+      return buildConfiguredHorizonLabels(monthCount, resolveForecastStartMonthAsOf(startKey));
+    } else {
+      return buildConfiguredHorizonLabels(
+        Math.max(1, horizon.length),
+        resolveForecastStartMonthAsOf(startKey),
+      );
+    }
+  }
+
+  if (horizon.length > 0) {
+    if (monthCount == null) return horizon;
+    return horizon.slice(0, monthCount);
   }
   if (monthCount != null) {
-    return buildConfiguredHorizonLabels(monthCount, input.asOf ?? new Date());
+    const asOf = startKey
+      ? resolveForecastStartMonthAsOf(startKey)
+      : (input.asOf ?? new Date());
+    return buildConfiguredHorizonLabels(monthCount, asOf);
   }
   return [];
 }
@@ -581,6 +610,7 @@ async function resolveHorizonForVersionView(input: {
   platform?: string;
   monthCount?: number;
   asOf: Date;
+  startMonth?: string | null;
 }): Promise<ForecastHorizonMonth[]> {
   let dataHorizon = input.dataHorizon;
   if (!dataHorizon.length) {
@@ -594,6 +624,7 @@ async function resolveHorizonForVersionView(input: {
     dataHorizon,
     monthCount: input.monthCount,
     asOf: input.asOf,
+    startMonth: input.startMonth,
   });
 }
 
@@ -889,6 +920,7 @@ async function listForecastHorizonAggregated(input: {
         station: stationFilter,
         monthCount: input.monthCount,
         asOf: input.asOf,
+        startMonth: input.version?.startMonth,
       });
       const historyHorizon = buildHistoryMonthLabels(input.historyMonthCount, input.asOf);
       return {
@@ -974,6 +1006,7 @@ async function listForecastHorizonAggregated(input: {
     station: stationFilter,
     monthCount: input.monthCount,
     asOf: input.asOf,
+    startMonth: input.version?.startMonth,
   });
   const historyHorizon = buildHistoryMonthLabels(input.historyMonthCount, input.asOf);
 
@@ -1268,6 +1301,7 @@ export async function listForecastHorizon(input: {
     platform: platformNormalized,
     monthCount,
     asOf,
+    startMonth: version?.startMonth,
   });
   const historyHorizon = buildHistoryMonthLabels(historyMonthCount, asOf);
 

@@ -1,10 +1,13 @@
-import { normalizeCategoryPath } from './sku-category.js';
-
 export const LAYERED_UNGROUPED = '(未分组)';
 export const LAYERED_UNCATEGORIZED = '(未分类)';
 export const LAYERED_PLATFORM_ALL = 'ALL';
 
 const YEAR_MONTH_RE = /^(\d{4})-(\d{2})$/;
+
+/** Local copy to avoid importing sku-category (pulls DB at module load). */
+function normalizeCategoryPath(value: string | null | undefined): string {
+  return (value ?? '').trim().replace(/\\/g, '/');
+}
 
 export function normalizeProjectGroup(value: string | null | undefined): string {
   const trimmed = (value ?? '').trim();

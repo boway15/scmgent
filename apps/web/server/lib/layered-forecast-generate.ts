@@ -1,4 +1,4 @@
-import { and, inArray, lt } from 'drizzle-orm';
+import { and, eq, inArray, lt } from 'drizzle-orm';
 import {
   db,
   layeredForecastNodes,

@@ -509,8 +509,36 @@
     {
       "idx": 72,
       "version": "6",
+      "when": 1780717058213,
+      "tag": "0070_forecast_version_start_month",
+      "breakpoints": true
+    },
+    {
+      "idx": 73,
+      "version": "6",
+      "when": 1780717058214,
+      "tag": "0071_sku_project_group",
+      "breakpoints": true
+    },
+    {
+      "idx": 74,
+      "version": "6",
       "when": 1786356401089,
       "tag": "0072_sales_analytics_cube",
+      "breakpoints": true
+    },
+    {
+      "idx": 75,
+      "version": "6",
+      "when": 1786357100000,
+      "tag": "0073_sales_history_station",
+      "breakpoints": true
+    },
+    {
+      "idx": 76,
+      "version": "6",
+      "when": 1786357200000,
+      "tag": "0074_layered_forecast",
       "breakpoints": true
     }
   ]

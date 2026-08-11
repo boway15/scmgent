@@ -57,6 +57,7 @@ type Props = {
   horizonMonthCount: number;
   monthLabels: string[];
   profileSegment?: string | null;
+  startMonth?: string | null;
 };
 
 export function ForecastAssistPanel({
@@ -67,6 +68,7 @@ export function ForecastAssistPanel({
   horizonMonthCount,
   monthLabels,
   profileSegment,
+  startMonth,
 }: Props) {
   const qc = useQueryClient();
   const defaultMonth = monthLabels[0] ?? '';
@@ -85,6 +87,7 @@ export function ForecastAssistPanel({
   const [lastAssistMode, setLastAssistMode] = useState<'auto' | 'human' | null>(null);
 
   const difyEnabled = Boolean(aiConfig?.salesForecastWorkflow);
+  const hasStartMonth = Boolean(startMonth?.trim());
 
   useEffect(() => {
     setExogenousRows([]);
@@ -183,10 +186,10 @@ export function ForecastAssistPanel({
 
   const aiPending = aiAutoForecast.isPending || aiHumanForecast.isPending;
   const aiMutation = aiHumanForecast.isPending ? aiHumanForecast : aiAutoForecast;
+  const aiDisabled =
+    !difyEnabled || !hasStartMonth || aiPending || systemRecompute.isPending;
   const humanSubmitDisabled =
-    !difyEnabled ||
-    aiPending ||
-    systemRecompute.isPending ||
+    aiDisabled ||
     (exogenousRows.length === 0 && !operatorNote.trim());
 
   const hasAiResult =
@@ -204,7 +207,13 @@ export function ForecastAssistPanel({
       <div className="space-y-1">
         <p className="text-sm font-medium text-text-main">预测辅助</p>
         <p className="text-xs text-text-sub">
-          基于近 {DRAWER_HISTORY_MONTH_COUNT} 个月销量与品类趋势；AI 模式调用 Dify 工作流，系统运算走本地算法。
+          使用版本开始月锚定近 {DRAWER_HISTORY_MONTH_COUNT} 个月销量与品类趋势；AI 模式调用 Dify
+          工作流，系统运算走本地算法。
+        </p>
+        <p className="text-xs text-text-sub">
+          {hasStartMonth
+            ? `按开始月 ${startMonth!.trim()} 严格回测（历史截止上月）`
+            : '本版本无开始月，无法严格回测；请带开始月重新生成草稿'}
         </p>
       </div>
 
@@ -212,7 +221,7 @@ export function ForecastAssistPanel({
         <Button
           size="sm"
           variant={profileSegment === 'T99' ? 'default' : 'outline'}
-          disabled={!difyEnabled || aiPending || systemRecompute.isPending}
+          disabled={aiDisabled}
           onClick={() => aiAutoForecast.mutate()}
         >
           {aiAutoForecast.isPending ? 'AI 预测中…' : 'AI 自动辅助'}

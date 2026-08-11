@@ -529,6 +529,7 @@ export function ForecastSkuDetailDrawer({
                 horizonMonthCount={horizonMonthCount}
                 monthLabels={assistMonthLabels}
                 profileSegment={profileSegment}
+                startMonth={detail?.versionSummary?.startMonth ?? null}
               />
             )}
 

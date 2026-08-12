@@ -595,7 +595,9 @@ function VersionRow({
               {deleting ? '删除中…' : '删除'}
             </button>
           )}
-          {(version.status === 'published' || version.status === 'archived') && (
+          {(version.status === 'draft' ||
+            version.status === 'published' ||
+            version.status === 'archived') && (
             <Link
               to={`/data/forecast/${version.id}${accuracySearch}`}
               className="text-primary hover:underline"

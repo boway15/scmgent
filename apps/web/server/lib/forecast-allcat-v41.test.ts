@@ -26,6 +26,8 @@ import {
   buildT99ReviewMessage,
   V41_T4B_NEAR_CONSERVATIVE_FACTOR,
   V41_T4B_CONSERVATIVE_FACTOR,
+  V41_T4B_RECENT30_CAP,
+  V41_T4B_RECENT90_CAP,
 } from './forecast-allcat-v41.js';
 
 function buildSeasonalMonthlyRows(): Array<{ saleYear: number; month: number; qtySold: number }> {
@@ -744,7 +746,7 @@ describe('forecast-allcat-v41', () => {
     });
     assert.equal(bounded.growthSignal, false);
     assert.ok(bounded.forecastDaily > 0);
-    assert.ok(bounded.forecastDaily <= 1.36 * 0.9);
+    assert.ok(bounded.forecastDaily <= 1.36 * 1.0); // V41_T4B_RECENT90_CAP
   });
 
   it('isAllCatV41RecentSalesAbsent detects weak and declining tail momentum', () => {
@@ -973,6 +975,15 @@ describe('forecast-allcat-v41', () => {
     });
     assert.equal(bounded.forecastDaily, 0);
     assert.equal(bounded.ghostGated, true);
+  });
+
+  it('T4B plan-A constants: near 0.9 / far 0.75 / caps 0.95 & 1.0', () => {
+    assert.equal(V41_T4B_NEAR_CONSERVATIVE_FACTOR, 0.9);
+    assert.equal(V41_T4B_CONSERVATIVE_FACTOR, 0.75);
+    assert.equal(V41_T4B_RECENT30_CAP, 0.95);
+    assert.equal(V41_T4B_RECENT90_CAP, 1.0);
+    assert.equal(tierConservativeFactor('T4B', 'C', 0), 0.9);
+    assert.equal(tierConservativeFactor('T4B', 'C', 3), 0.75);
   });
 
   it('T4B near horizon uses relaxed conservative factor and blend floor', () => {

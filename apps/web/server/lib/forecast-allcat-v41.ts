@@ -166,9 +166,9 @@ export const V41_T4A_FLEX_DECAY_FACTOR = 0.72;
 export const V41_T4A_MIN_TREND_RATIO = 0.8;
 export const V41_T4_TAIL_MONTH_DISCOUNT = 0.8;
 
-/** T4B 稳定保底层：远月压 ghost；近端 k≤2 放宽保守系数并抬底（缓解系统性低估） */
-export const V41_T4B_CONSERVATIVE_FACTOR = 0.6;
-export const V41_T4B_NEAR_CONSERVATIVE_FACTOR = 0.8;
+/** T4B 稳定保底层：远月压 ghost；近端 k≤2 放宽保守系数并抬底（缓解系统性低估，方案 A 温和乐观） */
+export const V41_T4B_CONSERVATIVE_FACTOR = 0.75;
+export const V41_T4B_NEAR_CONSERVATIVE_FACTOR = 0.9;
 export const V41_T4B_FLOOR_MIN_DAILY = 0;
 export const V41_T4B_FLOOR_D6_RATIO = 0.08;
 export const V41_T4B_NEAR_BLEND_FLOOR = 0.7;
@@ -207,8 +207,8 @@ export const V41_T4A_RECENT90_CAP = 0.85;
 export const V41_T4A_RECENT30_CAP = 0.8;
 export const V41_T4A_D6_CAP = 0.9;
 export const V41_T4B_ANCHOR_CAP = 1.0;
-export const V41_T4B_RECENT90_CAP = 0.9;
-export const V41_T4B_RECENT30_CAP = 0.85;
+export const V41_T4B_RECENT90_CAP = 1.0;
+export const V41_T4B_RECENT30_CAP = 0.95;
 export const V41_T4B_D6_CAP = 0.95;
 
 function nonNegative(value: number | undefined | null): number {

@@ -21,13 +21,15 @@ export function isForecastRowIncludedInAccuracyStats(input: {
   return input.forecastDaily > 0;
 }
 
-/** 主 KPI 可比：T1–T4A 且实际 > 0（与 V4.1 excludedFromMainStats 对齐） */
+/** 主 KPI 可比：T1–T4A 且实际 > 0、预测 > 0（漏报不进主 KPI） */
 export function isForecastRowComparableForAccuracy(input: {
   profileSegment?: string | null;
   forecastProfileClass?: string | null;
   actualDaily: number;
+  forecastDaily?: number;
 }): boolean {
   if (input.actualDaily <= 0) return false;
+  if (input.forecastDaily != null && input.forecastDaily <= 0) return false;
 
   const segment = input.profileSegment?.trim();
   if (segment && isAllCatV41TierCode(segment)) {
@@ -47,6 +49,7 @@ export function filterKpiComparableAccuracyRows<T extends KpiAccuracyRow>(rows: 
       profileSegment: row.profileSegment,
       forecastProfileClass: row.forecastProfileClass,
       actualDaily: row.actualDaily,
+      forecastDaily: row.forecastDaily,
     }),
   );
 }

@@ -96,6 +96,10 @@ export type ForecastAccuracyMetricSummary = {
   zeroForecastMissRows: number;
   actualDailySum: number;
   forecastDailySum: number;
+  /** Σ(预测日均 × 当月天数) */
+  forecastQtySum: number;
+  /** Σ(实际日均 × 当月天数) */
+  actualQtySum: number;
 };
 
 export type ForecastAccuracyTopErrorSku = {
@@ -149,6 +153,8 @@ type MetricSqlRow = {
   zeroForecastMissRows?: number | string | null;
   actualDailySum?: number | string | null;
   forecastDailySum?: number | string | null;
+  forecastQtySum?: number | string | null;
+  actualQtySum?: number | string | null;
   minForecastMonth?: string | null;
   maxForecastMonth?: string | null;
 };
@@ -233,6 +239,8 @@ function metricFromRow(row: MetricSqlRow, key?: string, label?: string): Forecas
     zeroForecastMissRows: toInt(row.zeroForecastMissRows),
     actualDailySum: toNumber(row.actualDailySum),
     forecastDailySum: toNumber(row.forecastDailySum),
+    forecastQtySum: toNumber(row.forecastQtySum),
+    actualQtySum: toNumber(row.actualQtySum),
   };
 }
 
@@ -266,6 +274,140 @@ function buildAccuracyFilters(input: {
   return filters;
 }
 
+/** 漏报行（矩阵 forecast=0 且历史有销）过滤；无 versionId 时不查漏报 */
+function buildMissRowFilters(input: {
+  versionId?: string;
+  station?: string;
+  platform?: string;
+  start?: YearMonth;
+  end?: YearMonth;
+}): SQL[] {
+  if (!input.versionId) return [sql`false`];
+  const filters: SQL[] = [
+    sql`sfm.version_id = ${input.versionId}::uuid`,
+    sql`sfm.forecast_daily_avg::numeric <= 0`,
+    sql`coalesce(shm.qty_sold, 0) > 0`,
+  ];
+  if (input.station) filters.push(sql`sfm.station = ${input.station}`);
+  if (input.platform) filters.push(sql`sfm.platform = ${input.platform}`);
+  if (input.start) filters.push(sql`(sfm.forecast_year * 100 + sfm.month) >= ${input.start.serial}`);
+  if (input.end) filters.push(sql`(sfm.forecast_year * 100 + sfm.month) <= ${input.end.serial}`);
+  return filters;
+}
+
+type AccuracyQueryScope = {
+  versionId?: string;
+  station?: string;
+  platform?: string;
+  start?: YearMonth;
+  end?: YearMonth;
+};
+
+function whereClause(filters: SQL[]): SQL {
+  return filters.length ? sql`where ${sql.join(filters, sql` and `)}` : sql``;
+}
+
+function buildBaseCte(scope: AccuracyQueryScope, horizonRef?: YearMonth): SQL {
+  const horizonFallback = horizonRef
+    ? sql`case
+        when ((fa.forecast_year - ${horizonRef.year}) * 12 + (fa.month - ${horizonRef.month})) <= 2 then 'precision'
+        when ((fa.forecast_year - ${horizonRef.year}) * 12 + (fa.month - ${horizonRef.month})) <= 5 then 'flex'
+        else 'strategic'
+      end`
+    : sql`'unknown'`;
+  const missHorizonFallback = horizonRef
+    ? sql`case
+        when ((sfm.forecast_year - ${horizonRef.year}) * 12 + (sfm.month - ${horizonRef.month})) <= 2 then 'precision'
+        when ((sfm.forecast_year - ${horizonRef.year}) * 12 + (sfm.month - ${horizonRef.month})) <= 5 then 'flex'
+        else 'strategic'
+      end`
+    : sql`'unknown'`;
+  const faFilters = buildAccuracyFilters(scope);
+  const missFilters = buildMissRowFilters(scope);
+  const daysExpr = sql`extract(day from (make_date(sfm.forecast_year, sfm.month, 1) + interval '1 month' - interval '1 day'))`;
+
+  return sql`
+    with predicted as (
+      select
+        fa.sku_id,
+        s.code as sku_code,
+        s.name as sku_name,
+        s.category,
+        fa.station,
+        fa.platform,
+        fa.forecast_year,
+        fa.month,
+        fa.forecast_daily_avg::numeric as forecast_daily,
+        fa.actual_daily_avg::numeric as actual_daily,
+        (fa.forecast_daily_avg::numeric - fa.actual_daily_avg::numeric) as error,
+        abs(fa.forecast_daily_avg::numeric - fa.actual_daily_avg::numeric) as abs_error,
+        coalesce(nullif(sfm.profile_segment, ''), 'unclassified') as profile_segment,
+        coalesce(nullif(sfm.horizon_band, ''), ${horizonFallback}) as horizon_band
+      from forecast_accuracy_monthly fa
+      join skus s on s.id = fa.sku_id
+      left join sales_forecast_monthly sfm on sfm.version_id = fa.version_id
+        and sfm.sku_id = fa.sku_id
+        and sfm.station = fa.station
+        and sfm.platform = fa.platform
+        and sfm.forecast_year = fa.forecast_year
+        and sfm.month = fa.month
+      ${whereClause([...faFilters, sql`fa.forecast_daily_avg::numeric > 0`])}
+    ), miss_rows as (
+      select
+        sfm.sku_id,
+        s.code as sku_code,
+        s.name as sku_name,
+        s.category,
+        sfm.station,
+        sfm.platform,
+        sfm.forecast_year,
+        sfm.month,
+        0::numeric as forecast_daily,
+        (coalesce(shm.qty_sold, 0)::numeric / nullif(${daysExpr}, 0)) as actual_daily,
+        (0::numeric - (coalesce(shm.qty_sold, 0)::numeric / nullif(${daysExpr}, 0))) as error,
+        abs(coalesce(shm.qty_sold, 0)::numeric / nullif(${daysExpr}, 0)) as abs_error,
+        coalesce(nullif(sfm.profile_segment, ''), 'unclassified') as profile_segment,
+        coalesce(nullif(sfm.horizon_band, ''), ${missHorizonFallback}) as horizon_band
+      from sales_forecast_monthly sfm
+      join skus s on s.id = sfm.sku_id
+      left join sales_history_monthly shm
+        on shm.sku_id = sfm.sku_id
+        and shm.channel = sfm.platform
+        and shm.sale_year = sfm.forecast_year
+        and shm.month = sfm.month
+      ${whereClause(missFilters)}
+    ), base as (
+      select * from predicted
+      union all
+      select * from miss_rows
+    ), sku_tier as (
+      select
+        sku_id,
+        case
+          when coalesce(sum(actual_daily) filter (where forecast_daily > 0), 0) <= 0 then 'skipped'
+          when avg(actual_daily) filter (where forecast_daily > 0 and actual_daily > 0) >= 5 then 'core'
+          when avg(actual_daily) filter (where forecast_daily > 0 and actual_daily > 0) >= 1 then 'mid'
+          else 'tail'
+        end as volume_tier
+      from base
+      group by sku_id
+    ), scored as (
+      select
+        b.*,
+        st.volume_tier,
+        (b.forecast_daily > 0) as stats_comparable,
+        (
+          b.actual_daily > 0
+          and b.forecast_daily > 0
+          and b.profile_segment not in ('T4B', 'T99')
+          and b.profile_segment not like 'D:%'
+        ) as kpi_comparable
+      from base b
+      join sku_tier st on st.sku_id = b.sku_id
+    )
+  `;
+}
+
 function buildMonthFilters(input: {
   platform?: string;
   start?: YearMonth;
@@ -287,10 +429,6 @@ function buildMonthFilters(input: {
     else filters.push(sql`(extract(year from ${sql.raw(a)}.sale_date)::int * 100 + extract(month from ${sql.raw(a)}.sale_date)::int) <= ${input.end.serial}`);
   }
   return filters;
-}
-
-function whereClause(filters: SQL[]): SQL {
-  return filters.length ? sql`where ${sql.join(filters, sql` and `)}` : sql``;
 }
 
 async function loadVersionById(versionId: string): Promise<VersionScopeRow | null> {
@@ -358,78 +496,20 @@ async function loadLatestAccuracyVersion(input: {
   return rowsOf<VersionScopeRow>(result)[0] ?? null;
 }
 
-function buildBaseCte(filters: SQL[], horizonRef?: YearMonth): SQL {
-  const horizonFallback = horizonRef
-    ? sql`case
-        when ((fa.forecast_year - ${horizonRef.year}) * 12 + (fa.month - ${horizonRef.month})) <= 2 then 'precision'
-        when ((fa.forecast_year - ${horizonRef.year}) * 12 + (fa.month - ${horizonRef.month})) <= 5 then 'flex'
-        else 'strategic'
-      end`
-    : sql`'unknown'`;
-
-  return sql`
-    with base as (
-      select
-        fa.sku_id,
-        s.code as sku_code,
-        s.name as sku_name,
-        s.category,
-        fa.station,
-        fa.platform,
-        fa.forecast_year,
-        fa.month,
-        fa.forecast_daily_avg::numeric as forecast_daily,
-        fa.actual_daily_avg::numeric as actual_daily,
-        (fa.forecast_daily_avg::numeric - fa.actual_daily_avg::numeric) as error,
-        abs(fa.forecast_daily_avg::numeric - fa.actual_daily_avg::numeric) as abs_error,
-        coalesce(nullif(sfm.profile_segment, ''), 'unclassified') as profile_segment,
-        coalesce(nullif(sfm.horizon_band, ''), ${horizonFallback}) as horizon_band
-      from forecast_accuracy_monthly fa
-      join skus s on s.id = fa.sku_id
-      left join sales_forecast_monthly sfm on sfm.version_id = fa.version_id
-        and sfm.sku_id = fa.sku_id
-        and sfm.station = fa.station
-        and sfm.platform = fa.platform
-        and sfm.forecast_year = fa.forecast_year
-        and sfm.month = fa.month
-      ${whereClause(filters)}
-    ), sku_tier as (
-      select
-        sku_id,
-        case
-          when coalesce(sum(actual_daily), 0) <= 0 then 'skipped'
-          when avg(actual_daily) filter (where actual_daily > 0) >= 5 then 'core'
-          when avg(actual_daily) filter (where actual_daily > 0) >= 1 then 'mid'
-          else 'tail'
-        end as volume_tier
-      from base
-      group by sku_id
-    ), scored as (
-      select
-        b.*,
-        st.volume_tier,
-        (b.forecast_daily > 0) as stats_comparable,
-        (
-          b.actual_daily > 0
-          and b.profile_segment not in ('T4B', 'T99')
-          and b.profile_segment not like 'D:%'
-        ) as kpi_comparable
-      from base b
-      join sku_tier st on st.sku_id = b.sku_id
-    )
-  `;
-}
-
 function rollupCountMetricsSql(tableAlias: 'scored' | 'keyed'): SQL {
   const t = tableAlias;
+  // 当月天数：make_date + 1 month - 1 day，与日均×天数口径一致
+  const daysInMonth = `extract(day from (make_date(${t}.forecast_year, ${t}.month, 1) + interval '1 month' - interval '1 day'))`;
   return sql.raw(`
     count(*)::int as rows,
     count(distinct ${t}.sku_id)::int as "skuCount",
     count(*) filter (where ${t}.stats_comparable)::int as "comparableRows",
     count(*) filter (where ${t}.actual_daily = 0 and ${t}.forecast_daily > 0)::int as "ghostRows",
     count(*) filter (where ${t}.actual_daily > 0 and ${t}.forecast_daily = 0)::int as "zeroForecastMissRows",
-    coalesce(sum(${t}.actual_daily), 0)::float8 as "actualDailySum",
-    coalesce(sum(${t}.forecast_daily), 0)::float8 as "forecastDailySum"
+    coalesce(sum(${t}.actual_daily) filter (where ${t}.forecast_daily > 0), 0)::float8 as "actualDailySum",
+    coalesce(sum(${t}.forecast_daily) filter (where ${t}.forecast_daily > 0), 0)::float8 as "forecastDailySum",
+    coalesce(sum(${t}.forecast_daily * ${daysInMonth}) filter (where ${t}.forecast_daily > 0), 0)::float8 as "forecastQtySum",
+    coalesce(sum(${t}.actual_daily * ${daysInMonth}) filter (where ${t}.forecast_daily > 0), 0)::float8 as "actualQtySum"
   `);
 }
 
@@ -451,16 +531,18 @@ function metricSelectSql(tableAlias: 'scored' | 'keyed' = 'scored'): SQL {
   `;
 }
 
-async function loadGlobalMetrics(filters: SQL[], horizonRef?: YearMonth): Promise<ForecastAccuracyMetricSummary & {
+async function loadGlobalMetrics(scope: AccuracyQueryScope, horizonRef?: YearMonth): Promise<ForecastAccuracyMetricSummary & {
   minForecastMonth?: string;
   maxForecastMonth?: string;
 }> {
   const result = await db.execute(sql`
-    ${buildBaseCte(filters, horizonRef)}
+    ${buildBaseCte(scope, horizonRef)}
     select
       ${metricSelectSql('scored')},
-      min(format('%s-%s', scored.forecast_year, lpad(scored.month::text, 2, '0'))) as "minForecastMonth",
-      max(format('%s-%s', scored.forecast_year, lpad(scored.month::text, 2, '0'))) as "maxForecastMonth"
+      min(format('%s-%s', scored.forecast_year, lpad(scored.month::text, 2, '0')))
+        filter (where scored.forecast_daily > 0) as "minForecastMonth",
+      max(format('%s-%s', scored.forecast_year, lpad(scored.month::text, 2, '0')))
+        filter (where scored.forecast_daily > 0) as "maxForecastMonth"
     from scored
   `);
   const row = rowsOf<MetricSqlRow>(result)[0] ?? {};
@@ -472,7 +554,7 @@ async function loadGlobalMetrics(filters: SQL[], horizonRef?: YearMonth): Promis
 }
 
 async function loadGroupedMetrics(input: {
-  filters: SQL[];
+  scope: AccuracyQueryScope;
   horizonRef?: YearMonth;
   dimensionSql: SQL;
   labelForKey?: (key: string) => string;
@@ -483,11 +565,11 @@ async function loadGroupedMetrics(input: {
   const limit = Math.max(1, Math.min(100, Math.floor(input.limit ?? 30)));
   const minComparableRows = Math.max(0, Math.floor(input.minComparableRows ?? 0));
   const orderBy = input.orderBySql ?? sql`
-    coalesce(sum(keyed.abs_error) filter (where keyed.actual_daily > 0), 0) desc,
+    coalesce(sum(keyed.abs_error) filter (where keyed.actual_daily > 0 and keyed.forecast_daily > 0), 0) desc,
     count(*) filter (where keyed.actual_daily = 0 and keyed.forecast_daily > 0) desc
   `;
   const result = await db.execute(sql`
-    ${buildBaseCte(input.filters, input.horizonRef)}
+    ${buildBaseCte(input.scope, input.horizonRef)}
     , keyed as (
       select scored.*, ${input.dimensionSql} as dim_key
       from scored
@@ -499,6 +581,7 @@ async function loadGroupedMetrics(input: {
     from keyed
     group by keyed.dim_key
     having count(*) filter (where keyed.stats_comparable) >= ${minComparableRows}
+      or count(*) filter (where keyed.actual_daily > 0 and keyed.forecast_daily = 0) > 0
     order by ${orderBy}
     limit ${limit}
   `);
@@ -510,13 +593,13 @@ async function loadGroupedMetrics(input: {
 }
 
 async function loadTopErrorSkus(input: {
-  filters: SQL[];
+  scope: AccuracyQueryScope;
   horizonRef?: YearMonth;
   limit: number;
 }): Promise<ForecastAccuracyTopErrorSku[]> {
   const limit = Math.max(1, Math.min(200, Math.floor(input.limit)));
   const result = await db.execute(sql`
-    ${buildBaseCte(input.filters, input.horizonRef)}
+    ${buildBaseCte(input.scope, input.horizonRef)}
     , sku_kpi as (
       select
         sku_id,
@@ -530,6 +613,7 @@ async function loadTopErrorSkus(input: {
         sum(error) filter (where stats_comparable)
           / nullif(sum(actual_daily) filter (where stats_comparable and actual_daily > 0), 0)::float8 as "weightedBias"
       from scored
+      where forecast_daily > 0
       group by sku_id, sku_code, sku_name, category, volume_tier, profile_segment
       having sum(actual_daily) filter (where stats_comparable and actual_daily > 0) > 0
         or count(*) filter (where stats_comparable and actual_daily = 0 and forecast_daily > 0) > 0
@@ -544,7 +628,7 @@ async function loadTopErrorSkus(input: {
       ${rollupCountMetricsSql('scored')},
       sku_kpi.wmape,
       sku_kpi."weightedBias",
-      coalesce(sum(scored.abs_error) filter (where scored.actual_daily > 0), 0)::float8 as "absErrorSum"
+      coalesce(sum(scored.abs_error) filter (where scored.actual_daily > 0 and scored.forecast_daily > 0), 0)::float8 as "absErrorSum"
     from scored
     join sku_kpi on sku_kpi.sku_id = scored.sku_id
       and sku_kpi.sku_code = scored.sku_code
@@ -552,6 +636,7 @@ async function loadTopErrorSkus(input: {
       and sku_kpi.category is not distinct from scored.category
       and sku_kpi.volume_tier is not distinct from scored.volume_tier
       and sku_kpi.profile_segment is not distinct from scored.profile_segment
+    where scored.forecast_daily > 0
     group by
       scored.sku_id,
       scored.sku_code,
@@ -803,61 +888,59 @@ export async function buildForecastAccuracyDiagnostics(
     versionSelection = version?.status === 'published' ? 'auto_published' : 'auto_latest';
   }
 
-  const filters = buildAccuracyFilters({
+  const scope: AccuracyQueryScope = {
     versionId: version?.id,
     station,
     platform,
     start,
     end,
-  });
+  };
   const horizonRef = asOf ?? start;
   const limitTopErrors = Math.max(1, Math.min(200, Math.floor(rawInput.limitTopErrors ?? 20)));
 
-  const [dataQuality, global, byHorizonBand, byProfileSegment, byVolumeTier, byCategory, topErrorSkus] =
-    await Promise.all([
-      loadDataQuality({ platform, start, end }),
-      loadGlobalMetrics(filters, horizonRef),
-      loadGroupedMetrics({
-        filters,
-        horizonRef,
-        dimensionSql: sql`coalesce(nullif(horizon_band, ''), 'unknown') || '|' || coalesce(nullif(profile_segment, ''), 'unclassified')`,
-        labelForKey: horizonProfileLabel,
-        limit: 48,
-        orderBySql: sql`
-          case split_part(keyed.dim_key, '|', 1)
-            when 'precision' then 1
-            when 'flex' then 2
-            when 'strategic' then 3
-            else 9
-          end,
-          split_part(keyed.dim_key, '|', 2)
-        `,
-      }),
-      loadGroupedMetrics({
-        filters,
-        horizonRef,
-        dimensionSql: sql`coalesce(nullif(profile_segment, ''), 'unclassified')`,
-        labelForKey: profileSegmentLabel,
-        limit: 30,
-      }),
-      loadGroupedMetrics({
-        filters,
-        horizonRef,
-        dimensionSql: sql`volume_tier`,
-        labelForKey: (key) => VOLUME_TIER_LABELS[key] ?? key,
-        limit: 10,
-      }),
-      loadGroupedMetrics({
-        filters,
-        horizonRef,
-        dimensionSql: sql`coalesce(nullif(category, ''), '(无品类)')`,
-        limit: 20,
-        minComparableRows: 10,
-      }),
-      loadTopErrorSkus({ filters, horizonRef, limit: limitTopErrors }),
-    ]);
+  // 串行加载：漏报 UNION CTE 较重，并行易打满 Postgres /dev/shm
+  const dataQuality = await loadDataQuality({ platform, start, end });
+  const global = await loadGlobalMetrics(scope, horizonRef);
+  const byHorizonBand = await loadGroupedMetrics({
+    scope,
+    horizonRef,
+    dimensionSql: sql`coalesce(nullif(horizon_band, ''), 'unknown') || '|' || coalesce(nullif(profile_segment, ''), 'unclassified')`,
+    labelForKey: horizonProfileLabel,
+    limit: 48,
+    orderBySql: sql`
+      case split_part(keyed.dim_key, '|', 1)
+        when 'precision' then 1
+        when 'flex' then 2
+        when 'strategic' then 3
+        else 9
+      end,
+      split_part(keyed.dim_key, '|', 2)
+    `,
+  });
+  const byProfileSegment = await loadGroupedMetrics({
+    scope,
+    horizonRef,
+    dimensionSql: sql`coalesce(nullif(profile_segment, ''), 'unclassified')`,
+    labelForKey: profileSegmentLabel,
+    limit: 30,
+  });
+  const byVolumeTier = await loadGroupedMetrics({
+    scope,
+    horizonRef,
+    dimensionSql: sql`volume_tier`,
+    labelForKey: (key) => VOLUME_TIER_LABELS[key] ?? key,
+    limit: 10,
+  });
+  const byCategory = await loadGroupedMetrics({
+    scope,
+    horizonRef,
+    dimensionSql: sql`coalesce(nullif(category, ''), '(无品类)')`,
+    limit: 20,
+    minComparableRows: 10,
+  });
+  const topErrorSkus = await loadTopErrorSkus({ scope, horizonRef, limit: limitTopErrors });
 
-  const scope: ForecastAccuracyDiagnosticScope = {
+  const diagnosticScope: ForecastAccuracyDiagnosticScope = {
     versionId: version?.id,
     versionName: version?.versionName,
     versionStatus: version?.status,
@@ -879,7 +962,7 @@ export async function buildForecastAccuracyDiagnostics(
   });
 
   return {
-    scope,
+    scope: diagnosticScope,
     dataQuality,
     global,
     byHorizonBand,
@@ -1062,14 +1145,14 @@ export async function createForecastAccuracyReviewQueue(
             select
               forecast_year,
               month,
-              sum(abs_error) filter (where actual_daily > 0)
-                / nullif(sum(actual_daily) filter (where actual_daily > 0), 0) as month_wmape
+              sum(abs_error) filter (where actual_daily > 0 and forecast_daily > 0)
+                / nullif(sum(actual_daily) filter (where actual_daily > 0 and forecast_daily > 0), 0) as month_wmape
             from base b2
             where b2.sku_id = base.sku_id
               and b2.station = base.station
               and b2.platform = base.platform
             group by forecast_year, month
-            having sum(actual_daily) filter (where actual_daily > 0) > 0
+            having sum(actual_daily) filter (where actual_daily > 0 and forecast_daily > 0) > 0
           ) monthly_wmape
         ) as wmape,
         (
@@ -1078,14 +1161,14 @@ export async function createForecastAccuracyReviewQueue(
             select
               forecast_year,
               month,
-              sum(error) filter (where actual_daily > 0)
-                / nullif(sum(actual_daily) filter (where actual_daily > 0), 0) as month_bias
+              sum(error) filter (where actual_daily > 0 and forecast_daily > 0)
+                / nullif(sum(actual_daily) filter (where actual_daily > 0 and forecast_daily > 0), 0) as month_bias
             from base b3
             where b3.sku_id = base.sku_id
               and b3.station = base.station
               and b3.platform = base.platform
             group by forecast_year, month
-            having sum(actual_daily) filter (where actual_daily > 0) > 0
+            having sum(actual_daily) filter (where actual_daily > 0 and forecast_daily > 0) > 0
           ) monthly_bias
         ) as "weightedBias",
         count(*) filter (where actual_daily = 0 and forecast_daily > 0)::int as "ghostRows",

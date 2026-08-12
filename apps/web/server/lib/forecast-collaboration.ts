@@ -1389,6 +1389,7 @@ async function generateBaselineForStationPlatform(input: {
         const floor = resolveT99SystemFloorDaily({
           recent30DailyAvg,
           recent90DailyAvg,
+          d3DailyAvg: anchorV41.metrics.d3,
           horizonIndex: 0,
         });
         reviewDrafts.push({

@@ -8,6 +8,7 @@ import {
 } from './forecast-baseline.js';
 import {
   ALLCAT_V41_MODEL,
+  aggregateAllCatV41HorizonFactorsForDisplay,
   parseAllCatV41HorizonFactors,
   type AllCatV41HorizonDisplay,
 } from './forecast-allcat-v41.js';
@@ -831,6 +832,32 @@ function aggregateHorizonCellsForIdentity(input: {
 
     const effectiveDailyAvg = sumEffectiveForecastDailyAcrossPlatforms(monthRows);
     const primaryRow = pickPrimaryForecastDetailRow(monthRows) ?? monthRows[0]!;
+    const orderedPlatformRows = [
+      primaryRow,
+      ...monthRows.filter((row) => row !== primaryRow),
+    ];
+    const parsedPlatformFactors = orderedPlatformRows.map((row) =>
+      parseAllCatV41HorizonFactors(row.horizonFactors),
+    );
+    const aggregatedFactors = aggregateAllCatV41HorizonFactorsForDisplay(parsedPlatformFactors);
+    const allCatV41Factors =
+      aggregatedFactors && orderedPlatformRows.length > 1
+        ? {
+            ...aggregatedFactors,
+            platformContributions: orderedPlatformRows.map((row, index) => {
+              const factors = parsedPlatformFactors[index];
+              const forecast = Number(row.forecastDailyAvg);
+              return {
+                platform: normalizeSalesPlatform(row.platform),
+                forecastDailyAvg: Number.isFinite(forecast) ? forecast : 0,
+                levelDaily: factors?.levelDaily,
+                seasonalDaily: factors?.seasonalDaily,
+                anchorDaily: factors?.anchorDaily,
+                tier: factors?.tier ?? row.profileSegment ?? undefined,
+              };
+            }),
+          }
+        : aggregatedFactors;
     const categoryFactors = buildCategoryFactors(
       input.seasonalityLookup,
       input.category,
@@ -862,7 +889,7 @@ function aggregateHorizonCellsForIdentity(input: {
       categoryTrendWasClipped: categoryFactors.categoryTrendWasClipped,
       categoryTrendMatched: categoryFactors.categoryTrendMatched,
       horizonFactors: parseHorizonFactors(primaryRow.horizonFactors),
-      allCatV41Factors: parseAllCatV41HorizonFactors(primaryRow.horizonFactors),
+      allCatV41Factors,
       forecastModel: primaryRow.forecastModel ?? null,
       aiAssistRationale: aiAssist.tooltip,
       aiAssistMode: aiAssist.assistMode,

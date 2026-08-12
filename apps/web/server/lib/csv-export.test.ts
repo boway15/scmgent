@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { contentDispositionAttachment, csvAttachment } from './csv-export.js';
+import { contentDispositionAttachment, csvAttachment, excelKeepYmText, buildCsv } from './csv-export.js';
 
 describe('csv-export Content-Disposition', () => {
   it('encodes non-ascii filename without raw unicode in header value', () => {
@@ -16,5 +16,13 @@ describe('csv-export Content-Disposition', () => {
     for (let i = 0; i < disposition.length; i += 1) {
       assert.ok(disposition.charCodeAt(i) <= 0xff, `non-latin1 at ${i}: ${disposition}`);
     }
+  });
+});
+
+describe('excelKeepYmText', () => {
+  it('wraps YYYY-MM so Excel keeps list-style month text', () => {
+    assert.equal(excelKeepYmText('2026-02'), '="2026-02"');
+    const csv = buildCsv(['forecast_month'], [[excelKeepYmText('2026-02')]]);
+    assert.match(csv, /"=""2026-02"""/);
   });
 });

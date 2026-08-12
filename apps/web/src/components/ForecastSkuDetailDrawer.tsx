@@ -26,7 +26,10 @@ import {
   getForecastHorizonColumnHelp,
   type ForecastHorizonColumnHelpContext,
 } from '@/lib/forecast-horizon-column-help';
-import { buildV41SystemCellTitle } from '@/lib/forecast-v41-system-formula';
+import {
+  buildV41LevelCellTitle,
+  buildV41SystemCellTitle,
+} from '@/lib/forecast-v41-system-formula';
 import {
   hasAnyLegacyHorizonColumn,
   isAiAssistForecastDetail,
@@ -766,6 +769,27 @@ export function ForecastSkuDetailDrawer({
                                   recent90DailyAvg: detail?.context?.recent90DailyAvg,
                                 })
                               : undefined;
+                          const levelTitleOpts =
+                            useV41DetailColumns && v41
+                              ? {
+                                  cell,
+                                  v41,
+                                  monthIndex,
+                                  tier: profileSegment,
+                                  diagnosticOnly: t99Cell,
+                                }
+                              : null;
+                          const baselineTitle = levelTitleOpts
+                            ? buildV41LevelCellTitle({ ...levelTitleOpts, kind: 'baseline' })
+                            : undefined;
+                          const seasonalTitle = levelTitleOpts
+                            ? buildV41LevelCellTitle({ ...levelTitleOpts, kind: 'seasonal' })
+                            : undefined;
+                          const blendTitle = levelTitleOpts
+                            ? buildV41LevelCellTitle({ ...levelTitleOpts, kind: 'blend' })
+                            : undefined;
+                          const helpCellClass =
+                            'cursor-help underline decoration-dotted decoration-text-sub/40 underline-offset-2';
                           return (
                           <tr key={cell.monthLabel} className="border-b border-border/60">
                             <td className="w-0 p-2 font-numeric whitespace-nowrap">
@@ -782,7 +806,15 @@ export function ForecastSkuDetailDrawer({
                               </span>
                             </td>
                             <td className="p-2">{formatConfidenceLabel(cell.confidenceLevel)}</td>
-                            <td className="p-2 font-numeric">{formatFactor(cell.baselineDailyAvg)}</td>
+                            <td
+                              className={cn(
+                                'p-2 font-numeric',
+                                baselineTitle && helpCellClass,
+                              )}
+                              title={baselineTitle}
+                            >
+                              {formatFactor(cell.baselineDailyAvg)}
+                            </td>
                             {useV41DetailColumns ? (
                               <>
                                 {v41ColumnVisibility?.d6 ? (
@@ -797,24 +829,55 @@ export function ForecastSkuDetailDrawer({
                                 ) : null}
                                 {v41ColumnVisibility?.anchor ? (
                                   <td
-                                    className={cn('p-2 font-numeric', diagnosticClass)}
-                                    title={t99Cell ? '诊断参考，不计入系统预测' : undefined}
+                                    className={cn(
+                                      'p-2 font-numeric',
+                                      diagnosticClass,
+                                      v41?.anchorDaily != null && helpCellClass,
+                                    )}
+                                    title={
+                                      v41?.anchorDaily != null
+                                        ? [
+                                            '【锚定日均 · 算法】',
+                                            '按商品 T 层对走步特征 d2/d3/d6/d12 加权得到水平锚点。',
+                                            v41.formula
+                                              ? `分层公式：${v41.formula.replace(/\*/g, '×')}`
+                                              : profileSegment
+                                                ? `分层：${profileSegment}`
+                                                : null,
+                                            `→ 锚定 ${formatFactor(v41.anchorDaily)}`,
+                                            '走步特征在触发时锚定，全周期各月相同；再与季节朴素混合得到基线/混合水平。',
+                                            t99Cell ? '（T99 诊断参考，不计入系统点预测）' : null,
+                                          ]
+                                            .filter(Boolean)
+                                            .join('\n')
+                                        : t99Cell
+                                          ? '诊断参考，不计入系统预测'
+                                          : undefined
+                                    }
                                   >
                                     {formatFactor(v41?.anchorDaily)}
                                   </td>
                                 ) : null}
                                 {v41ColumnVisibility?.seasonal ? (
                                   <td
-                                    className={cn('p-2 font-numeric', diagnosticClass)}
-                                    title={t99Cell ? '诊断参考，不计入系统预测' : undefined}
+                                    className={cn(
+                                      'p-2 font-numeric',
+                                      diagnosticClass,
+                                      seasonalTitle && helpCellClass,
+                                    )}
+                                    title={seasonalTitle}
                                   >
                                     {formatFactor(v41?.seasonalDaily)}
                                   </td>
                                 ) : null}
                                 {v41ColumnVisibility?.blendLevel ? (
                                   <td
-                                    className={cn('p-2 font-numeric', diagnosticClass)}
-                                    title={t99Cell ? '诊断参考，不计入系统预测' : undefined}
+                                    className={cn(
+                                      'p-2 font-numeric',
+                                      diagnosticClass,
+                                      blendTitle && helpCellClass,
+                                    )}
+                                    title={blendTitle}
                                   >
                                     {formatFactor(v41?.levelDaily)}
                                   </td>

@@ -6,6 +6,16 @@ function csvCell(value: string | number | null | undefined): string {
   return s;
 }
 
+/**
+ * 让 Excel 打开 CSV 时把 YYYY-MM 当纯文本显示（与列表一致），
+ * 避免被自动识别成日期后变成 Feb-26 / February 等英文月名。
+ */
+export function excelKeepYmText(value: string | null | undefined): string {
+  const s = String(value ?? '').trim();
+  if (!s) return '';
+  return `="${s.replace(/"/g, '""')}"`;
+}
+
 export function buildCsv(headers: string[], rows: Array<Array<string | number | null | undefined>>): string {
   const lines = [headers.map(csvCell).join(',')];
   for (const row of rows) {

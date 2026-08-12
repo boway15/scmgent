@@ -2,7 +2,7 @@
  * 预测 horizon 列表导出：宽表（未来矩阵）与明细表（明细视图）。
  * 字段与前端 ForecastHorizonPanel 列表列对齐。
  */
-import { buildCsv } from './csv-export.js';
+import { buildCsv, excelKeepYmText } from './csv-export.js';
 import { formatAllCatV41TierLabel, ALLCAT_V41_MODEL } from './forecast-allcat-v41.js';
 import {
   listForecastHorizon,
@@ -83,7 +83,7 @@ export function buildForecastHorizonWideCsv(dataset: HorizonExportDataset): {
   rowCount: number;
 } {
   const monthLabels = dataset.horizon.map((h) => h.monthLabel);
-  const headers = ['SKU', 'SKU名称', '渠道', '生命周期', '分层', ...monthLabels];
+  const headers = ['SKU', 'SKU名称', '渠道', '生命周期', '分层', ...monthLabels.map(excelKeepYmText)];
   const rows = dataset.items.map((row) => {
     const byLabel = new Map(row.months.map((cell) => [cell.monthLabel, cell]));
     return [
@@ -151,7 +151,7 @@ function buildHistoryDetailRow(
     row.skuCode,
     row.category ?? '',
     row.platform,
-    cell.monthLabel,
+    excelKeepYmText(cell.monthLabel),
     formatLifecycle(row.lifecycle),
     ...pads,
     formatDaily(cell.actualDailyAvg),
@@ -187,7 +187,7 @@ function buildFutureDetailRow(
     row.skuCode,
     row.category ?? '',
     row.platform,
-    cell.monthLabel,
+    excelKeepYmText(cell.monthLabel),
     formatLifecycle(cell.lifecycle ?? row.lifecycle),
     formatConfidence(cell.confidenceLevel),
     formatDaily(cell.baselineDailyAvg),

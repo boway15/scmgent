@@ -329,7 +329,7 @@ export function SalesForecastListPage() {
                   <span className="text-text-main">未触及</span>：各渠道均无销量记录，生成时直接跳过，不写预测也不留复核。
                 </li>
                 <li>
-                  <span className="text-text-main">T99</span>：有近期动销时系统写保守保底数（max(近30,近90)×0.8）；近30=0 归零；近30&gt;0.2 时优先 T4B 保底，不轻易归入 T99。
+                  <span className="text-text-main">T99</span>：有近期动销时系统写保守保底数（近端 max(近30,近90,d3)×1.0，远月×0.8）；近30=0 归零；近30&gt;0.2 时优先 T4B 保底，不轻易归入 T99。
                 </li>
               </ul>
               <p className="mt-2 text-xs text-text-sub">

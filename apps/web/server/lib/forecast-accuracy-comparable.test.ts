@@ -65,6 +65,18 @@ describe('forecast-accuracy-comparable', () => {
     );
   });
 
+  it('excludes zero-forecast miss rows from strict KPI accuracy', () => {
+    assert.equal(
+      isForecastRowComparableForAccuracy({
+        profileSegment: 'T1',
+        forecastProfileClass: 'A',
+        actualDaily: 20,
+        forecastDaily: 0,
+      }),
+      false,
+    );
+  });
+
   it('identifies core KPI tiers', () => {
     assert.equal(isAllCatV41CoreKpiTier('T1'), true);
     assert.equal(isAllCatV41CoreKpiTier('T2'), true);

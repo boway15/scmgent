@@ -573,6 +573,8 @@ export type ForecastAccuracyMetricSummary = {
   zeroForecastMissRows: number;
   actualDailySum: number;
   forecastDailySum: number;
+  forecastQtySum: number;
+  actualQtySum: number;
 };
 
 export type ForecastAccuracyDiagnostics = {
@@ -3401,6 +3403,7 @@ export const api = {
     versionId?: string;
     page?: number;
     pageSize?: number;
+    rowKind?: 'predicted' | 'miss';
   }) => {
     const qs = new URLSearchParams();
     if (params?.year) qs.set('year', String(params.year));
@@ -3410,6 +3413,7 @@ export const api = {
     if (params?.versionId) qs.set('versionId', params.versionId);
     if (params?.page) qs.set('page', String(params.page));
     if (params?.pageSize) qs.set('pageSize', String(params.pageSize));
+    if (params?.rowKind === 'miss') qs.set('rowKind', 'miss');
     const query = qs.toString();
     return request<{
       items: Array<{
@@ -3425,6 +3429,7 @@ export const api = {
         mape: number | null;
         profileSegment: string | null;
         profileSegmentLabel: string | null;
+        isZeroForecastMiss?: boolean;
       }>;
       summary: string;
       total: number;
@@ -3439,6 +3444,7 @@ export const api = {
     station?: string;
     platform?: string;
     groupBy?: 'sku' | 'month';
+    rowKind?: 'predicted' | 'miss';
   }) => {
     const qs = new URLSearchParams();
     if (params?.versionId) qs.set('versionId', params.versionId);
@@ -3447,9 +3453,18 @@ export const api = {
     if (params?.station) qs.set('station', params.station);
     if (params?.platform) qs.set('platform', params.platform);
     if (params?.groupBy === 'sku') qs.set('groupBy', 'sku');
+    if (params?.rowKind === 'miss') qs.set('rowKind', 'miss');
     const query = qs.toString();
     const res = await apiFetch(apiUrl(`/api/sales-forecasts/accuracy/export${query ? `?${query}` : ''}`));
-    await downloadAttachment(res, params?.groupBy === 'sku' ? 'forecast-accuracy-sku-summary.csv' : 'forecast-accuracy.csv');
+    const fallback =
+      params?.groupBy === 'sku'
+        ? params?.rowKind === 'miss'
+          ? 'forecast-accuracy-miss-sku-summary.csv'
+          : 'forecast-accuracy-sku-summary.csv'
+        : params?.rowKind === 'miss'
+          ? 'forecast-accuracy-miss.csv'
+          : 'forecast-accuracy.csv';
+    await downloadAttachment(res, fallback);
   },
   getSalesForecastAccuracySummary: (params?: {
     versionId?: string;
@@ -3690,6 +3705,7 @@ export const api = {
           mape: number | null;
           profileSegment: string | null;
           profileSegmentLabel: string | null;
+          isZeroForecastMiss?: boolean;
         }>;
         total: number;
         page: number;

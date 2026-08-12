@@ -5,6 +5,7 @@ import {
   filterCompletedMonthKeys,
   formatQtyTotalsLabel,
   monthKey,
+  parseMonthKey,
   resolveHorizonMonthKeys,
 } from './forecast-qty-totals.js';
 
@@ -31,6 +32,21 @@ describe('forecast-qty-totals', () => {
       now: new Date(Date.UTC(2026, 7, 12)),
     });
     assert.deepEqual(keys, ['2026-02', '2026-03', '2026-04']);
+  });
+
+  it('parseMonthKey parses YYYY-MM', () => {
+    assert.deepEqual(parseMonthKey('2026-02'), { year: 2026, month: 2 });
+    assert.equal(parseMonthKey('bad'), null);
+  });
+
+  it('filterCompletedMonthKeys drops current and future months', () => {
+    assert.deepEqual(
+      filterCompletedMonthKeys(
+        ['2026-06', '2026-07', '2026-08', '2026-09'],
+        new Date(Date.UTC(2026, 7, 12)),
+      ),
+      ['2026-06', '2026-07'],
+    );
   });
 
   it('in_progress when horizon includes current month', () => {
@@ -65,15 +81,5 @@ describe('forecast-qty-totals', () => {
     assert.equal(r.status, 'ready');
     assert.equal(r.label, '12,345 / 11,900');
     assert.equal(formatQtyTotalsLabel('ready', 12345, 11900), '12,345 / 11,900');
-  });
-
-  it('filters completed months strictly before current', () => {
-    assert.deepEqual(
-      filterCompletedMonthKeys(
-        ['2026-06', '2026-07', '2026-08'],
-        new Date(Date.UTC(2026, 7, 12)),
-      ),
-      ['2026-06', '2026-07'],
-    );
   });
 });

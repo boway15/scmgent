@@ -1,6 +1,8 @@
 services:
   postgres:
     image: postgres:16-alpine
+    # 准确率诊断漏报 UNION 等重查询需要更大共享内存（默认 64MB 易 OOM）
+    shm_size: 256mb
     environment:
       POSTGRES_DB: scm_dev
       POSTGRES_USER: scm

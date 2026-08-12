@@ -1,10 +1,9 @@
-import { and, eq, inArray } from 'drizzle-orm';
-import { db, salesForecastMonthly } from '@scm/db';
-import { buildMonthlyForecastHorizon, daysInCalendarMonth } from './forecast-baseline.js';
+import { and, eq, inArray, or, sql } from 'drizzle-orm';
+import { db, forecastAccuracyMonthly, salesForecastMonthly, salesHistoryMonthly } from '@scm/db';
+import { buildMonthlyForecastHorizon } from './forecast-baseline.js';
 import { formatForecastStartMonth, resolveForecastStartMonthAsOf } from './forecast-start-month.js';
 import { FORECAST_V41_PLATFORM_CODES } from './forecast-platform-scope.js';
 import { getForecastVersionById } from './forecast-version.js';
-import { resolveActualMonthlyDailyAvg } from './sales-history-monthly.js';
 
 export type ForecastQtyTotalsStatus = 'in_progress' | 'empty_actual' | 'ready';
 
@@ -94,7 +93,68 @@ export function filterCompletedMonthKeys(horizonMonthKeys: string[], now = new D
   return horizonMonthKeys.filter((m) => m < currentMonth);
 }
 
+export function parseMonthKey(key: string): { year: number; month: number } | null {
+  const match = /^(\d{4})-(\d{2})$/.exec(key.trim());
+  if (!match) return null;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  if (!Number.isInteger(year) || !Number.isInteger(month) || month < 1 || month > 12) return null;
+  return { year, month };
+}
+
 const DEFAULT_VERSION_MONTH_COUNT = 6;
+
+/**
+ * 解析版本预测地平线内、已结束的自然月（与「按开始月复盘回测」对齐）。
+ * 优先用版本预测行去重月份；无行时回退 startMonth + 默认月数。
+ */
+export async function listVersionCompletedBacktestMonths(
+  versionId: string,
+  now: Date = new Date(),
+): Promise<Array<{ year: number; month: number }>> {
+  const version = await getForecastVersionById(versionId);
+  if (!version) return [];
+
+  const monthRows = await db
+    .selectDistinct({
+      forecastYear: salesForecastMonthly.forecastYear,
+      month: salesForecastMonthly.month,
+    })
+    .from(salesForecastMonthly)
+    .where(eq(salesForecastMonthly.versionId, versionId));
+
+  const distinctMonths = monthRows
+    .map((r) => monthKey(r.forecastYear, r.month))
+    .sort();
+  const monthCount =
+    distinctMonths.length > 0
+      ? distinctMonths.length
+      : version.startMonth
+        ? DEFAULT_VERSION_MONTH_COUNT
+        : 0;
+
+  const horizonMonthKeys = resolveHorizonMonthKeys({
+    distinctMonths,
+    startMonth: version.startMonth ?? null,
+    monthCount,
+    now,
+  });
+
+  return filterCompletedMonthKeys(horizonMonthKeys, now)
+    .map(parseMonthKey)
+    .filter((row): row is { year: number; month: number } => row != null);
+}
+
+function monthSerialConditions(
+  yearCol: typeof salesForecastMonthly.forecastYear,
+  monthCol: typeof salesForecastMonthly.month,
+  completed: Array<{ year: number; month: number }>,
+) {
+  if (completed.length === 0) return sql`false`;
+  return or(
+    ...completed.map((m) => and(eq(yearCol, m.year), eq(monthCol, m.month))),
+  )!;
+}
 
 /**
  * 汇总某预测版本地平线内的预测/实际销量总量。
@@ -102,6 +162,7 @@ const DEFAULT_VERSION_MONTH_COUNT = 6;
  * - horizon 含当前/未来月 → in_progress（提前返回，跳过实际销量扫描）
  * - 已完成月份无实际销量 → empty_actual
  * - 否则 → ready
+ * - 实际销量仅累计 forecast>0 行（漏报不进合计）；优先用准确率表，与诊断面板口径对齐
  */
 export async function getVersionQtyTotals(
   versionId: string,
@@ -110,14 +171,10 @@ export async function getVersionQtyTotals(
   const version = await getForecastVersionById(versionId);
   if (!version) return null;
 
-  const rows = await db
-    .select({
-      skuId: salesForecastMonthly.skuId,
-      station: salesForecastMonthly.station,
-      platform: salesForecastMonthly.platform,
+  const monthRows = await db
+    .selectDistinct({
       forecastYear: salesForecastMonthly.forecastYear,
       month: salesForecastMonthly.month,
-      forecastDailyAvg: salesForecastMonthly.forecastDailyAvg,
     })
     .from(salesForecastMonthly)
     .where(
@@ -127,9 +184,7 @@ export async function getVersionQtyTotals(
       ),
     );
 
-  const distinctMonths = Array.from(
-    new Set(rows.map((r) => monthKey(r.forecastYear, r.month))),
-  );
+  const distinctMonths = monthRows.map((r) => monthKey(r.forecastYear, r.month)).sort();
   const monthCount =
     distinctMonths.length > 0
       ? distinctMonths.length
@@ -154,33 +209,83 @@ export async function getVersionQtyTotals(
     return preliminary;
   }
 
-  const completedKeys = new Set(filterCompletedMonthKeys(horizonMonthKeys, now));
-  if (completedKeys.size === 0) {
+  const completed = filterCompletedMonthKeys(horizonMonthKeys, now)
+    .map(parseMonthKey)
+    .filter((row): row is { year: number; month: number } => row != null);
+  if (completed.length === 0) {
     return preliminary;
   }
 
-  let forecastQty = 0;
-  let actualQty = 0;
-  for (const row of rows) {
-    const key = monthKey(row.forecastYear, row.month);
-    if (!completedKeys.has(key)) continue;
+  const daysExpr = sql`extract(day from (make_date(${salesForecastMonthly.forecastYear}, ${salesForecastMonthly.month}, 1) + interval '1 month' - interval '1 day'))`;
+  const completedCond = monthSerialConditions(
+    salesForecastMonthly.forecastYear,
+    salesForecastMonthly.month,
+    completed,
+  );
 
-    const dim = daysInCalendarMonth(row.forecastYear, row.month);
-    forecastQty += Number(row.forecastDailyAvg) * dim;
+  // 优先准确率表：仅 forecast>0（漏报不进预测/实际合计），与诊断分层一致
+  const accuracyDays = sql`extract(day from (make_date(${forecastAccuracyMonthly.forecastYear}, ${forecastAccuracyMonthly.month}, 1) + interval '1 month' - interval '1 day'))`;
+  const accuracyCompleted = monthSerialConditions(
+    forecastAccuracyMonthly.forecastYear,
+    forecastAccuracyMonthly.month,
+    completed,
+  );
+  const accuracyPredictedOnly = sql`${forecastAccuracyMonthly.forecastDailyAvg}::float8 > 0`;
+  const [accuracyAgg] = await db
+    .select({
+      rows: sql<number>`count(*)::int`,
+      forecastQty: sql<number>`coalesce(sum(${forecastAccuracyMonthly.forecastDailyAvg}::float8 * ${accuracyDays}), 0)`,
+      actualQty: sql<number>`coalesce(sum(${forecastAccuracyMonthly.actualDailyAvg}::float8 * ${accuracyDays}), 0)`,
+    })
+    .from(forecastAccuracyMonthly)
+    .where(
+      and(
+        eq(forecastAccuracyMonthly.versionId, versionId),
+        accuracyCompleted,
+        accuracyPredictedOnly,
+      ),
+    );
 
-    const actual = await resolveActualMonthlyDailyAvg({
-      skuId: row.skuId,
-      channel: row.platform,
-      year: row.forecastYear,
-      month: row.month,
+  if ((accuracyAgg?.rows ?? 0) > 0) {
+    return buildForecastQtyTotalsResult({
+      horizonMonthKeys,
+      forecastQty: Math.round(Number(accuracyAgg.forecastQty) || 0),
+      actualQty: Math.round(Number(accuracyAgg.actualQty) || 0),
+      now,
     });
-    actualQty += actual.actualDaily * dim;
   }
+
+  // 无准确率行时回退矩阵：预测全量；实际仅 forecast>0（漏报不计）
+  const [matrixAgg] = await db
+    .select({
+      forecastQty: sql<number>`coalesce(sum(${salesForecastMonthly.forecastDailyAvg}::float8 * ${daysExpr}), 0)`,
+      actualQty: sql<number>`coalesce(sum(case
+        when ${salesForecastMonthly.forecastDailyAvg}::float8 > 0
+        then coalesce(${salesHistoryMonthly.qtySold}, 0)::float8
+        else 0 end), 0)`,
+    })
+    .from(salesForecastMonthly)
+    .leftJoin(
+      salesHistoryMonthly,
+      and(
+        eq(salesHistoryMonthly.skuId, salesForecastMonthly.skuId),
+        eq(salesHistoryMonthly.channel, salesForecastMonthly.platform),
+        eq(salesHistoryMonthly.saleYear, salesForecastMonthly.forecastYear),
+        eq(salesHistoryMonthly.month, salesForecastMonthly.month),
+      ),
+    )
+    .where(
+      and(
+        eq(salesForecastMonthly.versionId, versionId),
+        inArray(salesForecastMonthly.platform, [...FORECAST_V41_PLATFORM_CODES]),
+        completedCond,
+      ),
+    );
 
   return buildForecastQtyTotalsResult({
     horizonMonthKeys,
-    forecastQty: Math.round(forecastQty),
-    actualQty: Math.round(actualQty),
+    forecastQty: Math.round(Number(matrixAgg?.forecastQty) || 0),
+    actualQty: Math.round(Number(matrixAgg?.actualQty) || 0),
     now,
   });
 }

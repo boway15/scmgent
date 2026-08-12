@@ -29,6 +29,8 @@ import {
   V41_T4B_FLEX_DECAY_FACTOR,
   V41_T4B_RECENT30_CAP,
   V41_T4B_RECENT90_CAP,
+  V41_T4A_NEAR_CONSERVATIVE_FACTOR,
+  V41_T4A_CONSERVATIVE_FACTOR,
 } from './forecast-allcat-v41.js';
 
 function buildSeasonalMonthlyRows(): Array<{ saleYear: number; month: number; qtySold: number }> {
@@ -306,9 +308,29 @@ describe('forecast-allcat-v41', () => {
       recent30DailyAvg: 0,
       recent90DailyAvg: 4,
     });
-    assert.equal(near.forecastDaily, 3.2);
+    assert.equal(near.forecastDaily, 4); // max(2,4,d3=0)*1.0 near
     assert.equal(far.forecastDaily, 2.88);
     assert.equal(gated.forecastDaily, 0);
+  });
+
+  it('computeAllCatV41BoundedDaily T99 near uses d3 when higher than recent', () => {
+    const metrics = {
+      q1: 0, q3: 455, q6: 0, q12: 0,
+      d2: 0, d3: 5, d6: 0, d12: 0,
+      active2: 0, active6: 0, active12: 0,
+      cv6: 9, trendRatio: 1,
+    };
+    const near = computeAllCatV41BoundedDaily({
+      tier: 'T99',
+      baseDaily: 0,
+      productCategory: 'U',
+      forecastMonth: 7,
+      horizonIndex: 0,
+      metrics,
+      recent30DailyAvg: 2,
+      recent90DailyAvg: 3,
+    });
+    assert.equal(near.forecastDaily, 5);
   });
 
   it('computeAllCatV41ForecastForMonth writes T99 floor into horizonFactors', () => {
@@ -328,13 +350,13 @@ describe('forecast-allcat-v41', () => {
       recent90DailyAvg: 2,
     });
     assert.equal(result.tier, 'T99');
-    assert.equal(result.forecastDaily, 2.4); // max(3,2)*0.8
+    // walk-forward d3 from sparse history is small; near = max(3,2,d3)*1.0
+    assert.ok(result.forecastDaily >= 3);
     assert.equal(result.algorithm, 't99_conservative_floor');
-    assert.equal(result.formula, 'max(recent30,recent90)*0.8 with far decay');
+    assert.equal(result.formula, 'max(recent30,recent90,d3)*1.0 near / max(r)*0.8 far');
     assert.equal(result.kpiTarget, 'T99_CONSERVATIVE_FLOOR');
     assert.equal(result.horizonFactors.t99FloorMode, 'recent_max06');
-    assert.equal(result.horizonFactors.t99FloorDaily, 2.4);
-    assert.equal(result.horizonFactors.t99FloorDiscount, 0.8);
+    assert.equal(result.horizonFactors.t99FloorDiscount, 1);
   });
 
   it('buildT99ReviewMessage uses neutral copy when floor params omitted', () => {
@@ -984,6 +1006,14 @@ describe('forecast-allcat-v41', () => {
     });
     assert.equal(bounded.forecastDaily, 0);
     assert.equal(bounded.ghostGated, true);
+  });
+
+  it('T4A flex-window conservative factor raised to 0.66 (near stays 0.72)', () => {
+    assert.equal(V41_T4A_NEAR_CONSERVATIVE_FACTOR, 0.72);
+    assert.equal(V41_T4A_CONSERVATIVE_FACTOR, 0.66);
+    assert.equal(tierConservativeFactor('T4A', 'A', 0), 0.72);
+    assert.equal(tierConservativeFactor('T4A', 'A', 2), 0.72);
+    assert.equal(tierConservativeFactor('T4A', 'A', 3), 0.66);
   });
 
   it('T4B plan-A/B1 constants: near 0.9 / far 0.85 / flex 0.9 / caps 0.95 & 1.0', () => {

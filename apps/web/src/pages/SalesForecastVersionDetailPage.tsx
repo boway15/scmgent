@@ -4,20 +4,18 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
 import { PageHeader } from '@/components/PageHeader';
 import { ListPagination } from '@/components/ListPagination';
 import { ForecastDataExplorer } from '@/components/ForecastDataExplorer';
 import { ForecastSkuDetailDrawer, type ForecastHorizonRow } from '@/components/ForecastSkuDetailDrawer';
 import { ForecastAccuracyDiagnosticsPanel } from '@/components/ForecastAccuracyDiagnosticsPanel';
-import { ForecastAccuracyMetricLabel } from '@/components/ForecastAccuracyMetricLabel';
-import { FORECAST_ACCURACY_METRICS_LEGEND_INTRO } from '@/lib/forecast-accuracy-metrics';
 import { ForecastVersionStatusBadge } from '@/components/ForecastVersionStatusBadge';
 import { resolveHorizonPlatformScope } from '@/lib/forecast-horizon-meta';
 import { formatForecastVersionTitle, mutationErrorMessage, buildForecastVersionDetailSearch, resolveForecastExplorerPlatform } from '@/lib/forecast-version-utils';
 import { formatTierDisplayLabel } from '@/lib/forecast-labels';
 
 type DetailView = 'data' | 'review' | 'accuracy';
+type AccuracyListTab = 'detail' | 'miss';
 
 const VIEW_LABEL: Record<DetailView, string> = {
   data: '数据明细',
@@ -39,12 +37,11 @@ export function SalesForecastVersionDetailPage() {
   const navigate = useNavigate();
   const qc = useQueryClient();
   const [searchParams, setSearchParams] = useSearchParams();
-  const [reviewSummary, setReviewSummary] = useState<string | null>(null);
-  const [impactPreview, setImpactPreview] = useState<string | null>(null);
   const [selectedHorizonRow, setSelectedHorizonRow] = useState<ForecastHorizonRow | null>(null);
   const [selectedHorizonPlatform, setSelectedHorizonPlatform] = useState('ALL');
   const [accuracyPage, setAccuracyPage] = useState(1);
-  const [accuracyBacktestMonths, setAccuracyBacktestMonths] = useState(6);
+  const [accuracyMissPage, setAccuracyMissPage] = useState(1);
+  const [accuracyListTab, setAccuracyListTab] = useState<AccuracyListTab>('detail');
   const [accuracyExporting, setAccuracyExporting] = useState(false);
   const [listPageSize, setListPageSize] = useState(LIST_PAGE_SIZE);
 
@@ -76,6 +73,8 @@ export function SalesForecastVersionDetailPage() {
 
   useEffect(() => {
     setAccuracyPage(1);
+    setAccuracyMissPage(1);
+    setAccuracyListTab('detail');
   }, [versionId]);
 
   const setActiveView = (view: DetailView) => {
@@ -96,14 +95,27 @@ export function SalesForecastVersionDetailPage() {
   });
 
   const { data: accuracy } = useQuery({
-    queryKey: ['sales-forecast-accuracy', versionId, accuracyPage, listPageSize],
+    queryKey: ['sales-forecast-accuracy', versionId, accuracyPage, listPageSize, 'predicted'],
     queryFn: () =>
       api.getSalesForecastAccuracy({
         versionId,
         page: accuracyPage,
         pageSize: listPageSize,
+        rowKind: 'predicted',
       }),
-    enabled: activeView === 'accuracy' && Boolean(versionId),
+    enabled: activeView === 'accuracy' && accuracyListTab === 'detail' && Boolean(versionId),
+  });
+
+  const { data: accuracyMiss } = useQuery({
+    queryKey: ['sales-forecast-accuracy', versionId, accuracyMissPage, listPageSize, 'miss'],
+    queryFn: () =>
+      api.getSalesForecastAccuracy({
+        versionId,
+        page: accuracyMissPage,
+        pageSize: listPageSize,
+        rowKind: 'miss',
+      }),
+    enabled: activeView === 'accuracy' && accuracyListTab === 'miss' && Boolean(versionId),
   });
 
   const {
@@ -123,17 +135,9 @@ export function SalesForecastVersionDetailPage() {
     enabled: activeView === 'accuracy' && Boolean(versionId),
   });
 
-  const impactPreviewMutation = useMutation({
-    mutationFn: () => api.getSalesForecastImpactPreview(versionId),
-    onMutate: () => setImpactPreview(null),
-    onSuccess: (data) => setImpactPreview(data.summary),
-  });
-
   const publishVersion = useMutation({
     mutationFn: () => api.publishSalesForecastVersion(versionId),
     onSuccess: () => {
-      setImpactPreview(null);
-      setReviewSummary(null);
       qc.invalidateQueries({ queryKey: ['sales-forecast-versions'] });
       qc.invalidateQueries({ queryKey: ['sales-forecast-version', versionId] });
       qc.invalidateQueries({ queryKey: ['sales-forecasts'] });
@@ -151,16 +155,9 @@ export function SalesForecastVersionDetailPage() {
     },
   });
 
-  const reviewVersion = useMutation({
-    mutationFn: () => api.getSalesForecastReviewSummary(versionId),
-    onMutate: () => setReviewSummary(null),
-    onSuccess: (data) => setReviewSummary(data.summary),
-  });
-
   const accuracyBacktestMutation = useMutation({
     mutationFn: () =>
       api.backtestSalesForecastAccuracy({
-        monthCount: accuracyBacktestMonths,
         versionId,
         createReviewItems: true,
       }),
@@ -173,15 +170,13 @@ export function SalesForecastVersionDetailPage() {
     },
   });
 
-  useEffect(() => {
-    if (!version) return;
-    if (version.stats.monthCount > 0) {
-      setAccuracyBacktestMonths(Math.min(6, version.stats.monthCount));
-    }
-  }, [version]);
-
-  const accuracyListItems = accuracy?.items ?? [];
-  const accuracyListTotal = accuracy?.total ?? 0;
+  const accuracyListItems =
+    accuracyListTab === 'miss' ? (accuracyMiss?.items ?? []) : (accuracy?.items ?? []);
+  const accuracyListTotal =
+    accuracyListTab === 'miss' ? (accuracyMiss?.total ?? 0) : (accuracy?.total ?? 0);
+  const accuracyListPage = accuracyListTab === 'miss' ? accuracyMissPage : accuracyPage;
+  const setAccuracyListPage =
+    accuracyListTab === 'miss' ? setAccuracyMissPage : setAccuracyPage;
 
   const handleSkuClick = (row: ForecastHorizonRow, ctx?: { platform: string }) => {
     setSelectedHorizonRow(row);
@@ -296,28 +291,6 @@ export function SalesForecastVersionDetailPage() {
               >
                 {deleteDraftVersion.isPending ? '删除中…' : '删除草稿'}
               </Button>
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={() => {
-                  impactPreviewMutation.reset();
-                  setImpactPreview(null);
-                  impactPreviewMutation.mutate();
-                }}
-              >
-                影响预览
-              </Button>
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={() => {
-                  reviewVersion.reset();
-                  setReviewSummary(null);
-                  reviewVersion.mutate();
-                }}
-              >
-                AI 复核摘要
-              </Button>
               <Button size="sm" variant="outline" onClick={() => setActiveView('data')}>
                 查看全部数据明细
               </Button>
@@ -329,24 +302,6 @@ export function SalesForecastVersionDetailPage() {
             )}
             {deleteDraftVersion.isError && (
               <p className="text-sm text-destructive">{mutationErrorMessage(deleteDraftVersion.error)}</p>
-            )}
-            {impactPreviewMutation.isError && (
-              <p className="text-sm text-destructive">{mutationErrorMessage(impactPreviewMutation.error)}</p>
-            )}
-            {reviewVersion.isError && (
-              <p className="text-sm text-destructive">{mutationErrorMessage(reviewVersion.error)}</p>
-            )}
-            {impactPreview && (
-              <div className="rounded-md border border-border bg-card p-3">
-                <p className="text-sm font-medium text-text-main">发布影响预览</p>
-                <pre className="mt-2 whitespace-pre-wrap text-sm text-text-sub">{impactPreview}</pre>
-              </div>
-            )}
-            {reviewSummary && (
-              <div className="rounded-md border border-border bg-card p-3">
-                <p className="text-sm font-medium text-text-main">AI 复核摘要（只读，不修改预测值）</p>
-                <pre className="mt-2 whitespace-pre-wrap text-sm text-text-sub">{reviewSummary}</pre>
-              </div>
             )}
           </CardContent>
         </Card>
@@ -381,29 +336,30 @@ export function SalesForecastVersionDetailPage() {
           <Card>
             <CardHeader>
               <CardTitle>预测准确率</CardTitle>
-              <p className="text-sm text-text-sub">
-                {`当前版本 ${version.versionNo} 的逐月复盘；需有对应月份实际销量。`}
-                {FORECAST_ACCURACY_METRICS_LEGEND_INTRO} 下表为单月口径，悬停列名可看公式。
-              </p>
               <p className="text-sm text-text-main">
                 预测值 / 实际值：
                 <span className="font-numeric font-medium">{qtyTotals?.label ?? '—'}</span>
               </p>
-              {accuracy?.summary && (
-                <pre className="mt-2 whitespace-pre-wrap text-sm text-text-sub">{accuracy.summary}</pre>
-              )}
             </CardHeader>
             <CardContent className="space-y-4">
+              <div className="flex flex-wrap gap-2">
+                {(
+                  [
+                    ['detail', '复盘明细'],
+                    ['miss', '漏报'],
+                  ] as const
+                ).map(([tab, label]) => (
+                  <Button
+                    key={tab}
+                    size="sm"
+                    variant={accuracyListTab === tab ? 'default' : 'outline'}
+                    onClick={() => setAccuracyListTab(tab)}
+                  >
+                    {label}
+                  </Button>
+                ))}
+              </div>
               <div className="flex flex-wrap items-center gap-2">
-                <Input
-                  type="number"
-                  min={1}
-                  max={24}
-                  className="h-9 w-28"
-                  value={accuracyBacktestMonths}
-                  onChange={(e) => setAccuracyBacktestMonths(Number(e.target.value) || 6)}
-                />
-                <span className="text-sm text-text-sub">个月</span>
                 <Button
                   variant="outline"
                   disabled={accuracyBacktestMutation.isPending}
@@ -411,68 +367,115 @@ export function SalesForecastVersionDetailPage() {
                 >
                   {accuracyBacktestMutation.isPending ? '回测中…' : '按开始月复盘回测'}
                 </Button>
-                <Button
-                  variant="outline"
-                  disabled={accuracyExporting || !versionId || accuracyListTotal === 0}
-                  onClick={async () => {
-                    setAccuracyExporting(true);
-                    try {
-                      await api.exportSalesForecastAccuracy({
-                        versionId,
-                        groupBy: 'sku',
-                      });
-                    } finally {
-                      setAccuracyExporting(false);
-                    }
-                  }}
-                >
-                  {accuracyExporting ? '导出中…' : '导出 SKU 汇总'}
-                </Button>
-                <Button
-                  variant="outline"
-                  disabled={accuracyExporting || !versionId || accuracyListTotal === 0}
-                  onClick={async () => {
-                    setAccuracyExporting(true);
-                    try {
-                      await api.exportSalesForecastAccuracy({ versionId });
-                    } finally {
-                      setAccuracyExporting(false);
-                    }
-                  }}
-                >
-                  {accuracyExporting ? '导出中…' : '导出 CSV'}
-                </Button>
+                {accuracyListTab === 'detail' ? (
+                  <>
+                    <Button
+                      variant="outline"
+                      disabled={accuracyExporting || !versionId || accuracyListTotal === 0}
+                      onClick={async () => {
+                        setAccuracyExporting(true);
+                        try {
+                          await api.exportSalesForecastAccuracy({
+                            versionId,
+                            groupBy: 'sku',
+                          });
+                        } finally {
+                          setAccuracyExporting(false);
+                        }
+                      }}
+                    >
+                      {accuracyExporting ? '导出中…' : '导出 SKU 汇总'}
+                    </Button>
+                    <Button
+                      variant="outline"
+                      disabled={accuracyExporting || !versionId || accuracyListTotal === 0}
+                      onClick={async () => {
+                        setAccuracyExporting(true);
+                        try {
+                          await api.exportSalesForecastAccuracy({
+                            versionId,
+                            rowKind: 'predicted',
+                          });
+                        } finally {
+                          setAccuracyExporting(false);
+                        }
+                      }}
+                    >
+                      {accuracyExporting ? '导出中…' : '导出 CSV'}
+                    </Button>
+                  </>
+                ) : (
+                  <>
+                    <Button
+                      variant="outline"
+                      disabled={accuracyExporting || !versionId || accuracyListTotal === 0}
+                      onClick={async () => {
+                        setAccuracyExporting(true);
+                        try {
+                          await api.exportSalesForecastAccuracy({
+                            versionId,
+                            groupBy: 'sku',
+                            rowKind: 'miss',
+                          });
+                        } finally {
+                          setAccuracyExporting(false);
+                        }
+                      }}
+                    >
+                      {accuracyExporting ? '导出中…' : '导出 SKU 汇总'}
+                    </Button>
+                    <Button
+                      variant="outline"
+                      disabled={accuracyExporting || !versionId || accuracyListTotal === 0}
+                      onClick={async () => {
+                        setAccuracyExporting(true);
+                        try {
+                          await api.exportSalesForecastAccuracy({
+                            versionId,
+                            rowKind: 'miss',
+                          });
+                        } finally {
+                          setAccuracyExporting(false);
+                        }
+                      }}
+                    >
+                      {accuracyExporting ? '导出中…' : '导出漏报 CSV'}
+                    </Button>
+                  </>
+                )}
               </div>
-              {accuracyBacktestMutation.data?.summary && (
-                <pre className="whitespace-pre-wrap rounded-md bg-muted p-3 text-sm text-text-sub">
-                  {accuracyBacktestMutation.data.summary}
-                </pre>
-              )}
               {accuracyBacktestMutation.isError && (
                 <p className="text-sm text-destructive">{mutationErrorMessage(accuracyBacktestMutation.error)}</p>
+              )}
+              {accuracyListTab === 'miss' && (
+                <p className="text-sm text-text-sub">
+                  漏报：预测日均=0 且实际日均&gt;0。不计入上方「预测值 / 实际值」与主 KPI。
+                </p>
               )}
               <table className="min-w-full text-sm">
                 <thead>
                   <tr className="border-b border-border text-left text-text-sub">
-                    <th className="p-2 font-normal">SKU</th>
+                    <th className="p-2 font-normal">商品编码</th>
                     <th className="p-2 font-normal">商品分层</th>
                     <th className="p-2 font-normal">渠道</th>
                     <th className="p-2 font-normal">月份</th>
                     <th className="p-2 font-normal">预测日均</th>
                     <th className="p-2 font-normal">实际日均</th>
-                    <th className="p-2 font-normal">
-                      <ForecastAccuracyMetricLabel metric="rowMape" showShort />
-                    </th>
-                    <th className="p-2 font-normal">
-                      <ForecastAccuracyMetricLabel metric="rowWmape" showShort />
-                    </th>
+                    {accuracyListTab === 'detail' ? (
+                      <th className="p-2 font-normal">当月有符号</th>
+                    ) : null}
                   </tr>
                 </thead>
                 <tbody>
                   {accuracyListItems.length === 0 ? (
                     <tr>
-                      <td colSpan={8} className="p-4 text-center text-text-sub">
-                        暂无准确率记录；可对当前版本运行「按开始月复盘回测」。（需历史开始月且已结束月份有实际销量。）
+                      <td
+                        colSpan={accuracyListTab === 'detail' ? 7 : 6}
+                        className="p-4 text-center text-text-sub"
+                      >
+                        {accuracyListTab === 'miss'
+                          ? '暂无漏报记录；可对当前版本运行「按开始月复盘回测」。'
+                          : '暂无准确率记录；可对当前版本运行「按开始月复盘回测」。（需历史开始月且已结束月份有实际销量。）'}
                       </td>
                     </tr>
                   ) : (
@@ -486,28 +489,28 @@ export function SalesForecastVersionDetailPage() {
                         <td className="p-2">{row.forecastMonth}</td>
                         <td className="p-2 font-numeric">{row.forecastDailyAvg.toFixed(2)}</td>
                         <td className="p-2 font-numeric">{row.actualDailyAvg.toFixed(2)}</td>
-                        <td className="p-2 font-numeric">
-                          {row.biasVsActual != null
-                            ? `${row.biasVsActual >= 0 ? '+' : ''}${(row.biasVsActual * 100).toFixed(1)}%`
-                            : '-'}
-                        </td>
-                        <td className="p-2 font-numeric">
-                          {row.mape != null ? `${(row.mape * 100).toFixed(1)}%` : '-'}
-                        </td>
+                        {accuracyListTab === 'detail' ? (
+                          <td className="p-2 font-numeric">
+                            {row.biasVsActual != null
+                              ? `${row.biasVsActual >= 0 ? '+' : ''}${(row.biasVsActual * 100).toFixed(1)}%`
+                              : '-'}
+                          </td>
+                        ) : null}
                       </tr>
                     ))
                   )}
                 </tbody>
               </table>
-              {accuracy && (
+              {(accuracyListTab === 'detail' ? accuracy : accuracyMiss) && (
                 <ListPagination
-                  page={accuracyPage}
+                  page={accuracyListPage}
                   pageSize={listPageSize}
                   total={accuracyListTotal}
-                  onPageChange={setAccuracyPage}
+                  onPageChange={setAccuracyListPage}
                   onPageSizeChange={(next) => {
                     setListPageSize(next);
                     setAccuracyPage(1);
+                    setAccuracyMissPage(1);
                   }}
                 />
               )}

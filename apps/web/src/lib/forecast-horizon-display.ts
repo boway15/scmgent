@@ -7,8 +7,18 @@ export type AllCatV41BoundedSnapshot = {
   conservativeFactor?: number;
   tierCeiling?: number;
   nearHorizonFloor?: number | null;
+  peerPlatformFloor?: number | null;
   growthSignal?: boolean;
   rollingRatio?: number;
+};
+
+export type V41PlatformContribution = {
+  platform: string;
+  forecastDailyAvg: number;
+  levelDaily?: number;
+  seasonalDaily?: number;
+  anchorDaily?: number;
+  tier?: string;
 };
 
 export type AllCatV41HorizonDisplay = AllCatV41BoundedSnapshot & {
@@ -22,6 +32,10 @@ export type AllCatV41HorizonDisplay = AllCatV41BoundedSnapshot & {
   levelDaily?: number;
   formula: string;
   algorithm: string;
+  /** 全渠道汇总时参与合计的渠道数；>1 时单渠公式不可直接还原系统列 */
+  aggregatedPlatformCount?: number;
+  /** 全渠道汇总时各渠道系统/混合贡献明细 */
+  platformContributions?: V41PlatformContribution[];
 };
 
 export function isT99ForecastTier(tier?: string | null): boolean {

@@ -70,15 +70,15 @@ export const FORECAST_ACCURACY_METRICS: Record<ForecastAccuracyMetricKey, Foreca
   zeroForecastMiss: {
     label: '漏报',
     short: '有销零预测',
-    formula: '实际日均>0 且 预测日均=0 的行数（漏掉真实需求）。',
+    formula: '实际>0 且 预测=0 的行数（仅计数；不计入实际总销量与 MAPE/WMAPE）。',
   },
 };
 
 export const FORECAST_ACCURACY_DIAGNOSTICS_LEGEND_INTRO =
-  '主 KPI 为全期 MAPE（有符号）；辅 KPI 为全期 WMAPE（绝对误差）。统计纳入全部预测>0 行（含 T4B / ghost）；MAPE/WMAPE 分母仅实际>0 行，ghost 误差计入分子。';
+  '主 KPI 为全期 MAPE（有符号）；辅 KPI 为全期 WMAPE（绝对误差）。MAPE/销量合计仅统计预测>0 行（含 T4B / ghost）；漏报不进看板合计，仅在明细「漏报」Tab 查看。';
 
 export const FORECAST_ACCURACY_METRICS_LEGEND_INTRO =
-  '主 KPI 为月均 MAPE（有符号）；辅 KPI 为月均 WMAPE（绝对误差）。汇总均排除 T4B/T99/D 层，先按月计算再对月份算术平均；列表每行为单月口径。';
+  '主 KPI 为月均 MAPE（有符号）；辅 KPI 为月均 WMAPE（绝对误差）。汇总均排除 T4B/T99/D 层与漏报行，先按月计算再对月份算术平均；复盘明细仅预测>0 行，漏报见独立 Tab。';
 
 /** @deprecated 使用 monthlyAvgMape */
 export const monthlyAvgBias = FORECAST_ACCURACY_METRICS.monthlyAvgMape;

@@ -17,7 +17,7 @@ import {
   type AllCatV41Metrics,
   type AllCatV41Tier,
 } from '../server/lib/forecast-allcat-v41.js';
-import { T99_SYSTEM_FLOOR_DISCOUNT } from '../server/lib/forecast-demand.js';
+import { T99_SYSTEM_FLOOR_DISCOUNT, T99_SYSTEM_FLOOR_NEAR_DISCOUNT } from '../server/lib/forecast-demand.js';
 
 const ROOT = resolve(import.meta.dirname, '../../..');
 config({ path: resolve(ROOT, '.env') });
@@ -135,7 +135,8 @@ function main() {
     T4B_far: V41_T4B_CONSERVATIVE_FACTOR,
     T4B_r30_cap: V41_T4B_RECENT30_CAP,
     T4B_r90_cap: V41_T4B_RECENT90_CAP,
-    T99_discount: T99_SYSTEM_FLOOR_DISCOUNT,
+    T99_discount_far: T99_SYSTEM_FLOOR_DISCOUNT,
+    T99_discount_near: T99_SYSTEM_FLOOR_NEAR_DISCOUNT,
   });
 
   const json = q(`

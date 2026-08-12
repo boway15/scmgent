@@ -10,7 +10,7 @@ import { getPrimaryPublishedVersionId } from './forecast-version.js';
 import { formatForecastMonth } from './forecast-demand.js';
 import { segmentLabel } from './forecast-profile-class.js';
 import { forecastPlatformCondition } from './forecast-platform-scope.js';
-import { buildCsv } from './csv-export.js';
+import { buildCsv, excelKeepYmText } from './csv-export.js';
 import {
   computeMonthlyAvgMape,
   computeMonthlyAvgWmape,
@@ -27,18 +27,17 @@ import {
 } from './forecast-horizon-band.js';
 import {
   classifyForecastProfile,
-  isComparableForAccuracy,
   type ProfileClass,
 } from './forecast-profile-class.js';
 import {
   buildCompletedCalendarMonths,
   resolveActualMonthlyDailyAvg,
 } from './sales-history-monthly.js';
+import { listVersionCompletedBacktestMonths } from './forecast-qty-totals.js';
 import {
   buildReviewItemIdentity,
   type ReviewItemDraft,
 } from './forecast-collaboration.js';
-import { isForecastRowIncludedInAccuracyStats } from './forecast-accuracy-comparable.js';
 
 export type ForecastAccuracySummary = AccuracyTierSummary & {
   byHorizonBand: HorizonBandStats[];
@@ -63,12 +62,68 @@ export function shouldRefreshLowAccuracyReviewItem(status: ReviewStatus): boolea
   return status === 'pending';
 }
 
+/** 准确率明细落库：预测>0（含 ghost），或漏报（预测=0 且实际>0） */
+export function shouldPersistAccuracyRow(input: {
+  forecastDaily: number;
+  actualDaily: number;
+}): boolean {
+  if (input.forecastDaily > 0) return true;
+  return input.actualDaily > 0;
+}
+
+export function computeAccuracyRowMetrics(input: {
+  forecastDaily: number;
+  actualDaily: number;
+}): {
+  biasRate: number | null;
+  mape: number | null;
+  biasVsActual: number | null;
+  isZeroForecastMiss: boolean;
+} {
+  const { forecastDaily, actualDaily } = input;
+  const isZeroForecastMiss = forecastDaily <= 0 && actualDaily > 0;
+  const biasRate = forecastDaily > 0 ? (actualDaily - forecastDaily) / forecastDaily : null;
+  const mape = actualDaily > 0 ? Math.abs(forecastDaily - actualDaily) / actualDaily : null;
+  const biasVsActual = actualDaily > 0 ? (forecastDaily - actualDaily) / actualDaily : null;
+  return { biasRate, mape, biasVsActual, isZeroForecastMiss };
+}
+
 export function shouldCreateLowAccuracyReviewItem(input: {
   mape: number | null;
   actualDaily: number;
   forecastDaily: number;
 }): boolean {
   return (input.mape != null && input.mape > 0.3) || (input.actualDaily === 0 && input.forecastDaily > 0);
+}
+
+/** 复盘明细 CSV 表头（与页面列表列一致） */
+export const FORECAST_ACCURACY_DETAIL_CSV_HEADERS = [
+  '商品编码',
+  '商品分层',
+  '渠道',
+  '月份',
+  '预测日均',
+  '实际日均',
+  '当月有符号',
+] as const;
+
+/** 漏报明细 CSV 表头（与页面漏报 Tab 列表列一致） */
+export const FORECAST_ACCURACY_MISS_DETAIL_CSV_HEADERS = [
+  '商品编码',
+  '商品分层',
+  '渠道',
+  '月份',
+  '预测日均',
+  '实际日均',
+] as const;
+
+export function formatAccuracyDailyDisplay(value: number): string {
+  return value.toFixed(2);
+}
+
+export function formatAccuracyBiasVsActualDisplay(biasVsActual: number | null): string {
+  if (biasVsActual == null || Number.isNaN(biasVsActual)) return '-';
+  return `${biasVsActual >= 0 ? '+' : ''}${(biasVsActual * 100).toFixed(1)}%`;
 }
 
 export function buildLowAccuracyReviewItem(input: {
@@ -227,7 +282,6 @@ export async function computeForecastAccuracyForMonth(
 
   for (const row of forecastRows) {
     const forecastDaily = Number(row.forecastDailyAvg);
-    if (forecastDaily <= 0) continue;
 
     const { actualDaily } = await resolveActualMonthlyDailyAvg({
       skuId: row.skuId,
@@ -236,15 +290,12 @@ export async function computeForecastAccuracyForMonth(
       month: targetMonth,
     });
 
-    if (!isForecastRowIncludedInAccuracyStats({ forecastDaily })) {
+    if (!shouldPersistAccuracyRow({ forecastDaily, actualDaily })) {
       continue;
     }
 
     const profileClass = (row.forecastProfileClass as ProfileClass | null) ?? null;
-
-    const biasRate = forecastDaily > 0 ? (actualDaily - forecastDaily) / forecastDaily : 0;
-    const mape =
-      actualDaily > 0 ? Math.abs(actualDaily - forecastDaily) / actualDaily : null;
+    const { biasRate, mape } = computeAccuracyRowMetrics({ forecastDaily, actualDaily });
 
     if (shouldCreateLowAccuracyReviewItem({ mape, actualDaily, forecastDaily })) {
       highMapeCount++;
@@ -348,14 +399,74 @@ export function buildForecastAccuracyBacktestSummary(input: {
   return lines.join('\n');
 }
 
+/** 从已落库的准确率记录重建【批量准确率回测】摘要（刷新后仍可展示）。 */
+export async function buildPersistedForecastAccuracyBacktestSummary(params: {
+  versionId: string;
+  station?: string;
+  platform?: string;
+  year?: number;
+  month?: number;
+}): Promise<string | null> {
+  const conditions = [eq(forecastAccuracyMonthly.versionId, params.versionId)];
+  if (params.year) conditions.push(eq(forecastAccuracyMonthly.forecastYear, params.year));
+  if (params.month) conditions.push(eq(forecastAccuracyMonthly.month, params.month));
+  if (params.station) conditions.push(eq(forecastAccuracyMonthly.station, params.station));
+  const platformCond = forecastPlatformCondition(forecastAccuracyMonthly.platform, params.platform);
+  if (platformCond) conditions.push(platformCond);
+
+  const rows = await db
+    .select({
+      year: forecastAccuracyMonthly.forecastYear,
+      month: forecastAccuracyMonthly.month,
+      upserted: sql<number>`count(*)::int`,
+      highMapeCount: sql<number>`count(*) filter (
+        where (
+          ${forecastAccuracyMonthly.mape} is not null
+          and ${forecastAccuracyMonthly.mape}::float > 0.3
+        )
+        or (
+          ${forecastAccuracyMonthly.actualDailyAvg}::float = 0
+          and ${forecastAccuracyMonthly.forecastDailyAvg}::float > 0
+        )
+      )::int`,
+    })
+    .from(forecastAccuracyMonthly)
+    .where(and(...conditions))
+    .groupBy(forecastAccuracyMonthly.forecastYear, forecastAccuracyMonthly.month)
+    .orderBy(forecastAccuracyMonthly.forecastYear, forecastAccuracyMonthly.month);
+
+  if (!rows.length) return null;
+
+  const monthResults = rows.map((row) => ({
+    year: row.year,
+    month: row.month,
+    upserted: Number(row.upserted) || 0,
+    highMapeCount: Number(row.highMapeCount) || 0,
+  }));
+  const totalUpserted = monthResults.reduce((sum, m) => sum + m.upserted, 0);
+  const totalHighMapeCount = monthResults.reduce((sum, m) => sum + m.highMapeCount, 0);
+
+  return buildForecastAccuracyBacktestSummary({
+    monthResults,
+    totalUpserted,
+    totalHighMapeCount,
+  });
+}
+
 export async function computeForecastAccuracyBacktest(input?: {
   monthCount?: number;
   versionId?: string;
   createReviewItems?: boolean;
   today?: Date;
 }) {
-  const monthCount = Math.min(24, Math.max(1, Math.floor(input?.monthCount ?? 6)));
-  const months = buildCompletedCalendarMonths(monthCount, input?.today ?? new Date());
+  const today = input?.today ?? new Date();
+  const months = input?.versionId
+    ? await listVersionCompletedBacktestMonths(input.versionId, today)
+    : buildCompletedCalendarMonths(
+        Math.min(24, Math.max(1, Math.floor(input?.monthCount ?? 6))),
+        today,
+      );
+  const monthCount = months.length;
   const monthResults: Array<{
     year: number;
     month: number;
@@ -400,10 +511,26 @@ export async function computeForecastAccuracyBacktest(input?: {
 
 export async function getVersionAccuracyWmape(versionId: string): Promise<number | null> {
   const [row] = await db
-    .select({ wmape: sql<number | null>`avg(${forecastAccuracyMonthly.mape})::float` })
+    .select({
+      wmape: sql<number | null>`avg(${forecastAccuracyMonthly.mape}) filter (
+        where ${forecastAccuracyMonthly.forecastDailyAvg}::float > 0
+      )::float`,
+    })
     .from(forecastAccuracyMonthly)
     .where(eq(forecastAccuracyMonthly.versionId, versionId));
   return row?.wmape != null ? Number(row.wmape) : null;
+}
+
+export type ForecastAccuracyRowKind = 'predicted' | 'miss';
+
+function accuracyRowKindCondition(kind: ForecastAccuracyRowKind) {
+  if (kind === 'miss') {
+    return and(
+      sql`${forecastAccuracyMonthly.forecastDailyAvg}::float <= 0`,
+      sql`${forecastAccuracyMonthly.actualDailyAvg}::float > 0`,
+    )!;
+  }
+  return sql`${forecastAccuracyMonthly.forecastDailyAvg}::float > 0`;
 }
 
 export async function listForecastAccuracy(params?: {
@@ -412,6 +539,8 @@ export async function listForecastAccuracy(params?: {
   station?: string;
   platform?: string;
   versionId?: string;
+  /** predicted=预测>0；miss=漏报（预测=0 且实际>0） */
+  rowKind?: ForecastAccuracyRowKind;
   page?: number;
   pageSize?: number;
   limit?: number;
@@ -422,14 +551,15 @@ export async function listForecastAccuracy(params?: {
     Math.max(1, params?.pageSize ?? params?.limit ?? 20),
   );
   const offset = (page - 1) * pageSize;
-  const conditions = [];
+  const rowKind = params?.rowKind ?? 'predicted';
+  const conditions = [accuracyRowKindCondition(rowKind)];
   if (params?.year) conditions.push(eq(forecastAccuracyMonthly.forecastYear, params.year));
   if (params?.month) conditions.push(eq(forecastAccuracyMonthly.month, params.month));
   if (params?.station) conditions.push(eq(forecastAccuracyMonthly.station, params.station));
   const platformCond = forecastPlatformCondition(forecastAccuracyMonthly.platform, params?.platform);
   if (platformCond) conditions.push(platformCond);
   if (params?.versionId) conditions.push(eq(forecastAccuracyMonthly.versionId, params.versionId));
-  const where = conditions.length ? and(...conditions) : undefined;
+  const where = and(...conditions);
 
   const base = db
     .select({
@@ -479,19 +609,22 @@ export async function listForecastAccuracy(params?: {
     items: rows.map((r) => {
       const forecastDailyAvg = Number(r.forecastDailyAvg);
       const actualDailyAvg = Number(r.actualDailyAvg);
-      const biasVsActual =
-        actualDailyAvg > 0 ? (forecastDailyAvg - actualDailyAvg) / actualDailyAvg : null;
+      const metrics = computeAccuracyRowMetrics({
+        forecastDaily: forecastDailyAvg,
+        actualDaily: actualDailyAvg,
+      });
       const profileSegment = r.profileSegment?.trim() || null;
       return {
         ...r,
         forecastMonth: formatForecastMonth(r.forecastYear, r.month),
         forecastDailyAvg,
         actualDailyAvg,
-        biasRate: r.biasRate != null ? Number(r.biasRate) : null,
-        biasVsActual,
-        mape: r.mape != null ? Number(r.mape) : null,
+        biasRate: r.biasRate != null ? Number(r.biasRate) : metrics.biasRate,
+        biasVsActual: metrics.biasVsActual,
+        mape: r.mape != null ? Number(r.mape) : metrics.mape,
         profileSegment,
         profileSegmentLabel: profileSegment ? segmentLabel(profileSegment) : null,
+        isZeroForecastMiss: metrics.isZeroForecastMiss,
       };
     }),
     total: countRow[0]?.count ?? 0,
@@ -506,10 +639,15 @@ export async function buildForecastAccuracyExportCsv(params: {
   platform?: string;
   year?: number;
   month?: number;
+  rowKind?: ForecastAccuracyRowKind;
   limit?: number;
 }): Promise<{ csv: string; rowCount: number }> {
   const limit = Math.min(Math.max(1, params.limit ?? 100_000), 100_000);
-  const conditions = [eq(forecastAccuracyMonthly.versionId, params.versionId)];
+  const rowKind = params.rowKind ?? 'predicted';
+  const conditions = [
+    eq(forecastAccuracyMonthly.versionId, params.versionId),
+    accuracyRowKindCondition(rowKind),
+  ];
   if (params.year) conditions.push(eq(forecastAccuracyMonthly.forecastYear, params.year));
   if (params.month) conditions.push(eq(forecastAccuracyMonthly.month, params.month));
   if (params.station) conditions.push(eq(forecastAccuracyMonthly.station, params.station));
@@ -547,39 +685,31 @@ export async function buildForecastAccuracyExportCsv(params: {
     .orderBy(skus.code, forecastAccuracyMonthly.forecastYear, forecastAccuracyMonthly.month)
     .limit(limit);
 
+  const headers =
+    rowKind === 'miss'
+      ? [...FORECAST_ACCURACY_MISS_DETAIL_CSV_HEADERS]
+      : [...FORECAST_ACCURACY_DETAIL_CSV_HEADERS];
+
   const csv = buildCsv(
-    [
-      'sku_code',
-      'sku_name',
-      'profile_segment',
-      'profile_segment_label',
-      'station',
-      'platform',
-      'forecast_month',
-      'forecast_daily_avg',
-      'actual_daily_avg',
-      'bias_vs_actual_pct',
-      'mape_pct',
-    ],
+    headers,
     rows.map((r) => {
       const forecastDailyAvg = Number(r.forecastDailyAvg);
       const actualDailyAvg = Number(r.actualDailyAvg);
-      const biasVsActual =
-        actualDailyAvg > 0 ? (forecastDailyAvg - actualDailyAvg) / actualDailyAvg : null;
+      const { biasVsActual } = computeAccuracyRowMetrics({
+        forecastDaily: forecastDailyAvg,
+        actualDaily: actualDailyAvg,
+      });
       const profileSegment = r.profileSegment?.trim() || '';
-      return [
+      const base = [
         r.skuCode,
-        r.skuName ?? '',
-        profileSegment,
-        profileSegment ? segmentLabel(profileSegment) : '',
-        r.station,
+        profileSegment ? segmentLabel(profileSegment) : '-',
         r.platform,
-        formatForecastMonth(r.forecastYear, r.month),
-        forecastDailyAvg.toFixed(4),
-        actualDailyAvg.toFixed(4),
-        biasVsActual != null ? (biasVsActual * 100).toFixed(2) : '',
-        r.mape != null ? (Number(r.mape) * 100).toFixed(2) : '',
+        excelKeepYmText(formatForecastMonth(r.forecastYear, r.month)),
+        formatAccuracyDailyDisplay(forecastDailyAvg),
+        formatAccuracyDailyDisplay(actualDailyAvg),
       ];
+      if (rowKind === 'miss') return base;
+      return [...base, formatAccuracyBiasVsActualDisplay(biasVsActual)];
     }),
   );
 
@@ -592,10 +722,15 @@ export async function buildForecastAccuracySkuExportCsv(params: {
   platform?: string;
   year?: number;
   month?: number;
+  rowKind?: ForecastAccuracyRowKind;
   limit?: number;
 }): Promise<{ csv: string; rowCount: number }> {
   const limit = Math.min(Math.max(1, params.limit ?? 100_000), 100_000);
-  const conditions = [eq(forecastAccuracyMonthly.versionId, params.versionId)];
+  const rowKind = params.rowKind ?? 'predicted';
+  const conditions = [
+    eq(forecastAccuracyMonthly.versionId, params.versionId),
+    accuracyRowKindCondition(rowKind),
+  ];
   if (params.year) conditions.push(eq(forecastAccuracyMonthly.forecastYear, params.year));
   if (params.month) conditions.push(eq(forecastAccuracyMonthly.month, params.month));
   if (params.station) conditions.push(eq(forecastAccuracyMonthly.station, params.station));
@@ -629,6 +764,57 @@ export async function buildForecastAccuracySkuExportCsv(params: {
     .where(where)
     .orderBy(skus.code, forecastAccuracyMonthly.station, forecastAccuracyMonthly.platform);
 
+  if (rowKind === 'miss') {
+    type MissSkuAgg = {
+      skuCode: string;
+      skuName: string;
+      station: string;
+      platform: string;
+      profileSegment: string;
+      missRows: number;
+      actualSum: number;
+    };
+    const byKey = new Map<string, MissSkuAgg>();
+    for (const row of rows) {
+      const key = `${row.skuCode}|${row.station}|${row.platform}`;
+      const actualDaily = Number(row.actualDailyAvg);
+      let agg = byKey.get(key);
+      if (!agg) {
+        agg = {
+          skuCode: row.skuCode,
+          skuName: row.skuName ?? '',
+          station: row.station,
+          platform: row.platform,
+          profileSegment: row.profileSegment?.trim() || '',
+          missRows: 0,
+          actualSum: 0,
+        };
+        byKey.set(key, agg);
+      }
+      if (!agg.profileSegment && row.profileSegment?.trim()) {
+        agg.profileSegment = row.profileSegment.trim();
+      }
+      agg.missRows += 1;
+      agg.actualSum += actualDaily;
+    }
+
+    const skuRows = [...byKey.values()]
+      .sort((a, b) => b.actualSum - a.actualSum || b.missRows - a.missRows)
+      .slice(0, limit);
+
+    const csv = buildCsv(
+      ['商品编码', '商品分层', '渠道', '漏报行数', '实际日均合计'],
+      skuRows.map((r) => [
+        r.skuCode,
+        r.profileSegment ? segmentLabel(r.profileSegment) : '-',
+        r.platform,
+        r.missRows,
+        formatAccuracyDailyDisplay(r.actualSum),
+      ]),
+    );
+    return { csv, rowCount: skuRows.length };
+  }
+
   type SkuAgg = {
     skuCode: string;
     skuName: string;
@@ -637,7 +823,6 @@ export async function buildForecastAccuracySkuExportCsv(params: {
     profileSegment: string;
     comparableRows: number;
     ghostRows: number;
-    zeroForecastMissRows: number;
     actualSum: number;
     forecastSum: number;
     absErrSum: number;
@@ -659,7 +844,6 @@ export async function buildForecastAccuracySkuExportCsv(params: {
         profileSegment: row.profileSegment?.trim() || '',
         comparableRows: 0,
         ghostRows: 0,
-        zeroForecastMissRows: 0,
         actualSum: 0,
         forecastSum: 0,
         absErrSum: 0,
@@ -670,18 +854,14 @@ export async function buildForecastAccuracySkuExportCsv(params: {
     if (!agg.profileSegment && row.profileSegment?.trim()) {
       agg.profileSegment = row.profileSegment.trim();
     }
-    if (forecastDaily > 0) {
-      agg.comparableRows += 1;
-      if (actualDaily > 0) {
-        agg.actualSum += actualDaily;
-        agg.forecastSum += forecastDaily;
-        agg.absErrSum += Math.abs(forecastDaily - actualDaily);
-        agg.signedErrSum += forecastDaily - actualDaily;
-      } else {
-        agg.ghostRows += 1;
-      }
-    } else if (actualDaily > 0) {
-      agg.zeroForecastMissRows += 1;
+    agg.comparableRows += 1;
+    if (actualDaily > 0) {
+      agg.actualSum += actualDaily;
+      agg.forecastSum += forecastDaily;
+      agg.absErrSum += Math.abs(forecastDaily - actualDaily);
+      agg.signedErrSum += forecastDaily - actualDaily;
+    } else {
+      agg.ghostRows += 1;
     }
   }
 
@@ -697,36 +877,24 @@ export async function buildForecastAccuracySkuExportCsv(params: {
 
   const csv = buildCsv(
     [
-      'sku_code',
-      'sku_name',
-      'profile_segment',
-      'profile_segment_label',
-      'station',
-      'platform',
-      'comparable_rows',
-      'ghost_rows',
-      'zero_forecast_miss_rows',
-      'actual_daily_sum',
-      'forecast_daily_sum',
-      'wmape_pct',
-      'wmape_raw_pct',
-      'bias_pct',
+      '商品编码',
+      '商品分层',
+      '渠道',
+      '可比行数',
+      '零销误预测',
+      '实际日均合计',
+      '预测日均合计',
+      '当月有符号',
     ],
     skuRows.map((r) => [
       r.skuCode,
-      r.skuName,
-      r.profileSegment,
-      r.profileSegment ? segmentLabel(r.profileSegment) : '',
-      r.station,
+      r.profileSegment ? segmentLabel(r.profileSegment) : '-',
       r.platform,
       r.comparableRows,
       r.ghostRows,
-      r.zeroForecastMissRows,
-      r.actualSum.toFixed(4),
-      r.forecastSum.toFixed(4),
-      r.wmape != null ? (r.wmape * 100).toFixed(2) : '',
-      r.rawWmape != null ? (r.rawWmape * 100).toFixed(2) : '',
-      r.bias != null ? (r.bias * 100).toFixed(2) : '',
+      formatAccuracyDailyDisplay(r.actualSum),
+      formatAccuracyDailyDisplay(r.forecastSum),
+      formatAccuracyBiasVsActualDisplay(r.bias),
     ]),
   );
 

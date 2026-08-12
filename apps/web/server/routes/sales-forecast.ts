@@ -44,7 +44,13 @@ import {
   hasBlockingForecastIssues,
   type ForecastRowInput,
 } from '../lib/forecast-validation.js';
-import { listForecastAccuracy, computeForecastAccuracyBacktest, summarizeForecastAccuracy, buildForecastAccuracyExportCsv, buildForecastAccuracySkuExportCsv } from '../lib/forecast-accuracy.js';
+import {
+  listForecastAccuracy,
+  computeForecastAccuracyBacktest,
+  summarizeForecastAccuracy,
+  buildForecastAccuracyExportCsv,
+  buildForecastAccuracySkuExportCsv,
+} from '../lib/forecast-accuracy.js';
 import {
   buildForecastAccuracyDiagnostics,
   createForecastAccuracyReviewQueue,
@@ -1437,13 +1443,16 @@ salesForecastRoutes.post(
       createReviewItems?: boolean;
     }>();
 
-    const monthCount = body.monthCount ?? 6;
-    if (!Number.isInteger(monthCount) || monthCount < 1 || monthCount > 24) {
-      return c.json({ message: 'monthCount must be an integer between 1 and 24' }, 400);
+    // 有 versionId 时按版本地平线已结束月回测，忽略客户端 monthCount
+    if (!body.versionId) {
+      const monthCount = body.monthCount ?? 6;
+      if (!Number.isInteger(monthCount) || monthCount < 1 || monthCount > 24) {
+        return c.json({ message: 'monthCount must be an integer between 1 and 24' }, 400);
+      }
     }
 
     const result = await computeForecastAccuracyBacktest({
-      monthCount,
+      monthCount: body.monthCount,
       versionId: body.versionId,
       createReviewItems: body.createReviewItems ?? true,
     });
@@ -1642,7 +1651,17 @@ salesForecastRoutes.get('/sales-forecasts/accuracy', requireMenu('data.forecast'
     c.req.query('pageSize')?.trim(),
   );
 
-  const result = await listForecastAccuracy({ year, month, station, platform, versionId, page, pageSize });
+  const result = await listForecastAccuracy({
+    year,
+    month,
+    station,
+    platform,
+    versionId,
+    page,
+    pageSize,
+    rowKind:
+      c.req.query('rowKind')?.trim().toLowerCase() === 'miss' ? 'miss' : 'predicted',
+  });
   const summary = buildForecastAccuracyDigest(result.items, result.total);
   return c.json({
     items: result.items,
@@ -1673,7 +1692,9 @@ salesForecastRoutes.get('/sales-forecasts/accuracy/export', requireMenu('data.fo
   }
 
   const groupBy = c.req.query('groupBy')?.trim().toLowerCase();
-  const exportParams = {
+  const rowKind =
+    c.req.query('rowKind')?.trim().toLowerCase() === 'miss' ? 'miss' : 'predicted';
+  const baseExportParams = {
     versionId,
     year: parsedYear.value,
     month: parsedMonth.value,
@@ -1683,12 +1704,19 @@ salesForecastRoutes.get('/sales-forecasts/accuracy/export', requireMenu('data.fo
 
   const { csv, rowCount } =
     groupBy === 'sku'
-      ? await buildForecastAccuracySkuExportCsv(exportParams)
-      : await buildForecastAccuracyExportCsv(exportParams);
+      ? await buildForecastAccuracySkuExportCsv({ ...baseExportParams, rowKind })
+      : await buildForecastAccuracyExportCsv({ ...baseExportParams, rowKind });
 
   const stamp = new Date().toISOString().slice(0, 10);
   const safeName = version.versionNo.replace(/[^\w\u4e00-\u9fff-]+/g, '_').slice(0, 48);
-  const suffix = groupBy === 'sku' ? 'sku-summary' : 'detail';
+  const suffix =
+    groupBy === 'sku'
+      ? rowKind === 'miss'
+        ? 'miss-sku-summary'
+        : 'sku-summary'
+      : rowKind === 'miss'
+        ? 'miss'
+        : 'detail';
   return csvAttachment(`forecast-accuracy-${suffix}-${safeName}-${stamp}.csv`, csv);
 });
 

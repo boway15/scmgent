@@ -5,7 +5,7 @@
 import { roundDaily } from './forecast-baseline.js';
 import {
   resolveT99SystemFloorDaily,
-  T99_SYSTEM_FLOOR_DISCOUNT,
+  resolveT99SystemFloorDiscount,
   type T99FloorMode,
 } from './forecast-demand.js';
 import { horizonBandFromIndex } from './forecast-horizon-band.js';
@@ -226,8 +226,8 @@ export const V41_Q2_SEASONAL_DISCOUNT = 0.92;
 /** T2/T3 在 Q2 目标月再叠一层折减（压右尾高估） */
 export const V41_Q2_MID_TIER_EXTRA_DISCOUNT = 0.95;
 
-/** T4A 边界层保守化（四轮：上界再贴 recent + 弱动销扩闸）；远月更保守，近端 k≤2 放宽 */
-export const V41_T4A_CONSERVATIVE_FACTOR = 0.58;
+/** T4A 边界层保守化（四轮：上界再贴 recent + 弱动销扩闸）；远月更保守，近端 k≤2 放宽。远端 0.58→0.66 收口 flex 窗系统性低估 */
+export const V41_T4A_CONSERVATIVE_FACTOR = 0.66;
 export const V41_T4A_NEAR_CONSERVATIVE_FACTOR = 0.72;
 export const V41_T4A_FLOOR_MIN_DAILY = 0;
 export const V41_T4A_FLOOR_D6_RATIO = 0.08;
@@ -944,6 +944,7 @@ export function computeAllCatV41BoundedDaily(input: {
     const floor = resolveT99SystemFloorDaily({
       recent30DailyAvg: input.recent30DailyAvg,
       recent90DailyAvg: input.recent90DailyAvg,
+      d3DailyAvg: input.metrics.d3,
       horizonIndex: input.horizonIndex ?? 0,
     });
     return {
@@ -1122,7 +1123,7 @@ function tierFormula(tier: AllCatV41Tier, metrics?: Pick<AllCatV41Metrics, 'acti
       }
       return '0.35*d3 + 0.45*d6 + 0.20*d12';
     case 'T99':
-      return 'max(recent30,recent90)*0.8 with far decay';
+      return 'max(recent30,recent90,d3)*1.0 near / max(r)*0.8 far';
     default:
       return 'no_forecast';
   }
@@ -1296,7 +1297,9 @@ export function computeAllCatV41ForecastForMonth(input: {
   if (tier === 'T99') {
     horizonFactors.t99FloorDaily = bounded.t99FloorDaily;
     horizonFactors.t99FloorMode = bounded.t99FloorMode;
-    horizonFactors.t99FloorDiscount = T99_SYSTEM_FLOOR_DISCOUNT;
+    horizonFactors.t99FloorDiscount = resolveT99SystemFloorDiscount({
+      horizonIndex: input.horizonIndex,
+    });
   }
   if (bounded.ghostGated) {
     horizonFactors.zeroSalesGhostGate = true;
@@ -1349,7 +1352,7 @@ export function buildT99ReviewMessage(input: {
   ) {
     floorNote = '近30天断销，系统归零';
   } else if (input.floorDaily != null && input.floorDaily > 0) {
-    floorNote = `系统保守保底日均 ${roundDaily(input.floorDaily)}（max(近30,近90)×0.8，远月衰减）`;
+    floorNote = `系统保守保底日均 ${roundDaily(input.floorDaily)}（近端 max(近30,近90,d3)×1.0，远月 max(近窗)×0.8 再衰减）`;
   } else {
     floorNote = '系统保守保底（有近30动销时出数，断销归零）';
   }

@@ -151,22 +151,34 @@ describe('forecast-demand', () => {
     assert.equal(far.mode, 'zero_gate_recent30');
   });
 
-  it('resolveT99SystemFloorDaily uses max(r30,r90)*0.8 near and *0.9 far', () => {
-    // max(2, 4) * 0.8 = 3.2; far = 3.2 * 0.9 = 2.88
+  it('resolveT99SystemFloorDaily uses max(r30,r90,d3)*1.0 near and max(r)*0.8*0.9 far', () => {
+    // near: max(2, 3, 5) * 1.0 = 5; far ignores d3: max(2,3)*0.8*0.9 = 2.16
     const near = resolveT99SystemFloorDaily({
       recent30DailyAvg: 2,
-      recent90DailyAvg: 4,
+      recent90DailyAvg: 3,
+      d3DailyAvg: 5,
       horizonIndex: 1,
     });
     const far = resolveT99SystemFloorDaily({
       recent30DailyAvg: 2,
-      recent90DailyAvg: 4,
+      recent90DailyAvg: 3,
+      d3DailyAvg: 5,
       horizonIndex: 3,
     });
-    assert.equal(near.daily, 3.2);
+    assert.equal(near.daily, 5);
     assert.equal(near.mode, 'recent_max06');
-    assert.equal(far.daily, 2.88);
+    assert.equal(far.daily, 2.16);
     assert.equal(far.mode, 'recent_max06');
+  });
+
+  it('resolveT99SystemFloorDaily near falls back to max(r30,r90) when d3 absent', () => {
+    const near = resolveT99SystemFloorDaily({
+      recent30DailyAvg: 2,
+      recent90DailyAvg: 4,
+      horizonIndex: 0,
+    });
+    assert.equal(near.daily, 4);
+    assert.equal(near.mode, 'recent_max06');
   });
 
   it('resolveT99ReplenishmentFallbackDaily zero-gates when recent30 is 0', () => {

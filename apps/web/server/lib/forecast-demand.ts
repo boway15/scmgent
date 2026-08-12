@@ -179,7 +179,13 @@ export function resolveHorizonConsumptionDailyDetailed(input: {
 /** T99 系统不预测时的补货兜底日均（不进主 KPI） */
 export type T99FloorMode = 'zero_gate_recent30' | 'recent_max06';
 
+/** 远月（柔性窗及更远）保底折扣；近端见 T99_SYSTEM_FLOOR_NEAR_DISCOUNT */
 export const T99_SYSTEM_FLOOR_DISCOUNT = 0.8;
+/**
+ * 近端 1–3 月保底折扣。
+ * 方案2：近端用 max(r30,r90,d3) 丰富锚点，系数回到 1.0（不再用单纯抬系数冲 MAPE）。
+ */
+export const T99_SYSTEM_FLOOR_NEAR_DISCOUNT = 1.0;
 export const T99_SYSTEM_FLOOR_FLEX_DECAY_FROM_K = 3;
 /** B1：与 T4B 远端一并放宽，缓解已预测行柔性窗低估 */
 export const T99_SYSTEM_FLOOR_FLEX_DECAY_FACTOR = 0.9;
@@ -189,9 +195,28 @@ function nonNegDaily(value?: number | null): number {
   return Math.max(0, value);
 }
 
+/** 未显式传入 discount 时，按地平线选用近端 1.0 / 远端 0.8 */
+export function resolveT99SystemFloorDiscount(input?: {
+  horizonIndex?: number;
+  discount?: number;
+  flexDecayFromK?: number;
+}): number {
+  if (input?.discount != null && Number.isFinite(input.discount) && input.discount > 0) {
+    return input.discount;
+  }
+  const decayFrom =
+    input?.flexDecayFromK != null && Number.isFinite(input.flexDecayFromK)
+      ? Math.max(0, Math.floor(input.flexDecayFromK))
+      : T99_SYSTEM_FLOOR_FLEX_DECAY_FROM_K;
+  const k = Math.max(0, Math.floor(input?.horizonIndex ?? 0));
+  return k < decayFrom ? T99_SYSTEM_FLOOR_NEAR_DISCOUNT : T99_SYSTEM_FLOOR_DISCOUNT;
+}
+
 export function resolveT99SystemFloorDaily(input: {
   recent30DailyAvg?: number | null;
   recent90DailyAvg?: number | null;
+  /** 近 3 月折日均（metrics.d3 = q3/91）；仅近端并入锚点 */
+  d3DailyAvg?: number | null;
   horizonIndex?: number;
   discount?: number;
   flexDecayFromK?: number;
@@ -202,10 +227,7 @@ export function resolveT99SystemFloorDaily(input: {
   if (recent30 <= 0) {
     return { daily: 0, mode: 'zero_gate_recent30' };
   }
-  const discount =
-    input.discount != null && Number.isFinite(input.discount) && input.discount > 0
-      ? input.discount
-      : T99_SYSTEM_FLOOR_DISCOUNT;
+  const discount = resolveT99SystemFloorDiscount(input);
   const decayFrom =
     input.flexDecayFromK != null && Number.isFinite(input.flexDecayFromK)
       ? Math.max(0, Math.floor(input.flexDecayFromK))
@@ -215,7 +237,11 @@ export function resolveT99SystemFloorDaily(input: {
       ? input.flexDecayFactor
       : T99_SYSTEM_FLOOR_FLEX_DECAY_FACTOR;
   const k = Math.max(0, Math.floor(input.horizonIndex ?? 0));
-  let daily = Math.max(recent30, recent90) * discount;
+  const d3 = nonNegDaily(input.d3DailyAvg);
+  // 近端丰富锚点；远月仍只用滚动近窗，避免柔性窗 Ghost 被 d3 抬爆
+  const anchor =
+    k < decayFrom ? Math.max(recent30, recent90, d3) : Math.max(recent30, recent90);
+  let daily = anchor * discount;
   if (k >= decayFrom) daily *= decayFactor;
   return {
     daily: Math.round(daily * 10_000) / 10_000,

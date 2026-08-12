@@ -9,16 +9,15 @@ import {
   formatTierDisplayLabel,
 } from '@/lib/forecast-labels';
 import { resolveAiAssistModeFromMonths } from '@/lib/forecast-detail-columns';
-import {
-  FORECAST_HORIZON_FUTURE_MONTH_OPTIONS,
-  FORECAST_HORIZON_HISTORY_MONTH_OPTIONS,
-  resolveHorizonPlatformScope,
-} from '@/lib/forecast-horizon-meta';
+import { resolveHorizonPlatformScope } from '@/lib/forecast-horizon-meta';
 import { isAllCatV41ForecastCell, isT99ForecastTier } from '@/lib/forecast-horizon-display';
 import { cn } from '@/lib/utils';
 import type { ForecastHorizonRow } from '@/components/ForecastSkuDetailDrawer';
 
 export type ForecastHorizonViewMode = 'future' | 'history' | 'detail';
+
+/** 数据明细历史窗口固定月数（与创建时预测月数无关） */
+const PANEL_HISTORY_MONTH_COUNT = 12;
 
 const formatFactor = (value: number | null | undefined) =>
   value == null || !Number.isFinite(value) ? '-' : value.toFixed(2);
@@ -86,7 +85,6 @@ type Props = {
 
 export function ForecastHorizonPanel({ active, filters, pageSize = 20, onSkuClick }: Props) {
   const [viewMode, setViewMode] = useState<ForecastHorizonViewMode>('future');
-  const [monthCount, setMonthCount] = useState(6);
   const [page, setPage] = useState(1);
   const [pageSizeState, setPageSizeState] = useState(pageSize);
   const [exporting, setExporting] = useState<'wide' | 'detail' | null>(null);
@@ -97,7 +95,6 @@ export function ForecastHorizonPanel({ active, filters, pageSize = 20, onSkuClic
       filters,
       page,
       pageSizeState,
-      monthCount,
       viewMode,
     ],
     queryFn: () =>
@@ -110,8 +107,8 @@ export function ForecastHorizonPanel({ active, filters, pageSize = 20, onSkuClic
         pendingCalibration: filters.pendingCalibration || undefined,
         page,
         pageSize: pageSizeState,
-        monthCount: viewMode === 'history' ? undefined : monthCount,
-        historyMonthCount: viewMode === 'future' ? 0 : monthCount,
+        // 不传 monthCount：按版本创建时落库地平线展示
+        historyMonthCount: viewMode === 'future' ? 0 : PANEL_HISTORY_MONTH_COUNT,
       }),
     enabled: active && Boolean(filters.versionId),
     staleTime: 0,
@@ -130,8 +127,7 @@ export function ForecastHorizonPanel({ active, filters, pageSize = 20, onSkuClic
         category: filters.category || undefined,
         profileSegment: filters.profileSegment || undefined,
         pendingCalibration: filters.pendingCalibration || undefined,
-        monthCount,
-        historyMonthCount: mode === 'wide' ? 0 : monthCount,
+        historyMonthCount: mode === 'wide' ? 0 : PANEL_HISTORY_MONTH_COUNT,
       });
     } catch (err) {
       window.alert(err instanceof Error ? err.message : '导出失败');
@@ -177,27 +173,6 @@ export function ForecastHorizonPanel({ active, filters, pageSize = 20, onSkuClic
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-end gap-2">
-        <select
-          className="h-9 rounded-md border border-border bg-card px-3 text-sm"
-          value={monthCount}
-          onChange={(e) => {
-            setMonthCount(Number(e.target.value));
-            setPage(1);
-          }}
-        >
-          {(viewMode === 'history'
-            ? FORECAST_HORIZON_HISTORY_MONTH_OPTIONS
-            : FORECAST_HORIZON_FUTURE_MONTH_OPTIONS
-          ).map((n) => (
-            <option key={n} value={n}>
-              {viewMode === 'future'
-                ? `未来 ${n} 个月`
-                : viewMode === 'history'
-                  ? `历史 ${n} 个月`
-                  : `各 ${n} 个月`}
-            </option>
-          ))}
-        </select>
         <div className="flex gap-1">
           <Button
             size="sm"

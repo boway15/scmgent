@@ -181,7 +181,8 @@ export type T99FloorMode = 'zero_gate_recent30' | 'recent_max06';
 
 export const T99_SYSTEM_FLOOR_DISCOUNT = 0.8;
 export const T99_SYSTEM_FLOOR_FLEX_DECAY_FROM_K = 3;
-export const T99_SYSTEM_FLOOR_FLEX_DECAY_FACTOR = 0.72;
+/** B1：与 T4B 远端一并放宽，缓解已预测行柔性窗低估 */
+export const T99_SYSTEM_FLOOR_FLEX_DECAY_FACTOR = 0.9;
 
 function nonNegDaily(value?: number | null): number {
   if (value == null || !Number.isFinite(value)) return 0;

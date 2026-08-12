@@ -60,8 +60,19 @@ export type AllCatV41BoundedSnapshot = {
   conservativeFactor?: number;
   tierCeiling?: number;
   nearHorizonFloor?: number | null;
+  peerPlatformFloor?: number | null;
   growthSignal?: boolean;
   rollingRatio?: number;
+};
+
+/** 全渠道汇总时各渠道对系统列的贡献（仅 API 展示，不落库） */
+export type V41PlatformContribution = {
+  platform: string;
+  forecastDailyAvg: number;
+  levelDaily?: number;
+  seasonalDaily?: number;
+  anchorDaily?: number;
+  tier?: string;
 };
 
 /** 抽屉/明细展示用 V4.1 因子（与 legacy HorizonFactorSnapshot 不同结构） */
@@ -76,6 +87,10 @@ export type AllCatV41HorizonDisplay = AllCatV41BoundedSnapshot & {
   levelDaily?: number;
   formula: string;
   algorithm: string;
+  /** 全渠道汇总时参与合计的渠道数；>1 时单渠公式不可直接还原系统列 */
+  aggregatedPlatformCount?: number;
+  /** 全渠道汇总时各渠道系统/混合贡献明细 */
+  platformContributions?: V41PlatformContribution[];
 };
 
 export function parseAllCatV41HorizonFactors(raw: unknown): AllCatV41HorizonDisplay | null {
@@ -99,6 +114,8 @@ export function parseAllCatV41HorizonFactors(raw: unknown): AllCatV41HorizonDisp
     return Number.isFinite(parsed) ? parsed : undefined;
   };
   const nearHorizonFloor = num('nearHorizonFloor');
+  const peerPlatformFloor = num('peerPlatformFloor');
+  const aggregatedPlatformCount = num('aggregatedPlatformCount');
   return {
     tier,
     d6: num('d6') ?? 0,
@@ -117,8 +134,60 @@ export function parseAllCatV41HorizonFactors(raw: unknown): AllCatV41HorizonDisp
     conservativeFactor: num('conservativeFactor'),
     tierCeiling: num('tierCeiling'),
     nearHorizonFloor: nearHorizonFloor != null ? nearHorizonFloor : undefined,
+    peerPlatformFloor: peerPlatformFloor != null ? peerPlatformFloor : undefined,
     growthSignal: value.growthSignal === true ? true : value.growthSignal === false ? false : undefined,
     rollingRatio: num('rollingRatio'),
+    aggregatedPlatformCount:
+      aggregatedPlatformCount != null && aggregatedPlatformCount >= 1
+        ? Math.round(aggregatedPlatformCount)
+        : undefined,
+  };
+}
+
+/**
+ * 全渠道汇总：可加总日均（锚定/季节/混合/跨平台抬底）按渠道求和，
+ * 与系统列/基线列的 Σ 口径对齐；乘法套限幅因子不可合成，予以清除。
+ * `factorList` 首项应为主渠道（pickPrimary）因子。
+ */
+export function aggregateAllCatV41HorizonFactorsForDisplay(
+  factorList: Array<AllCatV41HorizonDisplay | null | undefined>,
+): AllCatV41HorizonDisplay | null {
+  const factors = factorList.filter((f): f is AllCatV41HorizonDisplay => f != null);
+  if (factors.length === 0) return null;
+  const primary = factors[0]!;
+  if (factors.length === 1) {
+    return { ...primary, aggregatedPlatformCount: 1 };
+  }
+
+  const sumOptional = (
+    key: 'levelDaily' | 'seasonalDaily' | 'anchorDaily' | 'peerPlatformFloor',
+  ): number | undefined => {
+    let sum = 0;
+    let any = false;
+    for (const f of factors) {
+      const value = f[key];
+      if (value != null && Number.isFinite(value)) {
+        sum += value;
+        any = true;
+      }
+    }
+    return any ? roundDaily(sum) : undefined;
+  };
+
+  return {
+    ...primary,
+    levelDaily: sumOptional('levelDaily') ?? primary.levelDaily,
+    seasonalDaily: sumOptional('seasonalDaily') ?? primary.seasonalDaily,
+    anchorDaily: sumOptional('anchorDaily') ?? primary.anchorDaily,
+    peerPlatformFloor: sumOptional('peerPlatformFloor'),
+    effectiveTrendDecay: undefined,
+    monthFactor: undefined,
+    conservativeFactor: undefined,
+    tierCeiling: undefined,
+    nearHorizonFloor: undefined,
+    growthSignal: undefined,
+    rollingRatio: undefined,
+    aggregatedPlatformCount: factors.length,
   };
 }
 
@@ -170,8 +239,8 @@ export const V41_T4A_FLEX_DECAY_FACTOR = 0.72;
 export const V41_T4A_MIN_TREND_RATIO = 0.8;
 export const V41_T4_TAIL_MONTH_DISCOUNT = 0.8;
 
-/** T4B 稳定保底层：远月压 ghost；近端 k≤2 放宽保守系数并抬底（缓解系统性低估，方案 A 温和乐观） */
-export const V41_T4B_CONSERVATIVE_FACTOR = 0.75;
+/** T4B 稳定保底层：远月压 ghost；近端 k≤2 放宽；B1 再抬远端（柔性窗系统性低估） */
+export const V41_T4B_CONSERVATIVE_FACTOR = 0.85;
 export const V41_T4B_NEAR_CONSERVATIVE_FACTOR = 0.9;
 export const V41_T4B_FLOOR_MIN_DAILY = 0;
 export const V41_T4B_FLOOR_D6_RATIO = 0.08;
@@ -179,7 +248,7 @@ export const V41_T4B_NEAR_BLEND_FLOOR = 0.7;
 export const V41_T4B_NEAR_D6_FLOOR = 0.75;
 export const V41_T4B_NEAR_RECENT90_FLOOR = 0.65;
 export const V41_T4B_FLEX_DECAY_FROM_K = 3;
-export const V41_T4B_FLEX_DECAY_FACTOR = 0.72;
+export const V41_T4B_FLEX_DECAY_FACTOR = 0.9;
 
 /** 跨平台近端抬底：本平台过低时，不低于其他平台近端日均的 α 倍 */
 export const V41_PEER_PLATFORM_FLOOR_ALPHA = 0.2;
@@ -544,7 +613,8 @@ export function resolveV41MonthFactor(
       factor *= V41_Q2_MID_TIER_EXTRA_DISCOUNT;
     }
   }
-  if ((tier === 'T4A' || tier === 'T4B') && forecastMonth >= 4) {
+  // B1：T4B 不再叠尾月折扣（远端已有 flex 衰减）；T4A 仍保留
+  if (tier === 'T4A' && forecastMonth >= 4) {
     factor *= V41_T4_TAIL_MONTH_DISCOUNT;
   }
   if (tier === 'T4A' && k >= V41_T4A_FLEX_DECAY_FROM_K) {

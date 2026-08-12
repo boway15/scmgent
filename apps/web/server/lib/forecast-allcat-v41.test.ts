@@ -26,6 +26,7 @@ import {
   buildT99ReviewMessage,
   V41_T4B_NEAR_CONSERVATIVE_FACTOR,
   V41_T4B_CONSERVATIVE_FACTOR,
+  V41_T4B_FLEX_DECAY_FACTOR,
   V41_T4B_RECENT30_CAP,
   V41_T4B_RECENT90_CAP,
 } from './forecast-allcat-v41.js';
@@ -306,7 +307,7 @@ describe('forecast-allcat-v41', () => {
       recent90DailyAvg: 4,
     });
     assert.equal(near.forecastDaily, 3.2);
-    assert.equal(far.forecastDaily, 2.304);
+    assert.equal(far.forecastDaily, 2.88);
     assert.equal(gated.forecastDaily, 0);
   });
 
@@ -648,10 +649,17 @@ describe('forecast-allcat-v41', () => {
 
   it('resolveV41MonthFactor applies mild July haircut for T1 first horizon', () => {
     assert.equal(resolveV41MonthFactor(7, 0, 'T1'), 0.98);
-    assert.ok(Math.abs(resolveV41MonthFactor(7, 0, 'T4B') - 0.8) < 0.0001);
+    // B1: T4B 不再叠尾月 ×0.8；近端 k=0 为 1.0
+    assert.ok(Math.abs(resolveV41MonthFactor(7, 0, 'T4B') - 1.0) < 0.0001);
     assert.equal(resolveV41MonthFactor(7, 1, 'T1'), 0.98);
     assert.equal(resolveV41MonthFactor(7, 5, 'T1'), 0.88);
     assert.equal(resolveV41MonthFactor(2, 0, 'T1'), 1.0);
+  });
+
+  it('resolveV41MonthFactor B1: T4B flex decay 0.9 without tail-month discount', () => {
+    // k=3 → base 0.92 * flex 0.9 = 0.828；T4A 仍叠尾月 0.8
+    assert.ok(Math.abs(resolveV41MonthFactor(7, 3, 'T4B') - 0.92 * 0.9) < 0.0001);
+    assert.ok(Math.abs(resolveV41MonthFactor(7, 3, 'T4A') - 0.92 * 0.8 * 0.72) < 0.0001);
   });
 
   it('resolveV41MonthFactor applies Q2 seasonal discount for core tiers', () => {
@@ -978,13 +986,14 @@ describe('forecast-allcat-v41', () => {
     assert.equal(bounded.ghostGated, true);
   });
 
-  it('T4B plan-A constants: near 0.9 / far 0.75 / caps 0.95 & 1.0', () => {
+  it('T4B plan-A/B1 constants: near 0.9 / far 0.85 / flex 0.9 / caps 0.95 & 1.0', () => {
     assert.equal(V41_T4B_NEAR_CONSERVATIVE_FACTOR, 0.9);
-    assert.equal(V41_T4B_CONSERVATIVE_FACTOR, 0.75);
+    assert.equal(V41_T4B_CONSERVATIVE_FACTOR, 0.85);
+    assert.equal(V41_T4B_FLEX_DECAY_FACTOR, 0.9);
     assert.equal(V41_T4B_RECENT30_CAP, 0.95);
     assert.equal(V41_T4B_RECENT90_CAP, 1.0);
     assert.equal(tierConservativeFactor('T4B', 'C', 0), 0.9);
-    assert.equal(tierConservativeFactor('T4B', 'C', 3), 0.75);
+    assert.equal(tierConservativeFactor('T4B', 'C', 3), 0.85);
   });
 
   it('T4B near horizon uses relaxed conservative factor and blend floor', () => {

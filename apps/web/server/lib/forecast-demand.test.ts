@@ -151,8 +151,8 @@ describe('forecast-demand', () => {
     assert.equal(far.mode, 'zero_gate_recent30');
   });
 
-  it('resolveT99SystemFloorDaily uses max(r30,r90)*0.8 near and *0.72 far', () => {
-    // max(2, 4) * 0.8 = 3.2; far = 3.2 * 0.72 = 2.304
+  it('resolveT99SystemFloorDaily uses max(r30,r90)*0.8 near and *0.9 far', () => {
+    // max(2, 4) * 0.8 = 3.2; far = 3.2 * 0.9 = 2.88
     const near = resolveT99SystemFloorDaily({
       recent30DailyAvg: 2,
       recent90DailyAvg: 4,
@@ -165,7 +165,7 @@ describe('forecast-demand', () => {
     });
     assert.equal(near.daily, 3.2);
     assert.equal(near.mode, 'recent_max06');
-    assert.equal(far.daily, 2.304);
+    assert.equal(far.daily, 2.88);
     assert.equal(far.mode, 'recent_max06');
   });
 

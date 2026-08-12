@@ -179,7 +179,7 @@ export function resolveHorizonConsumptionDailyDetailed(input: {
 /** T99 系统不预测时的补货兜底日均（不进主 KPI） */
 export type T99FloorMode = 'zero_gate_recent30' | 'recent_max06';
 
-export const T99_SYSTEM_FLOOR_DISCOUNT = 0.6;
+export const T99_SYSTEM_FLOOR_DISCOUNT = 0.8;
 export const T99_SYSTEM_FLOOR_FLEX_DECAY_FROM_K = 3;
 export const T99_SYSTEM_FLOOR_FLEX_DECAY_FACTOR = 0.72;
 
@@ -226,13 +226,13 @@ export function resolveT99ReplenishmentFallbackDaily(input: {
   recent30DailyAvg?: number | null;
   recent90DailyAvg?: number | null;
   categoryPoolFloorDaily?: number | null;
-  /** 相对近期动销的折扣，默认 0.6 */
+  /** 相对近期动销的折扣，默认 0.8（与 T99_SYSTEM_FLOOR_DISCOUNT 对齐） */
   discount?: number;
 }): number {
   const discount =
     input.discount != null && Number.isFinite(input.discount) && input.discount > 0
       ? input.discount
-      : 0.6;
+      : T99_SYSTEM_FLOOR_DISCOUNT;
   const recent30 =
     input.recent30DailyAvg != null && Number.isFinite(input.recent30DailyAvg)
       ? Math.max(0, input.recent30DailyAvg)

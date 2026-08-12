@@ -151,8 +151,8 @@ describe('forecast-demand', () => {
     assert.equal(far.mode, 'zero_gate_recent30');
   });
 
-  it('resolveT99SystemFloorDaily uses max(r30,r90)*0.6 near and *0.72 far', () => {
-    // max(2, 4) * 0.6 = 2.4; far = 2.4 * 0.72 = 1.728
+  it('resolveT99SystemFloorDaily uses max(r30,r90)*0.8 near and *0.72 far', () => {
+    // max(2, 4) * 0.8 = 3.2; far = 3.2 * 0.72 = 2.304
     const near = resolveT99SystemFloorDaily({
       recent30DailyAvg: 2,
       recent90DailyAvg: 4,
@@ -163,9 +163,9 @@ describe('forecast-demand', () => {
       recent90DailyAvg: 4,
       horizonIndex: 3,
     });
-    assert.equal(near.daily, 2.4);
+    assert.equal(near.daily, 3.2);
     assert.equal(near.mode, 'recent_max06');
-    assert.equal(far.daily, 1.728);
+    assert.equal(far.daily, 2.304);
     assert.equal(far.mode, 'recent_max06');
   });
 
@@ -187,7 +187,7 @@ describe('forecast-demand', () => {
         recent90DailyAvg: 1,
         categoryPoolFloorDaily: 0.1,
       }),
-      1.2,
+      1.6,
     );
     const detailed = resolveHorizonConsumptionDailyDetailed({
       forecastDailyAvg: 0,
@@ -197,7 +197,7 @@ describe('forecast-demand', () => {
       recent90DailyAvg: 1,
     });
     assert.equal(detailed.demandSource, 't99_fallback');
-    assert.equal(detailed.daily, 1.2);
+    assert.equal(detailed.daily, 1.6);
     assert.equal(
       resolveHorizonConsumptionDaily({
         forecastDailyAvg: 0,

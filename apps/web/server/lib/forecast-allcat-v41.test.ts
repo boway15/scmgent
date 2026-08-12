@@ -303,8 +303,8 @@ describe('forecast-allcat-v41', () => {
       recent30DailyAvg: 0,
       recent90DailyAvg: 4,
     });
-    assert.equal(near.forecastDaily, 2.4);
-    assert.equal(far.forecastDaily, 1.728);
+    assert.equal(near.forecastDaily, 3.2);
+    assert.equal(far.forecastDaily, 2.304);
     assert.equal(gated.forecastDaily, 0);
   });
 
@@ -325,12 +325,12 @@ describe('forecast-allcat-v41', () => {
       recent90DailyAvg: 2,
     });
     assert.equal(result.tier, 'T99');
-    assert.equal(result.forecastDaily, 1.8); // max(3,2)*0.6
+    assert.equal(result.forecastDaily, 2.4); // max(3,2)*0.8
     assert.equal(result.algorithm, 't99_conservative_floor');
-    assert.equal(result.formula, 'max(recent30,recent90)*0.6 with far decay');
+    assert.equal(result.formula, 'max(recent30,recent90)*0.8 with far decay');
     assert.equal(result.kpiTarget, 'T99_CONSERVATIVE_FLOOR');
     assert.equal(result.horizonFactors.t99FloorMode, 'recent_max06');
-    assert.equal(result.horizonFactors.t99FloorDaily, 1.8);
+    assert.equal(result.horizonFactors.t99FloorDaily, 2.4);
   });
 
   it('buildT99ReviewMessage uses neutral copy when floor params omitted', () => {

@@ -333,6 +333,7 @@ describe('forecast-allcat-v41', () => {
     assert.equal(result.kpiTarget, 'T99_CONSERVATIVE_FLOOR');
     assert.equal(result.horizonFactors.t99FloorMode, 'recent_max06');
     assert.equal(result.horizonFactors.t99FloorDaily, 2.4);
+    assert.equal(result.horizonFactors.t99FloorDiscount, 0.8);
   });
 
   it('buildT99ReviewMessage uses neutral copy when floor params omitted', () => {

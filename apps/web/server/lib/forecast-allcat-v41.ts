@@ -3,7 +3,11 @@
  */
 
 import { roundDaily } from './forecast-baseline.js';
-import { resolveT99SystemFloorDaily, type T99FloorMode } from './forecast-demand.js';
+import {
+  resolveT99SystemFloorDaily,
+  T99_SYSTEM_FLOOR_DISCOUNT,
+  type T99FloorMode,
+} from './forecast-demand.js';
 import { horizonBandFromIndex } from './forecast-horizon-band.js';
 import {
   monthlyQtyToDailyAvg,
@@ -1222,6 +1226,7 @@ export function computeAllCatV41ForecastForMonth(input: {
   if (tier === 'T99') {
     horizonFactors.t99FloorDaily = bounded.t99FloorDaily;
     horizonFactors.t99FloorMode = bounded.t99FloorMode;
+    horizonFactors.t99FloorDiscount = T99_SYSTEM_FLOOR_DISCOUNT;
   }
   if (bounded.ghostGated) {
     horizonFactors.zeroSalesGhostGate = true;

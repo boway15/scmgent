@@ -16,6 +16,16 @@ export type PublishedForecastEntry = {
   demandSource?: HorizonDemandSource;
 };
 
+/** 已发布版本无 t99FloorDiscount 时冻结为 0.6，避免静默套用新生成默认 0.8 */
+export const T99_PUBLISHED_FALLBACK_LEGACY_DISCOUNT = 0.6;
+
+export function resolveT99FallbackDiscountFromFactors(raw: unknown): number {
+  if (!raw || typeof raw !== 'object') return T99_PUBLISHED_FALLBACK_LEGACY_DISCOUNT;
+  const discount = Number((raw as Record<string, unknown>).t99FloorDiscount);
+  if (Number.isFinite(discount) && discount > 0) return discount;
+  return T99_PUBLISHED_FALLBACK_LEGACY_DISCOUNT;
+}
+
 function t99FallbackFromHorizonFactors(raw: unknown): number {
   if (!raw || typeof raw !== 'object') return 0;
   const value = raw as Record<string, unknown>;
@@ -24,6 +34,7 @@ function t99FallbackFromHorizonFactors(raw: unknown): number {
   return resolveT99ReplenishmentFallbackDaily({
     recent30DailyAvg: Number.isFinite(recent30) ? recent30 : null,
     recent90DailyAvg: Number.isFinite(recent90) ? recent90 : null,
+    discount: resolveT99FallbackDiscountFromFactors(raw),
   });
 }
 

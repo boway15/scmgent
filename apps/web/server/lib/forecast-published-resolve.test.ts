@@ -1,6 +1,10 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { pickLatestPublishedVersionPerSku } from './forecast-published-resolve.js';
+import {
+  pickLatestPublishedVersionPerSku,
+  resolveT99FallbackDiscountFromFactors,
+  T99_PUBLISHED_FALLBACK_LEGACY_DISCOUNT,
+} from './forecast-published-resolve.js';
 
 describe('forecast-published-resolve', () => {
   it('pickLatestPublishedVersionPerSku uses latest publishedAt per sku', () => {
@@ -19,5 +23,22 @@ describe('forecast-published-resolve', () => {
       { skuId: 'sku-a', versionId: 'v-dated', publishedAt: new Date('2026-07-01T00:00:00.000Z') },
     ]);
     assert.equal(map.get('sku-a'), 'v-dated');
+  });
+
+  it('resolveT99FallbackDiscountFromFactors defaults to legacy 0.6 when missing', () => {
+    assert.equal(resolveT99FallbackDiscountFromFactors(null), T99_PUBLISHED_FALLBACK_LEGACY_DISCOUNT);
+    assert.equal(
+      resolveT99FallbackDiscountFromFactors({ recent30DailyAvg: 3 }),
+      T99_PUBLISHED_FALLBACK_LEGACY_DISCOUNT,
+    );
+    assert.equal(
+      resolveT99FallbackDiscountFromFactors({ t99FloorDiscount: 0 }),
+      T99_PUBLISHED_FALLBACK_LEGACY_DISCOUNT,
+    );
+  });
+
+  it('resolveT99FallbackDiscountFromFactors uses stored t99FloorDiscount when valid', () => {
+    assert.equal(resolveT99FallbackDiscountFromFactors({ t99FloorDiscount: 0.8 }), 0.8);
+    assert.equal(resolveT99FallbackDiscountFromFactors({ t99FloorDiscount: 0.6 }), 0.6);
   });
 });

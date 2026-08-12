@@ -93,9 +93,20 @@ function recompute(row: Row): number {
     recent90DailyAvg: Number.isFinite(recent90) ? recent90 : null,
   });
 
-  // 同 SKU 其他平台近端：用同 sku 在 AMAZON 的实际日均作 peer 近似（复盘用）
   return bounded.forecastDaily;
 }
+
+const LATEST_PUBLISHED_JOIN = `
+  JOIN (
+    SELECT DISTINCT ON (sfm_lp.sku_id)
+      sfm_lp.sku_id,
+      sfm_lp.version_id
+    FROM sales_forecast_monthly sfm_lp
+    JOIN sales_forecast_versions v_lp
+      ON v_lp.id = sfm_lp.version_id AND v_lp.status = 'published'
+    ORDER BY sfm_lp.sku_id, v_lp.published_at DESC NULLS LAST, v_lp.id DESC
+  ) latest_pub ON latest_pub.sku_id = sfm.sku_id AND latest_pub.version_id = sfm.version_id
+`;
 
 function wmape(rows: Array<{ system: number; actualD: number }>): number | null {
   let abs = 0;
@@ -142,6 +153,7 @@ function main() {
       FROM sales_forecast_monthly sfm
       JOIN skus s ON s.id = sfm.sku_id
       JOIN sales_forecast_versions v ON v.id = sfm.version_id
+      ${LATEST_PUBLISHED_JOIN}
       LEFT JOIN sales_history_monthly act
         ON act.sku_id = sfm.sku_id AND act.channel = sfm.platform
        AND act.sale_year = 2026 AND act.month = 7
@@ -211,6 +223,7 @@ function main() {
     SELECT COUNT(*)::int, COALESCE(SUM(act.qty_sold),0)::bigint
     FROM sales_forecast_monthly sfm
     JOIN sales_forecast_versions v ON v.id = sfm.version_id
+    ${LATEST_PUBLISHED_JOIN}
     JOIN sales_history_monthly act
       ON act.sku_id = sfm.sku_id AND act.channel = sfm.platform
      AND act.sale_year = 2026 AND act.month = 7

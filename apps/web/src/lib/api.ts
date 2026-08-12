@@ -450,6 +450,13 @@ export type ForecastVersionSummary = {
   startMonth: string | null;
 };
 
+export type ForecastQtyTotalsResult = {
+  status: 'in_progress' | 'empty_actual' | 'ready';
+  forecastQty: number;
+  actualQty: number;
+  label: string;
+};
+
 export type ForecastVersionStats = {
   forecastRowCount: number;
   skuCount: number;
@@ -3187,6 +3194,8 @@ export const api = {
   },
   getSalesForecastVersion: (id: string) =>
     request<ForecastVersionListItem>(`/api/sales-forecast-versions/${id}`),
+  getSalesForecastVersionQtyTotals: (id: string) =>
+    request<ForecastQtyTotalsResult>(`/api/sales-forecast-versions/${id}/qty-totals`),
   deleteSalesForecastVersion: (id: string) =>
     request<{
       id: string;

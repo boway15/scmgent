@@ -11,10 +11,8 @@ import { ForecastDataExplorer } from '@/components/ForecastDataExplorer';
 import { ForecastSkuDetailDrawer, type ForecastHorizonRow } from '@/components/ForecastSkuDetailDrawer';
 import { ForecastAccuracyDiagnosticsPanel } from '@/components/ForecastAccuracyDiagnosticsPanel';
 import { ForecastAccuracyMetricLabel } from '@/components/ForecastAccuracyMetricLabel';
-import { WalkForwardMonthTierTable } from '@/components/WalkForwardMonthTierTable';
 import { FORECAST_ACCURACY_METRICS_LEGEND_INTRO } from '@/lib/forecast-accuracy-metrics';
 import { ForecastVersionStatusBadge } from '@/components/ForecastVersionStatusBadge';
-import { computeWalkForwardAsOf } from '@/lib/forecast-walkforward-utils';
 import { resolveHorizonPlatformScope } from '@/lib/forecast-horizon-meta';
 import { formatForecastVersionTitle, mutationErrorMessage, buildForecastVersionDetailSearch, resolveForecastExplorerPlatform } from '@/lib/forecast-version-utils';
 import { formatTierDisplayLabel } from '@/lib/forecast-labels';
@@ -32,7 +30,7 @@ const LIST_PAGE_SIZE = 20;
 function isViewAllowed(view: DetailView, status: string): boolean {
   if (view === 'data') return true;
   if (view === 'review') return status === 'draft';
-  if (view === 'accuracy') return status === 'published' || status === 'archived';
+  if (view === 'accuracy') return status === 'draft' || status === 'published' || status === 'archived';
   return false;
 }
 
@@ -47,9 +45,6 @@ export function SalesForecastVersionDetailPage() {
   const [selectedHorizonPlatform, setSelectedHorizonPlatform] = useState('ALL');
   const [accuracyPage, setAccuracyPage] = useState(1);
   const [accuracyBacktestMonths, setAccuracyBacktestMonths] = useState(6);
-  const [walkForwardTier, setWalkForwardTier] = useState<'all' | 'core' | 'mid' | 'tail'>('all');
-  const [walkForwardAccuracyVersionId, setWalkForwardAccuracyVersionId] = useState<string | null>(null);
-  const [accuracyDraftTargetVersionId, setAccuracyDraftTargetVersionId] = useState('');
   const [accuracyExporting, setAccuracyExporting] = useState(false);
   const [listPageSize, setListPageSize] = useState(LIST_PAGE_SIZE);
 
@@ -58,14 +53,6 @@ export function SalesForecastVersionDetailPage() {
     queryFn: () => api.getSalesForecastVersion(versionId),
     enabled: Boolean(versionId),
   });
-
-  const { data: draftVersions = [] } = useQuery({
-    queryKey: ['sales-forecast-versions', 'draft'],
-    queryFn: () => api.getSalesForecastVersions({ status: 'draft' }),
-    enabled: Boolean(versionId),
-  });
-
-  const latestDraftVersion = draftVersions[0];
 
   const defaultView = useMemo<DetailView>(() => {
     if (!version) return 'data';
@@ -89,13 +76,7 @@ export function SalesForecastVersionDetailPage() {
 
   useEffect(() => {
     setAccuracyPage(1);
-    const stored = sessionStorage.getItem(`wf-accuracy-version:${versionId}`);
-    setWalkForwardAccuracyVersionId(stored || null);
   }, [versionId]);
-
-  const accuracyListVersionId = walkForwardAccuracyVersionId ?? versionId;
-  const viewingWalkForwardAccuracy =
-    Boolean(walkForwardAccuracyVersionId) && walkForwardAccuracyVersionId !== versionId;
 
   const setActiveView = (view: DetailView) => {
     const next = new URLSearchParams(searchParams);
@@ -115,14 +96,14 @@ export function SalesForecastVersionDetailPage() {
   });
 
   const { data: accuracy } = useQuery({
-    queryKey: ['sales-forecast-accuracy', accuracyListVersionId, accuracyPage, listPageSize],
+    queryKey: ['sales-forecast-accuracy', versionId, accuracyPage, listPageSize],
     queryFn: () =>
       api.getSalesForecastAccuracy({
-        versionId: accuracyListVersionId,
+        versionId,
         page: accuracyPage,
         pageSize: listPageSize,
       }),
-    enabled: activeView === 'accuracy' && Boolean(accuracyListVersionId),
+    enabled: activeView === 'accuracy' && Boolean(versionId),
   });
 
   const {
@@ -130,10 +111,16 @@ export function SalesForecastVersionDetailPage() {
     isLoading: accuracyDiagnosticsLoading,
     error: accuracyDiagnosticsError,
   } = useQuery({
-    queryKey: ['sales-forecast-accuracy-diagnostics', accuracyListVersionId],
+    queryKey: ['sales-forecast-accuracy-diagnostics', versionId],
     queryFn: () =>
-      api.getSalesForecastAccuracyDiagnostics({ versionId: accuracyListVersionId, limitTopErrors: 10 }),
-    enabled: activeView === 'accuracy' && Boolean(accuracyListVersionId),
+      api.getSalesForecastAccuracyDiagnostics({ versionId, limitTopErrors: 10 }),
+    enabled: activeView === 'accuracy' && Boolean(versionId),
+  });
+
+  const { data: qtyTotals } = useQuery({
+    queryKey: ['sales-forecast-version-qty-totals', versionId],
+    queryFn: () => api.getSalesForecastVersionQtyTotals(versionId),
+    enabled: activeView === 'accuracy' && Boolean(versionId),
   });
 
   const impactPreviewMutation = useMutation({
@@ -174,48 +161,27 @@ export function SalesForecastVersionDetailPage() {
     mutationFn: () =>
       api.backtestSalesForecastAccuracy({
         monthCount: accuracyBacktestMonths,
-        versionId: accuracyDraftTargetVersionId || latestDraftVersion?.id || undefined,
+        versionId,
         createReviewItems: true,
       }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['sales-forecast-accuracy'] });
+      qc.invalidateQueries({ queryKey: ['sales-forecast-accuracy-diagnostics'] });
       qc.invalidateQueries({ queryKey: ['sales-forecast-review-items'] });
       qc.invalidateQueries({ queryKey: ['sales-forecast-version', versionId] });
+      qc.invalidateQueries({ queryKey: ['sales-forecast-version-qty-totals', versionId] });
     },
   });
 
-  const walkForwardMutation = useMutation({
-    mutationFn: () =>
-      api.walkForwardSalesForecastAccuracy({
-        asOf: computeWalkForwardAsOf(accuracyBacktestMonths),
-        monthCount: accuracyBacktestMonths,
-        station: version?.station?.trim() || undefined,
-        platform: 'ALL',
-        tierFilter: walkForwardTier === 'all' ? undefined : walkForwardTier,
-        createReviewItems: false,
-      }),
-    onSuccess: async (data) => {
-      setWalkForwardAccuracyVersionId(data.version.id);
-      sessionStorage.setItem(`wf-accuracy-version:${versionId}`, data.version.id);
-      setAccuracyPage(1);
-      await qc.fetchQuery({
-        queryKey: ['sales-forecast-accuracy', data.version.id, 1, listPageSize],
-        queryFn: () =>
-          api.getSalesForecastAccuracy({
-            versionId: data.version.id,
-            page: 1,
-            pageSize: listPageSize,
-          }),
-      });
-      qc.invalidateQueries({ queryKey: ['sales-forecast-accuracy'] });
-      qc.invalidateQueries({ queryKey: ['sales-forecast-accuracy-summary'] });
-      qc.invalidateQueries({ queryKey: ['sales-forecast-accuracy-diagnostics'] });
-    },
-  });
+  useEffect(() => {
+    if (!version) return;
+    if (version.stats.monthCount > 0) {
+      setAccuracyBacktestMonths(Math.min(6, version.stats.monthCount));
+    }
+  }, [version]);
 
-  const accuracyListItems =
-    accuracy?.items?.length ? accuracy.items : (walkForwardMutation.data?.accuracyList?.items ?? []);
-  const accuracyListTotal = accuracy?.total ?? walkForwardMutation.data?.accuracyList?.total ?? 0;
+  const accuracyListItems = accuracy?.items ?? [];
+  const accuracyListTotal = accuracy?.total ?? 0;
 
   const handleSkuClick = (row: ForecastHorizonRow, ctx?: { platform: string }) => {
     setSelectedHorizonRow(row);
@@ -226,7 +192,9 @@ export function SalesForecastVersionDetailPage() {
     if (!version) return ['data'] as DetailView[];
     const views: DetailView[] = ['data'];
     if (version.status === 'draft') views.push('review');
-    if (version.status === 'published' || version.status === 'archived') views.push('accuracy');
+    if (version.status === 'draft' || version.status === 'published' || version.status === 'archived') {
+      views.push('accuracy');
+    }
     return views;
   }, [version]);
 
@@ -414,27 +382,13 @@ export function SalesForecastVersionDetailPage() {
             <CardHeader>
               <CardTitle>预测准确率</CardTitle>
               <p className="text-sm text-text-sub">
-                {viewingWalkForwardAccuracy
-                  ? `走步影子版本 ${walkForwardMutation.data?.version.versionName ?? ''} 的逐月复盘（含 T4B / ghost）`
-                  : `当前版本 ${version.versionNo} 的逐月复盘；需有对应月份实际销量。`}
+                {`当前版本 ${version.versionNo} 的逐月复盘；需有对应月份实际销量。`}
                 {FORECAST_ACCURACY_METRICS_LEGEND_INTRO} 下表为单月口径，悬停列名可看公式。
               </p>
-              {viewingWalkForwardAccuracy && walkForwardMutation.data?.version.id && (
-                <p className="text-sm text-primary">
-                  列表已切换至走步影子版本，共 {accuracy?.total?.toLocaleString() ?? '…'} 条准确率记录。
-                  <button
-                    type="button"
-                    className="ml-2 underline"
-                    onClick={() => {
-                      setWalkForwardAccuracyVersionId(null);
-                      sessionStorage.removeItem(`wf-accuracy-version:${versionId}`);
-                      setAccuracyPage(1);
-                    }}
-                  >
-                    恢复当前版本
-                  </button>
-                </p>
-              )}
+              <p className="text-sm text-text-main">
+                预测值 / 实际值：
+                <span className="font-numeric font-medium">{qtyTotals?.label ?? '—'}</span>
+              </p>
               {accuracy?.summary && (
                 <pre className="mt-2 whitespace-pre-wrap text-sm text-text-sub">{accuracy.summary}</pre>
               )}
@@ -449,39 +403,22 @@ export function SalesForecastVersionDetailPage() {
                   value={accuracyBacktestMonths}
                   onChange={(e) => setAccuracyBacktestMonths(Number(e.target.value) || 6)}
                 />
-                <span className="text-sm text-text-sub">个月批量回测</span>
+                <span className="text-sm text-text-sub">个月</span>
                 <Button
                   variant="outline"
                   disabled={accuracyBacktestMutation.isPending}
                   onClick={() => accuracyBacktestMutation.mutate()}
                 >
-                  运行回测
-                </Button>
-                <select
-                  className="h-9 rounded-md border border-border bg-background px-2 text-sm"
-                  value={walkForwardTier}
-                  onChange={(e) => setWalkForwardTier(e.target.value as typeof walkForwardTier)}
-                >
-                  <option value="all">分层：全量</option>
-                  <option value="core">主力</option>
-                  <option value="mid">腰部</option>
-                  <option value="tail">长尾</option>
-                </select>
-                <Button
-                  variant="outline"
-                  disabled={walkForwardMutation.isPending}
-                  onClick={() => walkForwardMutation.mutate()}
-                >
-                  {walkForwardMutation.isPending ? '走步回测中…' : '走步回测'}
+                  {accuracyBacktestMutation.isPending ? '回测中…' : '按开始月复盘回测'}
                 </Button>
                 <Button
                   variant="outline"
-                  disabled={accuracyExporting || !accuracyListVersionId || accuracyListTotal === 0}
+                  disabled={accuracyExporting || !versionId || accuracyListTotal === 0}
                   onClick={async () => {
                     setAccuracyExporting(true);
                     try {
                       await api.exportSalesForecastAccuracy({
-                        versionId: accuracyListVersionId,
+                        versionId,
                         groupBy: 'sku',
                       });
                     } finally {
@@ -493,11 +430,11 @@ export function SalesForecastVersionDetailPage() {
                 </Button>
                 <Button
                   variant="outline"
-                  disabled={accuracyExporting || !accuracyListVersionId || accuracyListTotal === 0}
+                  disabled={accuracyExporting || !versionId || accuracyListTotal === 0}
                   onClick={async () => {
                     setAccuracyExporting(true);
                     try {
-                      await api.exportSalesForecastAccuracy({ versionId: accuracyListVersionId });
+                      await api.exportSalesForecastAccuracy({ versionId });
                     } finally {
                       setAccuracyExporting(false);
                     }
@@ -506,17 +443,6 @@ export function SalesForecastVersionDetailPage() {
                   {accuracyExporting ? '导出中…' : '导出 CSV'}
                 </Button>
               </div>
-              {walkForwardMutation.data?.summary && (
-                <pre className="whitespace-pre-wrap rounded-md bg-muted p-3 text-sm text-text-sub">
-                  {walkForwardMutation.data.summary}
-                </pre>
-              )}
-              {walkForwardMutation.data?.monthTierSummary && walkForwardMutation.data.monthTierSummary.length > 0 && (
-                <WalkForwardMonthTierTable rows={walkForwardMutation.data.monthTierSummary} />
-              )}
-              {walkForwardMutation.isError && (
-                <p className="text-sm text-destructive">{mutationErrorMessage(walkForwardMutation.error)}</p>
-              )}
               {accuracyBacktestMutation.data?.summary && (
                 <pre className="whitespace-pre-wrap rounded-md bg-muted p-3 text-sm text-text-sub">
                   {accuracyBacktestMutation.data.summary}
@@ -546,11 +472,7 @@ export function SalesForecastVersionDetailPage() {
                   {accuracyListItems.length === 0 ? (
                     <tr>
                       <td colSpan={8} className="p-4 text-center text-text-sub">
-                        {walkForwardMutation.isPending
-                          ? '走步回测进行中…'
-                          : viewingWalkForwardAccuracy
-                            ? '暂无准确率明细，请确认走步回测已完成且 KPI 可比行已写入。'
-                            : '暂无准确率记录；可运行走步回测或批量回测后查看。'}
+                        暂无准确率记录；可对当前版本运行「按开始月复盘回测」。（需历史开始月且已结束月份有实际销量。）
                       </td>
                     </tr>
                   ) : (
@@ -577,7 +499,7 @@ export function SalesForecastVersionDetailPage() {
                   )}
                 </tbody>
               </table>
-              {(accuracy || walkForwardMutation.data?.accuracyList) && (
+              {accuracy && (
                 <ListPagination
                   page={accuracyPage}
                   pageSize={listPageSize}

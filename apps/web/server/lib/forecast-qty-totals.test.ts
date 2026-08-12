@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
   buildForecastQtyTotalsResult,
+  filterCompletedMonthKeys,
   formatQtyTotalsLabel,
   monthKey,
   resolveHorizonMonthKeys,
@@ -64,5 +65,15 @@ describe('forecast-qty-totals', () => {
     assert.equal(r.status, 'ready');
     assert.equal(r.label, '12,345 / 11,900');
     assert.equal(formatQtyTotalsLabel('ready', 12345, 11900), '12,345 / 11,900');
+  });
+
+  it('filters completed months strictly before current', () => {
+    assert.deepEqual(
+      filterCompletedMonthKeys(
+        ['2026-06', '2026-07', '2026-08'],
+        new Date(Date.UTC(2026, 7, 12)),
+      ),
+      ['2026-06', '2026-07'],
+    );
   });
 });

@@ -98,6 +98,7 @@ import {
 } from '../lib/forecast-drawer-actual.js';
 import { loadMonthlySalesBySkuIds } from '../lib/sales-history-query.js';
 import { MAX_FORECAST_MONTH_COUNT } from '../lib/forecast-limits.js';
+import { getVersionQtyTotals } from '../lib/forecast-qty-totals.js';
 
 export const salesForecastRoutes = new Hono();
 
@@ -1254,6 +1255,16 @@ salesForecastRoutes.get('/sales-forecast-versions/:id', requireMenu('data.foreca
   return c.json(row);
 });
 
+salesForecastRoutes.get(
+  '/sales-forecast-versions/:id/qty-totals',
+  requireMenu('data.forecast'),
+  async (c) => {
+    const result = await getVersionQtyTotals(c.req.param('id'));
+    if (!result) return c.json({ message: 'Version not found' }, 404);
+    return c.json(result);
+  },
+);
+
 salesForecastRoutes.post('/sales-forecast-versions', requireMenu('data.forecast'), requireForecastWrite, async (c) => {
   const user = await getCurrentUser(c);
   const body = await c.req.json<{ versionName?: string; station?: string }>();
@@ -1453,6 +1464,7 @@ salesForecastRoutes.post(
   },
 );
 
+/** @deprecated 产品 UI 已下线；保留供脚本/离线诊断。主路径：历史开始月生成 + 当前版本批量回溯 */
 salesForecastRoutes.post(
   '/sales-forecasts/accuracy/walkforward',
   requireMenu('data.forecast'),

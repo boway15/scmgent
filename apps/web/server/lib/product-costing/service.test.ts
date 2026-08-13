@@ -94,6 +94,20 @@ describe('toManualBomLineValues', () => {
     assert.equal(values.qtyGross, '2.75');
     assert.equal(values.isManual, true);
   });
+
+  it('calculates gross quantity from persisted four-decimal net quantity and loss rate', () => {
+    const values = toManualBomLineValues({
+      category: '板材',
+      materialName: '多层板',
+      unit: '张',
+      qtyNet: 1.23456,
+      lossRate: 0.123456,
+    });
+
+    assert.equal(values.qtyNet, '1.2346');
+    assert.equal(values.lossRate, '0.1235');
+    assert.equal(values.qtyGross, '1.3871');
+  });
 });
 
 describe('assertCostingSourceAttachment', () => {

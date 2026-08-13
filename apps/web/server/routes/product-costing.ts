@@ -218,6 +218,7 @@ productCostingRoutes.put(
       c.req.param('id')!,
       lines as ManualBomLineInput[],
     );
+    if (!saved) return c.json({ message: '未找到核算产品' }, 404);
     return c.json({ items: saved });
   },
 );
@@ -231,6 +232,7 @@ productCostingRoutes.post(
     const line = parseManualBomLine(body);
     if (!line) return c.json({ message: '物料名称、单位和非负净用量为必填项' }, 400);
     const created = await createBomLine(c.req.param('id')!, line);
+    if (!created) return c.json({ message: '未找到核算产品' }, 404);
     return c.json(created, 201);
   },
 );

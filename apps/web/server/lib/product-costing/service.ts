@@ -60,6 +60,16 @@ function toNumericString(value: number): string {
   return String(Math.round(value * 10000) / 10000);
 }
 
+function toRoundedBomQuantities(qtyNet: number, lossRate: number) {
+  const roundedQtyNet = Number(toNumericString(qtyNet));
+  const roundedLossRate = Number(toNumericString(lossRate));
+  return {
+    qtyNet: toNumericString(roundedQtyNet),
+    lossRate: toNumericString(roundedLossRate),
+    qtyGross: toNumericString(calcQtyGross(roundedQtyNet, roundedLossRate)),
+  };
+}
+
 export function assertCostingSourceAttachment(fileName: string, byteSize: number): void {
   const name = fileName.trim().toLowerCase();
   if (!name.endsWith('.pptx') && !name.endsWith('.pdf')) {
@@ -77,9 +87,7 @@ export function toManualBomLineValues(line: ManualBomLineInput) {
     materialName: line.materialName.trim(),
     spec: line.spec?.trim() || null,
     unit: line.unit.trim(),
-    qtyNet: toNumericString(line.qtyNet),
-    lossRate: toNumericString(lossRate),
-    qtyGross: toNumericString(calcQtyGross(line.qtyNet, lossRate)),
+    ...toRoundedBomQuantities(line.qtyNet, lossRate),
     sourceRef: line.sourceRef?.trim() || null,
     confidence: line.confidence ?? ('medium' as const),
     notes: line.notes?.trim() || null,
@@ -337,43 +345,56 @@ async function markProjectReady(projectId: string): Promise<void> {
 }
 
 export async function replaceBomLines(projectId: string, lines: ManualBomLineInput[]) {
-  await db.delete(costingBomLines).where(eq(costingBomLines.projectId, projectId));
-  if (!lines.length) {
-    await db
+  return db.transaction(async (tx) => {
+    const [project] = await tx
       .update(costingProjects)
-      .set({ updatedAt: new Date() })
-      .where(eq(costingProjects.id, projectId));
-    return [];
-  }
-  const inserted = await db
-    .insert(costingBomLines)
-    .values(
-      lines.map((line, index) => ({
-        projectId,
-        lineNo: index + 1,
-        ...toManualBomLineValues(line),
-      })),
-    )
-    .returning();
-  await markProjectReady(projectId);
-  return inserted;
+      .set({
+        ...(lines.length ? { status: 'ready' as const } : {}),
+        updatedAt: new Date(),
+      })
+      .where(eq(costingProjects.id, projectId))
+      .returning({ id: costingProjects.id });
+    if (!project) return null;
+
+    await tx.delete(costingBomLines).where(eq(costingBomLines.projectId, projectId));
+    if (!lines.length) return [];
+
+    return tx
+      .insert(costingBomLines)
+      .values(
+        lines.map((line, index) => ({
+          projectId,
+          lineNo: index + 1,
+          ...toManualBomLineValues(line),
+        })),
+      )
+      .returning();
+  });
 }
 
 export async function createBomLine(projectId: string, line: ManualBomLineInput) {
-  const [{ maxLineNo }] = await db
-    .select({ maxLineNo: sql<number>`coalesce(max(${costingBomLines.lineNo}), 0)` })
-    .from(costingBomLines)
-    .where(eq(costingBomLines.projectId, projectId));
-  const [created] = await db
-    .insert(costingBomLines)
-    .values({
-      projectId,
-      lineNo: Number(maxLineNo) + 1,
-      ...toManualBomLineValues(line),
-    })
-    .returning();
-  await markProjectReady(projectId);
-  return created;
+  return db.transaction(async (tx) => {
+    const [project] = await tx
+      .update(costingProjects)
+      .set({ status: 'ready', updatedAt: new Date() })
+      .where(eq(costingProjects.id, projectId))
+      .returning({ id: costingProjects.id });
+    if (!project) return null;
+
+    const [{ maxLineNo }] = await tx
+      .select({ maxLineNo: sql<number>`coalesce(max(${costingBomLines.lineNo}), 0)` })
+      .from(costingBomLines)
+      .where(eq(costingBomLines.projectId, projectId));
+    const [created] = await tx
+      .insert(costingBomLines)
+      .values({
+        projectId,
+        lineNo: Number(maxLineNo) + 1,
+        ...toManualBomLineValues(line),
+      })
+      .returning();
+    return created;
+  });
 }
 
 export async function updateBomLine(
@@ -392,6 +413,7 @@ export async function updateBomLine(
     patch.materialName !== undefined || patch.spec !== undefined || patch.unit !== undefined;
   const qtyNet = patch.qtyNet ?? Number(existing.qtyNet);
   const lossRate = patch.lossRate ?? Number(existing.lossRate);
+  const quantities = toRoundedBomQuantities(qtyNet, lossRate);
   const [updated] = await db
     .update(costingBomLines)
     .set({
@@ -399,9 +421,7 @@ export async function updateBomLine(
       ...(patch.materialName !== undefined ? { materialName: patch.materialName.trim() } : {}),
       ...(patch.spec !== undefined ? { spec: patch.spec?.trim() || null } : {}),
       ...(patch.unit !== undefined ? { unit: patch.unit.trim() } : {}),
-      qtyNet: toNumericString(qtyNet),
-      lossRate: toNumericString(lossRate),
-      qtyGross: toNumericString(calcQtyGross(qtyNet, lossRate)),
+      ...quantities,
       ...(patch.sourceRef !== undefined ? { sourceRef: patch.sourceRef?.trim() || null } : {}),
       ...(patch.confidence !== undefined ? { confidence: patch.confidence } : {}),
       ...(patch.notes !== undefined ? { notes: patch.notes?.trim() || null } : {}),

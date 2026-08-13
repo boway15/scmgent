@@ -12,6 +12,11 @@ import {
 import { importPriceBookWorkbook } from '../lib/product-costing/price-book-import.js';
 import { parseUnitPrice } from '../lib/product-costing/parse-unit-price.js';
 import {
+  getExtractRun,
+  readCostingPageImage,
+  startExtractRun,
+} from '../lib/product-costing/extract-runner.js';
+import {
   assertCostingSourceAttachment,
   createBomLine,
   createCostingProject,
@@ -189,6 +194,78 @@ productCostingRoutes.post(
       return c.json({ ok: true }, 201);
     } catch (error) {
       return c.json({ message: error instanceof Error ? error.message : '上传失败' }, 400);
+    }
+  },
+);
+
+productCostingRoutes.post(
+  '/procurement/costing/projects/:id/extract',
+  menuGuard,
+  requireWrite(),
+  async (c) => {
+    if (!isCostingBomWorkflowEnabled()) {
+      return c.json(
+        { message: '未配置 DIFY_API_KEY_COSTING_BOM，无法 AI 拆解；可手工维护清单' },
+        503,
+      );
+    }
+    const body: Record<string, unknown> = await c.req
+      .json<Record<string, unknown>>()
+      .catch(() => ({}));
+    const parsePage = (value: unknown): number | undefined => {
+      if (value === undefined || value === null) return undefined;
+      return typeof value === 'number' && Number.isInteger(value) && value > 0
+        ? value
+        : Number.NaN;
+    };
+    const pageFrom = parsePage(body.pageFrom);
+    const pageTo = parsePage(body.pageTo);
+    if (
+      Number.isNaN(pageFrom) ||
+      Number.isNaN(pageTo) ||
+      (pageFrom !== undefined && pageTo !== undefined && pageFrom > pageTo)
+    ) {
+      return c.json({ message: '页码范围无效' }, 400);
+    }
+    try {
+      const user = await getCurrentUser(c);
+      return c.json(
+        await startExtractRun(c.req.param('id')!, user.id, { pageFrom, pageTo }),
+        202,
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '启动解析失败';
+      return c.json({ message }, message === '核算单不存在' ? 404 : 400);
+    }
+  },
+);
+
+productCostingRoutes.get(
+  '/procurement/costing/projects/:id/extract/runs/:runId',
+  menuGuard,
+  async (c) => {
+    const run = await getExtractRun(c.req.param('id')!, c.req.param('runId')!);
+    if (!run) return c.json({ message: '解析任务不存在' }, 404);
+    return c.json(run);
+  },
+);
+
+productCostingRoutes.get(
+  '/procurement/costing/projects/:id/pages/:pageNo',
+  menuGuard,
+  async (c) => {
+    const pageNo = Number(c.req.param('pageNo'));
+    if (!Number.isInteger(pageNo) || pageNo < 1) {
+      return c.json({ message: '页码无效' }, 400);
+    }
+    try {
+      const page = await readCostingPageImage(c.req.param('id')!, pageNo);
+      if (!page) return c.json({ message: '页面不存在' }, 404);
+      c.header('Content-Type', page.contentType);
+      c.header('Cache-Control', 'private, max-age=300');
+      return c.body(new Uint8Array(page.buffer));
+    } catch {
+      return c.json({ message: '页面文件不存在' }, 404);
     }
   },
 );

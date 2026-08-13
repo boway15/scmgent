@@ -276,6 +276,7 @@ export async function getCostingProject(id: string) {
     ...project,
     lines: calculated.lines,
     summary: calculated.summary,
+    hasSourceAttachment: attachments.some((attachment) => attachment.kind === 'source'),
     pageCount: attachments.filter((attachment) => attachment.kind === 'page_image').length,
   };
 }

@@ -157,7 +157,20 @@ export type CostingProjectDetail = {
   extractError: string | null;
   lines: CostingBomLine[];
   summary: CostingSummary;
+  hasSourceAttachment: boolean;
   pageCount: number;
+};
+
+export type CostingExtractRun = {
+  id: string;
+  status: 'pending' | 'running' | 'succeeded' | 'failed';
+  pageFrom: number | null;
+  pageTo: number | null;
+  errorMessage: string | null;
+  batchCurrent: number;
+  batchTotal: number;
+  startedAt: string | null;
+  finishedAt: string | null;
 };
 
 export type ReplenishLight = 'red' | 'yellow' | 'green';
@@ -2143,6 +2156,15 @@ export const api = {
     if (!res.ok) throw new Error(payload.message ?? '上传失败');
     return payload as { ok: boolean };
   },
+  startCostingExtract: (id: string, range?: { pageFrom?: number; pageTo?: number }) =>
+    request<{ runId: string }>(`/api/procurement/costing/projects/${id}/extract`, {
+      method: 'POST',
+      body: JSON.stringify(range ?? {}),
+    }),
+  getCostingExtractRun: (id: string, runId: string) =>
+    request<CostingExtractRun>(
+      `/api/procurement/costing/projects/${id}/extract/runs/${runId}`,
+    ),
   saveCostingBomLines: (id: string, lines: CostingBomLineInput[]) =>
     request<{ items: CostingBomLine[] }>(`/api/procurement/costing/projects/${id}/bom-lines`, {
       method: 'PUT',

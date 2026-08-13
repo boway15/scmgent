@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import { PageHeader } from '@/components/PageHeader';
+import { AiBanner } from '@/components/AiBanner';
+import { AiProgressBar } from '@/components/AiProgressBar';
 import { BomLinesPanel } from '@/components/costing/BomLinesPanel';
 import { CostDashboard } from '@/components/costing/CostDashboard';
 import { PriceBookPanel } from '@/components/costing/PriceBookPanel';
@@ -16,6 +18,7 @@ export function ProductCostingToolPage() {
   const { data: user } = useCurrentUser();
   const uploadRef = useRef<HTMLInputElement>(null);
   const [projectId, setProjectId] = useState('');
+  const [extractRunId, setExtractRunId] = useState('');
   const [message, setMessage] = useState('');
   const isReadOnly = user?.role.code === 'viewer';
 
@@ -49,6 +52,16 @@ export function ProductCostingToolPage() {
     enabled: Boolean(projectId),
   });
 
+  const extractRunQuery = useQuery({
+    queryKey: ['costing-extract-run', projectId, extractRunId],
+    queryFn: () => api.getCostingExtractRun(projectId, extractRunId),
+    enabled: Boolean(projectId && extractRunId),
+    refetchInterval: (query) => {
+      const status = query.state.data?.status;
+      return status === 'pending' || status === 'running' ? 2000 : false;
+    },
+  });
+
   const createProject = useMutation({
     mutationFn: (name: string) => api.createCostingProject({ name }),
     onSuccess: (project) => {
@@ -63,11 +76,31 @@ export function ProductCostingToolPage() {
   const uploadAttachment = useMutation({
     mutationFn: (file: File) => api.uploadCostingAttachment(projectId, file),
     onSuccess: () => {
-      setMessage('设计方案已上传，可先手工维护材料清单。');
+      setMessage('设计方案已上传，可以开始 AI 解析。');
       queryClient.invalidateQueries({ queryKey: ['costing-project', projectId] });
     },
     onError: (error: Error) => setMessage(error.message),
   });
+
+  const startExtract = useMutation({
+    mutationFn: () => api.startCostingExtract(projectId),
+    onSuccess: ({ runId }) => {
+      setMessage('');
+      setExtractRunId(runId);
+      queryClient.invalidateQueries({ queryKey: ['costing-project', projectId] });
+      queryClient.invalidateQueries({ queryKey: ['costing-projects'] });
+    },
+    onError: (error: Error) => setMessage(error.message),
+  });
+
+  useEffect(() => {
+    const run = extractRunQuery.data;
+    if (run?.status !== 'succeeded') return;
+    setMessage('AI 解析完成，材料清单已更新。');
+    setExtractRunId('');
+    queryClient.invalidateQueries({ queryKey: ['costing-project', projectId] });
+    queryClient.invalidateQueries({ queryKey: ['costing-projects'] });
+  }, [extractRunQuery.data, projectId, queryClient]);
 
   const handleCreate = () => {
     const name = window.prompt('请输入产品名称');
@@ -90,6 +123,7 @@ export function ProductCostingToolPage() {
             disabled={!projects.length}
             onChange={(event) => {
               setMessage('');
+              setExtractRunId('');
               setProjectId(event.target.value);
             }}
           >
@@ -125,8 +159,27 @@ export function ProductCostingToolPage() {
               />
             </>
           )}
-          <Button disabled title="AI 解析将在下一阶段开放">
-            解析
+          <Button
+            disabled={
+              isReadOnly ||
+              !projectId ||
+              !projectQuery.data?.hasSourceAttachment ||
+              startExtract.isPending ||
+              extractRunQuery.data?.status === 'pending' ||
+              extractRunQuery.data?.status === 'running'
+            }
+            title={
+              projectId && !projectQuery.data?.hasSourceAttachment
+                ? '请先上传设计方案'
+                : undefined
+            }
+            onClick={() => startExtract.mutate()}
+          >
+            {startExtract.isPending ||
+            extractRunQuery.data?.status === 'pending' ||
+            extractRunQuery.data?.status === 'running'
+              ? '解析中...'
+              : '解析'}
           </Button>
         </div>
       </PageHeader>
@@ -135,6 +188,26 @@ export function ProductCostingToolPage() {
         <p className="text-sm text-text-sub" role="status">
           {message}
         </p>
+      )}
+
+      {(extractRunQuery.data?.status === 'pending' ||
+        extractRunQuery.data?.status === 'running') && (
+        <Card>
+          <CardContent className="space-y-2 py-4">
+            <p className="text-sm text-text-sub">
+              正在解析第 {extractRunQuery.data.batchCurrent}/{extractRunQuery.data.batchTotal} 批
+            </p>
+            <AiProgressBar />
+          </CardContent>
+        </Card>
+      )}
+
+      {extractRunQuery.data?.status === 'failed' && (
+        <AiBanner
+          message={extractRunQuery.data.errorMessage || 'AI 解析失败，请重试'}
+          fixLabel="重试"
+          onFix={() => startExtract.mutate()}
+        />
       )}
 
       <PriceBookPanel projectId={projectId} readOnly={isReadOnly} />

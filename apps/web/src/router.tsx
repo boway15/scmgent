@@ -35,6 +35,7 @@ import { AuditLogsPage } from '@/pages/AuditLogsPage';
 import { NewsIntelPage } from '@/pages/NewsIntelPage';
 import { CsReplyQualityPage } from '@/pages/CsReplyQualityPage';
 import { BulkStockRequestPage, ProcurementFollowUpPage } from '@/pages/ProcurementPages';
+import { ProductCostingToolPage } from '@/pages/ProductCostingToolPage';
 import { HomeRedirect } from '@/components/HomeRedirect';
 import { PlaceholderPage } from '@/pages/PlaceholderPage';
 import { SystemTasksPage } from '@/pages/SystemTasksPage';
@@ -61,6 +62,7 @@ export function AppRouter() {
           <Route path="pmc/shipments" element={<ShipmentsPage />} />
           <Route path="procurement/bulk-stock" element={<BulkStockRequestPage />} />
           <Route path="procurement/follow-up" element={<ProcurementFollowUpPage />} />
+          <Route path="procurement/costing" element={<ProductCostingToolPage />} />
           <Route path="pmc/drafts" element={<Navigate to="/pmc/tracking" replace />} />
           <Route path="pmc/:id" element={<PmcDetailPage />} />
           <Route path="data/products" element={<ProductMasterPage />} />

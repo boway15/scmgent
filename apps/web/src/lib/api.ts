@@ -84,6 +84,82 @@ export type ProcurementListRow = {
   createdAt: string;
 };
 
+export type CostingPriceBookItem = {
+  id: string;
+  category: string;
+  materialName: string;
+  spec: string;
+  unit: string;
+  unitPrice: string;
+  notes: string | null;
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type CostingProjectListItem = {
+  id: string;
+  name: string;
+  category: string | null;
+  status: string;
+  updatedAt: string;
+};
+
+export type CostingBomLineInput = {
+  category: string;
+  materialName: string;
+  spec?: string | null;
+  unit: string;
+  qtyNet: number;
+  lossRate?: number;
+  sourceRef?: string | null;
+  confidence?: 'high' | 'medium' | 'low';
+  notes?: string | null;
+  unitPriceOverride?: number | null;
+};
+
+export type CostingBomLine = {
+  id: string;
+  lineNo: number;
+  category: string;
+  materialName: string;
+  spec: string | null;
+  unit: string;
+  qtyNet: string;
+  lossRate: string;
+  qtyGross: string;
+  sourceRef: string | null;
+  confidence: 'high' | 'medium' | 'low';
+  notes: string | null;
+  isManual: boolean;
+  origin: string;
+  priceBookId: string | null;
+  unitPriceOverride: string | null;
+  matchStatus: 'exact' | 'name_only' | 'unmatched';
+  effectiveUnitPrice: number | null;
+  lineAmount: number;
+};
+
+export type CostingSummary = {
+  totalAmount: number;
+  byCategory: Array<{ category: string; amount: number; share: number }>;
+  missingPriceCount: number;
+  missingQtyCount: number;
+  lines: Array<{ qtyGross: number; effectiveUnitPrice: number | null; lineAmount: number }>;
+};
+
+export type CostingProjectDetail = {
+  id: string;
+  projectNo: string;
+  name: string;
+  category: string | null;
+  status: string;
+  extractError: string | null;
+  lines: CostingBomLine[];
+  summary: CostingSummary;
+  pageCount: number;
+};
+
 export type ReplenishLight = 'red' | 'yellow' | 'green';
 
 export type InventoryHealth = 'red' | 'yellow' | 'green' | 'blue' | 'gray';
@@ -1989,6 +2065,105 @@ export const api = {
       source: 'upload';
     };
   },
+  listCostingPriceBook: (params?: { q?: string; category?: string; activeOnly?: boolean }) => {
+    const qs = new URLSearchParams();
+    if (params?.q) qs.set('q', params.q);
+    if (params?.category) qs.set('category', params.category);
+    if (params?.activeOnly) qs.set('activeOnly', 'true');
+    const query = qs.toString();
+    return request<{ items: CostingPriceBookItem[] }>(
+      `/api/procurement/costing/price-book${query ? `?${query}` : ''}`,
+    );
+  },
+  createCostingPriceBookItem: (
+    data: Omit<CostingBomLineInput, 'qtyNet' | 'lossRate' | 'sourceRef' | 'confidence' | 'unitPriceOverride'> & {
+      unitPrice: number;
+    },
+  ) =>
+    request<CostingPriceBookItem>('/api/procurement/costing/price-book', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+  updateCostingPriceBookItem: (
+    id: string,
+    data: Partial<{
+      category: string;
+      materialName: string;
+      spec: string;
+      unit: string;
+      unitPrice: number;
+      notes: string;
+    }>,
+  ) =>
+    request<CostingPriceBookItem>(`/api/procurement/costing/price-book/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(data),
+    }),
+  disableCostingPriceBookItem: (id: string) =>
+    request<{ ok: boolean }>(`/api/procurement/costing/price-book/${id}/disable`, {
+      method: 'POST',
+    }),
+  importCostingPriceBook: async (file: File) => {
+    const form = new FormData();
+    form.append('file', file);
+    const res = await apiFetch(apiUrl('/api/procurement/costing/price-book/import'), {
+      method: 'POST',
+      body: form,
+    });
+    const payload = await res.json().catch(() => ({ message: res.statusText }));
+    if (!res.ok) throw new Error(payload.message ?? '导入失败');
+    return payload as { imported: number; errors: number };
+  },
+  listCostingProjects: () =>
+    request<{ items: CostingProjectListItem[] }>('/api/procurement/costing/projects'),
+  createCostingProject: (data: { name: string; category?: string }) =>
+    request<{ id: string; projectNo: string; name: string; status: string }>(
+      '/api/procurement/costing/projects',
+      { method: 'POST', body: JSON.stringify(data) },
+    ),
+  getCostingProject: (id: string) =>
+    request<CostingProjectDetail>(`/api/procurement/costing/projects/${id}`),
+  patchCostingProject: (id: string, data: { name?: string; category?: string | null }) =>
+    request<CostingProjectDetail>(`/api/procurement/costing/projects/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(data),
+    }),
+  deleteCostingProject: (id: string) =>
+    request<{ ok: boolean }>(`/api/procurement/costing/projects/${id}`, {
+      method: 'DELETE',
+    }),
+  uploadCostingAttachment: async (id: string, file: File) => {
+    const form = new FormData();
+    form.append('file', file);
+    const res = await apiFetch(apiUrl(`/api/procurement/costing/projects/${id}/attachments`), {
+      method: 'POST',
+      body: form,
+    });
+    const payload = await res.json().catch(() => ({ message: res.statusText }));
+    if (!res.ok) throw new Error(payload.message ?? '上传失败');
+    return payload as { ok: boolean };
+  },
+  saveCostingBomLines: (id: string, lines: CostingBomLineInput[]) =>
+    request<{ items: CostingBomLine[] }>(`/api/procurement/costing/projects/${id}/bom-lines`, {
+      method: 'PUT',
+      body: JSON.stringify({ lines }),
+    }),
+  createCostingBomLine: (id: string, line: CostingBomLineInput) =>
+    request<CostingBomLine>(`/api/procurement/costing/projects/${id}/bom-lines`, {
+      method: 'POST',
+      body: JSON.stringify(line),
+    }),
+  patchCostingBomLine: (id: string, lineId: string, patch: Partial<CostingBomLineInput>) =>
+    request<CostingBomLine>(`/api/procurement/costing/projects/${id}/bom-lines/${lineId}`, {
+      method: 'PATCH',
+      body: JSON.stringify(patch),
+    }),
+  deleteCostingBomLine: (id: string, lineId: string) =>
+    request<{ ok: boolean }>(`/api/procurement/costing/projects/${id}/bom-lines/${lineId}`, {
+      method: 'DELETE',
+    }),
+  getCostingStatus: () =>
+    request<{ difyEnabled: boolean; preprocessMode: string }>('/api/procurement/costing/status'),
   clearProcurementList: (type: ProcurementListType) =>
     request<{ deleted: number }>(`/api/procurement/lists/${type}/clear`, { method: 'POST' }),
   getPmcPlans: () =>

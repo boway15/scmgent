@@ -93,6 +93,11 @@ export function ProductCostingToolPage() {
     onError: (error: Error) => setMessage(error.message),
   });
 
+  const exportProject = useMutation({
+    mutationFn: () => api.downloadCostingProject(projectId),
+    onError: (error: Error) => setMessage(error.message),
+  });
+
   useEffect(() => {
     const run = extractRunQuery.data;
     if (run?.status === 'failed') {
@@ -164,6 +169,13 @@ export function ProductCostingToolPage() {
               />
             </>
           )}
+          <Button
+            variant="outline"
+            disabled={!projectId || exportProject.isPending}
+            onClick={() => exportProject.mutate()}
+          >
+            {exportProject.isPending ? '导出中...' : '导出'}
+          </Button>
           <Button
             disabled={
               isReadOnly ||

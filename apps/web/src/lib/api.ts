@@ -2136,6 +2136,22 @@ export const api = {
     ),
   getCostingProject: (id: string) =>
     request<CostingProjectDetail>(`/api/procurement/costing/projects/${id}`),
+  downloadCostingProject: async (id: string) => {
+    const res = await apiFetch(apiUrl(`/api/procurement/costing/projects/${id}/export`));
+    if (!res.ok) {
+      const payload = await res.json().catch(() => ({ message: res.statusText }));
+      throw new Error(payload.message ?? '导出失败');
+    }
+    const blob = await res.blob();
+    const disposition = res.headers.get('Content-Disposition') ?? '';
+    const filename = disposition.match(/filename="([^"]+)"/i)?.[1] ?? `costing-${id}.xlsx`;
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = filename;
+    anchor.click();
+    URL.revokeObjectURL(url);
+  },
   patchCostingProject: (id: string, data: { name?: string; category?: string | null }) =>
     request<CostingProjectDetail>(`/api/procurement/costing/projects/${id}`, {
       method: 'PATCH',

@@ -11,6 +11,7 @@ import {
 } from '../lib/product-costing/price-book.js';
 import { importPriceBookWorkbook } from '../lib/product-costing/price-book-import.js';
 import { parseUnitPrice } from '../lib/product-costing/parse-unit-price.js';
+import { exportCostingXlsx } from '../lib/product-costing/export-costing.js';
 import {
   ExtractAlreadyRunningError,
   getExtractRun,
@@ -112,6 +113,23 @@ productCostingRoutes.get('/procurement/costing/status', menuGuard, async (c) => 
 productCostingRoutes.get('/procurement/costing/projects', menuGuard, async (c) => {
   return c.json({ items: await listCostingProjects() });
 });
+
+productCostingRoutes.get(
+  '/procurement/costing/projects/:id/export',
+  menuGuard,
+  async (c) => {
+    const projectId = c.req.param('id')!;
+    const project = await getCostingProject(projectId);
+    if (!project) return c.json({ message: '未找到核算产品' }, 404);
+    const buffer = await exportCostingXlsx(projectId);
+    c.header(
+      'Content-Type',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    );
+    c.header('Content-Disposition', `attachment; filename="costing-${project.projectNo}.xlsx"`);
+    return c.body(new Uint8Array(buffer));
+  },
+);
 
 productCostingRoutes.post(
   '/procurement/costing/projects',

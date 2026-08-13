@@ -1,41 +1,94 @@
-# Task 2 Report: V4.1 bounded T99 output + horizon factors
+# Task 2 Report: T4B 四处常量放宽（TDD）
 
 ## Status
 
-**DONE_WITH_CONCERNS** — Task 2 implementation, TDD cycle, scoped commit, and self-review are complete. The required tests pass; repository-wide server type-check remains red from pre-existing diagnostics.
+**DONE**
+
+## Summary
+
+Plan A 温和乐观：仅放宽 T4B 四处常量（远月保守系数 0.75、近端 0.9、recent90 cap 1.0、recent30 cap 0.95）。未改动 Ghost 阈值、T4B flex decay、近端抬底或 T99。按 brief 走 TDD：先补失败断言 → RED → 改常量 → GREEN → 提交。
+
+## Constants Changed
+
+| Constant | Before | After |
+|----------|--------|-------|
+| `V41_T4B_CONSERVATIVE_FACTOR` | 0.6 | 0.75 |
+| `V41_T4B_NEAR_CONSERVATIVE_FACTOR` | 0.8 | 0.9 |
+| `V41_T4B_RECENT90_CAP` | 0.9 | 1.0 |
+| `V41_T4B_RECENT30_CAP` | 0.85 | 0.95 |
+
+## Files Modified
+
+| File | Change |
+|------|--------|
+| `apps/web/server/lib/forecast-allcat-v41.ts` | 更新四处 T4B 常量；注释保留「缓解系统性低估」并追加「方案 A 温和乐观」 |
+| `apps/web/server/lib/forecast-allcat-v41.test.ts` | tail upper bias 断言 cap 改为 `1.36 * 1.0`；新增 `T4B plan-A constants` 用例；import `V41_T4B_RECENT30_CAP` / `V41_T4B_RECENT90_CAP` |
+
+## TDD Evidence
+
+### RED (Step 2)
+
+命令：
+
+```bash
+pnpm --filter @scm/web exec tsx --test server/lib/forecast-allcat-v41.test.ts
+```
+
+结果：**FAIL** — 46/47 pass，1 fail。
+
+```
+✖ T4B plan-A constants: near 0.9 / far 0.75 / caps 0.95 & 1.0
+  AssertionError: Expected values to be strictly equal:
+  0.8 !== 0.9
+      at forecast-allcat-v41.test.ts:983:12
+```
+
+（常量仍为旧值 `V41_T4B_NEAR_CONSERVATIVE_FACTOR = 0.8` 时，新断言按预期失败。）
+
+### GREEN (Step 4)
+
+命令：
+
+```bash
+pnpm --filter @scm/web exec tsx --test server/lib/forecast-allcat-v41.test.ts
+pnpm --filter @scm/web exec tsx --test server/lib/forecast-demand.test.ts
+```
+
+结果：**PASS**
+
+- `forecast-allcat-v41.test.ts`: 46/46 pass
+- `forecast-demand.test.ts`: 14/14 pass
 
 ## Commit
 
-- `46912b3` — `feat(forecast): apply T99 system floor in V4.1 bounded daily`
-- Commit scope: only `forecast-allcat-v41.ts` and its test; Task 3 persistence and Task 4 frontend copy were not changed.
+| SHA | Subject |
+|-----|---------|
+| `a362a9b` | feat(forecast): relax T4B conservative factor and recent caps |
 
-## Implementation
+## Review Fix (2026-08-12)
 
-- Imported Task 1's `resolveT99SystemFloorDaily` and `T99FloorMode`.
-- T99 bounded output now applies the recent30 zero gate, `max(recent30,recent90) × 0.6`, and far-horizon decay.
-- Added `t99FloorDaily` / `t99FloorMode` to bounded results and persisted audit values into `horizonFactors`.
-- Updated the T99 tier label, KPI target, and review message to conservative-floor semantics.
-- Preserved zero output when recent30 is absent or zero.
+**Issue:** 原提交 `5800be0` 混入 ~70 行无关代码（`aggregateAllCatV41HorizonFactorsForDisplay`、`V41PlatformContribution`、`aggregatedPlatformCount` 解析/展示及聚合测试）。
 
-## TDD and verification
+**Fix:** `git reset --soft HEAD~1` → 自 `forecast-allcat-v41.ts` / `.test.ts` 还原无关 hunk → 仅保留四处 T4B 常量 + plan-A 测试 → 重新提交。
 
-- RED: required test command failed in exactly 2 new tests because T99 still returned `0`.
-- GREEN: `pnpm --filter @scm/web exec tsx --test server/lib/forecast-allcat-v41.test.ts` — PASS, 43 tests, 0 failures.
-- IDE lint: no errors in either changed file.
-- `git diff --check`: PASS.
-- `pnpm --filter @scm/web exec tsc -p tsconfig.node.json --noEmit`: FAIL with 219 existing diagnostics; the sole hit in this test file is an older fixture missing `trendRatio`, not a new Task 2 line.
+**Post-fix tests:**
 
-## Self-review
+```bash
+pnpm --filter @scm/web exec tsx --test server/lib/forecast-allcat-v41.test.ts
+pnpm --filter @scm/web exec tsx --test server/lib/forecast-demand.test.ts
+```
 
-- Verified near/far/gated values are `2.4`, `1.728`, and `0`, respectively.
-- Verified forecast output and audit factors reuse the same bounded floor result without duplicate calculation.
-- Verified T99 remains excluded from peer-platform lift and existing no-recent-sales behavior remains zero.
-- Verified no changes to `forecast-collaboration.ts` or frontend files.
+- `forecast-allcat-v41.test.ts`: **46/46 pass**
+- `forecast-demand.test.ts`: **14/14 pass**
 
-## Review fix (Task 2 follow-up)
+**WIP:** 聚合/display 相关改动仍保留在其他文件的未提交工作区（如 `forecast-horizon.ts`、`forecast-v41-system-formula.ts` 等），未写入 Task 2 提交。
 
-**Issue 1 — T99 algorithm/formula still `no_forecast`:** Updated `tierAlgorithm` / `tierFormula` so T99 emits `t99_conservative_floor` and `max(recent30,recent90)*0.6 with far decay`, aligned with `kpiTarget: T99_CONSERVATIVE_FLOOR`.
+## Self-Review
 
-**Issue 2 — `buildT99ReviewMessage` invented zero when floor params omitted:** When `floorMode` / `floorDaily` are both omitted, message now uses neutral copy `系统保守保底（有近30动销时出数，断销归零）`; zero gate and explicit positive floor paths unchanged.
+### Scope
 
-**Verification:** `pnpm --filter @scm/web exec tsx --test server/lib/forecast-allcat-v41.test.ts` — PASS, 45 tests, 0 failures (+2 new review-message / metadata assertions).
+- 仅改 brief 指定的四处常量与对应测试；`V41_T4B_FLEX_*`、近端 floor、Ghost 阈值、T99 均未动。
+
+### Concerns
+
+- 无。T4B 放宽幅度与 Task 1 T99 discount 0.8 同属 Plan A，后续 Task 3+ 做端到端校验即可。

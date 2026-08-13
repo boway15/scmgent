@@ -1,30 +1,104 @@
-﻿### Task 1: 杈圭晫鏂囨。鏍稿锛堟棤浠ｇ爜琛屼负鍙樻洿锛?
+### Task 1: T99 折扣 0.6→0.8（TDD）
+
 **Files:**
-- Modify: `docs/superpowers/specs/2026-07-29-inventory-planning-pmc-evolution-design.md`锛堢‘璁?搂1.2銆伮?4銆伮?6.1 涓庢湰 plan Global Constraints 涓€鑷达級
-- Optional note in: `docs/prd/mvp-overview.md`锛堜粎褰撻渶瑕佷竴鍙ャ€岃鍒?PMC 婕旇繘瑙?2026-07-29 spec銆嶏紱涓嶈鏀广€屾槑纭笉鍋氥€嶅垪琛級
+- Modify: `apps/web/server/lib/forecast-demand.test.ts`
+- Modify: `apps/web/server/lib/forecast-demand.ts`
+- Modify: `apps/web/server/lib/forecast-allcat-v41.test.ts`（本任务只改 T99 相关断言；T4B 留给 Task 2）
+- Modify: `apps/web/server/lib/forecast-allcat-v41.ts`（公式字符串与 `buildT99ReviewMessage` 中的 ×0.6）
 
 **Interfaces:**
-- Produces: 鏂囨。灞傞攣瀹氱殑鍙屽紩鎿庤竟鐣屼笌 P0 闈炵洰鏍囷紙鏃犺繍琛屾椂 API锛?
-- [ ] **Step 1: 閫氳璁捐 搂1.2 / 搂16.1 / 搂14**
+- Consumes: 现有 `resolveT99SystemFloorDaily` / `resolveT99ReplenishmentFallbackDaily`
+- Produces: `T99_SYSTEM_FLOOR_DISCOUNT = 0.8`；fallback 默认 `discount = 0.8`；数值期望 `max(r30,r90)*0.8`
 
-纭浠ヤ笅鍙ュ瓙瀛樺湪涓旀棤鐭涚浘锛?
-- 搴撳瓨瑙勫垝寮曟搸 vs 渚涘簲鍟?PMC 寮曟搸鑱岃矗琛?- P0 榛樿 `drafts_fill_gap`
-- P0 涓嶅仛 lead_time_profiles / shipments / 瑙勫垝椤?
-鑻?搂16.1 缂哄け锛屾寜 Global Constraints 琛ュ叏锛堜笌褰撳墠浠撳簱宸插啓鍐呭瀵归綈鍗冲彲锛夈€?
-- [ ] **Step 2:锛堝彲閫夛級鍦?mvp-overview銆屽悗缁?Phase銆嶅姞涓€琛屽紩鐢?*
+- [ ] **Step 1: 改失败单测（demand）**
 
-```markdown
-15. 搴撳瓨瑙勫垝涓?PMC 婕旇繘锛堣 docs/superpowers/specs/2026-07-29-inventory-planning-pmc-evolution-design.md锛?```
+将 `forecast-demand.test.ts` 中下列断言改为 0.8 口径：
 
-- [ ] **Step 3: Commit**
-
-```bash
-git add docs/superpowers/specs/2026-07-29-inventory-planning-pmc-evolution-design.md docs/prd/mvp-overview.md
-git commit -m "$(cat <<'EOF'
-docs: lock inventory planning / PMC boundary for P0
-
-EOF
-)"
+```ts
+it('resolveT99SystemFloorDaily uses max(r30,r90)*0.8 near and *0.72 far', () => {
+  // max(2, 4) * 0.8 = 3.2; far = 3.2 * 0.72 = 2.304
+  const near = resolveT99SystemFloorDaily({
+    recent30DailyAvg: 2,
+    recent90DailyAvg: 4,
+    horizonIndex: 1,
+  });
+  const far = resolveT99SystemFloorDaily({
+    recent30DailyAvg: 2,
+    recent90DailyAvg: 4,
+    horizonIndex: 3,
+  });
+  assert.equal(near.daily, 3.2);
+  assert.equal(near.mode, 'recent_max06');
+  assert.equal(far.daily, 2.304);
+  assert.equal(far.mode, 'recent_max06');
+});
 ```
 
----
+将「T99 zero forecast falls back…」中期望 `1.2` 改为 `1.6`（`max(2,1)*0.8`），两处 `assert.equal(..., 1.2)` → `1.6`。
+
+断销闸测例（daily=0）**不要改**。
+
+- [ ] **Step 2: 跑测确认失败**
+
+Run: `pnpm --filter @scm/web exec tsx --test server/lib/forecast-demand.test.ts`
+
+Expected: FAIL（仍为 2.4 / 1.2）
+
+- [ ] **Step 3: 改实现常量**
+
+在 `forecast-demand.ts`：
+
+```ts
+export const T99_SYSTEM_FLOOR_DISCOUNT = 0.8;
+```
+
+`resolveT99ReplenishmentFallbackDaily` 注释与默认：
+
+```ts
+  /** 相对近期动销的折扣，默认 0.8（与 T99_SYSTEM_FLOOR_DISCOUNT 对齐） */
+  discount?: number;
+}): number {
+  const discount =
+    input.discount != null && Number.isFinite(input.discount) && input.discount > 0
+      ? input.discount
+      : 0.8;
+```
+
+优先：默认折扣直接引用常量，避免漂移：
+
+```ts
+      : T99_SYSTEM_FLOOR_DISCOUNT;
+```
+
+- [ ] **Step 4: 同步 allcat T99 断言与文案**
+
+`forecast-allcat-v41.test.ts` 中 `computeAllCatV41ForecastForMonth writes T99 floor...`：
+
+```ts
+assert.equal(result.forecastDaily, 2.4); // max(3,2)*0.8
+assert.equal(result.formula, 'max(recent30,recent90)*0.8 with far decay');
+assert.equal(result.horizonFactors.t99FloorDaily, 2.4);
+```
+
+`forecast-allcat-v41.ts`：
+
+- `tierFormula` T99 分支：`'max(recent30,recent90)*0.8 with far decay'`
+- `buildT99ReviewMessage`：`（max(近30,近90)×0.8，远月衰减）`
+
+- [ ] **Step 5: 跑测通过**
+
+Run:
+
+```bash
+pnpm --filter @scm/web exec tsx --test server/lib/forecast-demand.test.ts
+pnpm --filter @scm/web exec tsx --test server/lib/forecast-allcat-v41.test.ts
+```
+
+Expected: PASS（若 allcat 因 T4B 旧 cap 断言尚未改而失败，可先只确认 demand + T99 相关用例；完整 allcat 在 Task 2 后必绿）
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add apps/web/server/lib/forecast-demand.ts apps/web/server/lib/forecast-demand.test.ts apps/web/server/lib/forecast-allcat-v41.ts apps/web/server/lib/forecast-allcat-v41.test.ts
+git commit -m "feat(forecast): raise T99 floor discount 0.6→0.8"
+```

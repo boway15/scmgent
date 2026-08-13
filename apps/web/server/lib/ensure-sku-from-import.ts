@@ -1,4 +1,4 @@
-import { eq } from 'drizzle-orm';
+import { eq, inArray } from 'drizzle-orm';
 import { db, skus } from '@scm/db';
 import { ensureSpuFromSkuEncoding } from './spu-from-sku.js';
 import { parseSkuCode, skuEncodingToColumns } from './sku-encoding.js';
@@ -14,6 +14,18 @@ import { readTurnoverSnapshot } from './inventory-turnover-snapshot.js';
 import { extractProjectGroupFromCategory } from './sku-category.js';
 
 export type SkuImportSource = 'daily_sales' | 'inventory' | 'sku_import';
+
+/** 销量导入批量查找已存在 SKU 的 IN 分片 */
+export const SALES_SKU_LOOKUP_CHUNK = 500;
+
+export function chunkList<T>(items: T[], size: number): T[][] {
+  if (size <= 0) throw new Error('chunk size must be positive');
+  const chunks: T[][] = [];
+  for (let offset = 0; offset < items.length; offset += size) {
+    chunks.push(items.slice(offset, offset + size));
+  }
+  return chunks;
+}
 
 /** 库存周转表 A:K 列对齐 SKU 主数据 */
 export type InventorySkuMasterInput = Partial<InventorySkuMasterFields> & {
@@ -320,39 +332,48 @@ export async function ensureSkusFromDailySales(rows: DailySalesRow[]): Promise<{
   let enrichedSkuCount = 0;
   let skippedExistingCount = 0;
 
+  const pending: Array<{ rawCode: string; normalizedCode: string; meta: { name: string; category?: string } }> =
+    [];
   for (const [rawCode, meta] of stubs) {
-    const { parse } = await ensureSpuFromSkuEncoding(rawCode, undefined, {
-      name: meta.name,
-      category: meta.category,
-    });
+    const parse = parseSkuCode(rawCode);
     const normalizedCode = resolveDailySalesSkuCode(rawCode, parse);
-    const cachedId = skuIdByCode.get(normalizedCode) ?? skuIdByCode.get(rawCode);
-    if (cachedId) {
-      skuIdByCode.set(rawCode, cachedId);
-      skuIdByCode.set(normalizedCode, cachedId);
-      skippedExistingCount++;
-      continue;
-    }
+    if (!normalizedCode) continue;
+    pending.push({ rawCode, normalizedCode, meta });
+  }
 
-    const [existing] = await db.select({ id: skus.id }).from(skus).where(eq(skus.code, normalizedCode)).limit(1);
-    if (existing) {
-      skuIdByCode.set(rawCode, existing.id);
-      skuIdByCode.set(normalizedCode, existing.id);
+  const existingByCode = new Map<string, string>();
+  const uniqueCodes = Array.from(new Set(pending.map((item) => item.normalizedCode)));
+  for (const codeChunk of chunkList(uniqueCodes, SALES_SKU_LOOKUP_CHUNK)) {
+    const found = await db
+      .select({ id: skus.id, code: skus.code })
+      .from(skus)
+      .where(inArray(skus.code, codeChunk));
+    for (const row of found) {
+      existingByCode.set(row.code, row.id);
+    }
+  }
+
+  for (const item of pending) {
+    const existingId = existingByCode.get(item.normalizedCode);
+    if (existingId) {
+      skuIdByCode.set(item.rawCode, existingId);
+      skuIdByCode.set(item.normalizedCode, existingId);
       skippedExistingCount++;
       continue;
     }
 
     const result = await ensureSkuFromImport({
-      rawCode,
-      name: meta.name,
-      category: meta.category,
+      rawCode: item.rawCode,
+      name: item.meta.name,
+      category: item.meta.category,
       source: 'daily_sales',
     });
     if (!result) continue;
 
-    skuIdByCode.set(rawCode, result.id);
-    skuIdByCode.set(normalizedCode, result.id);
+    skuIdByCode.set(item.rawCode, result.id);
+    skuIdByCode.set(item.normalizedCode, result.id);
     skuIdByCode.set(result.code, result.id);
+    existingByCode.set(result.code, result.id);
     if (result.created) createdSkuCount++;
     else if (result.updated) enrichedSkuCount++;
   }

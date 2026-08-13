@@ -4,6 +4,7 @@ import {
   buildCompletedCalendarMonths,
   monthlyDailyAvgFromRows,
   monthlyQtyFromRows,
+  shouldAggregateCalendarMonth,
 } from './sales-history-monthly.js';
 import { resolveLastYearSameMonthDailyAvg } from './forecast-baseline.js';
 import { buildForecastAccuracyBacktestSummary } from './forecast-accuracy.js';
@@ -15,6 +16,13 @@ describe('sales-history-monthly helpers', () => {
       { year: 2026, month: 4 },
       { year: 2026, month: 5 },
     ]);
+  });
+
+  it('skips calendar months that start before the daily table min date', () => {
+    assert.equal(shouldAggregateCalendarMonth(2025, 8, '2025-08-13'), false);
+    assert.equal(shouldAggregateCalendarMonth(2025, 9, '2025-08-13'), true);
+    assert.equal(shouldAggregateCalendarMonth(2025, 8, '2025-08-01'), true);
+    assert.equal(shouldAggregateCalendarMonth(2025, 8, null), false);
   });
 
   it('reads monthly qty and daily average from monthly rows', () => {

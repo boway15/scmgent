@@ -1,1642 +1,955 @@
-﻿# Final Branch Review Package — inventory-planning-boundary-p0
-MERGE_BASE: 77bcde51e80f3ac0c2b92ad9091f332437419f42
-HEAD: aab76135cde34fa3a2cf793eedc2fdb7db75687a
+﻿MERGE_BASE e15d6d37506494741de84c887fc5ba6b605ed424
+HEAD 46c5f1f
 
-## Commits
-aab7613 feat: capture sellable ETA on purchase tracking UI
-62d273e feat: expose eta_available on purchase draft API
-5631020 feat(db): add purchase_drafts.eta_available for sellable ETA
-b97c26c feat: drive health and replenishment from inventory position
-661d882 fix: zero physical-warehouse in-production in inventory position
-7a290d3 feat: resolve inventory position from snapshot and purchase drafts
-fd22298 feat: add inventory position merge helpers for P0
-61aad74 docs: align exception bucket mapping with P0 lock
-fd9a829 docs: lock inventory planning / PMC boundary for P0
-
-
-## Stat
- .superpowers/sdd/task-1-report.md                  | 103 ++++
- .superpowers/sdd/task-3-report.md                  |  11 +
- .../server/lib/inventory-health-service.test.ts    |  45 ++
- apps/web/server/lib/inventory-health-service.ts    |  15 +-
- apps/web/server/lib/inventory-position.test.ts     | 149 ++++++
- apps/web/server/lib/inventory-position.ts          | 316 ++++++++++++
- apps/web/server/lib/inventory-snapshot.ts          |  32 +-
- apps/web/server/lib/purchase-draft-eta.test.ts     |  12 +
- apps/web/server/lib/purchase-draft-eta.ts          |   6 +
- apps/web/server/routes/procurement.ts              |  14 +-
- apps/web/server/tasks/replenishmentForecast.ts     |  15 +-
- apps/web/src/lib/api.ts                            |   2 +
- apps/web/src/pages/PurchaseTrackingPage.tsx        |  86 +++-
- docs/prd/mvp-overview.md                           |   1 +
- ...7-29-inventory-planning-pmc-evolution-design.md | 570 +++++++++++++++++++++
- .../drizzle/0052_purchase_draft_eta_available.sql  |   4 +
- packages/db/drizzle/meta/_journal.json             |  14 +
- packages/db/src/schema/procurement.ts              |   2 +
- 18 files changed, 1366 insertions(+), 31 deletions(-)
-
-
-## Diff
-diff --git a/apps/web/server/lib/inventory-health-service.test.ts b/apps/web/server/lib/inventory-health-service.test.ts
-index e7e2a64..ddbe66e 100644
---- a/apps/web/server/lib/inventory-health-service.test.ts
-+++ b/apps/web/server/lib/inventory-health-service.test.ts
-@@ -2,10 +2,55 @@ import assert from 'node:assert/strict';
- import {
-   healthToAlertType,
-   healthToExceptionType,
-   recommendedActionForException,
- } from './inventory-health-service.js';
-+import { buildInventoryPositionMetrics } from './inventory-position.js';
-+
-+assert.deepEqual(
-+  buildInventoryPositionMetrics({
-+    effectiveQty: 135,
-+    qtyAvailable: 100,
-+    qtyInProduction: 20,
-+    qtyInTransit: 30,
-+    qtyConfirmedOpen: 5,
-+    qtyReserved: 20,
-+    qtyBackorder: 0,
-+    dedupeMode: 'drafts_fill_gap',
-+    unassignedOpenQty: 7,
-+    sources: [
-+      { source: 'snapshot', bucket: 'available', qty: 100 },
-+      {
-+        source: 'purchase_draft',
-+        bucket: 'confirmedOpen',
-+        qty: 5,
-+        draftId: 'draft-1',
-+      },
-+    ],
-+  }),
-+  {
-+    inventoryPosition: {
-+      effectiveQty: 135,
-+      qtyAvailable: 100,
-+      qtyInProduction: 20,
-+      qtyInTransit: 30,
-+      qtyConfirmedOpen: 5,
-+      qtyReserved: 20,
-+      dedupeMode: 'drafts_fill_gap',
-+      unassignedOpenQty: 7,
-+      sources: [
-+        { source: 'snapshot', bucket: 'available', qty: 100 },
-+        {
-+          source: 'purchase_draft',
-+          bucket: 'confirmedOpen',
-+          qty: 5,
-+          draftId: 'draft-1',
-+        },
-+      ],
-+    },
-+  },
-+);
- 
- assert.equal(healthToAlertType('red', 0), 'stockout');
- assert.equal(healthToAlertType('red', 5), 'below_rop');
- assert.equal(healthToAlertType('yellow', 10), 'below_safety');
- assert.equal(healthToAlertType('green', 10), null);
-diff --git a/apps/web/server/lib/inventory-health-service.ts b/apps/web/server/lib/inventory-health-service.ts
-index ce18ec9..a443d18 100644
---- a/apps/web/server/lib/inventory-health-service.ts
-+++ b/apps/web/server/lib/inventory-health-service.ts
-@@ -13,11 +13,14 @@ import { calcReplenishment } from './replenishment.js';
- import {
-   calcCoverageReplenishmentFromForecast,
-   calcForwardAvgDaily,
- } from './forecast-demand.js';
- import { resolveLeadTimeForSkuWarehouse } from './lead-time-resolver.js';
--import { getLatestInventorySnapshot } from './inventory-snapshot.js';
-+import {
-+  buildInventoryPositionMetrics,
-+  resolveInventoryPosition,
-+} from './inventory-position.js';
- import { isGrayLifecycle, type InventoryHealth } from './inventory-light.js';
- import type { CoverageReplenishmentResult } from './replenishment-coverage.js';
- import { loadDailySalesBySkuIds } from './sales-history-query.js';
- import { loadMergedPublishedForecastBySkuIds } from './forecast-published-resolve.js';
- import { FORECAST_GLOBAL_STATION } from './forecast-station-scope.js';
-@@ -85,11 +88,14 @@ export async function computeSkuWarehouseHealth(params: {
-     leadTimeDays: leadTime.totalLeadDays,
-     unitCost: params.sku.unitCost ? Number(params.sku.unitCost) : 1,
-   });
- 
-   const policy = params.policyMap.get(params.warehouse.code) ?? params.policyMap.get('ALL');
--  const snapshot = await getLatestInventorySnapshot(params.sku.id, params.warehouse.code);
-+  const position = await resolveInventoryPosition({
-+    skuId: params.sku.id,
-+    warehouseCode: params.warehouse.code,
-+  });
- 
-   if (!params.forecastEntry) {
-     if (!params.forecastByStation.has(FORECAST_GLOBAL_STATION)) {
-       const merged = await loadMergedPublishedForecastBySkuIds([params.sku.id]);
-       const resolved = merged.get(params.sku.id) ?? {
-@@ -106,11 +112,11 @@ export async function computeSkuWarehouseHealth(params: {
-   const forecastEntry =
-     params.forecastEntry ??
-     params.forecastByStation.get(FORECAST_GLOBAL_STATION) ?? { map: new Map(), lifecycle: undefined };
- 
-   const coverage = calcCoverageReplenishmentFromForecast({
--    effectiveQty: snapshot.effectiveQty,
-+    effectiveQty: position.effectiveQty,
-     forecasts: forecastEntry.map,
-     historicalAvgDaily: eoqCalc.avgDaily,
-     productionDays: leadTime.productionDays,
-     shippingDays: leadTime.shippingDays,
-     inboundBufferDays: leadTime.inboundBufferDays,
-@@ -132,11 +138,11 @@ export async function computeSkuWarehouseHealth(params: {
-     spuId: params.sku.spuId,
-     merchantCode: params.sku.merchantCode,
-     warehouseCode: params.warehouse.code,
-     regionGroup: params.warehouse.regionGroup,
-     countryCode: params.warehouse.countryCode,
--    effectiveQty: snapshot.effectiveQty,
-+    effectiveQty: position.effectiveQty,
-     avgDaily,
-     demandSource: coverage.demandSource,
-     healthStatus: coverage.healthStatus,
-     coverageDays: coverage.coverageDays,
-     totalLeadDays: coverage.leadTime.totalLeadDays,
-@@ -152,10 +158,11 @@ export async function computeSkuWarehouseHealth(params: {
-       safetyStockDays: coverage.safetyStockDays,
-       targetCoverageDays: coverage.targetCoverageDays,
-       overstockThresholdDays: coverage.overstockThresholdDays,
-       reorderPoint: eoqCalc.reorderPoint,
-       safetyStockQty: eoqCalc.safetyStockQty,
-+      ...buildInventoryPositionMetrics(position),
-     },
-     coverage,
-   };
- }
- 
-diff --git a/apps/web/server/lib/inventory-position.test.ts b/apps/web/server/lib/inventory-position.test.ts
+46c5f1f chore(forecast): validate July T4B/T99 plan-A relax offline
+2874345 docs(forecast): sync T99 UI copy to 0.8 floor discount
+a362a9b feat(forecast): relax T4B conservative factor and recent caps
+8f77778 feat(forecast): raise T99 floor discount 0.6鈫?.8
+ apps/web/scripts/validate-july-t4b-relax.ts        | 233 ++++++++++++++
+ apps/web/server/lib/forecast-allcat-v41.test.ts    |  23 +-
+ apps/web/server/lib/forecast-allcat-v41.ts         |  14 +-
+ apps/web/server/lib/forecast-demand.test.ts        |  12 +-
+ apps/web/server/lib/forecast-demand.ts             |   6 +-
+ .../web/src/components/ForecastStrategySection.tsx |   2 +-
+ apps/web/src/pages/SalesForecastListPage.tsx       |   2 +-
+ .../plans/2026-08-12-t4b-t99-optimistic-relax.md   | 353 +++++++++++++++++++++
+ .../2026-08-12-t4b-t99-optimistic-relax-design.md  |   2 +-
+ 9 files changed, 622 insertions(+), 25 deletions(-)
+diff --git a/apps/web/scripts/validate-july-t4b-relax.ts b/apps/web/scripts/validate-july-t4b-relax.ts
 new file mode 100644
-index 0000000..a11de6a
+index 0000000..6bb77c0
 --- /dev/null
-+++ b/apps/web/server/lib/inventory-position.test.ts
-@@ -0,0 +1,149 @@
-+import assert from 'node:assert/strict';
-+import { describe, it } from 'node:test';
++++ b/apps/web/scripts/validate-july-t4b-relax.ts
+@@ -0,0 +1,233 @@
++/**
++ * T4B+T99 鏂规 A 甯搁噺澶嶇洏锛氱敤宸插彂甯冪増鏈?7 鏈堣鐨?horizon_factors + 鏂扮増 T4B/T99 鍏紡锛?+ * 绂荤嚎澶嶇畻绯荤粺鏃ュ潎锛屽姣斿疄闄呴攢閲忥紝杈撳嚭鍒嗗眰 WMAPE / 鍋忓樊鎶ュ憡锛堜笉鍐欏簱锛夈€?+ *
++ * Usage: pnpm --filter @scm/web exec tsx scripts/validate-july-t4b-relax.ts
++ */
++import { config } from 'dotenv';
++import { resolve } from 'node:path';
++import { execFileSync } from 'node:child_process';
 +import {
-+  aggregateDraftBucketsForWarehouse,
-+  effectiveQtyWithProductionFallback,
-+  mapDraftStatusToBucket,
-+  mergeInventoryPosition,
-+  normalizeSnapshotForWarehouse,
-+  openDraftQty,
-+} from './inventory-position.js';
++  applyPeerPlatformNearFloor,
++  computeAllCatV41BoundedDaily,
++  V41_T4B_CONSERVATIVE_FACTOR,
++  V41_T4B_NEAR_CONSERVATIVE_FACTOR,
++  V41_T4B_RECENT30_CAP,
++  V41_T4B_RECENT90_CAP,
++  type AllCatV41Metrics,
++  type AllCatV41Tier,
++} from '../server/lib/forecast-allcat-v41.js';
++import { T99_SYSTEM_FLOOR_DISCOUNT } from '../server/lib/forecast-demand.js';
 +
-+describe('inventory-position pure', () => {
-+  it('maps draft statuses to buckets', () => {
-+    assert.equal(mapDraftStatusToBucket('draft'), 'confirmedOpen');
-+    assert.equal(mapDraftStatusToBucket('confirmed'), 'confirmedOpen');
-+    assert.equal(mapDraftStatusToBucket('in_production'), 'inProduction');
-+    assert.equal(mapDraftStatusToBucket('ready_to_ship'), 'inProduction');
-+    assert.equal(mapDraftStatusToBucket('in_transit'), 'inTransit');
-+    assert.equal(mapDraftStatusToBucket('partial_received'), 'inTransit');
-+    assert.equal(mapDraftStatusToBucket('exception'), 'confirmedOpen');
-+    assert.equal(mapDraftStatusToBucket('received'), null);
-+    assert.equal(mapDraftStatusToBucket('cancelled'), null);
-+  });
++const ROOT = resolve(import.meta.dirname, '../../..');
++config({ path: resolve(ROOT, '.env') });
 +
-+  it('computes open qty', () => {
-+    assert.equal(openDraftQty(100, 30), 70);
-+    assert.equal(openDraftQty(10, 15), 0);
-+  });
-+
-+  it('zeros in-production snapshot quantity for a physical warehouse', () => {
-+    const snapshot = normalizeSnapshotForWarehouse(
-+      {
-+        qtyAvailable: 100,
-+        qtyInTransit: 20,
-+        qtyInProduction: 75,
-+        qtyReserved: 10,
-+      },
-+      'US-WEST',
-+    );
-+
-+    assert.deepEqual(snapshot, {
-+      qtyAvailable: 100,
-+      qtyInTransit: 20,
-+      qtyInProduction: 0,
-+      qtyReserved: 10,
-+    });
-+  });
-+
-+  it('aggregates draft lines for one warehouse and tracks unassigned', () => {
-+    const { draftBuckets, sources, unassignedOpenQty } = aggregateDraftBucketsForWarehouse(
-+      [
-+        { draftId: 'a', status: 'submitted', openQty: 100, warehouseCode: 'US-WEST' },
-+        { draftId: 'b', status: 'in_transit', openQty: 50, warehouseCode: 'US-WEST' },
-+        { draftId: 'c', status: 'in_production', openQty: 20, warehouseCode: null },
-+        { draftId: 'd', status: 'exception', openQty: 5, warehouseCode: 'US-WEST' },
-+        { draftId: 'e', status: 'confirmed', openQty: 30, warehouseCode: 'US-EAST' },
-+      ],
-+      'US-WEST',
-+    );
-+
-+    assert.deepEqual(draftBuckets, {
-+      confirmedOpen: 105,
-+      inTransit: 50,
-+      inProduction: 0,
-+    });
-+    assert.equal(unassignedOpenQty, 20);
-+    assert.equal(sources.length, 3);
-+    assert.ok(sources.some((source) => source.draftId === 'd' && source.atRisk === true));
-+  });
-+
-+  it('drafts_fill_gap only fills zero snapshot buckets', () => {
-+    const result = mergeInventoryPosition({
-+      dedupeMode: 'drafts_fill_gap',
-+      snapshot: {
-+        qtyAvailable: 2400,
-+        qtyInTransit: 1000,
-+        qtyInProduction: 0,
-+        qtyReserved: 100,
-+      },
-+      draftBuckets: {
-+        inProduction: 500,
-+        inTransit: 2000,
-+        confirmedOpen: 300,
-+      },
-+    });
-+    assert.equal(result.qtyAvailable, 2400);
-+    assert.equal(result.qtyInTransit, 1000); // snapshot wins
-+    assert.equal(result.qtyInProduction, 500); // fill gap
-+    assert.equal(result.qtyConfirmedOpen, 300);
-+    assert.equal(result.qtyReserved, 100);
-+    assert.equal(result.effectiveQty, 2400 + 1000 + 500 + 300 - 100);
-+    assert.equal(result.dedupeMode, 'drafts_fill_gap');
-+  });
-+
-+  it('snapshot_only ignores drafts', () => {
-+    const result = mergeInventoryPosition({
-+      dedupeMode: 'snapshot_only',
-+      snapshot: {
-+        qtyAvailable: 100,
-+        qtyInTransit: 0,
-+        qtyInProduction: 0,
-+        qtyReserved: 0,
-+      },
-+      draftBuckets: { inProduction: 50, inTransit: 20, confirmedOpen: 10 },
-+    });
-+    assert.equal(result.effectiveQty, 100);
-+    assert.equal(result.qtyConfirmedOpen, 0);
-+  });
-+
-+  it('sum_both adds drafts on top of snapshot', () => {
-+    const result = mergeInventoryPosition({
-+      dedupeMode: 'sum_both',
-+      snapshot: {
-+        qtyAvailable: 100,
-+        qtyInTransit: 10,
-+        qtyInProduction: 5,
-+        qtyReserved: 0,
-+      },
-+      draftBuckets: { inProduction: 50, inTransit: 20, confirmedOpen: 10 },
-+    });
-+    assert.equal(result.qtyInProduction, 55);
-+    assert.equal(result.qtyInTransit, 30);
-+    assert.equal(result.qtyConfirmedOpen, 10);
-+    assert.equal(result.effectiveQty, 100 + 55 + 30 + 10);
-+  });
-+
-+  it('fills region production once only when warehouse positions contain none', () => {
-+    assert.equal(
-+      effectiveQtyWithProductionFallback(
-+        [
-+          { effectiveQty: 100, qtyInProduction: 0 },
-+          { effectiveQty: 50, qtyInProduction: 0 },
-+        ],
-+        25,
-+      ),
-+      175,
-+    );
-+    assert.equal(
-+      effectiveQtyWithProductionFallback(
-+        [
-+          { effectiveQty: 120, qtyInProduction: 20 },
-+          { effectiveQty: 50, qtyInProduction: 0 },
-+        ],
-+        25,
-+      ),
-+      170,
-+    );
-+  });
-+});
-diff --git a/apps/web/server/lib/inventory-position.ts b/apps/web/server/lib/inventory-position.ts
-new file mode 100644
-index 0000000..34079eb
---- /dev/null
-+++ b/apps/web/server/lib/inventory-position.ts
-@@ -0,0 +1,316 @@
-+import { and, desc, eq } from 'drizzle-orm';
-+import {
-+  db,
-+  inventoryRecords,
-+  pmcPlanItems,
-+  pmcPlans,
-+  purchaseDrafts,
-+} from '@scm/db';
-+import { IN_PRODUCTION_WAREHOUSE } from './inventory-constants.js';
-+import { normalizePurchaseDraftStatus } from './purchase-draft-lifecycle.js';
-+
-+export type InventoryDedupeMode = 'snapshot_only' | 'drafts_fill_gap' | 'sum_both';
-+
-+export type InventoryPositionBucket =
-+  | 'available'
-+  | 'inProduction'
-+  | 'inTransit'
-+  | 'confirmedOpen'
-+  | 'reserved'
-+  | 'backorder';
-+
-+export type InventoryPositionSource = {
-+  source: 'snapshot' | 'purchase_draft';
-+  bucket: InventoryPositionBucket;
-+  qty: number;
-+  draftId?: string;
-+  atRisk?: boolean;
++type Row = {
++  sku_code: string;
++  platform: string;
++  segment: string;
++  abcd: string;
++  blend_d: number;
++  old_system_d: number;
++  actual_m: number;
++  factors: string | null;
 +};
 +
-+export type InventoryPositionBreakdown = {
-+  qtyAvailable: number;
-+  qtyInProduction: number;
-+  qtyInTransit: number;
-+  qtyConfirmedOpen: number;
-+  qtyReserved: number;
-+  qtyBackorder: number;
-+  effectiveQty: number;
-+  sources: InventoryPositionSource[];
-+  dedupeMode: InventoryDedupeMode;
-+  unassignedOpenQty: number;
-+};
++function q(sql: string): string {
++  return execFileSync(
++    'docker',
++    ['exec', 'scm-agent-postgres-1', 'psql', '-U', 'scm', '-d', 'scm_dev', '-t', '-A', '-c', sql],
++    { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 },
++  ).trim();
++}
 +
-+export type DraftOpenLine = {
-+  draftId: string;
-+  status: string;
-+  openQty: number;
-+  warehouseCode: string | null;
-+  atRisk?: boolean;
-+};
++function parseFactors(raw: string | null): Record<string, unknown> | null {
++  if (!raw) return null;
++  try {
++    const once = JSON.parse(raw);
++    if (typeof once === 'string') return JSON.parse(once);
++    return once as Record<string, unknown>;
++  } catch {
++    return null;
++  }
++}
 +
-+export function buildInventoryPositionMetrics(position: InventoryPositionBreakdown) {
-+  return {
-+    inventoryPosition: {
-+      effectiveQty: position.effectiveQty,
-+      qtyAvailable: position.qtyAvailable,
-+      qtyInProduction: position.qtyInProduction,
-+      qtyInTransit: position.qtyInTransit,
-+      qtyConfirmedOpen: position.qtyConfirmedOpen,
-+      qtyReserved: position.qtyReserved,
-+      dedupeMode: position.dedupeMode,
-+      unassignedOpenQty: position.unassignedOpenQty,
-+      sources: position.sources,
-+    },
++function num(v: unknown, fallback = 0): number {
++  const n = Number(v);
++  return Number.isFinite(n) ? n : fallback;
++}
++
++function recompute(row: Row): number {
++  const factors = parseFactors(row.factors);
++  const tier = (row.segment || 'T4B') as AllCatV41Tier;
++
++  const metrics: AllCatV41Metrics = {
++    q1: num(factors?.q1),
++    q3: num(factors?.q3),
++    q6: num(factors?.q6),
++    q12: num(factors?.q12),
++    d2: num(factors?.d2, num(factors?.d3)),
++    d3: num(factors?.d3),
++    d6: num(factors?.d6),
++    d12: num(factors?.d12),
++    active2: Math.round(num(factors?.active2)),
++    active6: Math.round(num(factors?.active6)),
++    active12: Math.round(num(factors?.active12)),
++    cv6: num(factors?.cv6),
++    trendRatio: num(factors?.trendRatio, 1),
 +  };
++
++  const productCategory = String(factors?.productCategory ?? row.abcd ?? 'C');
++  const recent30 = num(factors?.recent30DailyAvg, null as unknown as number);
++  const recent90 = num(factors?.recent90DailyAvg, null as unknown as number);
++  const baseDaily = row.blend_d > 0 ? row.blend_d : num(factors?.levelDaily, row.old_system_d);
++
++  const bounded = computeAllCatV41BoundedDaily({
++    tier,
++    baseDaily,
++    productCategory,
++    forecastMonth: 7,
++    horizonIndex: 0,
++    metrics,
++    recent30DailyAvg: Number.isFinite(recent30) ? recent30 : null,
++    recent90DailyAvg: Number.isFinite(recent90) ? recent90 : null,
++  });
++
++  // 鍚?SKU 鍏朵粬骞冲彴杩戠锛氱敤鍚?sku 鍦?AMAZON 鐨勫疄闄呮棩鍧囦綔 peer 杩戜技锛堝鐩樼敤锛?+  return bounded.forecastDaily;
 +}
 +
-+export function effectiveQtyWithProductionFallback(
-+  positions: Array<Pick<InventoryPositionBreakdown, 'effectiveQty' | 'qtyInProduction'>>,
-+  fallbackInProductionQty: number,
-+): number {
-+  const total = positions.reduce((sum, position) => sum + position.effectiveQty, 0);
-+  const productionFromWarehouses = positions.reduce(
-+    (sum, position) => sum + position.qtyInProduction,
-+    0,
-+  );
-+  return productionFromWarehouses <= 0 && fallbackInProductionQty > 0
-+    ? total + fallbackInProductionQty
-+    : total;
++function wmape(rows: Array<{ system: number; actualD: number }>): number | null {
++  let abs = 0;
++  let act = 0;
++  for (const r of rows) {
++    if (r.actualD <= 0) continue;
++    abs += Math.abs(r.system - r.actualD);
++    act += r.actualD;
++  }
++  return act > 0 ? abs / act : null;
 +}
 +
-+type InventoryPositionSnapshot = {
-+  qtyAvailable: number;
-+  qtyInTransit: number;
-+  qtyInProduction: number;
-+  qtyReserved: number;
-+};
++function bias(rows: Array<{ system: number; actualM: number }>): number | null {
++  let s = 0;
++  let a = 0;
++  for (const r of rows) {
++    s += r.system * 31;
++    a += r.actualM;
++  }
++  return a > 0 ? s / a - 1 : null;
++}
 +
-+export function normalizeSnapshotForWarehouse(
-+  snapshot: InventoryPositionSnapshot,
-+  warehouseCode: string,
-+): InventoryPositionSnapshot {
-+  if (warehouseCode === IN_PRODUCTION_WAREHOUSE) {
++function main() {
++  console.log('constants', {
++    T4B_near: V41_T4B_NEAR_CONSERVATIVE_FACTOR,
++    T4B_far: V41_T4B_CONSERVATIVE_FACTOR,
++    T4B_r30_cap: V41_T4B_RECENT30_CAP,
++    T4B_r90_cap: V41_T4B_RECENT90_CAP,
++    T99_discount: T99_SYSTEM_FLOOR_DISCOUNT,
++  });
++
++  const json = q(`
++    SELECT json_agg(t)
++    FROM (
++      SELECT
++        s.code AS sku_code,
++        sfm.platform,
++        COALESCE(sfm.profile_segment, '?') AS segment,
++        COALESCE(sfm.forecast_profile_class, '?') AS abcd,
++        sfm.baseline_daily_avg::float8 AS blend_d,
++        sfm.forecast_daily_avg::float8 AS old_system_d,
++        COALESCE(act.qty_sold, 0)::float8 AS actual_m,
++        sfm.horizon_factors::text AS factors
++      FROM sales_forecast_monthly sfm
++      JOIN skus s ON s.id = sfm.sku_id
++      JOIN sales_forecast_versions v ON v.id = sfm.version_id
++      LEFT JOIN sales_history_monthly act
++        ON act.sku_id = sfm.sku_id AND act.channel = sfm.platform
++       AND act.sale_year = 2026 AND act.month = 7
++      WHERE sfm.forecast_year = 2026 AND sfm.month = 7
++        AND v.status = 'published'
++        AND sfm.forecast_daily_avg::numeric > 0
++    ) t
++  `);
++
++  const rows = JSON.parse(json) as Row[];
++  const rescored = rows.map((row) => {
++    const newSystem = recompute(row);
++    const actualD = row.actual_m / 31;
 +    return {
-+      qtyAvailable: 0,
-+      qtyInTransit: 0,
-+      qtyInProduction: snapshot.qtyInProduction,
-+      qtyReserved: 0,
++      ...row,
++      new_system_d: newSystem,
++      actualD,
 +    };
++  });
++
++  const bySeg = new Map<string, typeof rescored>();
++  for (const r of rescored) {
++    const list = bySeg.get(r.segment) ?? [];
++    list.push(r);
++    bySeg.set(r.segment, list);
 +  }
 +
-+  return {
-+    ...snapshot,
-+    qtyInProduction: 0,
-+  };
-+}
++  const pct = (x: number | null) => (x == null ? '鈥? : `${(x * 100).toFixed(1)}%`);
 +
-+export function openDraftQty(qty: number, receivedQty: number): number {
-+  return Math.max(0, (qty ?? 0) - (receivedQty ?? 0));
-+}
-+
-+export function mapDraftStatusToBucket(status: string): InventoryPositionBucket | null {
-+  switch (status) {
-+    case 'draft':
-+    case 'confirmed':
-+    case 'exception':
-+      return 'confirmedOpen';
-+    case 'in_production':
-+    case 'ready_to_ship':
-+      return 'inProduction';
-+    case 'in_transit':
-+    case 'partial_received':
-+      return 'inTransit';
-+    default:
-+      return null;
-+  }
-+}
-+
-+export function aggregateDraftBucketsForWarehouse(
-+  lines: DraftOpenLine[],
-+  warehouseCode: string,
-+): {
-+  draftBuckets: { inProduction: number; inTransit: number; confirmedOpen: number };
-+  sources: InventoryPositionSource[];
-+  unassignedOpenQty: number;
-+} {
-+  const draftBuckets = { inProduction: 0, inTransit: 0, confirmedOpen: 0 };
-+  const sources: InventoryPositionSource[] = [];
-+  let unassignedOpenQty = 0;
-+
-+  for (const line of lines) {
-+    if (line.openQty <= 0) continue;
-+    const status = normalizePurchaseDraftStatus(line.status);
-+    const bucket = mapDraftStatusToBucket(status);
-+    if (!bucket) continue;
-+
-+    if (line.warehouseCode == null) {
-+      unassignedOpenQty += line.openQty;
-+      continue;
-+    }
-+    if (line.warehouseCode !== warehouseCode) continue;
-+    if (
-+      bucket !== 'inProduction' &&
-+      bucket !== 'inTransit' &&
-+      bucket !== 'confirmedOpen'
-+    ) {
-+      continue;
-+    }
-+
-+    draftBuckets[bucket] += line.openQty;
-+    sources.push({
-+      source: 'purchase_draft',
-+      bucket,
-+      qty: line.openQty,
-+      draftId: line.draftId,
-+      atRisk: status === 'exception' ? true : line.atRisk,
-+    });
-+  }
-+
-+  return { draftBuckets, sources, unassignedOpenQty };
-+}
-+
-+export function mergeInventoryPosition(input: {
-+  dedupeMode?: InventoryDedupeMode;
-+  snapshot: {
-+    qtyAvailable: number;
-+    qtyInTransit: number;
-+    qtyInProduction: number;
-+    qtyReserved: number;
-+  };
-+  draftBuckets: {
-+    inProduction: number;
-+    inTransit: number;
-+    confirmedOpen: number;
-+  };
-+  sources?: InventoryPositionSource[];
-+  unassignedOpenQty?: number;
-+}): InventoryPositionBreakdown {
-+  const dedupeMode = input.dedupeMode ?? 'drafts_fill_gap';
-+  const s = input.snapshot;
-+  const d = input.draftBuckets;
-+
-+  let qtyInProduction = s.qtyInProduction;
-+  let qtyInTransit = s.qtyInTransit;
-+  let qtyConfirmedOpen = 0;
-+
-+  if (dedupeMode === 'snapshot_only') {
-+    // drafts ignored for bucket totals
-+  } else if (dedupeMode === 'sum_both') {
-+    qtyInProduction += d.inProduction;
-+    qtyInTransit += d.inTransit;
-+    qtyConfirmedOpen = d.confirmedOpen;
-+  } else {
-+    // drafts_fill_gap
-+    if (qtyInProduction <= 0) qtyInProduction = d.inProduction;
-+    if (qtyInTransit <= 0) qtyInTransit = d.inTransit;
-+    qtyConfirmedOpen = d.confirmedOpen;
-+  }
-+
-+  const qtyAvailable = s.qtyAvailable;
-+  const qtyReserved = s.qtyReserved;
-+  const qtyBackorder = 0;
-+  const effectiveQty =
-+    qtyAvailable + qtyInProduction + qtyInTransit + qtyConfirmedOpen - qtyReserved - qtyBackorder;
-+
-+  return {
-+    qtyAvailable,
-+    qtyInProduction,
-+    qtyInTransit,
-+    qtyConfirmedOpen,
-+    qtyReserved,
-+    qtyBackorder,
-+    effectiveQty,
-+    sources: input.sources ?? [],
-+    dedupeMode,
-+    unassignedOpenQty: input.unassignedOpenQty ?? 0,
-+  };
-+}
-+
-+function snapshotSources(snapshot: {
-+  qtyAvailable: number;
-+  qtyInTransit: number;
-+  qtyInProduction: number;
-+  qtyReserved: number;
-+}): InventoryPositionSource[] {
-+  const entries: Array<[InventoryPositionBucket, number]> = [
-+    ['available', snapshot.qtyAvailable],
-+    ['inTransit', snapshot.qtyInTransit],
-+    ['inProduction', snapshot.qtyInProduction],
-+    ['reserved', snapshot.qtyReserved],
-+  ];
-+  return entries
-+    .filter(([, qty]) => qty !== 0)
-+    .map(([bucket, qty]) => ({ source: 'snapshot', bucket, qty }));
-+}
-+
-+export async function resolveInventoryPosition(params: {
-+  skuId: string;
-+  warehouseCode: string;
-+  dedupeMode?: InventoryDedupeMode;
-+}): Promise<InventoryPositionBreakdown> {
-+  const [record] = await db
-+    .select({
-+      qtyAvailable: inventoryRecords.qtyAvailable,
-+      qtyInTransit: inventoryRecords.qtyInTransit,
-+      qtyInProduction: inventoryRecords.qtyInProduction,
-+      qtyReserved: inventoryRecords.qtyReserved,
-+    })
-+    .from(inventoryRecords)
-+    .where(
-+      and(
-+        eq(inventoryRecords.skuId, params.skuId),
-+        eq(inventoryRecords.warehouse, params.warehouseCode),
-+      ),
-+    )
-+    .orderBy(desc(inventoryRecords.recordedDate), desc(inventoryRecords.createdAt))
-+    .limit(1);
-+
-+  const snapshot = normalizeSnapshotForWarehouse(
-+    {
-+      qtyAvailable: record?.qtyAvailable ?? 0,
-+      qtyInTransit: record?.qtyInTransit ?? 0,
-+      qtyInProduction: record?.qtyInProduction ?? 0,
-+      qtyReserved: record?.qtyReserved ?? 0,
-+    },
-+    params.warehouseCode,
++  console.log('=== 7 鏈堝鐩橈細鏃х郴缁?vs T4B+T99 鏂规 A锛堢绾块噸绠楋級===\n');
++  console.log(
++    [
++      '鍒嗗眰'.padEnd(6),
++      '琛屾暟'.padStart(6),
++      '鏃MAPE'.padStart(10),
++      '鏂癢MAPE'.padStart(10),
++      '鏃у亸宸?.padStart(10),
++      '鏂板亸宸?.padStart(10),
++    ].join(' '),
 +  );
 +
-+  if (params.warehouseCode === IN_PRODUCTION_WAREHOUSE) {
-+    return mergeInventoryPosition({
-+      dedupeMode: params.dedupeMode,
-+      snapshot,
-+      draftBuckets: { inProduction: 0, inTransit: 0, confirmedOpen: 0 },
-+      sources: snapshotSources(snapshot),
-+    });
++  for (const [seg, list] of [...bySeg.entries()].sort((a, b) => b[1].length - a[1].length)) {
++    const oldW = wmape(list.map((r) => ({ system: r.old_system_d, actualD: r.actualD })));
++    const newW = wmape(list.map((r) => ({ system: r.new_system_d, actualD: r.actualD })));
++    const oldB = bias(list.map((r) => ({ system: r.old_system_d, actualM: r.actual_m })));
++    const newB = bias(list.map((r) => ({ system: r.new_system_d, actualM: r.actual_m })));
++    console.log(
++      [
++        seg.padEnd(6),
++        String(list.length).padStart(6),
++        pct(oldW).padStart(10),
++        pct(newW).padStart(10),
++        pct(oldB).padStart(10),
++        pct(newB).padStart(10),
++      ].join(' '),
++    );
 +  }
 +
-+  const draftRows = await db
-+    .select({
-+      id: purchaseDrafts.id,
-+      status: purchaseDrafts.status,
-+      qty: purchaseDrafts.qty,
-+      receivedQty: purchaseDrafts.receivedQty,
-+      itemWarehouseCode: pmcPlanItems.warehouseCode,
-+      planWarehouseCode: pmcPlans.targetWarehouseCode,
-+    })
-+    .from(purchaseDrafts)
-+    .leftJoin(pmcPlanItems, eq(purchaseDrafts.planItemId, pmcPlanItems.id))
-+    .leftJoin(pmcPlans, eq(pmcPlanItems.planId, pmcPlans.id))
-+    .where(eq(purchaseDrafts.skuId, params.skuId));
++  const oldW = wmape(rescored.map((r) => ({ system: r.old_system_d, actualD: r.actualD })));
++  const newW = wmape(rescored.map((r) => ({ system: r.new_system_d, actualD: r.actualD })));
++  const oldB = bias(rescored.map((r) => ({ system: r.old_system_d, actualM: r.actual_m })));
++  const newB = bias(rescored.map((r) => ({ system: r.new_system_d, actualM: r.actual_m })));
++  console.log('\n鍏ㄤ綋', `鏃MAPE=${pct(oldW)} 鏂癢MAPE=${pct(newW)} 鏃у亸宸?${pct(oldB)} 鏂板亸宸?${pct(newB)}`);
 +
-+  const draftLines: DraftOpenLine[] = draftRows.map((row) => ({
-+    draftId: row.id,
-+    status: row.status,
-+    openQty: openDraftQty(row.qty, row.receivedQty),
-+    warehouseCode: row.itemWarehouseCode ?? row.planWarehouseCode,
-+  }));
-+  const aggregated = aggregateDraftBucketsForWarehouse(draftLines, params.warehouseCode);
++  // T99 婕忔姤瑕嗙洊锛氱郴缁?0 浣嗕粛鏈夊疄闄?+  const t99Miss = q(`
++    SELECT COUNT(*)::int, COALESCE(SUM(act.qty_sold),0)::bigint
++    FROM sales_forecast_monthly sfm
++    JOIN sales_forecast_versions v ON v.id = sfm.version_id
++    JOIN sales_history_monthly act
++      ON act.sku_id = sfm.sku_id AND act.channel = sfm.platform
++     AND act.sale_year = 2026 AND act.month = 7
++    WHERE sfm.forecast_year = 2026 AND sfm.month = 7 AND v.status = 'published'
++      AND sfm.forecast_daily_avg::numeric = 0 AND act.qty_sold > 0
++      AND COALESCE(sfm.profile_segment,'') = 'T99'
++  `);
++  const [t99Rows, t99Qty] = t99Miss.split('|');
++  console.log(`\nT99 婕忔姤锛堢郴缁?0 鏈夊疄闄咃級: ${t99Rows} 琛? 瀹為檯鏈堥攢閲?${t99Qty}锛堣ˉ璐т晶 t99_fallback 瑕嗙洊锛塦);
 +
-+  return mergeInventoryPosition({
-+    dedupeMode: params.dedupeMode,
-+    snapshot,
-+    draftBuckets: aggregated.draftBuckets,
-+    sources: [...snapshotSources(snapshot), ...aggregated.sources],
-+    unassignedOpenQty: aggregated.unassignedOpenQty,
++  // peer floor smoke on known July underforecast
++  const peerDemo = applyPeerPlatformNearFloor({
++    forecastDaily: 0.23,
++    horizonIndex: 0,
++    peerPlatformRecentDaily: 20,
 +  });
-+}
-diff --git a/apps/web/server/lib/inventory-snapshot.ts b/apps/web/server/lib/inventory-snapshot.ts
-index 6bf27cc..3124f24 100644
---- a/apps/web/server/lib/inventory-snapshot.ts
-+++ b/apps/web/server/lib/inventory-snapshot.ts
-@@ -1,8 +1,13 @@
- import { eq, desc, and } from 'drizzle-orm';
- import { db, inventoryRecords, warehouses } from '@scm/db';
- import { IN_PRODUCTION_WAREHOUSE } from './inventory-constants.js';
-+import {
-+  effectiveQtyWithProductionFallback,
-+  resolveInventoryPosition,
-+  type InventoryPositionBreakdown,
-+} from './inventory-position.js';
- 
- export type InventorySnapshot = {
-   warehouseCode: string;
-   qtyAvailable: number;
-   qtyInTransit: number;
-@@ -68,40 +73,43 @@ export async function getLatestInventorySnapshot(
- }
- 
- export async function getRegionPoolSnapshot(
-   skuId: string,
-   regionGroup: string,
--): Promise<{ effectiveQty: number; warehouseCodes: string[]; byWarehouse: InventorySnapshot[] }> {
-+): Promise<{
-+  effectiveQty: number;
-+  warehouseCodes: string[];
-+  byWarehouse: Array<InventoryPositionBreakdown & { warehouseCode: string }>;
-+}> {
-   const whRows = await db
-     .select({ code: warehouses.code })
-     .from(warehouses)
-     .where(and(eq(warehouses.regionGroup, regionGroup), eq(warehouses.isActive, true)));
- 
-   const warehouseCodes = whRows.map((w) => w.code);
--  const byWarehouse: InventorySnapshot[] = [];
--  let effectiveQty = 0;
-+  const byWarehouse: Array<InventoryPositionBreakdown & { warehouseCode: string }> = [];
- 
-   for (const code of warehouseCodes) {
--    const snap = await getLatestInventorySnapshot(skuId, code);
--    byWarehouse.push(snap);
--    effectiveQty += snap.localEffectiveQty;
-+    const position = await resolveInventoryPosition({ skuId, warehouseCode: code });
-+    byWarehouse.push({ warehouseCode: code, ...position });
-   }
- 
--  effectiveQty += await getLatestInProductionQty(skuId);
-+  const effectiveQty = effectiveQtyWithProductionFallback(
-+    byWarehouse,
-+    await getLatestInProductionQty(skuId),
-+  );
- 
-   return { effectiveQty, warehouseCodes, byWarehouse };
- }
- 
- export async function sumEffectiveQtyForWarehouses(skuId: string, codes: string[]): Promise<number> {
-   if (!codes.length) return 0;
--  let total = 0;
-+  const positions: InventoryPositionBreakdown[] = [];
-   for (const code of codes) {
--    const snap = await getLatestInventorySnapshot(skuId, code);
--    total += snap.localEffectiveQty;
-+    positions.push(await resolveInventoryPosition({ skuId, warehouseCode: code }));
-   }
--  total += await getLatestInProductionQty(skuId);
--  return total;
-+  return effectiveQtyWithProductionFallback(positions, await getLatestInProductionQty(skuId));
- }
- 
- /** 姹囨€?SKU 鍦ㄦ墍鏈夊惎鐢ㄤ粨鐨勬渶鏂版湁鏁堜緵缁欙紙鍚?SKU 绾у湪浜ф睜锛?*/
- export async function getSkuTotalEffectiveQty(skuId: string): Promise<number> {
-   const whRows = await db
-diff --git a/apps/web/server/lib/purchase-draft-eta.test.ts b/apps/web/server/lib/purchase-draft-eta.test.ts
-new file mode 100644
-index 0000000..02e0957
---- /dev/null
-+++ b/apps/web/server/lib/purchase-draft-eta.test.ts
-@@ -0,0 +1,12 @@
-+import assert from 'node:assert/strict';
-+import { describe, it } from 'node:test';
-+import { buildEtaPatch } from './purchase-draft-eta.js';
-+
-+describe('buildEtaPatch', () => {
-+  it('sets both etaAvailable and confirmedDeliveryDate', () => {
-+    assert.deepEqual(buildEtaPatch('2026-08-15'), {
-+      etaAvailable: '2026-08-15',
-+      confirmedDeliveryDate: '2026-08-15',
-+    });
-+  });
-+});
-diff --git a/apps/web/server/lib/purchase-draft-eta.ts b/apps/web/server/lib/purchase-draft-eta.ts
-new file mode 100644
-index 0000000..aba4e69
---- /dev/null
-+++ b/apps/web/server/lib/purchase-draft-eta.ts
-@@ -0,0 +1,6 @@
-+export function buildEtaPatch(etaAvailable: string) {
-+  return {
-+    etaAvailable,
-+    confirmedDeliveryDate: etaAvailable,
-+  };
-+}
-diff --git a/apps/web/server/routes/procurement.ts b/apps/web/server/routes/procurement.ts
-index eceefff..3fa87bd 100644
---- a/apps/web/server/routes/procurement.ts
-+++ b/apps/web/server/routes/procurement.ts
-@@ -8,10 +8,11 @@ import {
-   normalizePurchaseDraftStatus,
-   PURCHASE_DRAFT_STATUS_LABEL,
-   type PurchaseDraftStatus,
- } from '../lib/purchase-draft-lifecycle.js';
- import { receivePurchaseDraft } from '../lib/purchase-draft-receipt.js';
-+import { buildEtaPatch } from '../lib/purchase-draft-eta.js';
- 
- function draftNo(): string {
-   const d = new Date();
-   const pad = (n: number) => String(n).padStart(2, '0');
-   return `PO-${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${Date.now().toString().slice(-6)}`;
-@@ -75,10 +76,11 @@ function mapDraftRow(row: {
-   planNo: string | null;
-   merchantCode: string | null;
-   merchantName: string | null;
-   status: string;
-   supplierConfirmedAt: Date | null;
-+  etaAvailable: string | null;
-   confirmedDeliveryDate: string | null;
-   actualShipDate: string | null;
-   actualReceivedDate: string | null;
-   receivedQty: number;
-   exceptionReason: string | null;
-@@ -114,10 +116,11 @@ procurementRoutes.get('/purchase-drafts', async (c) => {
-       planNo: pmcPlans.planNo,
-       merchantCode: pmcPlans.merchantCode,
-       merchantName: pmcPlans.merchantName,
-       status: purchaseDrafts.status,
-       supplierConfirmedAt: purchaseDrafts.supplierConfirmedAt,
-+      etaAvailable: purchaseDrafts.etaAvailable,
-       confirmedDeliveryDate: purchaseDrafts.confirmedDeliveryDate,
-       actualShipDate: purchaseDrafts.actualShipDate,
-       actualReceivedDate: purchaseDrafts.actualReceivedDate,
-       receivedQty: purchaseDrafts.receivedQty,
-       exceptionReason: purchaseDrafts.exceptionReason,
-@@ -157,10 +160,11 @@ procurementRoutes.patch('/purchase-drafts/:id', requireMenu('pmc.tracking'), asy
-   const user = await getCurrentUser(c);
-   const draftId = c.req.param('id');
-   const body = await c.req.json<{
-     status?: PurchaseDraftStatus;
-     remark?: string;
-+    etaAvailable?: string;
-     confirmedDeliveryDate?: string;
-     actualShipDate?: string;
-     exceptionReason?: string;
-     ownerUserId?: string;
-   }>();
-@@ -183,19 +187,23 @@ procurementRoutes.patch('/purchase-drafts/:id', requireMenu('pmc.tracking'), asy
-     updatedAt: new Date(),
-   };
- 
-   if (nextStatus) patch.status = nextStatus;
-   if (body.remark != null) patch.remark = body.remark;
--  if (body.confirmedDeliveryDate) patch.confirmedDeliveryDate = body.confirmedDeliveryDate;
-+  if (body.etaAvailable) {
-+    Object.assign(patch, buildEtaPatch(body.etaAvailable));
-+  } else if (body.confirmedDeliveryDate) {
-+    Object.assign(patch, buildEtaPatch(body.confirmedDeliveryDate));
-+  }
-   if (body.actualShipDate) patch.actualShipDate = body.actualShipDate;
-   if (body.exceptionReason != null) patch.exceptionReason = body.exceptionReason;
-   if (body.ownerUserId) patch.ownerUserId = body.ownerUserId;
- 
-   if (nextStatus === 'confirmed' && !existing.supplierConfirmedAt) {
-     patch.supplierConfirmedAt = new Date();
--    if (!body.confirmedDeliveryDate && existing.expectedDate) {
--      patch.confirmedDeliveryDate = existing.expectedDate;
-+    if (!body.etaAvailable && !body.confirmedDeliveryDate && existing.expectedDate) {
-+      Object.assign(patch, buildEtaPatch(existing.expectedDate));
-     }
-   }
- 
-   if (!existing.ownerUserId) {
-     patch.ownerUserId = user.id;
-diff --git a/apps/web/server/tasks/replenishmentForecast.ts b/apps/web/server/tasks/replenishmentForecast.ts
-index d4c1c93..960565a 100644
---- a/apps/web/server/tasks/replenishmentForecast.ts
-+++ b/apps/web/server/tasks/replenishmentForecast.ts
-@@ -7,14 +7,12 @@ import {
-   warehouses,
-   spus,
- } from '@scm/db';
- import { applyMoq, calcReplenishment, resolveEffectiveMoq } from '../lib/replenishment.js';
- import { formatCoverageReason, type InventoryHealth } from '../lib/replenishment-coverage.js';
--import {
--  getLatestInventorySnapshot,
--  getRegionPoolSnapshot,
--} from '../lib/inventory-snapshot.js';
-+import { getRegionPoolSnapshot } from '../lib/inventory-snapshot.js';
-+import { resolveInventoryPosition } from '../lib/inventory-position.js';
- import {
-   shouldDeferReplenishment,
-   splitQtyByDailyShare,
-   US_WAREHOUSE_CODES,
- } from '../lib/warehouse-domain.js';
-@@ -198,16 +196,19 @@ export async function runReplenishmentForecast() {
-         (h) => h.skuId === sku.id && h.warehouseCode === wh.code,
-       )!;
-       const coverage = coverageByWh[wh.code];
-       if (!coverage.needsReplenishment) continue;
- 
--      const snapshot = await getLatestInventorySnapshot(sku.id, wh.code);
-+      const position = await resolveInventoryPosition({
-+        skuId: sku.id,
-+        warehouseCode: wh.code,
-+      });
-       const eoqRop = (health.metrics.reorderPoint as number) ?? 0;
- 
-       if (wh.regionGroup === 'US') {
-         const defer = shouldDeferReplenishment({
--          warehouseEffective: snapshot.effectiveQty,
-+          warehouseEffective: position.effectiveQty,
-           warehouseRop: eoqRop,
-           networkEffective: usPool.effectiveQty,
-           networkRop: usNetworkRop,
-         });
-         if (defer && usNetworkCoverage >= coverage.targetCoverageDays) continue;
-@@ -231,11 +232,11 @@ export async function runReplenishmentForecast() {
-           : undefined;
-       const moqNote =
-         effectiveMoq > 0 && suggestedQty > rawQty ? `MOQ ${effectiveMoq}` : undefined;
-       const reasonBase = formatCoverageReason({
-         warehouseCode: wh.code,
--        effectiveQty: snapshot.effectiveQty,
-+        effectiveQty: position.effectiveQty,
-         avgDaily: dailyByWh[wh.code] ?? 0,
-         result: coverage,
-         poolNote,
-         moqNote,
-       });
-diff --git a/apps/web/src/lib/api.ts b/apps/web/src/lib/api.ts
-index 3094272..3acce6e 100644
---- a/apps/web/src/lib/api.ts
-+++ b/apps/web/src/lib/api.ts
-@@ -1457,10 +1457,11 @@ export const api = {
-         skuName: string;
-         qty: number;
-         receivedQty: number;
-         remainingQty: number;
-         expectedDate?: string | null;
-+        etaAvailable?: string | null;
-         confirmedDeliveryDate?: string | null;
-         actualShipDate?: string | null;
-         actualReceivedDate?: string | null;
-         source: string;
-         planId?: string | null;
-@@ -1477,10 +1478,11 @@ export const api = {
-   updatePurchaseTracking: (
-     id: string,
-     data: {
-       status?: PurchaseDraftStatus;
-       remark?: string;
-+      etaAvailable?: string;
-       confirmedDeliveryDate?: string;
-       actualShipDate?: string;
-       exceptionReason?: string;
-     },
-   ) => request(`/api/purchase-drafts/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
-diff --git a/apps/web/src/pages/PurchaseTrackingPage.tsx b/apps/web/src/pages/PurchaseTrackingPage.tsx
-index 9b66be8..6b7fa19 100644
---- a/apps/web/src/pages/PurchaseTrackingPage.tsx
-+++ b/apps/web/src/pages/PurchaseTrackingPage.tsx
-@@ -17,14 +17,21 @@ const STATUS_LABEL: Record<PurchaseDraftStatus, string> = {
-   received: '宸叉敹璐?,
-   exception: '寮傚父',
-   cancelled: '宸插彇娑?,
- };
- 
-+function displaySellableDate(d: {
-+  etaAvailable?: string | null;
-+  confirmedDeliveryDate?: string | null;
-+  expectedDate?: string | null;
-+}) {
-+  return d.etaAvailable ?? d.confirmedDeliveryDate ?? d.expectedDate ?? '-';
++  console.log(`\n璺ㄥ钩鍙版姮搴曟牱渚? 0.23 + peer20 鈫?${peerDemo.forecastDaily} (floor=${peerDemo.peerPlatformFloor})`);
 +}
 +
- const NEXT_ACTION: Partial<
-   Record<PurchaseDraftStatus, { label: string; status: PurchaseDraftStatus }[]>
- > = {
--  draft: [{ label: '纭浜ゆ湡', status: 'confirmed' }],
-   confirmed: [{ label: '鏍囪鐢熶骇涓?, status: 'in_production' }],
-   in_production: [{ label: '鏍囪寰呭彂璐?, status: 'ready_to_ship' }],
-   ready_to_ship: [{ label: '鏍囪鍦ㄩ€?, status: 'in_transit' }],
-   in_transit: [],
-   partial_received: [],
-@@ -35,32 +42,37 @@ export function PurchaseTrackingPage() {
-   const [searchParams] = useSearchParams();
-   const statusFilter = (searchParams.get('status') as PurchaseDraftStatus | null) ?? undefined;
-   const qc = useQueryClient();
-   const [receiveQty, setReceiveQty] = useState<Record<string, string>>({});
-   const [exceptionReason, setExceptionReason] = useState<Record<string, string>>({});
-+  const [confirmEtaDate, setConfirmEtaDate] = useState<Record<string, string>>({});
-+  const [updateEtaDate, setUpdateEtaDate] = useState<Record<string, string>>({});
++main();
+diff --git a/apps/web/server/lib/forecast-allcat-v41.test.ts b/apps/web/server/lib/forecast-allcat-v41.test.ts
+index 9721d5d..72fd1fb 100644
+--- a/apps/web/server/lib/forecast-allcat-v41.test.ts
++++ b/apps/web/server/lib/forecast-allcat-v41.test.ts
+@@ -21,16 +21,18 @@ import {
+   trendDecayFactor,
+   tierConservativeFactor,
+   applyV41CoreUpperBiasCap,
+   applyV41MicroSalesUpperCap,
+   applyV41TailUpperBiasCap,
+   buildT99ReviewMessage,
+   V41_T4B_NEAR_CONSERVATIVE_FACTOR,
+   V41_T4B_CONSERVATIVE_FACTOR,
++  V41_T4B_RECENT30_CAP,
++  V41_T4B_RECENT90_CAP,
+ } from './forecast-allcat-v41.js';
  
-   const { data: records = [], isLoading } = useQuery({
-     queryKey: ['purchase-tracking', statusFilter],
-     queryFn: () => api.getPurchaseTracking(statusFilter),
+ function buildSeasonalMonthlyRows(): Array<{ saleYear: number; month: number; qtySold: number }> {
+   const qtyByMonth: Record<number, number> = {
+     1: 600,
+     2: 700,
+     3: 800,
+     4: 900,
+@@ -298,18 +300,18 @@ describe('forecast-allcat-v41', () => {
+       baseDaily: 0,
+       productCategory: 'U',
+       forecastMonth: 7,
+       horizonIndex: 0,
+       metrics,
+       recent30DailyAvg: 0,
+       recent90DailyAvg: 4,
+     });
+-    assert.equal(near.forecastDaily, 2.4);
+-    assert.equal(far.forecastDaily, 1.728);
++    assert.equal(near.forecastDaily, 3.2);
++    assert.equal(far.forecastDaily, 2.304);
+     assert.equal(gated.forecastDaily, 0);
    });
  
-   const updateStatus = useMutation({
-     mutationFn: ({
-       id,
-       status,
-+      etaAvailable,
-       confirmedDeliveryDate,
-       actualShipDate,
-       exceptionReason: reason,
-     }: {
-       id: string;
--      status: PurchaseDraftStatus;
-+      status?: PurchaseDraftStatus;
-+      etaAvailable?: string;
-       confirmedDeliveryDate?: string;
-       actualShipDate?: string;
-       exceptionReason?: string;
-     }) =>
-       api.updatePurchaseTracking(id, {
--        status,
-+        ...(status ? { status } : {}),
-+        etaAvailable,
-         confirmedDeliveryDate,
-         actualShipDate,
-         exceptionReason: reason,
-       }),
-     onSuccess: () => {
-@@ -89,10 +101,11 @@ export function PurchaseTrackingPage() {
-       <Card>
-         <CardHeader>
-           <CardTitle>璺熷崟鍒楄〃</CardTitle>
-           <p className="text-sm text-text-sub">
-             鍐呴儴灞ョ害鍙拌处锛岄潪姝ｅ紡閲囪喘鍗曘€傜‘璁や氦鏈?鈫?鐢熶骇 鈫?鍙戣揣 鈫?鍦ㄩ€?鈫?鐧昏鍒拌揣鍥炲啓搴撳瓨銆?+            浜ゆ湡/鏃ユ湡琛ㄧず棰勮鍙敭鏃ワ紙鍒颁粨涓婃灦鍚庡彲鍞級锛屼笉鏄埌娓棩銆?             鏁版嵁鏉ヨ嚜{' '}
-             <Link to="/pmc/list" className="text-primary hover:underline">
-               璁″垝鍒楄〃
-             </Link>
-             涓凡纭鐨勮鍒掋€?@@ -105,11 +118,11 @@ export function PurchaseTrackingPage() {
-                 <th className="p-2 font-normal">璺熷崟鍗曞彿</th>
-                 <th className="p-2 font-normal">鏉ユ簮璁″垝</th>
-                 <th className="p-2 font-normal">鍟嗗</th>
-                 <th className="p-2 font-normal">SKU</th>
-                 <th className="p-2 font-normal">璁″垝/宸叉敹</th>
--                <th className="p-2 font-normal">鎵胯浜ゆ湡</th>
-+                <th className="p-2 font-normal">棰勮鍙敭鏃?/th>
-                 <th className="p-2 font-normal">鐘舵€?/th>
-                 <th className="p-2 font-normal">鎿嶄綔</th>
-               </tr>
-             </thead>
-             <tbody>
-@@ -136,19 +149,82 @@ export function PurchaseTrackingPage() {
-                       {d.qty} / {d.receivedQty ?? 0}
-                       {d.remainingQty > 0 && (
-                         <span className="ml-1 text-text-sub">锛堝墿 {d.remainingQty}锛?/span>
-                       )}
-                     </td>
--                    <td className="p-2">{d.confirmedDeliveryDate ?? d.expectedDate ?? '-'}</td>
-+                    <td className="p-2">{displaySellableDate(d)}</td>
-                     <td className="p-2">
-                       {d.statusLabel ?? STATUS_LABEL[d.status] ?? d.status}
-                       {d.exceptionReason && (
-                         <p className="mt-0.5 text-xs text-destructive">{d.exceptionReason}</p>
-                       )}
-                     </td>
-                     <td className="space-y-1 p-2">
-                       <div className="flex flex-wrap gap-1">
-+                        {d.status === 'draft' && (
-+                          <>
-+                            <Input
-+                              type="date"
-+                              className="h-8 w-36"
-+                              value={confirmEtaDate[d.id] ?? ''}
-+                              onChange={(e) =>
-+                                setConfirmEtaDate((prev) => ({ ...prev, [d.id]: e.target.value }))
-+                              }
-+                            />
-+                            <Button
-+                              size="sm"
-+                              variant="outline"
-+                              disabled={updateStatus.isPending || !confirmEtaDate[d.id]}
-+                              onClick={() =>
-+                                updateStatus.mutate({
-+                                  id: d.id,
-+                                  status: 'confirmed',
-+                                  etaAvailable: confirmEtaDate[d.id],
-+                                })
-+                              }
-+                            >
-+                              纭浜ゆ湡
-+                            </Button>
-+                          </>
-+                        )}
-+                        {d.status === 'confirmed' && (
-+                          <>
-+                            <Input
-+                              type="date"
-+                              className="h-8 w-36"
-+                              value={
-+                                updateEtaDate[d.id] ??
-+                                d.etaAvailable ??
-+                                d.confirmedDeliveryDate ??
-+                                ''
-+                              }
-+                              onChange={(e) =>
-+                                setUpdateEtaDate((prev) => ({ ...prev, [d.id]: e.target.value }))
-+                              }
-+                            />
-+                            <Button
-+                              size="sm"
-+                              variant="outline"
-+                              disabled={
-+                                updateStatus.isPending ||
-+                                !(updateEtaDate[d.id] ?? d.etaAvailable ?? d.confirmedDeliveryDate)
-+                              }
-+                              onClick={() =>
-+                                updateStatus.mutate({
-+                                  id: d.id,
-+                                  etaAvailable:
-+                                    updateEtaDate[d.id] ??
-+                                    d.etaAvailable ??
-+                                    d.confirmedDeliveryDate ??
-+                                    undefined,
-+                                })
-+                              }
-+                            >
-+                              鏇存柊鍙敭鏃?+                            </Button>
-+                          </>
-+                        )}
-                         {actions.map((a) => (
-                           <Button
-                             key={a.status}
-                             size="sm"
-                             variant="outline"
-diff --git a/docs/prd/mvp-overview.md b/docs/prd/mvp-overview.md
-index 40624cc..3f8e674 100644
---- a/docs/prd/mvp-overview.md
-+++ b/docs/prd/mvp-overview.md
-@@ -58,6 +58,7 @@
+   it('computeAllCatV41ForecastForMonth writes T99 floor into horizonFactors', () => {
+     const monthlyRows = Array.from({ length: 3 }, (_, i) => ({
+       saleYear: 2026,
+       month: i + 1,
+       qtySold: i === 2 ? 0 : 1,
+@@ -320,22 +322,22 @@ describe('forecast-allcat-v41', () => {
+       forecastYear: 2026,
+       forecastMonth: 7,
+       horizonIndex: 0,
+       monthlyRows,
+       recent30DailyAvg: 3,
+       recent90DailyAvg: 2,
+     });
+     assert.equal(result.tier, 'T99');
+-    assert.equal(result.forecastDaily, 1.8); // max(3,2)*0.6
++    assert.equal(result.forecastDaily, 2.4); // max(3,2)*0.8
+     assert.equal(result.algorithm, 't99_conservative_floor');
+-    assert.equal(result.formula, 'max(recent30,recent90)*0.6 with far decay');
++    assert.equal(result.formula, 'max(recent30,recent90)*0.8 with far decay');
+     assert.equal(result.kpiTarget, 'T99_CONSERVATIVE_FLOOR');
+     assert.equal(result.horizonFactors.t99FloorMode, 'recent_max06');
+-    assert.equal(result.horizonFactors.t99FloorDaily, 1.8);
++    assert.equal(result.horizonFactors.t99FloorDaily, 2.4);
+   });
  
- 鍚庣画 Phase
-   12. 鍚敤 Dify RAG + Workflow
-   13. 鍚堣瑙勫垯搴?+ Agent
-   14. 鐗╂祦鍦ㄩ€旇拷韪?+  15. 搴撳瓨瑙勫垝涓?PMC 婕旇繘锛堣 docs/superpowers/specs/2026-07-29-inventory-planning-pmc-evolution-design.md锛? ```
-diff --git a/docs/superpowers/specs/2026-07-29-inventory-planning-pmc-evolution-design.md b/docs/superpowers/specs/2026-07-29-inventory-planning-pmc-evolution-design.md
-new file mode 100644
-index 0000000..b5ebd16
---- /dev/null
-+++ b/docs/superpowers/specs/2026-07-29-inventory-planning-pmc-evolution-design.md
-@@ -0,0 +1,570 @@
-+# 璺ㄥ鐢靛晢搴撳瓨瑙勫垝涓庝緵搴斿晢 PMC 婕旇繘璁捐
-+
-+**鐗堟湰**锛歷1.0锛?026-07-29锛? 
-+**瀹氫綅**锛氬湪鐜版湁銆岄娴?鈫?琛ヨ揣 鈫?PMC 鈫?璺熷崟 鈫?鍒拌揣銆嶉棴鐜箣涓婏紝婕旇繘涓哄彲鍥炵瓟銆岃涓嶈琛ャ€佽ˉ澶氬皯銆佷綍鏃朵笅鍗曘€佷細鍚︽柇璐?绉帇銆嶇殑瑙勫垝骞冲彴锛涗笉鍙﹁捣绯荤粺銆?+
-+**鍏宠仈鏂囨。**锛?+
-+- `docs/prd/mvp-business-loop.md` 鈥?鐜版湁鏈夐檺涓氬姟闂幆
-+- `docs/prd/mvp-pmc.md` 鈥?PMC 璁″垝锛堥潪姝ｅ紡 PO锛?+- `docs/prd/mvp-inventory-replenishment.md` 鈥?瀹夊叏搴撳瓨涓庤ˉ璐?+- `docs/prd/mvp-overview.md` 鈥?鏄庣‘涓嶅仛鑼冨洿
-+- `docs/superpowers/specs/2026-06-29-sales-forecast-collaboration-design.md` 鈥?棰勬祴鍗忎綔
-+
-+---
-+
-+## 1. 鑳屾櫙涓庣洰鏍?+
-+### 1.1 瑕佸洖绛旂殑 4 涓棶棰?+
-+1. 浠€涔堟椂鍊欓渶瑕佽ˉ璐э紵
-+2. 搴旇琛ュ灏戯紵
-+3. 浠€涔堟椂鍊欏繀椤讳笅鍗曪紝鎵嶈兘瑕嗙洊鐢熶骇鍜屾捣杩愬懆鏈燂紵
-+4. 褰撳墠搴撳瓨銆佸湪閫斻€佺敓浜у拰闇€姹傚彉鍖栵紝鏄惁浼氶€犳垚鏂揣鎴栧簱瀛樼Н鍘嬶紵
-+
-+### 1.2 浜у搧杈圭晫
-+
-+绯荤粺鍚嶇О鍙〃杩颁负锛?*璺ㄥ鐢靛晢搴撳瓨瑙勫垝涓庝緵搴斿晢 PMC 骞冲彴**銆?+
-+鐢变袱涓浉浜掕繛鎺ョ殑鏍稿績寮曟搸缁勬垚锛?+
-+```text
-+搴撳瓨瑙勫垝寮曟搸锛?+闇€姹傞娴?+ 搴撳瓨浣嶇疆 + 鍒嗘鎻愬墠鏈?+ 瀹夊叏搴撳瓨/瑕嗙洊澶╂暟 + 琛ヨ揣寤鸿
-+
-+渚涘簲鍟?PMC 寮曟搸锛?+閲囪喘璁″垝 + 浜ゆ湡鎵胯 + 鐘舵€佽窡鍗?+ 鍙戣繍閲岀▼纰?+ 鍒拌揣鍥炲啓
-+```
-+
-+| 寮曟搸 | 璐熻矗 | 涓嶈礋璐?|
-+|------|------|--------|
-+| 搴撳瓨瑙勫垝 | 璇ヤ笉璇ヨˉ銆佽ˉ澶氬皯銆佷綍鏃朵笅鍗曘€佸彲瑙ｉ噴渚濇嵁 | 宸ュ巶鎺掍骇 MES銆佹寮忚储鍔?PO |
-+| 渚涘簲鍟?PMC | 渚涘簲鍟嗚兘鍚︽寜璁″垝鐢熶骇涓庝氦浠樸€侀璁″彲鍞棩 | 鑸瑰徃 API銆丗OB 璐圭敤缁撶畻锛堝凡鏈夌嫭绔嬫ā鍧楋級 |
-+
-+### 1.3 涓庣幇鐘剁殑鍏崇郴
-+
-+| 鑳藉姏 | 鐜扮姸 | 鏈璁?|
-+|------|------|--------|
-+| 棰勬祴鍗忎綔锛堢増鏈?瀹℃牳/瀛ｈ妭/鍑嗙‘鐜囷級 | 宸插疄鐜?| **澶嶇敤**锛屼粎琛ユ柇璐т慨姝?|
-+| 瑕嗙洊澶╂暟琛ヨ揣 + 鍋ュ悍鐏?| 宸插疄鐜?| **缁熶竴搴撳瓨浣嶇疆鍙ｅ緞**鍚庣户缁负涓荤瓥鐣?|
-+| 鎬绘彁鍓嶆湡 = 鐢熶骇 + 娴疯繍 + 鍏ヤ粨缂撳啿 | 宸插疄鐜帮紙3 娈碉級 | **婕旇繘涓鸿矾绾跨骇 profile**锛岃绠椾粛姹囨€讳负 `totalLeadDays` |
-+| PMC 璁″垝 + `purchase_drafts` 璺熷崟 | 宸插疄鐜?| **寮哄寲閲岀▼纰戜笌棰勮鍙敭鏃?* |
-+| 姝ｅ紡 PO / BOM / 渚涘簲鍟嗛棬鎴?/ 鑸瑰徃 API | PRD 鏄庣‘涓嶅仛 | **缁х画涓嶅仛** |
-+| FOB 缁撶畻 | 宸插疄鐜?| **涓庡彂杩愯窡韪В鑰?* |
-+| SAP | 鏃?| **浠呴鐣欏閮ㄦ爣璇嗗瓧娈?*锛屼笉寮€鍙戠湡瀹炴帴鍙?|
-+
-+**鍘熷垯**锛氭墿灞曠幇鏈夎〃涓庢湇鍔★紝绂佹骞宠鍐嶅缓涓€濂?`inventory_balance` / `demand_forecast` / `purchase_order` 涓昏矾寰勩€?+
-+### 1.4 鎴愬姛鏍囧噯
-+
-+- 鍋ュ悍鐏€佽ˉ璐у缓璁€丼KU 瑙勫垝椤点€佹€昏瀵瑰悓涓€ SKU+浠撲娇鐢?*鍚屼竴搴撳瓨浣嶇疆**瀹氫箟銆?+- 琛ヨ揣寤鸿鍙В閲婏細鑳藉睍绀鸿Е鍙戝師鍥犮€佸簱瀛樹綅缃瀯鎴愩€佹彁鍓嶆湡鎷嗚В銆侀娴嬬増鏈€佸缓璁笅鍗曟棩涓庡缓璁噺銆?+- 璺熷崟鑷冲皯鑳界淮鎶ゅ苟椹卞姩銆岄璁″彲鍞棩銆嶏紝琛ヨ揣瑕嗙洊璁＄畻浼樺厛浣跨敤璇ユ棩鏈熻涔夛紙鑰岄潪鍒版腐鏃ワ級銆?+- 鎻愬墠鏈熷彲鎸夈€屼緵搴斿晢 脳 鐩殑浠?脳 杩愯緭鏂瑰紡銆嶉厤缃紝缂虹渷鍥為€€鍒扮幇鏈?3 娈佃В鏋愩€?+
-+---
-+
-+## 2. 鍐崇瓥鎽樿
-+
-+| 椤?| 閫夋嫨 |
-+|----|------|
-+| 婕旇繘鏂瑰紡 | 鍦ㄧ幇闂幆涓婂姞娣憋紝涓嶉噸閫犺鍒掔郴缁?|
-+| 榛樿琛ヨ揣绛栫暐 | 瑕嗙洊澶╂暟 + 鍋ュ悍鐏紙鐜扮綉锛夛紱Z 鍊兼湇鍔℃按骞充负鍙€夐珮绾х瓥鐣ワ紝瀛楁鍏堥鐣?|
-+| 搴撳瓨浣嶇疆 | 鍗曚竴鏈嶅姟 `resolveInventoryPosition`锛涘叏閾捐矾寮哄埗鍚屾簮 |
-+| 鎻愬墠鏈?| 鏂板缓 `lead_time_profiles`锛涚畻娉曞澶栦粛鐢?`totalLeadDays` + `breakdown` |
-+| 姝ｅ紡 PO | 缁х画鐢?`purchase_drafts`锛涗笉寮曞叆瀹℃壒娴?PO |
-+| 鍙戣繍璺熻釜 | 杞婚噺 `shipments` / `shipment_milestones`锛屼笌 FOB 瑙ｈ€︼紱MVP 浜哄伐缁存姢 |
-+| 棰勬祴 | 涓嶉噸寤洪娴嬪伐浣滃彴锛涜ˉ銆屾湁搴撳瓨澶╂暟銆嶆湁鏁堟棩闇€姹?|
-+| SAP | `source_system` / `external_id` 绛夐鐣欙紱瑙勫垝閫昏緫鐣欏湪鏈郴缁?|
-+| 璁＄畻杩芥函 | 鍏堝己鍖栧缓璁?鍋ュ悍 `metrics` 蹇収锛涗簤璁鍚庡啀鎶?`planning_runs` 琛?|
-+
-+---
-+
-+## 3. 鐩爣闂幆
-+
-+```text
-+閿€鍞鍗?棰勬祴锛堝凡鏈夛級
-+    鈫?+搴撳瓨浣嶇疆鏍哥畻锛堟湰璁捐 P0锛?+    鈫?+瀹夊叏搴撳瓨 / 瑕嗙洊澶╂暟锛堝凡鏈夛紝鍙ｅ緞瀵归綈锛?+    鈫?+鑷姩閲嶈璐?/ 琛ヨ揣寤鸿锛堝凡鏈夛紝鍙В閲婂寮猴級
-+    鈫?+PMC 璁″垝 + 閲囪喘璺熷崟锛堝凡鏈夛級
-+    鈫?+鐢熶骇/鍙戣繍閲岀▼纰?+ 棰勮鍙敭鏃ワ紙鏈璁?P0鈥揚2锛?+    鈫?+鍒拌揣鍏ュ簱鍥炲啓锛堝凡鏈夛級
-+    鈫?+鍙敭搴撳瓨涓庡仴搴风伅鏇存柊
-+```
-+
-+瑙﹀彂鍒ゆ柇锛堜繚鎸佸苟寮哄寲锛夛細
-+
-+```text
-+渚涘簲瑕嗙洊澶╂暟 = 搴撳瓨浣嶇疆 / 棰勮鏃ラ渶姹?+
-+鑻?渚涘簲瑕嗙洊澶╂暟 < 鎬绘彁鍓嶆湡 + 瀹夊叏搴撳瓨瑕嗙洊鏈?+鎴?搴撳瓨浣嶇疆 <= 閲嶈璐х偣
-+鈫?鐢熸垚琛ヨ揣寤鸿
-+```
-+
-+**绂佹**浠呯敤銆岀幇璐у簱瀛?<= 閲嶈璐х偣銆嶄綔涓哄敮涓€瑙﹀彂鏉′欢銆?+
-+---
-+
-+## 4. 搴撳瓨浣嶇疆锛圥0锛?+
-+### 4.1 瀹氫箟
-+
-+```text
-+搴撳瓨浣嶇疆 =
-+  鍙敭搴撳瓨锛坬tyAvailable锛?++ 鐢熶骇涓紙qtyInProduction + 璺熷崟 mapped production锛?++ 鍦ㄩ€旓紙qtyInTransit + 璺熷崟 mapped transit锛?++ 宸茬‘璁ゆ湭鐢熶骇锛堣窡鍗?confirmed/draft 鏈敹璐ч噺锛屾寜绛栫暐璁″叆锛?+- 宸插垎閰嶏紙qtyReserved锛?+- 鏈氦浠樻瑺鍗曪紙鍙€夛紝棣栫増鍙负 0锛?+```
-+
-+棰勪笅鍗曠瓑涓氬姟閲忥細寤剁画鐜版湁瀵煎叆绾﹀畾锛堝鍐欏叆 `qtyReserved` / 鎬昏 `qtyPreOrder` 灞曠ず锛夛紝鍦?position 鏋勬垚涓?*鏄惧紡鏍囨敞鏉ユ簮**锛岄伩鍏嶉噸澶嶅姞鍑忋€?+
-+### 4.2 璺熷崟鐘舵€?鈫?浣嶇疆妗舵槧灏?+
-+| `purchase_drafts.status` | 璁″叆妗?| 鏁伴噺鍙ｅ緞 |
-+|--------------------------|--------|----------|
-+| `draft` / `confirmed` | `confirmedOpen`锛堝凡纭鏈敓浜э級 | `qty - receivedQty` |
-+| `in_production` / `ready_to_ship` | `inProduction` | 鍚屼笂 |
-+| `in_transit` / `partial_received` | `inTransit` | 鏈敹璐ч儴鍒?|
-+| `received` / `cancelled` | 涓嶈鍏ュ紑鏀鹃噺 | 鈥?|
-+| `exception` | `confirmedOpen` | `qty - receivedQty`锛沗sources` 鎵撴爣 `atRisk: true` |
-+
-+涓庨涔?瀵煎叆蹇収鐨?`qtyInProduction` / `qtyInTransit` **鍘婚噸瑙勫垯**锛堝繀椤诲啓姝伙級锛?+
-+1. **浼樺厛蹇収**锛氳嫢褰撴棩蹇収宸插惈銆屼緵搴斿晢璁㈠崟 / 璋冩嫧鍦ㄩ€斻€嶇瓑鍚堣锛岃窡鍗曞紑鏀鹃噺浠呭湪銆屽揩鐓ф湭瑕嗙洊璇?SKU+浠撱€嶆垨銆屾樉寮忓惎鐢ㄨ窡鍗曞彔鍔犲紑鍏炽€嶆椂鍙犲姞銆?+2. 棣栫増榛樿锛?*蹇収鏉冨▉ + 璺熷崟浠呰ˉ榻愬揩鐓т负 0 鐨勭己鍙?*锛圥0 閿佸畾 `drafts_fill_gap`锛涘彲閰嶇疆涓?`snapshot_only` | `drafts_fill_gap` | `sum_both`锛夈€?+3. 鏋勬垚鏄庣粏鍐欏叆 metrics锛屼究浜庡璁°€屼负浠€涔堜綅缃槸 5800銆嶃€?+
-+### 4.3 鏈嶅姟濂戠害
-+
-+鏂板缓锛堝缓璁矾寰勶級`apps/web/server/lib/inventory-position.ts`锛?+
-+```ts
-+type InventoryPositionBreakdown = {
-+  qtyAvailable: number;
-+  qtyInProduction: number;
-+  qtyInTransit: number;
-+  qtyConfirmedOpen: number;
-+  qtyReserved: number;
-+  qtyBackorder: number; // 棣栫増 0
-+  effectiveQty: number; // = 浣嶇疆鍚堣
-+  sources: Array<{ source: string; bucket: string; qty: number }>;
-+  dedupeMode: 'snapshot_only' | 'drafts_fill_gap' | 'sum_both';
-+};
-+
-+function resolveInventoryPosition(params: {
-+  skuId: string;
-+  warehouseCode: string;
-+  asOf?: Date;
-+}): Promise<InventoryPositionBreakdown>;
-+```
-+
-+**寮哄埗璋冪敤鏂?*锛歚inventory-health-service`銆佽ˉ璐т换鍔°€乣reorder` 寤鸿鐢熸垚銆佹湭鏉?SKU 瑙勫垝 API銆傜姝㈠悇妯″潡鑷 `available + transit`銆?+
-+### 4.4 鏁版嵁妯″瀷
-+
-+棣栫増**涓嶆柊寤?* `inventory_balance` / `inventory_transaction`銆傜户缁細
-+
-+- `inventory_records` + 椋炰功鏃ュ揩鐓?+- `purchase_drafts` 寮€鏀鹃噺
-+- 璁＄畻缁撴灉杩?`reorder_suggestions.metrics` / `inventory_health_snapshots`
-+
-+寰呯湡瀹?WMS 娴佹按鎺ュ叆鍚庡啀璇勪及娴佹按琛ㄣ€?+
-+---
-+
-+## 5. 鎻愬墠鏈燂紙P1锛?+
-+### 5.1 瀹屾暣閾捐矾锛堜笟鍔¤涔夛級
-+
-+```text
-+閲囪喘涓嬪崟 鈫?鎺ュ崟 鈫?澶囨枡 鈫?鐢熶骇 鈫?璐ㄦ/鍖呰 鈫?鍥藉唴闆嗚揣
-+鈫?璁㈣埍 鈫?娴疯繍 鈫?娓呭叧 鈫?鍒颁粨 鈫?涓婃灦 鈫?鍙敭
-+```
-+
-+### 5.2 閰嶇疆缁村害
-+
-+鎻愬墠鏈?*涓?*鍙寕鍦ㄤ緵搴斿晢涓绘暟鎹笂銆傜淮搴︼細
-+
-+```text
-+supplier/merchant + origin_location + destination_warehouse + transport_mode
-+```
-+
-+### 5.3 瀛樺偍锛歚lead_time_profiles`
-+
-+| 瀛楁 | 璇存槑 |
-+|------|------|
-+| id | uuid |
-+| merchant_code | 鍟嗗/渚涘簲鍟嗙紪鐮侊紝鍙┖琛ㄧず浠撻粯璁?|
-+| origin_location | 璧疯繍鍦帮紙鑷敱鏂囨湰鎴栫爜琛級锛屽彲绌?|
-+| destination_warehouse_code | 鐩殑浠擄紝蹇呭～鎴栦笌 region 浜岄€変竴 |
-+| transport_mode | `fcl` / `lcl` / `air` / `express` / `rail` / `truck_air` / `direct` |
-+| production_days | 澶囨枡+鐢熶骇+璐ㄦ锛堝彲鍐嶆媶瀛愬瓧娈碉紝棣栫増鍚堝苟锛?|
-+| booking_days | 璁㈣埍绛夊緟 |
-+| transit_days | 骞茬嚎杩愯緭 |
-+| customs_days | 娓呭叧 |
-+| inbound_days | 鍒颁粨+涓婃灦锛堝搴旂幇 `inboundBufferDays`锛?|
-+| domestic_days | 鍥藉唴闆嗚揣/杩愯緭锛岄粯璁?0 |
-+| lead_time_std_dev | 鍙€夛紝楂樼骇瀹夊叏搴撳瓨鐢?|
-+| is_default | 鍚岀淮搴﹂粯璁ゆ。 |
-+| version / effective_from | 鍙€夌増鏈?|
-+| source_system / external_id | SAP 棰勭暀 |
-+| created_at / updated_at | |
-+
-+**瑙ｆ瀽浼樺厛绾?*锛堟浛鎹?鎵╁睍鐜?`lead-time-resolver`锛夛細
-+
-+1. 绮剧‘鍖归厤 profile锛堝晢瀹?+ 浠?+ 杩愯緭鏂瑰紡锛?+2. 浠撶骇榛樿 profile / `warehouses.shipping_lead_days` + `inbound_buffer_days`
-+3. 鍟嗗 `production_lead_days` / `sku_suppliers.lead_time_days` / SKU `lead_time_days`
-+4. 浠ｇ爜甯搁噺锛堝鐜?`DEFAULT_SHIPPING_LEAD_BY_WAREHOUSE`锛?+
-+### 5.4 璁＄畻杈撳嚭
-+
-+淇濇寔骞舵墿灞?`LeadTimeBreakdown`锛?+
-+```text
-+totalLeadDays =
-+  production_days + domestic_days + booking_days
-+  + transit_days + customs_days + inbound_days
-+```
-+
-+灞曠ず灞傚彲鏄剧ず 6 娈碉紱鍐呴儴琛ヨ揣鍙緷璧?`totalLeadDays`銆? 
-+**琛ヨ揣涓?ETA 涓€寰嬩娇鐢ㄣ€岄璁″彲鍞棩銆嶈涔?*锛屼笉绛変簬鍒版腐鏃ャ€?+
-+---
-+
-+## 6. 瀹夊叏搴撳瓨涓庤ˉ璐ч噺锛堝榻愮幇缃戯級
-+
-+### 6.1 榛樿锛氳鐩栧ぉ鏁?+
-+娌跨敤 `replenishment-coverage`锛?+
-+```text
-+瑕嗙洊澶╂暟 = 搴撳瓨浣嶇疆 / 棰勮鏃ラ渶姹?+鏈€鏅氫笅鍗曞墿浣欏ぉ鏁?= 瑕嗙洊澶╂暟 - 鎬绘彁鍓嶆湡 - 瀹夊叏搴撳瓨澶╂暟
-+寤鸿閲?= max(0, 鐩爣瑕嗙洊澶╂暟 脳 鏃ラ渶姹?- 搴撳瓨浣嶇疆)锛屽啀鎸?MOQ 鎶崌
-+```
-+
-+鐩爣瑕嗙洊澶╂暟榛樿锛歚鎬绘彁鍓嶆湡 + 2 脳 瀹夊叏搴撳瓨澶╂暟`锛堜笌鐜板疄鐜颁竴鑷达紝鍙厤缃級銆?+
-+### 6.2 缁忓吀 ROP锛堝苟瀛橈級
-+
-+```text
-+閲嶈璐х偣 = 鎻愬墠鏈熼渶姹?+ 瀹夊叏搴撳瓨
-+鎻愬墠鏈熼渶姹?= 棰勮鏃ラ渶姹?脳 鎬绘彁鍓嶆湡
-+```
-+
-+`safety_stock_config` 缁х画鎵胯浇 ROP/EOQ/瑕嗙洊鍙傛暟锛涜ˉ璐т换鍔′互瑕嗙洊鍋ュ悍鐏负涓伙紝ROP 浣滃苟鍒楀睍绀轰笌棰勮绫诲瀷銆?+
-+### 6.3 楂樼骇锛氭湇鍔℃按骞筹紙P3锛屽瓧娈甸鐣欙級
-+
-+```text
-+safety_stock = Z 脳 蟽_demand 脳 鈭歀
-+# 鎴栧惈鎻愬墠鏈熸尝鍔細
-+Z 脳 鈭?L路蟽_d虏 + 渭_d虏 路 蟽_L虏)
-+```
-+
-+鍦?`safety_stock_config`锛堟垨 planning 鍙傛暟锛夐鐣欙細
-+
-+- `demand_std_dev`
-+- `lead_time_std_dev`
-+- `service_level`
-+- `safety_stock_method`锛歚coverage_days` | `z_demand` | `z_demand_leadtime`
-+
-+**棣栫増涓嶉粯璁ゅ惎鐢?Z 鍊煎叕寮忋€?*
-+
-+### 6.4 閲囪喘绾︽潫
-+
-+寤鸿閲忎慨姝ｉ『搴忥細
-+
-+1. 鐩爣搴撳瓨 鈭?搴撳瓨浣嶇疆  
-+2. `max(缁撴灉, MOQ, 鏈€灏忕敓浜ф壒閲?`  
-+3. 鍚戜笂鍙栨暣鍒板寘瑁呭€嶆暟锛堟湁鏁版嵁鏃讹級  
-+4. 鏁存煖/鎵樼洏锛堟湁鏁版嵁鏃讹紝鍙悗缃級  
-+5. 渚涘簲鍟嗕骇鑳?/ 棰勭畻 / 浠撳 鈥?**棣栫増浠呭娉ㄦ垨浜哄伐鏀归噺锛屼笉鍋氳嚜鍔ㄧ‖绾︽潫寮曟搸**
-+
-+---
-+
-+## 7. 闇€姹傞娴嬶紙澧為噺锛?+
-+### 7.1 澶嶇敤
-+
-+缁х画浣跨敤 `sales_forecast_*` 鍗忎綔浣撶郴锛涜ˉ璐т紭鍏堝凡鍙戝竷鐗堟湰锛堢幇鏈?`forecast-published-resolve`锛夈€?+
-+### 7.2 鏂揣淇锛圥2锛?+
-+鍘嗗彶鍥為€€鏃ラ渶姹傛敼涓烘湁鏁堥攢鍞€熷害锛?+
-+```text
-+鏈夋晥鏃ラ渶姹?= 鏈夊簱瀛樻湡闂撮攢閲?/ 鏈夊簱瀛橀攢鍞ぉ鏁?+```
-+
-+瀹炵幇瑕佺偣锛?+
-+- 杈撳叆锛歚sales_history` + 鍚屾湡鍙敭搴撳瓨锛堝揩鐓ф垨銆屽彲鍞?> 0銆嶈繎浼硷級
-+- 杈撳嚭锛氫緵 `historicalAvgDaily` 鍥為€€锛沵etrics 璁板綍 `stockoutAdjusted: true` 涓庡ぉ鏁?+- 鏃犲彲闈犲簱瀛樺巻鍙叉椂鍥為€€涓恒€屽疄闄呴攢閲?/ 鏃ュ巻澶╂暟銆嶏紝骞舵爣璁版湭淇
-+
-+### 7.3 涓嶅仛
-+
-+- 涓嶆柊寤哄钩琛?`demand_forecast` 琛? 
-+- 涓嶆妸銆屼粎鏀寔绉诲姩骞冲潎涓夌鏂规硶銆嶅綋浣滄柊椤圭洰锛涚幇鏈夊熀绾?鍗忓悓宸茶鐩栧苟鏇村己
-+
-+---
-+
-+## 8. 渚涘簲鍟?PMC 涓庨璁″彲鍞棩锛圥0鈥揚1锛?+
-+### 8.1 寤剁画
-+
-+- `pmc_plans` / `pmc_plan_items`锛氶渶姹傝鍒掍笅鍙? 
-+- `purchase_drafts`锛氬唴閮ㄨ窡鍗曠湡鐩? 
-+- 鍒拌揣 鈫?`pmc_receipts` 鈫?搴撳瓨鍥炲啓  
-+
-+### 8.2 璺熷崟瀛楁鎵╁睍
-+
-+鍦?`purchase_drafts`锛堟垨 1:1 鎵╁睍琛級澧炲姞锛?+
-+| 瀛楁 | 璇存槑 |
-+|------|------|
-+| planned_production_done_date | 璁″垝鐢熶骇瀹屾垚 |
-+| actual_production_done_date | 瀹為檯鐢熶骇瀹屾垚 |
-+| planned_pickup_date | 棰勮鎻愯揣 |
-+| etd | 棰勮寮€鑸?|
-+| eta_port | 棰勮鍒版腐 |
-+| customs_done_date | 棰勮/瀹為檯娓呭叧瀹屾垚 |
-+| eta_warehouse | 棰勮鍏ヤ粨 |
-+| eta_available | **棰勮鍙敭鏃?*锛堣ˉ璐т笌寤惰璁＄畻涓诲瓧娈碉級 |
-+| delay_days | 鐩稿鍘熸壙璇虹殑寤惰锛堝彲璁＄畻锛?|
-+| transport_mode | 杩愯緭鏂瑰紡锛岃В鏋?lead time 鐢?|
-+
-+鐜版湁 `confirmed_delivery_date`锛?*璇箟杩佺Щ涓烘壙璇哄彲鍞棩**锛涜嫢鍘嗗彶鏁版嵁娣风敤鍒版腐鏃ワ紝杩佺Щ璇存槑鍐欏叆 metrics/澶囨敞锛孶I 鏍囨槑銆屾壙璇哄彲鍞€嶃€?+
-+### 8.3 閲岀▼纰戞彁閱?+
-+鎵╁睍 `purchase_follow_up_reminders.milestone` 鏋氫妇/绾﹀畾鍊硷紝渚嬪锛歚confirm` / `production` / `etd` / `eta_port` / `eta_available`銆?+
-+### 8.4 鏄庣‘涓嶅仛锛堣繎鏈燂級
-+
-+- 姣忔棩宸ュ巶浜ч噺褰曞叆銆佺己鏂欍€丅OM/`material_requirements` UI  
-+- 渚涘簲鍟嗛棬鎴? 
-+- 姝ｅ紡 PO 瀹℃壒  
-+
-+---
-+
-+## 9. 鍙戣繍涓庢捣杩愯妭鐐癸紙P2锛?+
-+### 9.1 涓?FOB 瑙ｈ€?+
-+`/logistics/fob-*` 淇濇寔璐圭敤鍒嗘憡缁撶畻銆備緵搴旈摼鑺傜偣璺熻釜浣跨敤鏂拌交妯″瀷銆?+
-+### 9.2 琛細`shipments` / `shipment_milestones`
-+
-+**shipments**
-+
-+| 瀛楁 | 璇存槑 |
-+|------|------|
-+| id / shipment_no | |
-+| draft_id / plan_item_id | 鍏宠仈璺熷崟鎴栬鍒掕锛堝彲绌猴級 |
-+| sku_id / qty | 鍙琛屾椂鍚庣画鍐嶆媶鏄庣粏琛紱棣栫増涓€绁ㄤ竴 SKU 鎴?JSON lines |
-+| container_no / booking_ref / tracking_no | |
-+| transport_mode | |
-+| status | 涓庨噷绋嬬鏈€鍚庡畬鎴愯妭鐐逛竴鑷?|
-+| eta_available | 鍐椾綑渚夸簬鍒楄〃 |
-+| source_system / external_id | 棰勭暀 |
-+| created_at / updated_at | |
-+
-+**shipment_milestones**
-+
-+| 瀛楁 | 璇存槑 |
-+|------|------|
-+| shipment_id | |
-+| milestone | `booked` / `loaded` / `departed` / `arrived_port` / `customs` / `received_wh` / `available` |
-+| planned_at / actual_at | |
-+| remark | |
-+
-+MVP锛氫汉宸ョ淮鎶よ妭鐐癸紱寤惰澶╂暟 = `actual/ today - planned`銆?+
-+### 9.3 鍒楄〃椤?+
-+銆屽湪閫斿拰娴疯繍绠＄悊銆嶉鐗堝彲浠ユ槸璺熷崟绛涢€夊寮?+ shipments 鍒楄〃锛屼笉蹇呭厛鍋氬ぇ椹鹃┒鑸便€?+
-+---
-+
-+## 10. 椤甸潰婕旇繘
-+
-+### 10.1 浼樺厛
-+
-+| 椤甸潰 | 璇存槑 |
-+|------|------|
-+| SKU 搴撳瓨瑙勫垝椤?| 鍗?SKU锛氫綅缃媶鍒嗐€佹棩闇€姹傘€佸畨鍏ㄥ簱瀛樸€丷OP銆佹€绘彁鍓嶆湡銆佽鐩栧ぉ鏁般€侀璁℃柇璐ф棩銆佸缓璁笅鍗曟棩/閲忋€佺畝鏄撳簱瀛樻洸绾?|
-+| 琛ヨ揣寤鸿鍙В閲?| 鍦ㄧ幇 `/pmc/suggestions` 灞曠ず鏋勬垚涓庤Е鍙戝師鍥狅紙浣犳枃妗ｄ腑鐨勫瓧娈垫竻鍗曪級 |
-+| 璺熷崟閲岀▼纰?| `/pmc/tracking` 澧炲姞鍙敭鏃ヤ笌鍏抽敭鏃ユ湡 |
-+
-+### 10.2 鍏跺悗
-+
-+| 椤甸潰 | 璇存槑 |
-+|------|------|
-+| 鍙戣繍鑺傜偣鐪嬫澘 | 鍩轰簬 shipments |
-+| 瑙勫垝椹鹃┒鑸?| 鑱氬悎鍋ュ悍蹇収銆佸缓璁緟瀹°€佸欢璇壒娆°€佹柇璐х巼绛夛紱渚濊禆 P0 鍙ｅ緞绋冲畾 |
-+| 棰勬祴绠＄悊 | **宸叉湁**锛屼粎鍔犳柇璐т慨姝ｈ鏄?鎸囨爣 |
-+
-+### 10.3 SKU 瑙勫垝椤垫渶灏忔寚鏍?+
-+```text
-+褰撳墠鍙敭 / 宸插垎閰?/ 鐢熶骇涓?/ 鍦ㄩ€?/ 宸茬‘璁ゆ湭鐢熶骇
-+棰勮鏃ラ渶姹?/ 瀹夊叏搴撳瓨 / 閲嶈璐х偣 / 鎬绘彁鍓嶆湡
-+渚涘簲瑕嗙洊澶╂暟 / 棰勮鏂揣鏃?/ 寤鸿涓嬪崟鏃?/ 寤鸿閲囪喘閲?/ 棰勮鍙敭鍒拌揣
-+```
-+
-+搴撳瓨鏇茬嚎锛氱畝鍖栦负銆屾寜鏃ラ渶姹傛秷鑰?+ 宸茬煡 `eta_available` 琛ョ粰闃惰穬銆嶏紱涓嶅仛澶嶆潅浠跨湡寮曟搸銆?+
-+### 10.4 琛ヨ揣寤鸿鍙В閲婄ず渚嬶紙浜у搧鏂囨锛?+
-+```text
-+瑙﹀彂鍘熷洜锛氬簱瀛樹綅缃綆浜庨噸璁㈣揣鐐癸紙鎴栬鐩栧ぉ鏁颁笉瓒筹級
-+搴撳瓨浣嶇疆锛?,800 = 鍙敭 2,400 + 鐢熶骇涓?鈥?+ 鍦ㄩ€?鈥?鈭?宸插垎閰?鈥?+鏃ュ潎闇€姹傦細120锛堟潵婧愶細宸插彂甯冮娴?version=鈥?/ 鎴栨柇璐т慨姝ｅ巻鍙诧級
-+鎬绘彁鍓嶆湡锛?5 = 鐢熶骇 25 + 鈥?
-+瀹夊叏搴撳瓨锛?,800锛堟柟娉曪細coverage_days / 14 澶╋級
-+閲嶈璐х偣锛?,600
-+寤鸿琛ヨ揣閲忥細12,000锛堝凡鎸?MOQ 璋冩暣锛?+棰勮缂鸿揣鏃ユ湡 / 寤鸿涓嬪崟鏃ユ湡 / 棰勮鍙敭鍒拌揣
-+```
-+
-+鐢ㄦ埛鍔ㄤ綔淇濇寔锛氭帴鍙椼€佹敼閲忋€佹敼渚涘簲鍟嗐€佸悎骞惰繘 PMC銆佸拷鐣?鍘熷洜銆?+
-+---
-+
-+## 11. 璁＄畻杩芥函
-+
-+姣忔琛ヨ揣/鍋ュ悍璁＄畻鍐欏叆锛堝缓璁?metrics JSON锛夛細
-+
-+```text
-+planning_calculated_at
-+forecast_version_id / demand_source
-+lead_time_breakdown + profile_id
-+inventory_position breakdown + dedupe_mode
-+safety_stock_method + parameters
-+suggested_qty / suggested_date / health_status
-+```
-+
-+鐙珛 `planning_runs` 琛細**寤舵湡鍒?*鍑虹幇澶ч噺銆屽綋鏃朵负浣曞缓璁?12000銆嶅璁￠渶姹傛椂鍐嶆娊銆?+
-+---
-+
-+## 12. SAP / 澶栭儴绯荤粺鍏煎
-+
-+鍦?SKU銆佸晢瀹躲€佽窡鍗曘€佸彂杩愩€佹彁鍓嶆湡 profile 涓婃寜闇€棰勭暀锛?+
-+```text
-+source_system
-+external_id
-+external_line_id
-+external_version
-+sync_status
-+last_sync_time
-+```
-+
-+鎺ュ叆椤哄簭锛堜粎瑙勫垝锛屾湰璁捐涓嶅疄鏂斤級锛?+
-+1. 渚涘簲鍟嗕笌鐗╂枡涓绘暟鎹? 
-+2. 閲囪喘璁㈠崟闀滃儚  
-+3. 搴撳瓨涓庡叆搴? 
-+4. PO 鍙樻洿  
-+5. 鍙戣揣閫氱煡涓庣墿娴? 
-+
-+**鏈郴缁熺户缁淮鎶?*锛氶娴嬨€佸畨鍏ㄥ簱瀛?瑕嗙洊绛栫暐銆佽ˉ璐у缓璁€佷緵搴斿晢鎵胯涓庣敓浜?鍙戣繍璺熻繘銆佹捣杩?娓呭叧鎻愬墠鏈熴€佸紓甯镐笌缁╂晥鐩稿叧杩愯惀鏁版嵁銆?+
-+---
-+
-+## 13. 鍒嗘湡
-+
-+| 闃舵 | 鍐呭 | 楠屾敹 |
-+|------|------|------|
-+| **P0** | `resolveInventoryPosition` 鍚屾簮锛涜窡鍗?`eta_available` 璇箟锛涘缓璁?metrics 鏋勬垚 | 鍚?SKU 鍋ュ悍涓庡缓璁?effectiveQty 涓€鑷达紱UI 鍙浣嶇疆鎷嗗垎 |
-+| **P1** | `lead_time_profiles` + resolver锛汼KU 瑙勫垝椤碉紱寤鸿鍙В閲?UI锛涜窡鍗曢噷绋嬬鏃ユ湡 | 鎹?profile 鍚庡缓璁噺/鏃ユ湡鍙樺寲鍙祴锛涘崟 SKU 椤靛彲鐢?|
-+| **P2** | 鏂揣淇鏈夋晥鏃ラ渶姹傦紱`shipments` 杞绘ā鍨?+ 浜哄伐鑺傜偣锛涘欢璇垪琛?| 鏈夋柇璐у彶 SKU 鍥為€€闇€姹傚崌楂橈紱鑺傜偣鍙淮鎶?|
-+| **P3** | Z 鍊煎彲閫夌瓥鐣ワ紱瑙勫垝椹鹃┒鑸?KPI锛沞xternal_id 閾洪綈 | 鏂规硶鍒囨崲鏈夐厤缃笌鍗曟祴锛涢┚椹惰埍鍙鑱氬悎 |
-+| **P4+** | SAP 闀滃儚閫傞厤锛堝彟寮€璁捐锛?| 鈥?|
-+
-+宸ョ▼鏃佽矾锛堜笉闃诲鏈富绾匡紝鍙苟琛岋級锛氬簱瀛樻煡璇㈤〉/绯荤粺浠诲姟椤佃矾鐢辨帴閫氥€?+
-+---
-+
-+## 14. 闈炶寖鍥达紙鏈璁℃槑纭笉鍋氾級
-+
-+- 姝ｅ紡閲囪喘鍗曞鎵规祦銆佷緵搴斿晢闂ㄦ埛  
-+- BOM / MRP / `material_requirements` 涓氬姟鍖? 
-+- 鑸瑰徃/鎵胯繍鍟嗗疄鏃惰建杩?API  
-+- 涓?FOB 缁撶畻妯″潡鍚堝苟  
-+- 閲嶅缓棰勬祴宸ヤ綔鍙版垨骞宠瑙勫垝涓绘暟鎹? 
-+- 瀹屾暣搴撳瓨娴佹按璐?/ WMS  
-+- 鐜伴噾娴併€佷粨瀹广€佷繚璐ㄦ湡鑷姩纭害鏉熷紩鎿? 
-+- 鐪熷疄 SAP 鎺ュ彛寮€鍙? 
-+
-+---
-+
-+## 15. 涓昏浠ｇ爜钀界偣锛堝疄鏂芥椂鍙傝€冿級
-+
-+| 鍖哄煙 | 璺緞 |
-+|------|------|
-+| 鎻愬墠鏈?| `apps/web/server/lib/lead-time-resolver.ts`銆乣replenishment-coverage.ts` |
-+| 鍋ュ悍/琛ヨ揣 | `apps/web/server/lib/inventory-health-service.ts`銆乣tasks/replenishmentForecast.ts` |
-+| 搴撳瓨浣嶇疆锛堟柊锛?| `apps/web/server/lib/inventory-position.ts`锛? 鍗曟祴锛?|
-+| Schema | `packages/db/src/schema/procurement.ts`銆乣warehouses.ts`锛涙柊 `lead-time-profiles` / `shipments` |
-+| 璺熷崟 UI | `PurchaseTrackingPage`銆丳MC 璇︽儏 |
-+| 寤鸿 UI | `ReorderSuggestionsPage` |
-+| 瑙勫垝椤碉紙鏂帮級 | 寤鸿璺敱 `/inventory/planning/:skuId` 鎴?`/pmc/sku/:skuId` |
-+| 棰勬祴鍥為€€ | historical avg 璁＄畻澶?+ 鏂揣淇宸ュ叿鍑芥暟 |
-+
-+---
-+
-+## 16. 椋庨櫓涓庡紑鏀鹃棶棰?+
-+| 椋庨櫓 | 缂撹В |
-+|------|------|
-+| 椋炰功蹇収涓庤窡鍗曟暟閲忓弻璁?| 榛樿 `drafts_fill_gap`锛沵etrics 鏆撮湶 mode |
-+| 鍘嗗彶 `confirmed_delivery_date` 璇箟涓嶆竻 | UI 鏍囨敞锛涙柊瀛楁 `eta_available` 涓轰富 |
-+| 鎻愬墠鏈熷垎娈佃繃澶氬鑷存棤浜虹淮鎶?| 閰嶇疆鐢?6 娈碉紝褰曞叆鍙敤 3 娈垫眹鎬绘ā鏉?|
-+| 椹鹃┒鑸辫繃鏃╁缓璁惧鑷村彛寰勫啀鏀?| 椹鹃┒鑸辨斁 P3锛孭0 鍏堥攣 position |
-+| 鍦ㄤ骇蹇収涓?SKU 绾ч€昏緫浠?| 鐗╃悊浠?position **涓?*鎶?`IN-PRODUCTION` 鍏ㄩ噺鎽婅繘姣忎釜鐩殑浠擄紱鍖哄煙姹犲崟鐙姞涓€娆?fill_gap |
-+
-+### 16.1 P0 宸查攣瀹氬喅绛?+
-+| 椤?| 鍐冲畾 |
-+|----|------|
-+| 鍘婚噸妯″紡榛樿 | `drafts_fill_gap` |
-+| 鐗╃悊浠?`effectiveQty` | `available + transit + production(draft/fill) + confirmedOpen 鈭?reserved`锛堜笉鍚妸鍏ㄥ眬鍦ㄤ骇閲嶅璁″叆姣忎釜浠擄級 |
-+| `exception` 寮€鏀鹃噺 | 璁″叆 `confirmedOpen`锛宍sources` 鎵撴爣 `atRisk: true` |
-+| 璺熷崟浠撳綊灞?| `pmc_plan_items.warehouse_code` 鈫?鍚﹀垯 `pmc_plans.target_warehouse_code`锛涚殕绌哄垯涓嶈繘鐗╃悊浠?position锛堣鍏?`unassignedOpen` 浠?metrics锛?|
-+| `eta_available` | 鏂板垪锛涘啓鍏ユ椂鍚屾 `confirmed_delivery_date`锛涘垪琛ㄥ睍绀轰互 `eta_available` 浼樺厛 |
-+| SKU 瑙勫垝椤佃彍鍗?| **P1** 鍐嶅畾锛堝€欓€夛細`/inventory/planning/:skuId`锛?|
-+| 鎻愬墠鏈熻繍杈撴柟寮忕淮 | **P1**锛氬彲鍏堝晢瀹?鐩殑浠擄紝杩愯緭鏂瑰紡鍙┖ |
-+
-+### 16.2 鏈樁娈甸潪鐩爣锛堣竟鐣岋級
-+
-+P0 **涓嶅寘鍚?*锛歚lead_time_profiles`銆丼KU 瑙勫垝椤?UI銆佸彂杩?`shipments` 琛ㄣ€佹柇璐т慨姝ｃ€乑 鍊煎畨鍏ㄥ簱瀛樸€佽鍒掗┚椹惰埍銆丼AP 鎺ュ彛銆佹寮?PO銆丅OM銆丗OB 鏀归€犮€?+
-+---
-+
-+## 17. Self-review
-+
-+- 鏃犮€孴BD 绠楁硶鍙﹁銆嶇┖娲烇細P0鈥揚2 琛屼负涓庤〃瀛楁宸插啓娓? 
-+- 涓?`mvp-overview`銆屼笉鍋氭寮?PO/BOM銆嶆棤鍐茬獊  
-+- 涓嶈姹備竴娆℃€у疄鐜扮敤鎴峰師绋垮叏閮ㄩ〉闈笌 Z 鍊兼ā鍨? 
-+- 棰勬祴銆丗OB銆侀涔﹀悓姝ヨ亴璐ｈ竟鐣屽凡鍒掓竻  
-+
-+---
-+
-+**瀹炵幇璁″垝**锛歚docs/superpowers/plans/2026-07-29-inventory-planning-boundary-p0.md`锛堣竟鐣岄攣瀹?+ P0锛夈€侾1/P2 鍙﹀紑 plan銆?diff --git a/packages/db/drizzle/0052_purchase_draft_eta_available.sql b/packages/db/drizzle/0052_purchase_draft_eta_available.sql
-new file mode 100644
-index 0000000..2a213ad
---- /dev/null
-+++ b/packages/db/drizzle/0052_purchase_draft_eta_available.sql
-@@ -0,0 +1,4 @@
-+ALTER TABLE "purchase_drafts" ADD COLUMN IF NOT EXISTS "eta_available" date;
-+UPDATE "purchase_drafts"
-+SET "eta_available" = "confirmed_delivery_date"
-+WHERE "eta_available" IS NULL AND "confirmed_delivery_date" IS NOT NULL;
-diff --git a/packages/db/drizzle/meta/_journal.json b/packages/db/drizzle/meta/_journal.json
-index ce7f17a..ee6dd78 100644
---- a/packages/db/drizzle/meta/_journal.json
-+++ b/packages/db/drizzle/meta/_journal.json
-@@ -314,8 +314,22 @@
-       "idx": 45,
-       "version": "6",
-       "when": 1780717058185,
-       "tag": "0046_news_intel_menu",
-       "breakpoints": true
-+    },
-+    {
-+      "idx": 46,
-+      "version": "6",
-+      "when": 1785216000000,
-+      "tag": "0047_drop_creator_ops_menu",
-+      "breakpoints": true
-+    },
-+    {
-+      "idx": 47,
-+      "version": "6",
-+      "when": 1785216000001,
-+      "tag": "0052_purchase_draft_eta_available",
-+      "breakpoints": true
-     }
-   ]
+   it('buildT99ReviewMessage uses neutral copy when floor params omitted', () => {
+     const metrics = {
+       q1: 0, q3: 0, q6: 0, q12: 0,
+       d2: 0, d3: 0, d6: 0, d12: 0,
+       active2: 0, active6: 0, active12: 0,
+       cv6: 9, trendRatio: 1,
+@@ -739,17 +741,17 @@ describe('forecast-allcat-v41', () => {
+       forecastMonth: 7,
+       horizonIndex: 0,
+       metrics,
+       recent30DailyAvg: 1.93,
+       recent90DailyAvg: 1.36,
+     });
+     assert.equal(bounded.growthSignal, false);
+     assert.ok(bounded.forecastDaily > 0);
+-    assert.ok(bounded.forecastDaily <= 1.36 * 0.9);
++    assert.ok(bounded.forecastDaily <= 1.36 * 1.0); // V41_T4B_RECENT90_CAP
+   });
+ 
+   it('isAllCatV41RecentSalesAbsent detects weak and declining tail momentum', () => {
+     assert.equal(
+       isAllCatV41RecentSalesAbsent({
+         recent30DailyAvg: 0,
+         recent90DailyAvg: 0,
+         metrics: { q1: 0, active2: 2 },
+@@ -970,16 +972,25 @@ describe('forecast-allcat-v41', () => {
+       },
+       recent30DailyAvg: 0.1,
+       recent90DailyAvg: 0.2,
+     });
+     assert.equal(bounded.forecastDaily, 0);
+     assert.equal(bounded.ghostGated, true);
+   });
+ 
++  it('T4B plan-A constants: near 0.9 / far 0.75 / caps 0.95 & 1.0', () => {
++    assert.equal(V41_T4B_NEAR_CONSERVATIVE_FACTOR, 0.9);
++    assert.equal(V41_T4B_CONSERVATIVE_FACTOR, 0.75);
++    assert.equal(V41_T4B_RECENT30_CAP, 0.95);
++    assert.equal(V41_T4B_RECENT90_CAP, 1.0);
++    assert.equal(tierConservativeFactor('T4B', 'C', 0), 0.9);
++    assert.equal(tierConservativeFactor('T4B', 'C', 3), 0.75);
++  });
++
+   it('T4B near horizon uses relaxed conservative factor and blend floor', () => {
+     assert.equal(tierConservativeFactor('T4B', 'C', 0), V41_T4B_NEAR_CONSERVATIVE_FACTOR);
+     assert.equal(tierConservativeFactor('T4B', 'C', 3), V41_T4B_CONSERVATIVE_FACTOR);
+ 
+     const metrics = {
+       q1: 300,
+       q3: 900,
+       q6: 1800,
+diff --git a/apps/web/server/lib/forecast-allcat-v41.ts b/apps/web/server/lib/forecast-allcat-v41.ts
+index cf1c869..723fd0b 100644
+--- a/apps/web/server/lib/forecast-allcat-v41.ts
++++ b/apps/web/server/lib/forecast-allcat-v41.ts
+@@ -161,19 +161,19 @@ export const V41_T4A_FLOOR_D6_RATIO = 0.08;
+ export const V41_T4A_NEAR_BLEND_FLOOR = 0.65;
+ export const V41_T4A_NEAR_D6_FLOOR = 0.7;
+ export const V41_T4A_NEAR_RECENT90_FLOOR = 0.6;
+ export const V41_T4A_FLEX_DECAY_FROM_K = 3;
+ export const V41_T4A_FLEX_DECAY_FACTOR = 0.72;
+ export const V41_T4A_MIN_TREND_RATIO = 0.8;
+ export const V41_T4_TAIL_MONTH_DISCOUNT = 0.8;
+ 
+-/** T4B 绋冲畾淇濆簳灞傦細杩滄湀鍘?ghost锛涜繎绔?k鈮? 鏀惧淇濆畧绯绘暟骞舵姮搴曪紙缂撹В绯荤粺鎬т綆浼帮級 */
+-export const V41_T4B_CONSERVATIVE_FACTOR = 0.6;
+-export const V41_T4B_NEAR_CONSERVATIVE_FACTOR = 0.8;
++/** T4B 绋冲畾淇濆簳灞傦細杩滄湀鍘?ghost锛涜繎绔?k鈮? 鏀惧淇濆畧绯绘暟骞舵姮搴曪紙缂撹В绯荤粺鎬т綆浼帮紝鏂规 A 娓╁拰涔愯锛?*/
++export const V41_T4B_CONSERVATIVE_FACTOR = 0.75;
++export const V41_T4B_NEAR_CONSERVATIVE_FACTOR = 0.9;
+ export const V41_T4B_FLOOR_MIN_DAILY = 0;
+ export const V41_T4B_FLOOR_D6_RATIO = 0.08;
+ export const V41_T4B_NEAR_BLEND_FLOOR = 0.7;
+ export const V41_T4B_NEAR_D6_FLOOR = 0.75;
+ export const V41_T4B_NEAR_RECENT90_FLOOR = 0.65;
+ export const V41_T4B_FLEX_DECAY_FROM_K = 3;
+ export const V41_T4B_FLEX_DECAY_FACTOR = 0.72;
+ 
+@@ -202,18 +202,18 @@ export const V41_CORE_NEAR_UPPER_BIAS = 0.1;
+ export const V41_CORE_FLEX_UPPER_BIAS = 0.08;
+ 
+ /** T4A 涓婄晫鐩稿 recent/anchor 鐨勮创鍚堢郴鏁?*/
+ export const V41_T4A_ANCHOR_CAP = 0.95;
+ export const V41_T4A_RECENT90_CAP = 0.85;
+ export const V41_T4A_RECENT30_CAP = 0.8;
+ export const V41_T4A_D6_CAP = 0.9;
+ export const V41_T4B_ANCHOR_CAP = 1.0;
+-export const V41_T4B_RECENT90_CAP = 0.9;
+-export const V41_T4B_RECENT30_CAP = 0.85;
++export const V41_T4B_RECENT90_CAP = 1.0;
++export const V41_T4B_RECENT30_CAP = 0.95;
+ export const V41_T4B_D6_CAP = 0.95;
+ 
+ function nonNegative(value: number | undefined | null): number {
+   if (value == null || !Number.isFinite(value)) return 0;
+   return Math.max(0, value);
  }
-diff --git a/packages/db/src/schema/procurement.ts b/packages/db/src/schema/procurement.ts
-index 8fa6ae2..76e8e4c 100644
---- a/packages/db/src/schema/procurement.ts
-+++ b/packages/db/src/schema/procurement.ts
-@@ -48,10 +48,12 @@ export const purchaseDrafts = pgTable(
-     sourceRefId: uuid('source_ref_id'),
-     planItemId: uuid('plan_item_id').references(() => pmcPlanItems.id),
-     status: purchaseDraftStatusEnum('status').notNull().default('draft'),
-     supplierConfirmedAt: timestamp('supplier_confirmed_at', { withTimezone: true }),
-     confirmedDeliveryDate: date('confirmed_delivery_date'),
-+    /** 棰勮鍙敭鏃ワ紙琛ヨ揣/寤惰涓诲瓧娈碉紱鍐欏叆鏃跺悓姝?confirmedDeliveryDate锛?*/
-+    etaAvailable: date('eta_available'),
-     actualShipDate: date('actual_ship_date'),
-     actualReceivedDate: date('actual_received_date'),
-     receivedQty: integer('received_qty').notNull().default(0),
-     exceptionReason: text('exception_reason'),
-     ownerUserId: uuid('owner_user_id').references(() => users.id),
-
+ 
+ /** 鏈€杩戜竴涓嚜鐒舵湀鎶樼畻鏃ュ潎锛堣蛋姝ユ湀琛ㄥ彛寰勶紝绾︾瓑浜庤繎 30 澶╋級 */
+@@ -1043,17 +1043,17 @@ function tierFormula(tier: AllCatV41Tier, metrics?: Pick<AllCatV41Metrics, 'acti
+     case 'T4A':
+       return '0.50*d3 + 0.45*d6 + 0.05*d12';
+     case 'T4B':
+       if (metrics && isT4BShortHistory(metrics)) {
+         return '0.55*d3 + 0.45*d6';
+       }
+       return '0.35*d3 + 0.45*d6 + 0.20*d12';
+     case 'T99':
+-      return 'max(recent30,recent90)*0.6 with far decay';
++      return 'max(recent30,recent90)*0.8 with far decay';
+     default:
+       return 'no_forecast';
+   }
+ }
+ 
+ function tierKpiTarget(tier: AllCatV41Tier): string {
+   switch (tier) {
+     case 'T1':
+@@ -1269,17 +1269,17 @@ export function buildT99ReviewMessage(input: {
+   const platformLabel = formatAllCatV41PlatformLabel(input.platform);
+   let floorNote: string;
+   if (
+     input.floorMode === 'zero_gate_recent30' ||
+     (input.floorDaily != null && input.floorDaily <= 0)
+   ) {
+     floorNote = '杩?0澶╂柇閿€锛岀郴缁熷綊闆?;
+   } else if (input.floorDaily != null && input.floorDaily > 0) {
+-    floorNote = `绯荤粺淇濆畧淇濆簳鏃ュ潎 ${roundDaily(input.floorDaily)}锛坢ax(杩?0,杩?0)脳0.6锛岃繙鏈堣“鍑忥級`;
++    floorNote = `绯荤粺淇濆畧淇濆簳鏃ュ潎 ${roundDaily(input.floorDaily)}锛坢ax(杩?0,杩?0)脳0.8锛岃繙鏈堣“鍑忥級`;
+   } else {
+     floorNote = '绯荤粺淇濆畧淇濆簳锛堟湁杩?0鍔ㄩ攢鏃跺嚭鏁帮紝鏂攢褰掗浂锛?;
+   }
+   return (
+     `T99 ${floorNote}锛堝叏鍝佺被 V4.1锛夛細${input.skuCode}锛屽晢鍝佸垎绫?${input.productCategory}锛屽钩鍙?${platformLabel}锛沗 +
+     `娉㈠姩杈冨ぇ / 閿€閲忚繛缁€т笉瓒?/ 鏍稿績娓犻亾淇″彿涓嶈冻锛沗 +
+     `杩?鏈堝彉寮傜郴鏁?cv6=${roundDaily(input.metrics.cv6)}锛岃秼鍔挎瘮 trend=${roundDaily(input.metrics.trendRatio)}`
+   );
+diff --git a/apps/web/server/lib/forecast-demand.test.ts b/apps/web/server/lib/forecast-demand.test.ts
+index 46b66f4..8f378b4 100644
+--- a/apps/web/server/lib/forecast-demand.test.ts
++++ b/apps/web/server/lib/forecast-demand.test.ts
+@@ -146,31 +146,31 @@ describe('forecast-demand', () => {
+       horizonIndex: 4,
+     });
+     assert.equal(near.daily, 0);
+     assert.equal(near.mode, 'zero_gate_recent30');
+     assert.equal(far.daily, 0);
+     assert.equal(far.mode, 'zero_gate_recent30');
+   });
+ 
+-  it('resolveT99SystemFloorDaily uses max(r30,r90)*0.6 near and *0.72 far', () => {
+-    // max(2, 4) * 0.6 = 2.4; far = 2.4 * 0.72 = 1.728
++  it('resolveT99SystemFloorDaily uses max(r30,r90)*0.8 near and *0.72 far', () => {
++    // max(2, 4) * 0.8 = 3.2; far = 3.2 * 0.72 = 2.304
+     const near = resolveT99SystemFloorDaily({
+       recent30DailyAvg: 2,
+       recent90DailyAvg: 4,
+       horizonIndex: 1,
+     });
+     const far = resolveT99SystemFloorDaily({
+       recent30DailyAvg: 2,
+       recent90DailyAvg: 4,
+       horizonIndex: 3,
+     });
+-    assert.equal(near.daily, 2.4);
++    assert.equal(near.daily, 3.2);
+     assert.equal(near.mode, 'recent_max06');
+-    assert.equal(far.daily, 1.728);
++    assert.equal(far.daily, 2.304);
+     assert.equal(far.mode, 'recent_max06');
+   });
+ 
+   it('resolveT99ReplenishmentFallbackDaily zero-gates when recent30 is 0', () => {
+     assert.equal(
+       resolveT99ReplenishmentFallbackDaily({
+         recent30DailyAvg: 0,
+         recent90DailyAvg: 10,
+@@ -182,27 +182,27 @@ describe('forecast-demand', () => {
+ 
+   it('T99 zero forecast falls back to recent sales for replenishment', () => {
+     assert.equal(
+       resolveT99ReplenishmentFallbackDaily({
+         recent30DailyAvg: 2,
+         recent90DailyAvg: 1,
+         categoryPoolFloorDaily: 0.1,
+       }),
+-      1.2,
++      1.6,
+     );
+     const detailed = resolveHorizonConsumptionDailyDetailed({
+       forecastDailyAvg: 0,
+       horizonMonthIndex: 0,
+       profileSegment: 'T99',
+       recent30DailyAvg: 2,
+       recent90DailyAvg: 1,
+     });
+     assert.equal(detailed.demandSource, 't99_fallback');
+-    assert.equal(detailed.daily, 1.2);
++    assert.equal(detailed.daily, 1.6);
+     assert.equal(
+       resolveHorizonConsumptionDaily({
+         forecastDailyAvg: 0,
+         horizonMonthIndex: 0,
+         profileSegment: 'T1',
+         recent30DailyAvg: 2,
+       }),
+       0,
+diff --git a/apps/web/server/lib/forecast-demand.ts b/apps/web/server/lib/forecast-demand.ts
+index 284f230..ab25ec2 100644
+--- a/apps/web/server/lib/forecast-demand.ts
++++ b/apps/web/server/lib/forecast-demand.ts
+@@ -174,17 +174,17 @@ export function resolveHorizonConsumptionDailyDetailed(input: {
+   }
+ 
+   return { daily: base, demandSource: 'forecast' };
+ }
+ 
+ /** T99 绯荤粺涓嶉娴嬫椂鐨勮ˉ璐у厹搴曟棩鍧囷紙涓嶈繘涓?KPI锛?*/
+ export type T99FloorMode = 'zero_gate_recent30' | 'recent_max06';
+ 
+-export const T99_SYSTEM_FLOOR_DISCOUNT = 0.6;
++export const T99_SYSTEM_FLOOR_DISCOUNT = 0.8;
+ export const T99_SYSTEM_FLOOR_FLEX_DECAY_FROM_K = 3;
+ export const T99_SYSTEM_FLOOR_FLEX_DECAY_FACTOR = 0.72;
+ 
+ function nonNegDaily(value?: number | null): number {
+   if (value == null || !Number.isFinite(value)) return 0;
+   return Math.max(0, value);
+ }
+ 
+@@ -221,23 +221,23 @@ export function resolveT99SystemFloorDaily(input: {
+     mode: 'recent_max06',
+   };
+ }
+ 
+ export function resolveT99ReplenishmentFallbackDaily(input: {
+   recent30DailyAvg?: number | null;
+   recent90DailyAvg?: number | null;
+   categoryPoolFloorDaily?: number | null;
+-  /** 鐩稿杩戞湡鍔ㄩ攢鐨勬姌鎵ｏ紝榛樿 0.6 */
++  /** 鐩稿杩戞湡鍔ㄩ攢鐨勬姌鎵ｏ紝榛樿 0.8锛堜笌 T99_SYSTEM_FLOOR_DISCOUNT 瀵归綈锛?*/
+   discount?: number;
+ }): number {
+   const discount =
+     input.discount != null && Number.isFinite(input.discount) && input.discount > 0
+       ? input.discount
+-      : 0.6;
++      : T99_SYSTEM_FLOOR_DISCOUNT;
+   const recent30 =
+     input.recent30DailyAvg != null && Number.isFinite(input.recent30DailyAvg)
+       ? Math.max(0, input.recent30DailyAvg)
+       : 0;
+   if (recent30 <= 0) return 0;
+   const recent90 =
+     input.recent90DailyAvg != null && Number.isFinite(input.recent90DailyAvg)
+       ? Math.max(0, input.recent90DailyAvg)
+diff --git a/apps/web/src/components/ForecastStrategySection.tsx b/apps/web/src/components/ForecastStrategySection.tsx
+index 1708ed4..8d7cb98 100644
+--- a/apps/web/src/components/ForecastStrategySection.tsx
++++ b/apps/web/src/components/ForecastStrategySection.tsx
+@@ -36,17 +36,17 @@ type Props = {
+ 
+ const ALL_CATEGORY_V41_TIERS = [
+   ['T1', '鏍稿績绋冲畾楂橀攢閲?, 'A/C: AMAZON d6鈮?0锛汢: AMAZON d6鈮?8锛涜繎6鏈堝叏鍔ㄩ攢銆佽繎2鏈堣繛缁姩閿€銆乧v6鈮?.65~0.70', '0.15*d2 + 0.55*d6 + 0.30*d12锛屽啀鍋氳秼鍔?鏈堜唤/淇濆畧绯绘暟涓庝笂涓嬮檺鎴柇', '鏍稿績 KPI锛歐MAPE鈮?0%锛孊ias卤10%'],
+   ['T2', '鏍稿績楂橀攢閲?, 'A/U: d6闂ㄦ鏇撮珮锛汢/C: AMAZON d6鈮?~10锛沘ctive6鈮?銆乤ctive2=2銆乧v6鈮?.80~0.90', '0.25*d3 + 0.55*d6 + 0.20*d12锛屽啀鍋氳秼鍔?鏈堜唤/淇濆畧绯绘暟涓庝笂涓嬮檺鎴柇', '鏍稿績 KPI锛歐MAPE鈮?5%锛孊ias卤10%'],
+   ['T3', '涓珮閿€閲忕ǔ瀹氬眰', 'A/B/C: AMAZON 涓瓑閿€閲忎笖杩炵画鍔ㄩ攢锛沜v6鈮?.95~1.05锛涚敤浜庢墿澶ц鐩栦絾涓嶇壓鐗叉牳蹇冨噯纭巼', '0.35*d3 + 0.50*d6 + 0.15*d12锛屽啀鍋氳秼鍔?鏈堜唤/淇濆畧绯绘暟涓庝笂涓嬮檺鎴柇', '涓婚娴?KPI锛歐MAPE鈮?5%锛孊ias卤15%'],
+   ['T3P', '闈?AMAZON 浼樿川绋冲畾灞?, '浠?B/C 鐨?UNKNOWN/WALMART/TEMU/TIKTOK锛岃姹?d6鈮?~8銆乤ctive6=6銆乤ctive2=2銆乧v6鈮?.50~0.55', '0.45*d3 + 0.45*d6 + 0.10*d12锛岄潪鏍稿績娓犻亾鏇村亸杩?/6鏈?, '涓婚娴?KPI锛歐MAPE鈮?5%锛孊ias卤15%'],
+   ['T4A', 'AMAZON 杈圭晫鍙娴嬪眰', 'A/B/C: 浠?AMAZON锛岄攢閲忚緝浣庝絾浠嶆湁杩炵画鎬э紱V4.1 瀵?B/C 瑕佹眰 active2=2锛汥 浠呮瀬灏戠ǔ瀹氬搧鍙繘 T4A', '0.50*d3 + 0.45*d6 + 0.05*d12锛屼綆缃俊骞惰缃洿瀹?P10/P90', '杈圭晫 KPI锛歐MAPE鈮?0%锛孊ias卤20%'],
+   ['T4B', '绋冲畾杩炵画淇濆簳灞?, '鏈繘 T1鈥揟4A锛氶暱鍘嗗彶 active12鈮?锛涙柊鍝?鐭巻鍙茶繎2鏈堣繛缁湁閿€涓?active6鈮?', '闀垮巻鍙?0.35*d3+0.45*d6+0.20*d12锛涚煭鍘嗗彶 0.55*d3+0.45*d6', '淇濆簳 KPI锛歐MAPE鈮?0%锛屼笉璁″叆涓诲噯纭巼'],
+-  ['T99', '寮傚父/浣庤寰嬩繚瀹堜繚搴曞眰', '杩炵画鎬т笉瓒炽€乧v 杩囬珮鎴栬繎绔急淇″彿锛涜繎30鈮? 鏃跺綊闆?, 'max(杩?0,杩?0)脳0.6锛岃繙鏈埫?.72锛涗笉杩涗富 KPI', '涓嶈鍏ヤ富鍑嗙‘鐜囩粺璁?],
++  ['T99', '寮傚父/浣庤寰嬩繚瀹堜繚搴曞眰', '杩炵画鎬т笉瓒炽€乧v 杩囬珮鎴栬繎绔急淇″彿锛涜繎30鈮? 鏃跺綊闆?, 'max(杩?0,杩?0)脳0.8锛岃繙鏈埫?.72锛涗笉杩涗富 KPI', '涓嶈鍏ヤ富鍑嗙‘鐜囩粺璁?],
+ ] as const;
+ 
+ function AllCategoryV41StrategySummary() {
+   const { data: versions } = useQuery({
+     queryKey: ['sales-forecast-versions', 'draft'],
+     queryFn: () => api.getSalesForecastVersions({ status: 'draft' }),
+   });
+   const latestDraft = versions?.[0];
+diff --git a/apps/web/src/pages/SalesForecastListPage.tsx b/apps/web/src/pages/SalesForecastListPage.tsx
+index 71f3cc4..9359d23 100644
+--- a/apps/web/src/pages/SalesForecastListPage.tsx
++++ b/apps/web/src/pages/SalesForecastListPage.tsx
+@@ -324,17 +324,17 @@ export function SalesForecastListPage() {
+                 </li>
+                 <li>
+                   <span className="text-text-main">浠呮湁澶嶆牳銆佹棤棰勬祴琛?/span>锛氫緥濡傝娓犻亾杩?90 澶╂棤閿€閲忎笖鍘嗗彶涓嶈冻锛岀郴缁熻烦杩囬娴嬨€佷粎鍦ㄥ悗鍙扮暀鐥曪紝鐣岄潰涓嶅啀鍗曠嫭灞曠ず澶嶆牳娓呭崟銆?                 </li>
+                 <li>
+                   <span className="text-text-main">鏈Е鍙?/span>锛氬悇娓犻亾鍧囨棤閿€閲忚褰曪紝鐢熸垚鏃剁洿鎺ヨ烦杩囷紝涓嶅啓棰勬祴涔熶笉鐣欏鏍搞€?                 </li>
+                 <li>
+-                  <span className="text-text-main">T99</span>锛氭湁杩戞湡鍔ㄩ攢鏃剁郴缁熷啓淇濆畧淇濆簳鏁帮紙max(杩?0,杩?0)脳0.6锛夛紱杩?0=0 褰掗浂锛涜繎30&gt;0.2 鏃朵紭鍏?T4B 淇濆簳锛屼笉杞绘槗褰掑叆 T99銆?+                  <span className="text-text-main">T99</span>锛氭湁杩戞湡鍔ㄩ攢鏃剁郴缁熷啓淇濆畧淇濆簳鏁帮紙max(杩?0,杩?0)脳0.8锛夛紱杩?0=0 褰掗浂锛涜繎30&gt;0.2 鏃朵紭鍏?T4B 淇濆簳锛屼笉杞绘槗褰掑叆 T99銆?                 </li>
+               </ul>
+               <p className="mt-2 text-xs text-text-sub">
+                 鍗曟笭閬?/ 鍝佺被 / 鍗?SKU 鐢熸垚浼氬悇鑷骇鐢熺嫭绔嬪揩鐓э紙鎴栧崟 SKU 鍚堝苟杩涚洰鏍囪崏绋匡級锛屼究浜庡疄楠屽姣旓紱姝ｅ紡琛ヨ揣寤鸿鐢ㄣ€屽叏骞冲彴銆嶅叏閲忕敓鎴愩€?               </p>
+             </CardHeader>
+             <CardContent className="space-y-4">
+               <div className="flex flex-wrap items-end gap-2">
+diff --git a/docs/superpowers/plans/2026-08-12-t4b-t99-optimistic-relax.md b/docs/superpowers/plans/2026-08-12-t4b-t99-optimistic-relax.md
+new file mode 100644
+index 0000000..26b2a6f
+--- /dev/null
++++ b/docs/superpowers/plans/2026-08-12-t4b-t99-optimistic-relax.md
+@@ -0,0 +1,353 @@
++# T4B / T99 娓╁拰涔愯鏀惧锛堟柟妗?A锛?Implementation Plan
++
++> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
++
++**Goal:** 灏?T4B / T99 姘翠綅甯搁噺娓╁拰鎶珮锛岀紦瑙ｅ垎灞傚鐩樹腑鐨勭郴缁熸€ф€婚噺浣庝及锛涙湰杞笉鏀?Ghost / 鏂攢闂搞€?+
++**Architecture:** 浠呮敼 `forecast-allcat-v41.ts` 涓?`forecast-demand.ts` 涓殑甯搁噺鍙婁緷璧栧畠浠殑鍏紡鏂囨/鍗曟祴锛沀I 涓‖缂栫爜銆屆?.6銆嶅悓姝ヤ负銆屆?.8銆嶃€傜敤鐜版湁 7 鏈堢绾胯剼鏈獙璇佸亸宸柟鍚戙€備笉寮哄埗閲嶇畻宸?published 鐗堟湰銆?+
++**Tech Stack:** TypeScript銆丯ode `tsx --test`銆佹棦鏈?V4.1 / T99 淇濆簳閾捐矾銆?+
++**Spec:** [`docs/superpowers/specs/2026-08-12-t4b-t99-optimistic-relax-design.md`](../specs/2026-08-12-t4b-t99-optimistic-relax-design.md)
++
++## Global Constraints
++
++- T4B锛歚NEAR_CONSERVATIVE` 0.8鈫?*0.9**锛沗CONSERVATIVE` 0.6鈫?*0.75**锛沗RECENT30_CAP` 0.85鈫?*0.95**锛沗RECENT90_CAP` 0.9鈫?*1.0**
++- T99锛歚T99_SYSTEM_FLOOR_DISCOUNT` 涓庤ˉ璐?fallback 榛樿鎶樻墸 0.6鈫?*0.8**
++- **涓嶅彉**锛歍99 `recent30鈮?鈫?`锛汿99/T4B flex `k鈮? 脳0.72`锛汫host 寮卞姩閿€闃堝€硷紱T1鈥揟4A 甯搁噺锛沗t99FloorMode` 鏋氫妇鍚?`recent_max06` 淇濈暀
++- 浠呮柊鐢熸垚鐗堟湰鐢熸晥锛涗富 KPI 浠嶆帓闄?T4B/T99
++- 娴嬭瘯鍛戒护锛歚pnpm --filter @scm/web exec tsx --test <path>`
++
++---
++
++## File map
++
++| 鏂囦欢 | 鑱岃矗 |
++|------|------|
++| `apps/web/server/lib/forecast-demand.ts` | T99 鎶樻墸甯搁噺 + fallback 榛樿 |
++| `apps/web/server/lib/forecast-demand.test.ts` | T99 姘翠綅 / fallback 鏈熸湜鍊?|
++| `apps/web/server/lib/forecast-allcat-v41.ts` | T4B 鍥涘甯搁噺锛汿99 鍏紡/澶嶆牳鏂囨涓殑 脳0.6 |
++| `apps/web/server/lib/forecast-allcat-v41.test.ts` | T4B cap / T99 floor 鏈熸湜鍊?|
++| `apps/web/src/components/ForecastStrategySection.tsx` | 绛栫暐琛?T99 鍏紡鏂囨 |
++| `apps/web/src/pages/SalesForecastListPage.tsx` | 鍒楄〃 T99 璇存槑 |
++| `apps/web/scripts/validate-july-t4b-relax.ts` | 绂荤嚎澶嶇洏锛堝彲閫夊皬鏀癸細鎵撳嵃甯搁噺鐗堟湰锛涚‘璁ゅ惈 T99 閲嶇畻锛?|
++| `docs/superpowers/specs/2026-08-12-t4b-t99-optimistic-relax-design.md` | 鐘舵€佹敼涓哄凡瀹炵幇锛堝叏閮ㄤ换鍔″畬鎴愬悗锛?|
++
++---
++
++### Task 1: T99 鎶樻墸 0.6鈫?.8锛圱DD锛?+
++**Files:**
++- Modify: `apps/web/server/lib/forecast-demand.test.ts`
++- Modify: `apps/web/server/lib/forecast-demand.ts`
++- Modify: `apps/web/server/lib/forecast-allcat-v41.test.ts`锛堟湰浠诲姟鍙敼 T99 鐩稿叧鏂█锛汿4B 鐣欑粰 Task 2锛?+- Modify: `apps/web/server/lib/forecast-allcat-v41.ts`锛堝叕寮忓瓧绗︿覆涓?`buildT99ReviewMessage` 涓殑 脳0.6锛?+
++**Interfaces:**
++- Consumes: 鐜版湁 `resolveT99SystemFloorDaily` / `resolveT99ReplenishmentFallbackDaily`
++- Produces: `T99_SYSTEM_FLOOR_DISCOUNT = 0.8`锛沠allback 榛樿 `discount = 0.8`锛涙暟鍊兼湡鏈?`max(r30,r90)*0.8`
++
++- [ ] **Step 1: 鏀瑰け璐ュ崟娴嬶紙demand锛?*
++
++灏?`forecast-demand.test.ts` 涓笅鍒楁柇瑷€鏀逛负 0.8 鍙ｅ緞锛?+
++```ts
++it('resolveT99SystemFloorDaily uses max(r30,r90)*0.8 near and *0.72 far', () => {
++  // max(2, 4) * 0.8 = 3.2; far = 3.2 * 0.72 = 2.304
++  const near = resolveT99SystemFloorDaily({
++    recent30DailyAvg: 2,
++    recent90DailyAvg: 4,
++    horizonIndex: 1,
++  });
++  const far = resolveT99SystemFloorDaily({
++    recent30DailyAvg: 2,
++    recent90DailyAvg: 4,
++    horizonIndex: 3,
++  });
++  assert.equal(near.daily, 3.2);
++  assert.equal(near.mode, 'recent_max06');
++  assert.equal(far.daily, 2.304);
++  assert.equal(far.mode, 'recent_max06');
++});
++```
++
++灏嗐€孴99 zero forecast falls back鈥︺€嶄腑鏈熸湜 `1.2` 鏀逛负 `1.6`锛坄max(2,1)*0.8`锛夛紝涓ゅ `assert.equal(..., 1.2)` 鈫?`1.6`銆?+
++鏂攢闂告祴渚嬶紙daily=0锛?*涓嶈鏀?*銆?+
++- [ ] **Step 2: 璺戞祴纭澶辫触**
++
++Run: `pnpm --filter @scm/web exec tsx --test server/lib/forecast-demand.test.ts`
++
++Expected: FAIL锛堜粛涓?2.4 / 1.2锛?+
++- [ ] **Step 3: 鏀瑰疄鐜板父閲?*
++
++鍦?`forecast-demand.ts`锛?+
++```ts
++export const T99_SYSTEM_FLOOR_DISCOUNT = 0.8;
++```
++
++`resolveT99ReplenishmentFallbackDaily` 娉ㄩ噴涓庨粯璁わ細
++
++```ts
++  /** 鐩稿杩戞湡鍔ㄩ攢鐨勬姌鎵ｏ紝榛樿 0.8锛堜笌 T99_SYSTEM_FLOOR_DISCOUNT 瀵归綈锛?*/
++  discount?: number;
++}): number {
++  const discount =
++    input.discount != null && Number.isFinite(input.discount) && input.discount > 0
++      ? input.discount
++      : 0.8;
++```
++
++浼樺厛锛氶粯璁ゆ姌鎵ｇ洿鎺ュ紩鐢ㄥ父閲忥紝閬垮厤婕傜Щ锛?+
++```ts
++      : T99_SYSTEM_FLOOR_DISCOUNT;
++```
++
++- [ ] **Step 4: 鍚屾 allcat T99 鏂█涓庢枃妗?*
++
++`forecast-allcat-v41.test.ts` 涓?`computeAllCatV41ForecastForMonth writes T99 floor...`锛?+
++```ts
++assert.equal(result.forecastDaily, 2.4); // max(3,2)*0.8
++assert.equal(result.formula, 'max(recent30,recent90)*0.8 with far decay');
++assert.equal(result.horizonFactors.t99FloorDaily, 2.4);
++```
++
++`forecast-allcat-v41.ts`锛?+
++- `tierFormula` T99 鍒嗘敮锛歚'max(recent30,recent90)*0.8 with far decay'`
++- `buildT99ReviewMessage`锛歚锛坢ax(杩?0,杩?0)脳0.8锛岃繙鏈堣“鍑忥級`
++
++- [ ] **Step 5: 璺戞祴閫氳繃**
++
++Run:
++
++```bash
++pnpm --filter @scm/web exec tsx --test server/lib/forecast-demand.test.ts
++pnpm --filter @scm/web exec tsx --test server/lib/forecast-allcat-v41.test.ts
++```
++
++Expected: PASS锛堣嫢 allcat 鍥?T4B 鏃?cap 鏂█灏氭湭鏀硅€屽け璐ワ紝鍙厛鍙‘璁?demand + T99 鐩稿叧鐢ㄤ緥锛涘畬鏁?allcat 鍦?Task 2 鍚庡繀缁匡級
++
++- [ ] **Step 6: Commit**
++
++```bash
++git add apps/web/server/lib/forecast-demand.ts apps/web/server/lib/forecast-demand.test.ts apps/web/server/lib/forecast-allcat-v41.ts apps/web/server/lib/forecast-allcat-v41.test.ts
++git commit -m "feat(forecast): raise T99 floor discount 0.6鈫?.8"
++```
++
++---
++
++### Task 2: T4B 鍥涘甯搁噺鏀惧锛圱DD锛?+
++**Files:**
++- Modify: `apps/web/server/lib/forecast-allcat-v41.ts`
++- Modify: `apps/web/server/lib/forecast-allcat-v41.test.ts`
++
++**Interfaces:**
++- Consumes: `tierConservativeFactor` / `applyV41TailUpperBiasCap` / `computeAllCatV41BoundedDaily`
++- Produces: 鏂板父閲忓€煎涓?+
++```ts
++export const V41_T4B_CONSERVATIVE_FACTOR = 0.75;
++export const V41_T4B_NEAR_CONSERVATIVE_FACTOR = 0.9;
++export const V41_T4B_RECENT90_CAP = 1.0;
++export const V41_T4B_RECENT30_CAP = 0.95;
++```
++
++- [ ] **Step 1: 鏀?琛ュけ璐ユ柇瑷€**
++
++鐜版湁鐢ㄤ緥宸茬敤甯搁噺绗﹀彿鏂█ `tierConservativeFactor`锛屽父閲忎竴鏀瑰嵆鑷姩璺熸柊銆傞渶鏀圭‖缂栫爜 cap锛?+
++`computeAllCatV41BoundedDaily caps T4B with tail upper bias`锛?+
++```ts
++assert.ok(bounded.forecastDaily <= 1.36 * 1.0); // V41_T4B_RECENT90_CAP
++```
++
++鍦ㄥ悓鏂囦欢杩藉姞锛堟垨鎵╁睍鐜版湁 near horizon 鐢ㄤ緥锛夋樉寮忛攣瀹氭暟鍊硷細
++
++```ts
++it('T4B plan-A constants: near 0.9 / far 0.75 / caps 0.95 & 1.0', () => {
++  assert.equal(V41_T4B_NEAR_CONSERVATIVE_FACTOR, 0.9);
++  assert.equal(V41_T4B_CONSERVATIVE_FACTOR, 0.75);
++  assert.equal(V41_T4B_RECENT30_CAP, 0.95);
++  assert.equal(V41_T4B_RECENT90_CAP, 1.0);
++  assert.equal(tierConservativeFactor('T4B', 'C', 0), 0.9);
++  assert.equal(tierConservativeFactor('T4B', 'C', 3), 0.75);
++});
++```
++
++纭繚 import 鍚?`V41_T4B_RECENT30_CAP`銆乣V41_T4B_RECENT90_CAP`锛堣嫢灏氭湭 import锛夈€?+
++- [ ] **Step 2: 璺戞祴纭澶辫触锛堝父閲忎粛涓烘棫鍊兼椂锛?*
++
++Run: `pnpm --filter @scm/web exec tsx --test server/lib/forecast-allcat-v41.test.ts`
++
++Expected: 鏂板父閲忔柇瑷€ FAIL
++
++- [ ] **Step 3: 鏀瑰父閲?*
++
++鍦?`forecast-allcat-v41.ts` 灏嗘敞閲娿€岀紦瑙ｇ郴缁熸€т綆浼般€嶄繚鐣欙紝鏇存柊鍥涘€硷細
++
++```ts
++/** T4B 绋冲畾淇濆簳灞傦細杩滄湀鍘?ghost锛涜繎绔?k鈮? 鏀惧淇濆畧绯绘暟骞舵姮搴曪紙鏂规 A 娓╁拰涔愯锛?*/
++export const V41_T4B_CONSERVATIVE_FACTOR = 0.75;
++export const V41_T4B_NEAR_CONSERVATIVE_FACTOR = 0.9;
++// ...
++export const V41_T4B_RECENT90_CAP = 1.0;
++export const V41_T4B_RECENT30_CAP = 0.95;
++```
++
++鍕挎敼 `V41_T4B_FLEX_*`銆佽繎绔姮搴曘€丟host 闃堝€笺€?+
++- [ ] **Step 4: 璺戝叏閲忕浉鍏冲崟娴?*
++
++Run:
++
++```bash
++pnpm --filter @scm/web exec tsx --test server/lib/forecast-allcat-v41.test.ts
++pnpm --filter @scm/web exec tsx --test server/lib/forecast-demand.test.ts
++```
++
++Expected: PASS
++
++- [ ] **Step 5: Commit**
++
++```bash
++git add apps/web/server/lib/forecast-allcat-v41.ts apps/web/server/lib/forecast-allcat-v41.test.ts
++git commit -m "feat(forecast): relax T4B conservative factor and recent caps"
++```
++
++---
++
++### Task 3: UI 鏂囨鍚屾 脳0.6鈫捗?.8
++
++**Files:**
++- Modify: `apps/web/src/components/ForecastStrategySection.tsx`
++- Modify: `apps/web/src/pages/SalesForecastListPage.tsx`
++
++**Interfaces:**
++- 鏃犳柊 API锛涗粎灞曠ず鏂囨涓庡悗绔姌鎵ｄ竴鑷?+
++- [ ] **Step 1: 鏀圭瓥鐣ヨ〃涓庡垪琛ㄨ鏄?*
++
++`ForecastStrategySection.tsx` T99 琛岋細
++
++```ts
++'max(杩?0,杩?0)脳0.8锛岃繙鏈埫?.72锛涗笉杩涗富 KPI'
++```
++
++`SalesForecastListPage.tsx`锛?+
++```tsx
++max(杩?0,杩?0)脳0.8
++```
++
++锛堟暣鍙ュ叾浣欓儴鍒嗕笉鍙樸€傦級
++
++- [ ] **Step 2: 鍏ㄥ簱鎵畫鐣欑‖缂栫爜**
++
++Run锛堝湪 `apps/web`锛夛細
++
++```bash
++rg "杩?0\)脳0\.6|recent90\)\*0\.6|max\(杩?0,杩?0\)脳0\.6" -g "*.ts" -g "*.tsx"
++```
++
++Expected: 鏃犱笟鍔℃枃妗堝懡涓紙娴嬭瘯鍘嗗彶娉ㄩ噴闄ゅ锛沗recent_max06` 鏋氫妇鍚嶅彲淇濈暀锛?+
++- [ ] **Step 3: Commit**
++
++```bash
++git add apps/web/src/components/ForecastStrategySection.tsx apps/web/src/pages/SalesForecastListPage.tsx
++git commit -m "docs(forecast): sync T99 UI copy to 0.8 floor discount"
++```
++
++---
++
++### Task 4: 绂荤嚎 7 鏈堝鐩?+ 鏀跺熬
++
++**Files:**
++- Modify (鍙€?: `apps/web/scripts/validate-july-t4b-relax.ts` 鈥?鍦ㄦ爣棰樻墦鍗板綋鍓?`V41_T4B_*` / `T99_SYSTEM_FLOOR_DISCOUNT`
++- Modify: `docs/superpowers/specs/2026-08-12-t4b-t99-optimistic-relax-design.md` 鈥?鐘舵€佹敼涓恒€屽凡瀹炵幇銆?+
++**Interfaces:**
++- 鑴氭湰浠嶄笉鍐欏簱锛汿99 琛岃嫢 `old_system_d>0` 鍙蛋 `computeAllCatV41BoundedDaily`锛涜剼鏈幇鏈?`tier === 'T99' return 0` 闇€鏀逛负璋冪敤鐪熷疄 T99 鍒嗘敮锛堝惁鍒欏鐩樼湅涓嶅埌鎶樻墸鎶崌锛?+
++- [ ] **Step 1: 淇剼鏈?T99 閲嶇畻**
++
++灏?`recompute` 涓細
++
++```ts
++if (tier === 'T99') return 0;
++```
++
++鏀逛负鐓у父璋冪敤 `computeAllCatV41BoundedDaily`锛堜笌鍏跺畠灞傜浉鍚岋級锛岃 T99 璧扮郴缁熶繚搴曘€?+
++鏂囦欢澶存敞閲婃敼涓鸿鏄庛€孴4B+T99 鏂规 A 甯搁噺澶嶇洏銆嶃€?+
++鍦?`main` 寮€澶?`console.log` 鎵撳嵃锛?+
++```ts
++import {
++  V41_T4B_CONSERVATIVE_FACTOR,
++  V41_T4B_NEAR_CONSERVATIVE_FACTOR,
++  V41_T4B_RECENT30_CAP,
++  V41_T4B_RECENT90_CAP,
++} from '../server/lib/forecast-allcat-v41.js';
++import { T99_SYSTEM_FLOOR_DISCOUNT } from '../server/lib/forecast-demand.js';
++
++console.log('constants', {
++  T4B_near: V41_T4B_NEAR_CONSERVATIVE_FACTOR,
++  T4B_far: V41_T4B_CONSERVATIVE_FACTOR,
++  T4B_r30_cap: V41_T4B_RECENT30_CAP,
++  T4B_r90_cap: V41_T4B_RECENT90_CAP,
++  T99_discount: T99_SYSTEM_FLOOR_DISCOUNT,
++});
++```
++
++- [ ] **Step 2: 璺戠绾垮鐩橈紙鐜鍏佽鏃讹級**
++
++Run: `pnpm --filter @scm/web exec tsx scripts/validate-july-t4b-relax.ts`
++
++Expected: 杈撳嚭鍚?T4B / T99 琛岋紱鐩稿銆屾棫绯荤粺銆嶅亸宸簲鍚?0 闈犳嫝锛堜笉瑕佹眰涓€娆¤揪鏍?0锛夈€傝嫢鏈満鏃?Docker/DB锛岃褰曡烦杩囧師鍥狅紝涓嶉樆濉炲悎骞讹紱鍗曟祴宸茶鐩栧父閲忋€?+
++- [ ] **Step 3: 鏍囪 spec 宸插疄鐜?*
++
++灏嗚璁℃枃妗ｅご閮ㄦ敼涓猴細
++
++```markdown
++> **鐘舵€?*锛氬凡瀹炵幇  
++```
++
++- [ ] **Step 4: Commit**
++
++```bash
++git add apps/web/scripts/validate-july-t4b-relax.ts docs/superpowers/specs/2026-08-12-t4b-t99-optimistic-relax-design.md
++git commit -m "chore(forecast): validate July T4B/T99 plan-A relax offline"
++```
++
++---
++
++## Spec coverage checklist
++
++| Spec 瑕佹眰 | Task |
++|-----------|------|
++| T4B 鍥涘父閲?| Task 2 |
++| T99 鎶樻墸 0.8 + fallback 瀵归綈 | Task 1 |
++| 涓嶆柇閿€闂?/ 涓?Ghost | 鍏ㄤ换鍔′笉鏀圭浉鍏抽槇鍊?|
++| 鍗曟祴 | Task 1鈥? |
++| UI 脳0.6 鍚屾 | Task 3 |
++| 7 鏈堢绾垮鐩?| Task 4 |
++| 浠呮柊鐗堟湰鐢熸晥 | 鏃犱唬鐮佸己鍒堕噸绠?|
++| 鏂规 B 涓嶅仛 | 鏈垪鍏ヤ换鍔?|
++
++## Self-review
++
++- 鏃?TBD / 銆岀被浼?Task N銆嶅崰浣?+- T99 鏁板€硷細`max(2,4)*0.8=3.2`锛宍*0.72=2.304`锛沗max(3,2)*0.8=2.4`锛沠allback `max(2,1)*0.8=1.6` 鈥?涓庡疄鐜颁竴鑷?+- `recent_max06` 鏋氫妇鍚嶆寜 spec 淇濈暀
+diff --git a/docs/superpowers/specs/2026-08-12-t4b-t99-optimistic-relax-design.md b/docs/superpowers/specs/2026-08-12-t4b-t99-optimistic-relax-design.md
+index c5c3246..86c458d 100644
+--- a/docs/superpowers/specs/2026-08-12-t4b-t99-optimistic-relax-design.md
++++ b/docs/superpowers/specs/2026-08-12-t4b-t99-optimistic-relax-design.md
+@@ -1,11 +1,11 @@
+ # T4B / T99 娓╁拰涔愯鏀惧锛堟柟妗?A锛? 
+-> **鐘舵€?*锛氬凡鎵瑰噯璁捐  
++> **鐘舵€?*锛氬凡瀹炵幇  
+ > **鏃ユ湡**锛?026-08-12  
+ > **鐩爣**锛氱紦瑙ｅ垎灞傚鐩樹腑 T4B / T99 绯荤粺鎬ф€婚噺浣庝及锛涘厛鍋氭俯鍜屾姮绯绘暟锛岀绾?7 鏈堝鐩樺悗鍐嶅喅瀹氭槸鍚﹀姞鏂规 B锛堟紡鎶ラ椄锛夈€? 
+ ---
+ 
+ ## 1. 鑳屾櫙涓庡喅绛? 
+ 鍒嗗眰鍑嗙‘鐜囷紙鍏ㄦ湡鏈夌鍙?MAPE锛夋樉绀哄熬閮ㄤ袱灞傛槑鏄句綆浼帮細

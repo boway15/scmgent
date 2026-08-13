@@ -20,6 +20,7 @@ import {
 import { ASYNC_IMPORT_ROW_THRESHOLD } from './import-constants.js';
 import { pruneSalesHistoryDailyBeyondRetention } from '../sales-history-retention.js';
 import { refreshSkuLifecycles } from '../sku-lifecycle.js';
+import { yieldToEventLoop } from '../yield-event-loop.js';
 
 /** 日宽表按 SKU 行分片导入，避免一次展开数千万日销量行导致 OOM */
 export const SALES_WIDE_IMPORT_CHUNK_SIZE = 25;
@@ -335,6 +336,7 @@ export async function importXiaoshouSalesHistory(
       )) {
         await processWideChunk(input, chunkWide, processedSkuWideRows, estimatedDailyRows, state);
         state.isFirstChunk = false;
+        await yieldToEventLoop();
       }
     } else {
       const wideRows = input.dailyWideRows!;
@@ -343,6 +345,7 @@ export async function importXiaoshouSalesHistory(
         const processedSkuWideRows = Math.min(offset + chunkWide.length, wideRows.length);
         await processWideChunk(input, chunkWide, processedSkuWideRows, estimatedDailyRows, state);
         state.isFirstChunk = false;
+        await yieldToEventLoop();
       }
     }
 

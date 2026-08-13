@@ -456,6 +456,7 @@ export function SalesForecastVersionDetailPage() {
                 <thead>
                   <tr className="border-b border-border text-left text-text-sub">
                     <th className="p-2 font-normal">商品编码</th>
+                    <th className="p-2 font-normal">项目组</th>
                     <th className="p-2 font-normal">商品分层</th>
                     <th className="p-2 font-normal">渠道</th>
                     <th className="p-2 font-normal">月份</th>
@@ -470,7 +471,7 @@ export function SalesForecastVersionDetailPage() {
                   {accuracyListItems.length === 0 ? (
                     <tr>
                       <td
-                        colSpan={accuracyListTab === 'detail' ? 7 : 6}
+                        colSpan={accuracyListTab === 'detail' ? 8 : 7}
                         className="p-4 text-center text-text-sub"
                       >
                         {accuracyListTab === 'miss'
@@ -482,6 +483,7 @@ export function SalesForecastVersionDetailPage() {
                     accuracyListItems.map((row) => (
                       <tr key={row.id} className="border-b border-border/60">
                         <td className="p-2">{row.skuCode}</td>
+                        <td className="p-2 text-text-sub">{row.projectGroup?.trim() || '-'}</td>
                         <td className="p-2 text-text-sub">
                           {formatTierDisplayLabel(row.profileSegment, null)}
                         </td>

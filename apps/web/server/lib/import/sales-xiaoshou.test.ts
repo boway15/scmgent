@@ -4,10 +4,22 @@ import {
   buildSalesXiaoshouPreviewResponse,
   detectXiaoshouWideKind,
   importXiaoshouSalesHistory,
+  SALES_WIDE_IMPORT_CHUNK_SIZE,
   shouldRunSalesXiaoshouImportAsync,
 } from './sales-xiaoshou.js';
 
 describe('sales-xiaoshou import', () => {
+  it('keeps wide SKU chunks small so parse/insert cannot stall HTTP', () => {
+    assert.equal(SALES_WIDE_IMPORT_CHUNK_SIZE, 25);
+  });
+
+  it('wires SKU lifecycle refresh after sales import', async () => {
+    const source = await import('node:fs/promises').then((fs) =>
+      fs.readFile(new URL('./sales-xiaoshou.ts', import.meta.url), 'utf8'),
+    );
+    assert.match(source, /import \{ refreshSkuLifecycles \} from '\.\.\/sku-lifecycle\.js'/);
+  });
+
   it('detects daily and monthly sku wide formats', () => {
     assert.equal(
       detectXiaoshouWideKind([

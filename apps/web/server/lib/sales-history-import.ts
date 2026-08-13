@@ -11,6 +11,7 @@ import { sanitizeDbText } from './import/parse.js';
 import { assessUnknownChannelShare, normalizeSalesPlatformSync } from './sales-platform.js';
 import { schedulePostImportSalesAnalyticsCubeRebuild } from './sales-analytics-cube.js';
 import { classifyAnalyticsSiteFromReport } from './sales-analytics-dims.js';
+import { yieldToEventLoop } from './yield-event-loop.js';
 
 export type SalesHistoryImportPlanRow = {
   skuId: string;
@@ -212,6 +213,7 @@ export async function persistDailySalesRowsAsHistory(
 
     insertedSalesRows += inserted.length;
     skippedExistingSalesRows += chunk.length - inserted.length;
+    await yieldToEventLoop();
   }
 
   const monthlyAggregate = options?.skipMonthlyAggregate

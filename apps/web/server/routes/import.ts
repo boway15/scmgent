@@ -256,7 +256,7 @@ importRoutes.post('/import/:type', requireImportAccess(), async (c) => {
       });
       const salesMessage =
         type === 'sales' && estimatedDailyRows
-          ? `已提交后台导入：宽表 ${rowCount.toLocaleString()} 个 SKU，预估约 ${estimatedDailyRows.toLocaleString()} 条日销量。请勿重启服务，在下方批次查看进度（全量约需数小时）。`
+          ? `已提交后台导入：宽表 ${rowCount.toLocaleString()} 个 SKU，预估约 ${estimatedDailyRows.toLocaleString()} 条日销量。请勿重启服务，在下方批次查看进度。`
           : `已提交后台导入 ${rowCount} 行，请在下方的导入批次中查看进度`;
       return c.json(
         {
@@ -362,7 +362,7 @@ importRoutes.post('/import/:type', requireImportAccess(), async (c) => {
             rowCount: upload.skuRowCount,
             estimatedDailyRows,
             validationIssues: preview.validationIssues,
-            message: `已提交后台导入：宽表 ${upload.skuRowCount.toLocaleString()} 个 SKU，预估约 ${estimatedDailyRows.toLocaleString()} 条日销量。请勿重启 Docker，在下方批次查看进度（全量约需数小时）。`,
+            message: `已提交后台导入：宽表 ${upload.skuRowCount.toLocaleString()} 个 SKU，预估约 ${estimatedDailyRows.toLocaleString()} 条日销量。请勿重启 Docker，在下方批次查看进度。`,
           },
           202,
         );

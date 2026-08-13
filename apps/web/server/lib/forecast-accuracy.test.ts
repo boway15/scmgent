@@ -127,6 +127,7 @@ describe('forecast-accuracy', () => {
   it('uses Chinese CSV headers aligned with accuracy list columns', () => {
     assert.deepEqual(FORECAST_ACCURACY_DETAIL_CSV_HEADERS, [
       '商品编码',
+      '项目组',
       '商品分层',
       '渠道',
       '月份',
@@ -136,6 +137,7 @@ describe('forecast-accuracy', () => {
     ]);
     assert.deepEqual(FORECAST_ACCURACY_MISS_DETAIL_CSV_HEADERS, [
       '商品编码',
+      '项目组',
       '商品分层',
       '渠道',
       '月份',

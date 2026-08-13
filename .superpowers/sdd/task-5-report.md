@@ -1,21 +1,26 @@
-# Task 5 Report — Schema `eta_available`
+# Task 5 Acceptance (code-level)
 
-**Status:** Done  
-**Commit:** `feat(db): add purchase_drafts.eta_available for sellable ETA`
+Date: 2026-08-12
+HEAD: 7db3457
 
-## Changes
+## Checklist (from plan)
 
-| File | Action |
-|------|--------|
-| `packages/db/src/schema/procurement.ts` | Added `etaAvailable: date('eta_available')` after `confirmedDeliveryDate` |
-| `packages/db/drizzle/0052_purchase_draft_eta_available.sql` | ADD COLUMN + backfill from `confirmed_delivery_date` |
-| `packages/db/drizzle/meta/_journal.json` | Appended idx 47, tag `0052_purchase_draft_eta_available` |
+| 场景 | 结果 | 证据 |
+|------|------|------|
+| draft + `?view=accuracy` | PASS (code) | `isViewAllowed` includes draft; availableViews push accuracy for draft |
+| 地平线含当月 → 进行中 | PASS (unit) | forecast-qty-totals.test.ts in_progress case |
+| 全过去月、无销量 → `-` | PASS (unit) | empty_actual case |
+| 有预测与销量 → 数字比 | PASS (unit) | ready formats thousands |
+| 运行回测绑当前 versionId | PASS (code) | backtest mutation `versionId` only |
+| 无走步 UI | PASS (code) | no WalkForward / walkForward in detail page |
+| 列表无新列；草稿准确率 `-` | PASS (code) | ListPage accuracy column unchanged; 复盘 link added |
+| qty-totals API | PASS (code) | route registered |
+| unit tests | 7/7 PASS | tsx --test forecast-qty-totals.test.ts |
 
-## Interface
+## Live UI / DB
 
-- `purchaseDrafts.etaAvailable: date | null`
+Not exercised in this session (no browser / no backtest against live DB). Recommend smoke: open historical-startMonth draft → 准确率复盘 → confirm label + run 回测.
 
-## Notes
+## Spec
 
-- Journal only appended 0052; existing disk migrations 0048–0051 left untouched per brief.
-- Backfill copies non-null `confirmed_delivery_date` into new column for existing rows.
+Marked `已实现` in docs/superpowers/specs/2026-08-12-forecast-accuracy-detail-totals-design.md (commit 7db3457)

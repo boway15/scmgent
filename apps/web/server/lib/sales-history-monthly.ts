@@ -1,10 +1,14 @@
-import { and, eq, gte, inArray, lte, sql } from 'drizzle-orm';
-import { db, salesHistory, salesHistoryMonthly } from '@scm/db';
+import { and, eq, gte, inArray, lte, sql, type SQL } from 'drizzle-orm';
+import { db, salesHistory, salesHistoryMonthly, skus } from '@scm/db';
 import type { SkuMonthlySalesRow } from './sales-report-parser.js';
 import { loadSkuCategoryMap, resolveSkuCategoryFromMaster } from './sku-category.js';
 import { daysInCalendarMonth, roundDaily } from './forecast-baseline.js';
 import { normalizeSalesPlatformSync } from './sales-platform.js';
 import { channelsForPlatformFilterSync } from './sales-platform.js';
+import { yieldToEventLoop } from './yield-event-loop.js';
+
+/** 月表批量 upsert 时 SKU IN 列表上限，避免超长 SQL */
+const MONTHLY_UPSERT_SKU_CHUNK = 2000;
 
 export const DEFAULT_MONTHLY_HISTORY_LOOKBACK_MONTHS = 36;
 
@@ -56,6 +60,16 @@ export function computeWalkForwardAsOf(monthCount: number, today = new Date()): 
   return `${first.year}-${String(first.month).padStart(2, '0')}-01`;
 }
 
+/** 日表最早日期晚于该月 1 号时，该月已被裁剪，不能用残日表覆盖月表。 */
+export function shouldAggregateCalendarMonth(
+  saleYear: number,
+  month: number,
+  dailyMinDate: string | null,
+): boolean {
+  if (!dailyMinDate) return false;
+  return monthStartDate(saleYear, month) >= dailyMinDate;
+}
+
 export function monthlyQtyFromRows(
   rows: MonthlySalesQtyRow[],
   year: number,
@@ -87,67 +101,42 @@ export async function aggregateSalesHistoryMonthlyFromDaily(input?: {
       : input.lookbackMonths;
 
   let cutoffDate = '';
-  const conditions = [];
+  const dateConditions: SQL[] = [];
   if (!useAllHistory) {
     const cutoff = subtractMonths(new Date(), lookbackMonths);
     cutoffDate = monthStartDate(cutoff.getUTCFullYear(), cutoff.getUTCMonth() + 1);
-    conditions.push(gte(salesHistory.saleDate, cutoffDate));
-  }
-  if (input?.skuIds && input.skuIds.length > 0) {
-    conditions.push(inArray(salesHistory.skuId, input.skuIds));
+    dateConditions.push(gte(salesHistory.saleDate, cutoffDate));
   }
 
-  const baseQuery = db
-    .select({
-      skuId: salesHistory.skuId,
-      channel: sql<string>`coalesce(${salesHistory.channel}, 'UNKNOWN')`,
-      saleYear: sql<number>`extract(year from ${salesHistory.saleDate}::date)::int`,
-      month: sql<number>`extract(month from ${salesHistory.saleDate}::date)::int`,
-      qtySold: sql<number>`sum(${salesHistory.qtySold})::int`,
-    })
+  const minBase = db
+    .select({ minDate: sql<string | null>`min(${salesHistory.saleDate})::text` })
     .from(salesHistory);
+  const [dailyMinRow] = await (dateConditions.length
+    ? minBase.where(and(...dateConditions))
+    : minBase);
+  const dailyMinDate = dailyMinRow?.minDate ?? null;
+  if (!dailyMinDate) {
+    return {
+      upsertedRows: 0,
+      lookbackMonths: useAllHistory ? -1 : lookbackMonths,
+      cutoffDate: useAllHistory ? 'all' : cutoffDate,
+    };
+  }
 
-  const grouped = await (conditions.length
-    ? baseQuery.where(and(...conditions))
-    : baseQuery
-  ).groupBy(
-      salesHistory.skuId,
-      sql`coalesce(${salesHistory.channel}, 'UNKNOWN')`,
-      sql`extract(year from ${salesHistory.saleDate}::date)`,
-      sql`extract(month from ${salesHistory.saleDate}::date)`,
-    );
+  const monthComplete = sql`make_date(extract(year from ${salesHistory.saleDate}::date)::int, extract(month from ${salesHistory.saleDate}::date)::int, 1) >= ${dailyMinDate}::date`;
+  const skuIds = input?.skuIds?.length ? Array.from(new Set(input.skuIds)) : null;
+  const skuChunks: Array<string[] | null> = skuIds
+    ? chunkSkuIds(skuIds, MONTHLY_UPSERT_SKU_CHUNK)
+    : [null];
 
   let upsertedRows = 0;
-  const skuIds = Array.from(new Set(grouped.map((row) => row.skuId)));
-  const categoryBySkuId = await loadSkuCategoryMap(skuIds);
-
-  for (const row of grouped) {
-    await db
-      .insert(salesHistoryMonthly)
-      .values({
-        skuId: row.skuId,
-        channel: row.channel,
-        saleYear: row.saleYear,
-        month: row.month,
-        qtySold: row.qtySold,
-        category: resolveSkuCategoryFromMaster(categoryBySkuId, row.skuId),
-        source: 'import',
-        updatedAt: new Date(),
-      })
-      .onConflictDoUpdate({
-        target: [
-          salesHistoryMonthly.skuId,
-          salesHistoryMonthly.channel,
-          salesHistoryMonthly.saleYear,
-          salesHistoryMonthly.month,
-        ],
-        set: {
-          qtySold: row.qtySold,
-          category: resolveSkuCategoryFromMaster(categoryBySkuId, row.skuId),
-          updatedAt: new Date(),
-        },
-      });
-    upsertedRows++;
+  for (const skuChunk of skuChunks) {
+    const filters: SQL[] = [...dateConditions, monthComplete];
+    if (skuChunk) {
+      filters.push(inArray(salesHistory.skuId, skuChunk));
+    }
+    upsertedRows += await upsertMonthlySalesFromDailyWhere(and(...filters)!);
+    await yieldToEventLoop();
   }
 
   return {
@@ -155,6 +144,46 @@ export async function aggregateSalesHistoryMonthlyFromDaily(input?: {
     lookbackMonths: useAllHistory ? -1 : lookbackMonths,
     cutoffDate: useAllHistory ? 'all' : cutoffDate,
   };
+}
+
+function chunkSkuIds(ids: string[], size: number): string[][] {
+  const chunks: string[][] = [];
+  for (let offset = 0; offset < ids.length; offset += size) {
+    chunks.push(ids.slice(offset, offset + size));
+  }
+  return chunks;
+}
+
+async function upsertMonthlySalesFromDailyWhere(where: SQL): Promise<number> {
+  const result = await db.execute(sql`
+    WITH upserted AS (
+      INSERT INTO sales_history_monthly (
+        sku_id, channel, sale_year, month, qty_sold, category, source, updated_at
+      )
+      SELECT
+        ${salesHistory.skuId},
+        coalesce(${salesHistory.channel}, 'UNKNOWN'),
+        extract(year from ${salesHistory.saleDate}::date)::int,
+        extract(month from ${salesHistory.saleDate}::date)::int,
+        sum(${salesHistory.qtySold})::int,
+        ${skus.category},
+        'import',
+        now()
+      FROM ${salesHistory}
+      INNER JOIN ${skus} ON ${skus.id} = ${salesHistory.skuId}
+      WHERE ${where}
+      GROUP BY 1, 2, 3, 4, ${skus.category}
+      ON CONFLICT (sku_id, channel, sale_year, month)
+      DO UPDATE SET
+        qty_sold = EXCLUDED.qty_sold,
+        category = EXCLUDED.category,
+        updated_at = now()
+      RETURNING 1
+    )
+    SELECT count(*)::int AS upserted FROM upserted
+  `);
+  const rows = Array.from(result as unknown as Array<{ upserted: number }>);
+  return Number(rows[0]?.upserted ?? 0);
 }
 
 export async function persistSkuMonthlySalesRows(

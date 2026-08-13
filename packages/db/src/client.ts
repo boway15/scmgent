@@ -32,11 +32,28 @@ export function resolveDatabaseUrl(): string {
   return 'postgresql://scm:scm_dev_pass@127.0.0.1:5432/scm_dev';
 }
 
-/** 妙搭 Serverless PG 兼容：prepare:false 适配连接池，生产环境限制连接数 */
+/**
+ * 连接池大小：
+ * - 自建 Docker 导入与 HTTP 同进程，max=1 会让所有接口堵在导入 SQL 后面
+ * - 妙搭 Serverless 仍默认 1
+ * - 可用 DB_POOL_MAX 覆盖
+ */
+export function resolveDbPoolMax(
+  env: NodeJS.Dict<string> = process.env,
+): number {
+  const raw = env.DB_POOL_MAX?.trim();
+  if (raw) {
+    const parsed = Number.parseInt(raw, 10);
+    if (Number.isFinite(parsed) && parsed >= 1) return Math.min(parsed, 50);
+  }
+  if (env.RUNNING_IN_DOCKER === 'true') return 10;
+  return env.NODE_ENV === 'production' ? 1 : 10;
+}
+
+/** 妙搭 Serverless PG 兼容：prepare:false 适配连接池 */
 export function createDb(connectionString: string) {
-  const isProd = process.env.NODE_ENV === 'production';
   const client = postgres(connectionString, {
-    max: isProd ? 1 : 10,
+    max: resolveDbPoolMax(),
     prepare: false,
     idle_timeout: 20,
     connect_timeout: 15,

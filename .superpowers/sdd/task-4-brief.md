@@ -1,92 +1,64 @@
-﻿### Task 4: 鍋ュ悍璁＄畻涓庤ˉ璐т换鍔℃敼鐢?position
+### Task 4: 离线 7 月复盘 + 收尾
 
 **Files:**
-- Modify: `apps/web/server/lib/inventory-health-service.ts`
-- Modify: `apps/web/server/tasks/replenishmentForecast.ts`
-- Modify: `apps/web/server/lib/inventory-snapshot.ts`锛坄getRegionPoolSnapshot` / `sumEffectiveQtyForWarehouses`锛?- Modify: `apps/web/server/lib/inventory-health-service.test.ts`锛堣嫢鏈夌浉鍏虫柇瑷€鍒欐洿鏂帮紱鍙柊澧?position metrics 鏂█锛?
+- Modify (可选): `apps/web/scripts/validate-july-t4b-relax.ts` — 在标题打印当前 `V41_T4B_*` / `T99_SYSTEM_FLOOR_DISCOUNT`
+- Modify: `docs/superpowers/specs/2026-08-12-t4b-t99-optimistic-relax-design.md` — 状态改为「已实现」
+
 **Interfaces:**
-- Consumes: `resolveInventoryPosition`
-- Produces: `SkuHealthRow.effectiveQty` 鏉ヨ嚜 position锛沗metrics.inventoryPosition` 鍚?breakdown
+- 脚本仍不写库；T99 行若 `old_system_d>0` 可走 `computeAllCatV41BoundedDaily`；脚本现有 `tier === 'T99' return 0` 需改为调用真实 T99 分支（否则复盘看不到折扣抬升）
 
-- [ ] **Step 1: Write / extend failing test**
+- [ ] **Step 1: 修脚本 T99 重算**
 
-鍦?`inventory-health-service.test.ts` 鎴栨柊寤鸿交閲忔祴璇曪細楠岃瘉 metrics 褰㈢姸鍔╂墜锛堣嫢 compute 闅?mock DB锛屽垯鎶斤級锛?
+将 `recompute` 中：
+
 ```ts
-export function buildInventoryPositionMetrics(pos: InventoryPositionBreakdown) {
-  return {
-    inventoryPosition: {
-      effectiveQty: pos.effectiveQty,
-      qtyAvailable: pos.qtyAvailable,
-      qtyInProduction: pos.qtyInProduction,
-      qtyInTransit: pos.qtyInTransit,
-      qtyConfirmedOpen: pos.qtyConfirmedOpen,
-      qtyReserved: pos.qtyReserved,
-      dedupeMode: pos.dedupeMode,
-      unassignedOpenQty: pos.unassignedOpenQty,
-      sources: pos.sources,
-    },
-  };
-}
+if (tier === 'T99') return 0;
 ```
 
-鍗曟祴鏂█璇ュ璞″瓧娈甸綈鍏ㄣ€?
-- [ ] **Step 2: Run 鈥?RED**锛堣嫢鍑芥暟灏氭湭瀵煎嚭锛?
-- [ ] **Step 3: Wire `computeSkuWarehouseHealth`**
+改为照常调用 `computeAllCatV41BoundedDaily`（与其它层相同），让 T99 走系统保底。
 
-鏇挎崲锛?
-```ts
-const snapshot = await getLatestInventorySnapshot(...);
-// effectiveQty: snapshot.effectiveQty
-```
+文件头注释改为说明「T4B+T99 方案 A 常量复盘」。
 
-涓猴細
+在 `main` 开头 `console.log` 打印：
 
 ```ts
-const position = await resolveInventoryPosition({
-  skuId: params.sku.id,
-  warehouseCode: params.warehouse.code,
+import {
+  V41_T4B_CONSERVATIVE_FACTOR,
+  V41_T4B_NEAR_CONSERVATIVE_FACTOR,
+  V41_T4B_RECENT30_CAP,
+  V41_T4B_RECENT90_CAP,
+} from '../server/lib/forecast-allcat-v41.js';
+import { T99_SYSTEM_FLOOR_DISCOUNT } from '../server/lib/forecast-demand.js';
+
+console.log('constants', {
+  T4B_near: V41_T4B_NEAR_CONSERVATIVE_FACTOR,
+  T4B_far: V41_T4B_CONSERVATIVE_FACTOR,
+  T4B_r30_cap: V41_T4B_RECENT30_CAP,
+  T4B_r90_cap: V41_T4B_RECENT90_CAP,
+  T99_discount: T99_SYSTEM_FLOOR_DISCOUNT,
 });
-// coverage / return 浣跨敤 position.effectiveQty
-// metrics 鍚堝苟 buildInventoryPositionMetrics(position) 涓庡師 lead/safety 瀛楁
 ```
 
-`replenishmentForecast.ts` 涓粨绾?`getLatestInventorySnapshot` 鏀逛负 `resolveInventoryPosition`锛沀S 鍖哄煙姹狅細
+- [ ] **Step 2: 跑离线复盘（环境允许时）**
 
-```ts
-async function resolveRegionPoolEffectiveQty(skuId: string, regionGroup: string): Promise<number> {
-  const whRows = await db.select(...).from(warehouses).where(region...);
-  let total = 0;
-  for (const code of whRows) {
-    const pos = await resolveInventoryPosition({ skuId, warehouseCode: code });
-    total += pos.effectiveQty;
-  }
-  // SKU 绾у湪浜э細浠呭綋鍚勪粨 production 涔嬪拰涓?0 鏃?fill_gap 涓€娆?  const inProd = await getLatestInProductionQty(skuId);
-  const productionFromWarehouses = /* sum of qtyInProduction from each pos 鈥?track while looping */;
-  if (productionFromWarehouses <= 0 && inProd > 0) total += inProd;
-  return total;
-}
+Run: `pnpm --filter @scm/web exec tsx scripts/validate-july-t4b-relax.ts`
+
+Expected: 输出含 T4B / T99 行；相对「旧系统」偏差应向 0 靠拢（不要求一次达标 0）。若本机无 Docker/DB，记录跳过原因，不阻塞合并；单测已覆盖常量。
+
+- [ ] **Step 3: 标记 spec 已实现**
+
+将设计文档头部改为：
+
+```markdown
+> **状态**：已实现  
 ```
 
-鎶婂悓绛夐€昏緫鏀捐繘 `getRegionPoolSnapshot`锛岄伩鍏嶄换鍔′笌蹇収妯″潡鍒嗗弶銆?
-- [ ] **Step 4: Run targeted tests**
+- [ ] **Step 4: Commit**
+
+Also add the plan file if still untracked:
+`docs/superpowers/plans/2026-08-12-t4b-t99-optimistic-relax.md`
 
 ```bash
-pnpm --filter @scm/web exec tsx --test server/lib/inventory-position.test.ts
-pnpm --filter @scm/web exec tsx --test server/lib/inventory-health-service.test.ts
-pnpm --filter @scm/web exec tsx --test server/lib/replenishment-coverage.test.ts
+git add apps/web/scripts/validate-july-t4b-relax.ts docs/superpowers/specs/2026-08-12-t4b-t99-optimistic-relax-design.md docs/superpowers/plans/2026-08-12-t4b-t99-optimistic-relax.md
+git commit -m "chore(forecast): validate July T4B/T99 plan-A relax offline"
 ```
-
-Expected: PASS
-
-- [ ] **Step 5: Commit**
-
-```bash
-git add apps/web/server/lib/inventory-health-service.ts apps/web/server/lib/inventory-snapshot.ts apps/web/server/tasks/replenishmentForecast.ts apps/web/server/lib/inventory-position.ts apps/web/server/lib/inventory-health-service.test.ts
-git commit -m "$(cat <<'EOF'
-feat: drive health and replenishment from inventory position
-
-EOF
-)"
-```
-
----

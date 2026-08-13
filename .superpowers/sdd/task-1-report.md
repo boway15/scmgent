@@ -1,103 +1,75 @@
-# Task 1 Report: 边界文档核对（无代码行为变更）
+# Task 1 Report: T99 折扣 0.6→0.8（TDD）
 
-**Status:** DONE  
-**Branch:** `feat/inventory-planning-boundary-p0`  
-**Commit:** `fd9a829` — `docs: lock inventory planning / PMC boundary for P0`
+## Status
 
----
+**DONE**
 
-## 1. 任务目标
+## What Was Implemented
 
-核对 `docs/superpowers/specs/2026-07-29-inventory-planning-pmc-evolution-design.md` 的 §1.2、§14、§16.1 与 plan Global Constraints 一致；可选在 `docs/prd/mvp-overview.md`「后续 Phase」增加一行引用。无运行时代码变更。
+- Raised `T99_SYSTEM_FLOOR_DISCOUNT` from `0.6` to `0.8` in `forecast-demand.ts`.
+- Updated `resolveT99ReplenishmentFallbackDaily` default discount to reference `T99_SYSTEM_FLOOR_DISCOUNT` (avoids drift).
+- Synced allcat V4.1 T99 formula string and `buildT99ReviewMessage` copy from `×0.6` to `×0.8`.
+- Kept `recent_max06` enum mode name unchanged.
+- Did **not** change T4B constants, ghost gates, or T99 zero-gate (`recent30≤0→0`).
 
----
+## TDD Evidence
 
-## 2. 核对清单（Global Constraints ↔ 设计文档）
+### RED (Step 2)
 
-| Global Constraint | 设计文档位置 | 结果 |
-|-------------------|-------------|------|
-| 双引擎职责边界（库存规划 vs 供应商 PMC） | §1.2 引擎定义 + 职责表 | ✅ 一致 |
-| 默认去重模式 `drafts_fill_gap` | §4.2 首版默认说明；§16.1 锁定 | ✅ 一致 |
-| 物理仓不重复摊 SKU 级 IN-PRODUCTION | §16.1 + §16 风险表 | ✅ 一致 |
-| `exception` → `confirmedOpen` + `atRisk` | §4.2 状态映射；§16.1 | ✅ 一致 |
-| 跟单仓归属规则 | §16.1 | ✅ 一致 |
-| `eta_available` 为主字段 | §8.2、§16.1 | ✅ 一致 |
-| P0 不做：lead_time_profiles / shipments / SKU 规划页 | §13 分期 P1/P2；§16.1 SKU 规划页 P1；§16.2 非目标 | ✅ 一致 |
-| P0 不做：断货修正、Z 值、驾驶舱、SAP、正式 PO、BOM、FOB 改动 | §14 非范围；§16.2 | ✅ 一致 |
-| 扩展现表，禁止平行主路径 | §1.3 原则 | ✅ 一致 |
+Command:
 
-**结论：** 设计文档已完整覆盖 Global Constraints，§16.1 无需补写或修改。
-
----
-
-## 3. 变更摘要
-
-| 文件 | 操作 |
-|------|------|
-| `docs/superpowers/specs/2026-07-29-inventory-planning-pmc-evolution-design.md` | 新增入库（内容已满足边界，无正文修改） |
-| `docs/prd/mvp-overview.md` | 在「后续 Phase」追加第 15 项引用 spec |
-
-**未修改：**「明确不做（本期）」列表（按要求保持不变）。
-
-追加内容：
-
-```markdown
-15. 库存规划与 PMC 演进（见 docs/superpowers/specs/2026-07-29-inventory-planning-pmc-evolution-design.md）
+```bash
+pnpm --filter @scm/web exec tsx --test server/lib/forecast-demand.test.ts
 ```
 
----
+Result: **FAIL** (2 failing tests)
 
-## 4. Self-review
+- `resolveT99SystemFloorDaily uses max(r30,r90)*0.8 near and *0.72 far` — `2.4 !== 3.2`
+- `T99 zero forecast falls back to recent sales for replenishment` — `1.2 !== 1.6`
 
-### §1.2 双引擎
+Zero-gate test remained passing (unchanged).
 
-- 库存规划引擎：需求预测 + 库存位置 + 提前期 + 安全库存/覆盖天数 + 补货建议
-- 供应商 PMC 引擎：采购计划 + 交期承诺 + 状态跟单 + 发运里程碑 + 到货回写
-- 职责表明确划分「负责 / 不负责」，与 plan 描述无冲突
+### GREEN (Step 5)
 
-### §14 非范围
+Commands:
 
-与 P0 Global Constraints 及 `mvp-overview`「明确不做」无矛盾（正式 PO、BOM、SAP、船司 API 等均列明不做）。
+```bash
+pnpm --filter @scm/web exec tsx --test server/lib/forecast-demand.test.ts
+pnpm --filter @scm/web exec tsx --test server/lib/forecast-allcat-v41.test.ts
+```
 
-### §16.1 / §16.2 P0 锁定
+Results:
 
-- 默认 `drafts_fill_gap` 已在 §16.1 首行锁定
-- SKU 规划页、lead_time 运输方式维均标注 **P1**
-- §16.2 显式列出 P0 不包含项，与 plan Task 8 验收「未做 P1+ 范围」对齐
+- `forecast-demand.test.ts`: **14/14 PASS**
+- `forecast-allcat-v41.test.ts`: **46/46 PASS** (T99 bounded/floor assertions updated; no T4B assertion changes in this task)
 
-### 潜在关注点（非阻塞）
+## Files Changed
 
-- §4.2 仍描述三种可配置去重模式；§16.1 已锁定 P0 默认值为 `drafts_fill_gap`，语义清晰，不构成矛盾
-- `mvp-overview` 仍标注「运行于飞书妙搭」为历史语境；本次任务未要求更新平台描述
+| File | Change |
+|------|--------|
+| `apps/web/server/lib/forecast-demand.ts` | `T99_SYSTEM_FLOOR_DISCOUNT = 0.8`; fallback default uses constant |
+| `apps/web/server/lib/forecast-demand.test.ts` | T99 floor/fallback expectations → 0.8口径 |
+| `apps/web/server/lib/forecast-allcat-v41.ts` | `tierFormula` T99 + `buildT99ReviewMessage` ×0.8 |
+| `apps/web/server/lib/forecast-allcat-v41.test.ts` | T99 bounded daily + horizonFactors assertions |
 
----
+## Commit
 
-## 5. 测试
+```
+8f77778 feat(forecast): raise T99 floor discount 0.6→0.8
+```
 
-N/A — 纯文档任务，无代码或运行时验证。
+4 files changed, 16 insertions(+), 16 deletions(-) — Task 1 scope only (isolated from unrelated allcat WIP on branch).
 
----
+## Self-Review
 
-## 6. 交付物
+- TDD order followed: tests updated first, RED verified, then minimal implementation.
+- Fallback default references `T99_SYSTEM_FLOOR_DISCOUNT` per brief preference.
+- Zero-gate behavior preserved (`recent30=0` → daily 0, mode `zero_gate_recent30`).
+- Far-month decay unchanged (`flexDecayFromK=3`, `flexDecayFactor=0.72`).
+- Also updated `computeAllCatV41BoundedDaily applies T99 system floor with far-month decay` test (near 3.2, far 2.304) — required for GREEN; brief listed the `computeAllCatV41ForecastForMonth` case explicitly but bounded test is same T99 path.
 
-- Git commit: `fd9a829`
-- 本报告: `.superpowers/sdd/task-1-report.md`
+## Concerns
 
----
-
-## 7. Review fix（Important findings）
-
-**触发：** Code review 指出 §4.2 `exception` 行与 §16.1 / Global Constraints 不一致（仍写「默认计入原桶」）。
-
-**变更：**
-
-| 位置 | 修改 |
-|------|------|
-| §4.2 `exception` 行 | 开放量计入 `confirmedOpen`，数量口径 `qty - receivedQty`，`sources` 打标 `atRisk: true`（移除「原桶」表述） |
-| §4.2 去重规则第 2 点 | 补充「P0 锁定 `drafts_fill_gap`」 |
-
-**未改：**「明确不做（本期）」及其他无关文档。
-
-**确认：** §4.2 与 §16.1 / Global Constraints 现已一致。
-
-**Commit message:** `docs: align exception bucket mapping with P0 lock`
+- **Mode name `recent_max06`**: Still references 0.6 historically; left unchanged per brief. UI/docs may show 0.8 formula while mode key says `_06` — cosmetic inconsistency only.
+- **Frontend formula display**: `forecast-v41-system-formula.ts` / UI help text may still mention 0.6 if not updated in later tasks — out of Task 1 scope but worth checking in Task 5 or UI pass.
+- **Branch WIP**: Other unstaged allcat/forecast changes on branch were excluded from this commit intentionally.

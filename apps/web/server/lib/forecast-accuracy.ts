@@ -99,6 +99,7 @@ export function shouldCreateLowAccuracyReviewItem(input: {
 /** 复盘明细 CSV 表头（与页面列表列一致） */
 export const FORECAST_ACCURACY_DETAIL_CSV_HEADERS = [
   '商品编码',
+  '项目组',
   '商品分层',
   '渠道',
   '月份',
@@ -110,6 +111,7 @@ export const FORECAST_ACCURACY_DETAIL_CSV_HEADERS = [
 /** 漏报明细 CSV 表头（与页面漏报 Tab 列表列一致） */
 export const FORECAST_ACCURACY_MISS_DETAIL_CSV_HEADERS = [
   '商品编码',
+  '项目组',
   '商品分层',
   '渠道',
   '月份',
@@ -567,6 +569,7 @@ export async function listForecastAccuracy(params?: {
       skuId: forecastAccuracyMonthly.skuId,
       skuCode: skus.code,
       skuName: skus.name,
+      projectGroup: skus.projectGroup,
       station: forecastAccuracyMonthly.station,
       platform: forecastAccuracyMonthly.platform,
       forecastYear: forecastAccuracyMonthly.forecastYear,
@@ -614,6 +617,7 @@ export async function listForecastAccuracy(params?: {
         actualDaily: actualDailyAvg,
       });
       const profileSegment = r.profileSegment?.trim() || null;
+      const projectGroup = r.projectGroup?.trim() || null;
       return {
         ...r,
         forecastMonth: formatForecastMonth(r.forecastYear, r.month),
@@ -622,6 +626,7 @@ export async function listForecastAccuracy(params?: {
         biasRate: r.biasRate != null ? Number(r.biasRate) : metrics.biasRate,
         biasVsActual: metrics.biasVsActual,
         mape: r.mape != null ? Number(r.mape) : metrics.mape,
+        projectGroup,
         profileSegment,
         profileSegmentLabel: profileSegment ? segmentLabel(profileSegment) : null,
         isZeroForecastMiss: metrics.isZeroForecastMiss,
@@ -659,6 +664,7 @@ export async function buildForecastAccuracyExportCsv(params: {
     .select({
       skuCode: skus.code,
       skuName: skus.name,
+      projectGroup: skus.projectGroup,
       station: forecastAccuracyMonthly.station,
       platform: forecastAccuracyMonthly.platform,
       forecastYear: forecastAccuracyMonthly.forecastYear,
@@ -700,8 +706,10 @@ export async function buildForecastAccuracyExportCsv(params: {
         actualDaily: actualDailyAvg,
       });
       const profileSegment = r.profileSegment?.trim() || '';
+      const projectGroup = r.projectGroup?.trim() || '-';
       const base = [
         r.skuCode,
+        projectGroup,
         profileSegment ? segmentLabel(profileSegment) : '-',
         r.platform,
         excelKeepYmText(formatForecastMonth(r.forecastYear, r.month)),
@@ -742,6 +750,7 @@ export async function buildForecastAccuracySkuExportCsv(params: {
     .select({
       skuCode: skus.code,
       skuName: skus.name,
+      projectGroup: skus.projectGroup,
       station: forecastAccuracyMonthly.station,
       platform: forecastAccuracyMonthly.platform,
       forecastDailyAvg: forecastAccuracyMonthly.forecastDailyAvg,
@@ -768,6 +777,7 @@ export async function buildForecastAccuracySkuExportCsv(params: {
     type MissSkuAgg = {
       skuCode: string;
       skuName: string;
+      projectGroup: string;
       station: string;
       platform: string;
       profileSegment: string;
@@ -783,6 +793,7 @@ export async function buildForecastAccuracySkuExportCsv(params: {
         agg = {
           skuCode: row.skuCode,
           skuName: row.skuName ?? '',
+          projectGroup: row.projectGroup?.trim() || '',
           station: row.station,
           platform: row.platform,
           profileSegment: row.profileSegment?.trim() || '',
@@ -790,6 +801,9 @@ export async function buildForecastAccuracySkuExportCsv(params: {
           actualSum: 0,
         };
         byKey.set(key, agg);
+      }
+      if (!agg.projectGroup && row.projectGroup?.trim()) {
+        agg.projectGroup = row.projectGroup.trim();
       }
       if (!agg.profileSegment && row.profileSegment?.trim()) {
         agg.profileSegment = row.profileSegment.trim();
@@ -803,9 +817,10 @@ export async function buildForecastAccuracySkuExportCsv(params: {
       .slice(0, limit);
 
     const csv = buildCsv(
-      ['商品编码', '商品分层', '渠道', '漏报行数', '实际日均合计'],
+      ['商品编码', '项目组', '商品分层', '渠道', '漏报行数', '实际日均合计'],
       skuRows.map((r) => [
         r.skuCode,
+        r.projectGroup || '-',
         r.profileSegment ? segmentLabel(r.profileSegment) : '-',
         r.platform,
         r.missRows,
@@ -818,6 +833,7 @@ export async function buildForecastAccuracySkuExportCsv(params: {
   type SkuAgg = {
     skuCode: string;
     skuName: string;
+    projectGroup: string;
     station: string;
     platform: string;
     profileSegment: string;
@@ -839,6 +855,7 @@ export async function buildForecastAccuracySkuExportCsv(params: {
       agg = {
         skuCode: row.skuCode,
         skuName: row.skuName ?? '',
+        projectGroup: row.projectGroup?.trim() || '',
         station: row.station,
         platform: row.platform,
         profileSegment: row.profileSegment?.trim() || '',
@@ -850,6 +867,9 @@ export async function buildForecastAccuracySkuExportCsv(params: {
         signedErrSum: 0,
       };
       byKey.set(key, agg);
+    }
+    if (!agg.projectGroup && row.projectGroup?.trim()) {
+      agg.projectGroup = row.projectGroup.trim();
     }
     if (!agg.profileSegment && row.profileSegment?.trim()) {
       agg.profileSegment = row.profileSegment.trim();
@@ -878,6 +898,7 @@ export async function buildForecastAccuracySkuExportCsv(params: {
   const csv = buildCsv(
     [
       '商品编码',
+      '项目组',
       '商品分层',
       '渠道',
       '可比行数',
@@ -888,6 +909,7 @@ export async function buildForecastAccuracySkuExportCsv(params: {
     ],
     skuRows.map((r) => [
       r.skuCode,
+      r.projectGroup || '-',
       r.profileSegment ? segmentLabel(r.profileSegment) : '-',
       r.platform,
       r.comparableRows,

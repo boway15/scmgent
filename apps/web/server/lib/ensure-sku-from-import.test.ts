@@ -1,9 +1,15 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { collectDailySalesSkuStubs } from './ensure-sku-from-import.js';
+import { chunkList, collectDailySalesSkuStubs } from './ensure-sku-from-import.js';
 import { expandFobInventoryRows, isFobInventoryFormat } from './fob-inventory-import.js';
 
 describe('ensure-sku-from-import', () => {
+  it('chunks lists without dropping items', () => {
+    assert.deepEqual(chunkList([], 500), []);
+    assert.deepEqual(chunkList([1, 2, 3], 2), [[1, 2], [3]]);
+    assert.deepEqual(chunkList(['a', 'b'], 2), [['a', 'b']]);
+  });
+
   it('collects the best available daily sales stub per SKU code', () => {
     const stubs = collectDailySalesSkuStubs([
       {

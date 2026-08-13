@@ -3426,6 +3426,7 @@ export const api = {
       items: Array<{
         id: string;
         skuCode: string;
+        projectGroup: string | null;
         station: string;
         platform: string;
         forecastMonth: string;
@@ -3702,6 +3703,7 @@ export const api = {
         items: Array<{
           id: string;
           skuCode: string;
+          projectGroup: string | null;
           station: string;
           platform: string;
           forecastMonth: string;

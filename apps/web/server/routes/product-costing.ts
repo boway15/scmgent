@@ -12,6 +12,7 @@ import {
 import { importPriceBookWorkbook } from '../lib/product-costing/price-book-import.js';
 import { parseUnitPrice } from '../lib/product-costing/parse-unit-price.js';
 import {
+  ExtractAlreadyRunningError,
   getExtractRun,
   readCostingPageImage,
   startExtractRun,
@@ -235,7 +236,13 @@ productCostingRoutes.post(
       );
     } catch (error) {
       const message = error instanceof Error ? error.message : '启动解析失败';
-      return c.json({ message }, message === '核算单不存在' ? 404 : 400);
+      const status =
+        error instanceof ExtractAlreadyRunningError
+          ? 409
+          : message === '核算单不存在'
+            ? 404
+            : 400;
+      return c.json({ message }, status);
     }
   },
 );

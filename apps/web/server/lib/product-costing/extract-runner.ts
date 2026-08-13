@@ -27,6 +27,23 @@ const BATCH_SIZE = Math.max(
 
 export type ExtractPageRange = { pageFrom?: number; pageTo?: number };
 
+export class ExtractAlreadyRunningError extends Error {
+  constructor() {
+    super('正在解析中，请稍候');
+    this.name = 'ExtractAlreadyRunningError';
+  }
+}
+
+export function hasActiveExtractRun(
+  projectStatus: string,
+  runs: ReadonlyArray<{ status: string }>,
+): boolean {
+  return (
+    projectStatus === 'extracting' ||
+    runs.some((run) => run.status === 'pending' || run.status === 'running')
+  );
+}
+
 export function planExtractBatches<T>(pages: T[], batchSize: number): T[][] {
   const size = Math.max(1, Number(batchSize) || 1);
   const batches: T[][] = [];
@@ -298,31 +315,60 @@ export async function startExtractRun(
   userId: string,
   range?: ExtractPageRange,
 ): Promise<{ runId: string }> {
-  const [project] = await db
-    .select({ id: costingProjects.id })
-    .from(costingProjects)
-    .where(eq(costingProjects.id, projectId))
-    .limit(1);
-  if (!project) throw new Error('核算单不存在');
-  if (!(await loadSourceAttachment(projectId))) throw new Error('请先上传设计方案文件');
+  const runId = await db.transaction(async (tx) => {
+    const [project] = await tx
+      .select({ id: costingProjects.id, status: costingProjects.status })
+      .from(costingProjects)
+      .where(eq(costingProjects.id, projectId))
+      .limit(1)
+      .for('update');
+    if (!project) throw new Error('核算单不存在');
 
-  const [run] = await db
-    .insert(costingExtractRuns)
-    .values({
-      projectId,
-      status: 'pending',
-      pageFrom: range?.pageFrom ?? null,
-      pageTo: range?.pageTo ?? null,
-      createdBy: userId,
-    })
-    .returning({ id: costingExtractRuns.id });
-  await db
-    .update(costingProjects)
-    .set({ status: 'extracting', extractError: null, updatedAt: new Date() })
-    .where(eq(costingProjects.id, projectId));
+    const activeRuns = await tx
+      .select({ status: costingExtractRuns.status })
+      .from(costingExtractRuns)
+      .where(
+        and(
+          eq(costingExtractRuns.projectId, projectId),
+          inArray(costingExtractRuns.status, ['pending', 'running']),
+        ),
+      )
+      .limit(1);
+    if (hasActiveExtractRun(project.status, activeRuns)) {
+      throw new ExtractAlreadyRunningError();
+    }
 
-  void executeExtractRun(run.id).catch(() => undefined);
-  return { runId: run.id };
+    const [source] = await tx
+      .select({ id: costingAttachments.id })
+      .from(costingAttachments)
+      .where(
+        and(
+          eq(costingAttachments.projectId, projectId),
+          eq(costingAttachments.kind, 'source'),
+        ),
+      )
+      .limit(1);
+    if (!source) throw new Error('请先上传设计方案文件');
+
+    const [run] = await tx
+      .insert(costingExtractRuns)
+      .values({
+        projectId,
+        status: 'pending',
+        pageFrom: range?.pageFrom ?? null,
+        pageTo: range?.pageTo ?? null,
+        createdBy: userId,
+      })
+      .returning({ id: costingExtractRuns.id });
+    await tx
+      .update(costingProjects)
+      .set({ status: 'extracting', extractError: null, updatedAt: new Date() })
+      .where(eq(costingProjects.id, projectId));
+    return run.id;
+  });
+
+  void executeExtractRun(runId).catch(() => undefined);
+  return { runId };
 }
 
 export async function getExtractRun(projectId: string, runId: string) {

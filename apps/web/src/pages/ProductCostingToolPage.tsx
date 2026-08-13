@@ -95,6 +95,11 @@ export function ProductCostingToolPage() {
 
   useEffect(() => {
     const run = extractRunQuery.data;
+    if (run?.status === 'failed') {
+      queryClient.invalidateQueries({ queryKey: ['costing-project', projectId] });
+      queryClient.invalidateQueries({ queryKey: ['costing-projects'] });
+      return;
+    }
     if (run?.status !== 'succeeded') return;
     setMessage('AI 解析完成，材料清单已更新。');
     setExtractRunId('');

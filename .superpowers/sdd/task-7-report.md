@@ -14,3 +14,8 @@
 
 ## Commit
 - `feat(costing): extract BOM in filtered one-page Dify batches`
+
+## Important Review Fixes
+- `startExtractRun` 在事务内锁定核算项目，并查询同项目 `pending` / `running` 任务；项目为 `extracting` 或存在活动任务时返回 409「正在解析中，请稍候」。
+- 解析轮询进入 `failed` 后刷新当前核算项目及项目列表，使前端展示失败前已持久化的清单行。
+- 新增 `hasActiveExtractRun` 单元测试；`pnpm exec tsx --test server/lib/product-costing/extract-batches.test.ts`：4 passed。

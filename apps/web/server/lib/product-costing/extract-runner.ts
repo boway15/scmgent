@@ -12,7 +12,7 @@ import { isCostingBomWorkflowEnabled, runWorkflow } from '../../integrations/dif
 import { calcQtyGross } from './bom-math.js';
 import { applyCategoryTemplate } from './category-template.js';
 import { preparePageImageBase64 } from './compress-page-image.js';
-import { matchPriceBook } from './match-price.js';
+import { appendMatchHint, matchPriceBook } from './match-price.js';
 import { classifyPage, shouldSendPageToDify } from './page-classify.js';
 import { parseWorkflowLines } from './parse-workflow-output.js';
 import { preprocessDesignFile, type PageBundle } from './preprocess/index.js';
@@ -24,6 +24,7 @@ const BATCH_SIZE = Math.max(
   1,
   Number(process.env.COSTING_EXTRACT_BATCH_SIZE ?? 1) || 1,
 );
+const STALE_EXTRACT_RUN_MS = 15 * 60 * 1000;
 
 export type ExtractPageRange = { pageFrom?: number; pageTo?: number };
 
@@ -51,6 +52,32 @@ export function planExtractBatches<T>(pages: T[], batchSize: number): T[][] {
     batches.push(pages.slice(index, index + size));
   }
   return batches;
+}
+
+export function selectPagesInRange<T extends { pageNo: number }>(
+  pages: T[],
+  range: ExtractPageRange,
+): T[] {
+  const from = range.pageFrom ?? 1;
+  const to = range.pageTo ?? Number.MAX_SAFE_INTEGER;
+  const selected = pages.filter((page) => page.pageNo >= from && page.pageNo <= to);
+  if (selected.length > 20) {
+    throw new Error('超过 20 页，请拆分或指定页范围');
+  }
+  return selected;
+}
+
+export function isStaleExtractRun(
+  run: {
+    status: string;
+    startedAt: Date | null;
+    createdAt: Date;
+  },
+  now = new Date(),
+): boolean {
+  if (run.status !== 'pending' && run.status !== 'running') return false;
+  const ageFrom = run.startedAt ?? run.createdAt;
+  return now.getTime() - ageFrom.getTime() > STALE_EXTRACT_RUN_MS;
 }
 
 async function loadSourceAttachment(projectId: string) {
@@ -168,7 +195,7 @@ function toInsertValues(
     qtyGross: String(calcQtyGross(draft.qtyNet, draft.lossRate)),
     sourceRef: draft.sourceRef || null,
     confidence: draft.confidence,
-    notes: draft.notes || null,
+    notes: appendMatchHint(draft.notes, match.status === 'unmatched' ? match.hint : undefined),
     isManual: false,
     extractRunId: runId,
     origin: draft.origin,
@@ -254,12 +281,21 @@ async function applyTemplateAndFinish(
         },
         priceBook,
       );
-      if (line.matchStatus !== match.status || line.priceBookId !== match.priceBookId) {
+      const notes = appendMatchHint(
+        line.notes,
+        match.status === 'unmatched' ? match.hint : undefined,
+      );
+      if (
+        line.matchStatus !== match.status ||
+        line.priceBookId !== match.priceBookId ||
+        line.notes !== notes
+      ) {
         await tx
           .update(costingBomLines)
           .set({
             matchStatus: match.status,
             priceBookId: match.priceBookId,
+            notes,
             updatedAt: new Date(),
           })
           .where(eq(costingBomLines.id, line.id));
@@ -325,16 +361,38 @@ export async function startExtractRun(
     if (!project) throw new Error('核算单不存在');
 
     const activeRuns = await tx
-      .select({ status: costingExtractRuns.status })
+      .select({
+        id: costingExtractRuns.id,
+        status: costingExtractRuns.status,
+        startedAt: costingExtractRuns.startedAt,
+        createdAt: costingExtractRuns.createdAt,
+      })
       .from(costingExtractRuns)
       .where(
         and(
           eq(costingExtractRuns.projectId, projectId),
           inArray(costingExtractRuns.status, ['pending', 'running']),
         ),
-      )
-      .limit(1);
-    if (hasActiveExtractRun(project.status, activeRuns)) {
+      );
+    const staleRuns = activeRuns.filter((run) => isStaleExtractRun(run));
+    const activeRunIds = new Set(staleRuns.map((run) => run.id));
+    const currentRuns = activeRuns.filter((run) => !activeRunIds.has(run.id));
+    let projectStatus = project.status;
+    if (staleRuns.length) {
+      const message = '解析任务超过 15 分钟未完成，已自动标记失败，请重试';
+      await tx
+        .update(costingExtractRuns)
+        .set({ status: 'failed', finishedAt: new Date(), errorMessage: message })
+        .where(inArray(costingExtractRuns.id, staleRuns.map((run) => run.id)));
+      if (!currentRuns.length) {
+        await tx
+          .update(costingProjects)
+          .set({ status: 'extract_failed', extractError: message, updatedAt: new Date() })
+          .where(eq(costingProjects.id, projectId));
+        projectStatus = 'extract_failed';
+      }
+    }
+    if (hasActiveExtractRun(projectStatus, currentRuns)) {
       throw new ExtractAlreadyRunningError();
     }
 
@@ -382,6 +440,7 @@ export async function getExtractRun(projectId: string, runId: string) {
       errorMessage: costingExtractRuns.errorMessage,
       startedAt: costingExtractRuns.startedAt,
       finishedAt: costingExtractRuns.finishedAt,
+      createdAt: costingExtractRuns.createdAt,
     })
     .from(costingExtractRuns)
     .where(
@@ -392,6 +451,21 @@ export async function getExtractRun(projectId: string, runId: string) {
     )
     .limit(1);
   if (!run) return null;
+  if (isStaleExtractRun(run)) {
+    const message = '解析任务超过 15 分钟未完成，已自动标记失败，请重试';
+    const finishedAt = new Date();
+    await db
+      .update(costingExtractRuns)
+      .set({ status: 'failed', finishedAt, errorMessage: message })
+      .where(eq(costingExtractRuns.id, run.id));
+    await db
+      .update(costingProjects)
+      .set({ status: 'extract_failed', extractError: message, updatedAt: finishedAt })
+      .where(eq(costingProjects.id, projectId));
+    run.status = 'failed';
+    run.finishedAt = finishedAt;
+    run.errorMessage = message;
+  }
   const progress =
     run.rawResponse && typeof run.rawResponse === 'object'
       ? (run.rawResponse as Record<string, unknown>)
@@ -470,16 +544,13 @@ export async function executeExtractRun(runId: string): Promise<void> {
       contentType: source.contentType,
       fileName: source.fileName,
     });
-    if (allPages.length > 20) {
-      throw new Error('超过 20 页，请拆分或指定页范围');
-    }
     if (!allPages.length) throw new Error('预处理未得到任何页面');
     await persistPageAttachments(run.projectId, allPages);
 
-    const from = run.pageFrom ?? 1;
-    const to = run.pageTo ?? Number.MAX_SAFE_INTEGER;
-    const filteredPages = allPages
-      .filter((page) => page.pageNo >= from && page.pageNo <= to)
+    const filteredPages = selectPagesInRange(allPages, {
+      pageFrom: run.pageFrom ?? undefined,
+      pageTo: run.pageTo ?? undefined,
+    })
       .map((page) => ({ ...page, pageType: classifyPage(page.pageNo, page.text) }))
       .filter((page) => shouldSendPageToDify(page.pageType, page.text));
     if (!filteredPages.length) throw new Error('指定范围内没有需要 AI 解析的页面');

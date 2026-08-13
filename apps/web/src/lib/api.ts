@@ -159,6 +159,10 @@ export type CostingProjectDetail = {
   summary: CostingSummary;
   hasSourceAttachment: boolean;
   pageCount: number;
+  latestExtractRun: Pick<
+    CostingExtractRun,
+    'id' | 'status' | 'errorMessage' | 'rawResponse'
+  > | null;
 };
 
 export type CostingExtractRun = {
@@ -167,6 +171,7 @@ export type CostingExtractRun = {
   pageFrom: number | null;
   pageTo: number | null;
   errorMessage: string | null;
+  rawResponse: unknown;
   batchCurrent: number;
   batchTotal: number;
   startedAt: string | null;

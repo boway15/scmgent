@@ -2,6 +2,15 @@ import type { MatchStatus, PriceBookEntry } from './types.js';
 
 const normalize = (value: string): string => value.trim().toLowerCase();
 
+export function appendMatchHint(
+  notes: string | null | undefined,
+  hint?: string,
+): string | null {
+  const current = notes?.trim() ?? '';
+  if (!hint || current.includes(hint)) return current || null;
+  return current ? `${current}；${hint}` : hint;
+}
+
 export function matchPriceBook(
   line: { materialName: string; spec: string; unit: string },
   book: PriceBookEntry[],

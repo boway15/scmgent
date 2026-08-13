@@ -38,6 +38,11 @@ const CONFIDENCE_LABELS: Record<CostingBomLine['confidence'], string> = {
   low: '低',
 };
 
+const ORIGIN_LABELS: Record<string, string> = {
+  explicit: '明示',
+  template: '模板',
+};
+
 type BomLinesPanelProps = {
   projectId: string;
   lines: CostingBomLine[];
@@ -216,6 +221,7 @@ export function BomLinesPanel({ projectId, lines, readOnly }: BomLinesPanelProps
           />
         </td>
         <td className="p-2 text-right font-mono">¥{line.lineAmount.toFixed(2)}</td>
+        <td className="p-2 whitespace-nowrap">{ORIGIN_LABELS[line.origin] ?? line.origin}</td>
         <td className="p-1">
           <Input
             key={`${line.id}-source-${line.sourceRef ?? ''}`}
@@ -324,7 +330,7 @@ export function BomLinesPanel({ projectId, lines, readOnly }: BomLinesPanelProps
               <span className="ml-2 font-normal text-text-hint">{categoryLines.length} 行</span>
             </h3>
             <div className="overflow-x-auto">
-              <table className="w-full min-w-[1280px] text-sm">
+              <table className="w-full min-w-[1360px] text-sm">
                 <thead>
                   <tr className="border-b border-border text-left text-text-sub">
                     {[
@@ -337,7 +343,8 @@ export function BomLinesPanel({ projectId, lines, readOnly }: BomLinesPanelProps
                       '匹配状态',
                       '生效单价',
                       '金额',
-                      '来源',
+                      '来源类型',
+                      '出处',
                       '置信度',
                       '操作',
                     ].map((label) => (

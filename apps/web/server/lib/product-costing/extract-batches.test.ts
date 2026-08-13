@@ -1,6 +1,11 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { hasActiveExtractRun, planExtractBatches } from './extract-runner.js';
+import {
+  hasActiveExtractRun,
+  isStaleExtractRun,
+  planExtractBatches,
+  selectPagesInRange,
+} from './extract-runner.js';
 
 describe('planExtractBatches', () => {
   it('defaults invalid batch sizes to one page per batch', () => {
@@ -23,5 +28,59 @@ describe('hasActiveExtractRun', () => {
   it('allows a new run when no extraction is active', () => {
     assert.equal(hasActiveExtractRun('ready', []), false);
     assert.equal(hasActiveExtractRun('extract_failed', [{ status: 'failed' }]), false);
+  });
+});
+
+describe('selectPagesInRange', () => {
+  const pages = Array.from({ length: 25 }, (_, index) => ({ pageNo: index + 1 }));
+
+  it('applies the requested range before enforcing the 20-page limit', () => {
+    assert.deepEqual(
+      selectPagesInRange(pages, { pageFrom: 6, pageTo: 25 }).map((page) => page.pageNo),
+      Array.from({ length: 20 }, (_, index) => index + 6),
+    );
+  });
+
+  it('rejects more than 20 pages after range filtering', () => {
+    assert.throws(() => selectPagesInRange(pages, {}), /超过 20 页/);
+  });
+});
+
+describe('isStaleExtractRun', () => {
+  it('treats pending and running runs older than 15 minutes as stale', () => {
+    const now = new Date('2026-08-13T12:30:00.000Z');
+    assert.equal(
+      isStaleExtractRun(
+        {
+          status: 'running',
+          startedAt: new Date('2026-08-13T12:14:59.000Z'),
+          createdAt: new Date('2026-08-13T12:00:00.000Z'),
+        },
+        now,
+      ),
+      true,
+    );
+    assert.equal(
+      isStaleExtractRun(
+        {
+          status: 'pending',
+          startedAt: null,
+          createdAt: new Date('2026-08-13T12:20:00.000Z'),
+        },
+        now,
+      ),
+      false,
+    );
+    assert.equal(
+      isStaleExtractRun(
+        {
+          status: 'succeeded',
+          startedAt: new Date('2026-08-13T11:00:00.000Z'),
+          createdAt: new Date('2026-08-13T11:00:00.000Z'),
+        },
+        now,
+      ),
+      false,
+    );
   });
 });

@@ -2,13 +2,14 @@ import { and, asc, desc, eq, sql } from 'drizzle-orm';
 import {
   costingAttachments,
   costingBomLines,
+  costingExtractRuns,
   costingProjects,
   db,
   materialPriceBook,
 } from '@scm/db';
 import { calcQtyGross } from './bom-math.js';
 import { calcCostSummary } from './cost-calc.js';
-import { matchPriceBook } from './match-price.js';
+import { appendMatchHint, matchPriceBook } from './match-price.js';
 import { nextCostingProjectNo } from './project-no.js';
 import { removeProjectDir, writeProjectFile } from './storage.js';
 import type { BomConfidence, CostSummary } from './types.js';
@@ -120,6 +121,7 @@ export function calculateCostingLines(
         status: line.matchStatus,
         priceBookId: line.priceBookId,
         bookUnitPrice: null,
+        hint: undefined,
       };
     }
 
@@ -136,6 +138,7 @@ export function calculateCostingLines(
       status: match.status,
       priceBookId: match.priceBookId,
       bookUnitPrice: bookRow ? Number(bookRow.unitPrice) : null,
+      hint: match.hint,
     };
   });
 
@@ -159,6 +162,10 @@ export function calculateCostingLines(
         qtyGross: toNumericString(calculated.qtyGross),
         matchStatus: match.status,
         priceBookId: match.priceBookId,
+        notes: appendMatchHint(
+          line.notes,
+          match.status === 'unmatched' ? match.hint : undefined,
+        ),
         effectiveUnitPrice: calculated.effectiveUnitPrice,
         lineAmount: calculated.lineAmount,
       };
@@ -226,7 +233,7 @@ export async function getCostingProject(id: string) {
     .limit(1);
   if (!project) return null;
 
-  const [sourceLines, activePriceBook, attachments] = await Promise.all([
+  const [sourceLines, activePriceBook, attachments, latestExtractRuns] = await Promise.all([
     db
       .select()
       .from(costingBomLines)
@@ -248,6 +255,17 @@ export async function getCostingProject(id: string) {
       })
       .from(costingAttachments)
       .where(eq(costingAttachments.projectId, id)),
+    db
+      .select({
+        id: costingExtractRuns.id,
+        status: costingExtractRuns.status,
+        errorMessage: costingExtractRuns.errorMessage,
+        rawResponse: costingExtractRuns.rawResponse,
+      })
+      .from(costingExtractRuns)
+      .where(eq(costingExtractRuns.projectId, id))
+      .orderBy(desc(costingExtractRuns.createdAt))
+      .limit(1),
   ]);
 
   const calculated = calculateCostingLines(sourceLines, activePriceBook);
@@ -257,7 +275,9 @@ export async function getCostingProject(id: string) {
         const source = sourceLines[index]!;
         return (
           source.unitPriceOverride === null &&
-          (source.matchStatus !== line.matchStatus || source.priceBookId !== line.priceBookId)
+          (source.matchStatus !== line.matchStatus ||
+            source.priceBookId !== line.priceBookId ||
+            source.notes !== line.notes)
         );
       })
       .map((line) =>
@@ -266,6 +286,7 @@ export async function getCostingProject(id: string) {
           .set({
             matchStatus: line.matchStatus,
             priceBookId: line.priceBookId,
+            notes: line.notes,
             updatedAt: new Date(),
           })
           .where(eq(costingBomLines.id, line.id)),
@@ -278,6 +299,7 @@ export async function getCostingProject(id: string) {
     summary: calculated.summary,
     hasSourceAttachment: attachments.some((attachment) => attachment.kind === 'source'),
     pageCount: attachments.filter((attachment) => attachment.kind === 'page_image').length,
+    latestExtractRun: latestExtractRuns[0] ?? null,
   };
 }
 

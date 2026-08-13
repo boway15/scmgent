@@ -9,9 +9,11 @@ import { CostDashboard } from '@/components/costing/CostDashboard';
 import { PriceBookPanel } from '@/components/costing/PriceBookPanel';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
+import { Input } from '@/components/ui/input';
 import { useCurrentUser } from '@/hooks/useAuth';
 
 const CURRENT_PROJECT_KEY = 'costing.currentProjectId';
+const PRODUCT_CATEGORIES = ['斗柜', '床头柜', '书桌', '梳妆台', '其他'] as const;
 
 export function ProductCostingToolPage() {
   const queryClient = useQueryClient();
@@ -20,6 +22,11 @@ export function ProductCostingToolPage() {
   const [projectId, setProjectId] = useState('');
   const [extractRunId, setExtractRunId] = useState('');
   const [message, setMessage] = useState('');
+  const [showCreateForm, setShowCreateForm] = useState(false);
+  const [newProductName, setNewProductName] = useState('');
+  const [newProductCategory, setNewProductCategory] = useState<(typeof PRODUCT_CATEGORIES)[number]>(
+    '其他',
+  );
   const isReadOnly = user?.role.code === 'viewer';
 
   const projectsQuery = useQuery({
@@ -63,11 +70,25 @@ export function ProductCostingToolPage() {
   });
 
   const createProject = useMutation({
-    mutationFn: (name: string) => api.createCostingProject({ name }),
+    mutationFn: (input: { name: string; category: string }) =>
+      api.createCostingProject(input),
     onSuccess: (project) => {
       setMessage('');
+      setNewProductName('');
+      setNewProductCategory('其他');
+      setShowCreateForm(false);
       setProjectId(project.id);
       localStorage.setItem(CURRENT_PROJECT_KEY, project.id);
+      queryClient.invalidateQueries({ queryKey: ['costing-projects'] });
+    },
+    onError: (error: Error) => setMessage(error.message),
+  });
+
+  const patchProject = useMutation({
+    mutationFn: (category: string) => api.patchCostingProject(projectId, { category }),
+    onSuccess: () => {
+      setMessage('');
+      queryClient.invalidateQueries({ queryKey: ['costing-project', projectId] });
       queryClient.invalidateQueries({ queryKey: ['costing-projects'] });
     },
     onError: (error: Error) => setMessage(error.message),
@@ -99,6 +120,18 @@ export function ProductCostingToolPage() {
   });
 
   useEffect(() => {
+    const project = projectQuery.data;
+    if (
+      project?.status === 'extracting' &&
+      project.latestExtractRun &&
+      (project.latestExtractRun.status === 'pending' ||
+        project.latestExtractRun.status === 'running')
+    ) {
+      setExtractRunId(project.latestExtractRun.id);
+    }
+  }, [projectQuery.data]);
+
+  useEffect(() => {
     const run = extractRunQuery.data;
     if (run?.status === 'failed') {
       queryClient.invalidateQueries({ queryKey: ['costing-project', projectId] });
@@ -111,11 +144,6 @@ export function ProductCostingToolPage() {
     queryClient.invalidateQueries({ queryKey: ['costing-project', projectId] });
     queryClient.invalidateQueries({ queryKey: ['costing-projects'] });
   }, [extractRunQuery.data, projectId, queryClient]);
-
-  const handleCreate = () => {
-    const name = window.prompt('请输入产品名称');
-    if (name?.trim()) createProject.mutate(name.trim());
-  };
 
   const project = projectQuery.data;
 
@@ -146,8 +174,12 @@ export function ProductCostingToolPage() {
           </select>
           {!isReadOnly && (
             <>
-              <Button variant="outline" onClick={handleCreate} disabled={createProject.isPending}>
-                新建
+              <Button
+                variant="outline"
+                onClick={() => setShowCreateForm((value) => !value)}
+                disabled={createProject.isPending}
+              >
+                {showCreateForm ? '取消新建' : '新建'}
               </Button>
               <Button
                 variant="outline"
@@ -201,6 +233,51 @@ export function ProductCostingToolPage() {
         </div>
       </PageHeader>
 
+      {showCreateForm && !isReadOnly && (
+        <Card>
+          <CardContent className="flex flex-wrap items-end gap-3 py-4">
+            <label className="min-w-64 flex-1 text-sm text-text-sub">
+              产品名称
+              <Input
+                className="mt-1"
+                value={newProductName}
+                onChange={(event) => setNewProductName(event.target.value)}
+              />
+            </label>
+            <label className="text-sm text-text-sub">
+              品类
+              <select
+                className="mt-1 block h-10 min-w-36 rounded-md border border-input bg-card px-3 text-sm text-text-main"
+                value={newProductCategory}
+                onChange={(event) =>
+                  setNewProductCategory(
+                    event.target.value as (typeof PRODUCT_CATEGORIES)[number],
+                  )
+                }
+              >
+                {PRODUCT_CATEGORIES.map((category) => (
+                  <option key={category} value={category}>
+                    {category}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <Button
+              variant="outline"
+              disabled={!newProductName.trim() || createProject.isPending}
+              onClick={() =>
+                createProject.mutate({
+                  name: newProductName.trim(),
+                  category: newProductCategory,
+                })
+              }
+            >
+              {createProject.isPending ? '创建中...' : '确认创建'}
+            </Button>
+          </CardContent>
+        </Card>
+      )}
+
       {message && (
         <p className="text-sm text-text-sub" role="status">
           {message}
@@ -250,6 +327,21 @@ export function ProductCostingToolPage() {
               核算编号：<span className="font-mono text-text-main">{project.projectNo}</span>
             </span>
             <span>产品：{project.name}</span>
+            <label className="flex items-center gap-2">
+              品类：
+              <select
+                className="h-8 rounded-md border border-input bg-card px-2 text-sm text-text-main"
+                value={project.category ?? '其他'}
+                disabled={isReadOnly || patchProject.isPending}
+                onChange={(event) => patchProject.mutate(event.target.value)}
+              >
+                {PRODUCT_CATEGORIES.map((category) => (
+                  <option key={category} value={category}>
+                    {category}
+                  </option>
+                ))}
+              </select>
+            </label>
             <span>状态：{project.status}</span>
           </div>
           <BomLinesPanel projectId={project.id} lines={project.lines} readOnly={isReadOnly} />

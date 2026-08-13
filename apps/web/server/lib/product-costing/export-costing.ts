@@ -12,6 +12,7 @@ type CostingExportLine = {
   effectiveUnitPrice: number | null;
   lineAmount: number;
   origin: string;
+  sourceRef: string;
   confidence: string;
   matchStatus: string;
 };
@@ -31,7 +32,8 @@ export function buildCostingExportAoa(input: {
       '毛用量',
       '生效单价',
       '金额',
-      '来源',
+      '来源类型',
+      '出处',
       '置信度',
       '匹配状态',
     ],
@@ -46,6 +48,7 @@ export function buildCostingExportAoa(input: {
       line.effectiveUnitPrice,
       line.lineAmount,
       line.origin,
+      line.sourceRef,
       line.confidence,
       line.matchStatus,
     ]),
@@ -75,6 +78,7 @@ export async function exportCostingXlsx(projectId: string): Promise<Buffer> {
       effectiveUnitPrice: line.effectiveUnitPrice,
       lineAmount: line.lineAmount,
       origin: line.origin,
+      sourceRef: line.sourceRef ?? '',
       confidence: line.confidence,
       matchStatus: line.matchStatus,
     })),

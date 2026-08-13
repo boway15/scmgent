@@ -17,31 +17,28 @@ const line = (materialName: string): CostingBomLineDraft => ({
 });
 
 describe('applyCategoryTemplate', () => {
-  it('adds a missing side panel template row for a chest of drawers', () => {
-    const result = applyCategoryTemplate('斗柜', []);
-    const sidePanel = result.find((item) => item.materialName === '侧板');
-    assert.deepEqual(sidePanel, {
-      category: '板材',
-      materialName: '侧板',
-      spec: '',
-      unit: '块',
-      qtyNet: 0,
-      lossRate: 0,
-      sourceRef: '',
-      confidence: 'low',
-      origin: 'template',
-      notes: '用量待补',
-    });
+  it('adds all cabinet slots for chest and bedside cabinets', () => {
+    const expected = ['侧板', '顶底板', '背板', '抽面', '抽侧', '抽底'];
+    assert.deepEqual(
+      applyCategoryTemplate('斗柜', []).map((item) => item.materialName),
+      expected,
+    );
+    assert.deepEqual(
+      applyCategoryTemplate('床头柜', []).map((item) => item.materialName),
+      expected,
+    );
   });
 
   it('does not add a side panel when an existing name contains it', () => {
     const result = applyCategoryTemplate('斗柜', [line('左侧板')]);
-    assert.equal(result.length, 1);
+    assert.equal(result.filter((item) => item.materialName.includes('侧板')).length, 1);
+    assert.equal(result.length, 6);
   });
 
-  it('does not add rows for an empty or unsupported category', () => {
+  it('does not add rows for empty or other categories', () => {
     assert.deepEqual(applyCategoryTemplate(null, []), []);
-    assert.deepEqual(applyCategoryTemplate('衣柜', []), []);
+    assert.deepEqual(applyCategoryTemplate('', []), []);
+    assert.deepEqual(applyCategoryTemplate('其他', []), []);
   });
 
   it('adds desk top, side panel, and drawer box without hardware', () => {
@@ -51,5 +48,12 @@ describe('applyCategoryTemplate', () => {
       ['桌面', '侧板', '抽盒'],
     );
     assert.ok(result.every((item) => item.category === '板材'));
+  });
+
+  it('adds vanity top, side panel, and drawer box', () => {
+    assert.deepEqual(
+      applyCategoryTemplate('梳妆台', []).map((item) => item.materialName),
+      ['台面', '侧板', '抽盒'],
+    );
   });
 });

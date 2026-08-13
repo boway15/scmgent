@@ -79,6 +79,39 @@ describe('calculateCostingLines', () => {
     assert.equal(result.lines[0]?.lineAmount, 25);
     assert.equal(result.summary.missingPriceCount, 0);
   });
+
+  it('appends an unmatched price-book hint without wiping existing notes', () => {
+    const result = calculateCostingLines(
+      [
+        {
+          id: 'line-1',
+          lineNo: 1,
+          category: '五金',
+          materialName: '滑轨',
+          spec: null,
+          unit: '副',
+          qtyNet: '2',
+          lossRate: '0',
+          qtyGross: '2',
+          origin: 'explicit',
+          confidence: 'medium',
+          matchStatus: 'exact',
+          unitPriceOverride: null,
+          priceBookId: 'old-price',
+          sourceRef: 'p2',
+          notes: '图纸模糊',
+          isManual: false,
+        },
+      ],
+      [
+        { id: 'price-1', materialName: '滑轨', spec: '三节', unit: '副', unitPrice: '10' },
+        { id: 'price-2', materialName: '滑轨', spec: '两节', unit: '副', unitPrice: '8' },
+      ],
+    );
+
+    assert.equal(result.lines[0]?.matchStatus, 'unmatched');
+    assert.equal(result.lines[0]?.notes, '图纸模糊；规格待确认');
+  });
 });
 
 describe('toManualBomLineValues', () => {

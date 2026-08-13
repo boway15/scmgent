@@ -8,6 +8,7 @@ import {
   updatePriceBookItem,
 } from '../lib/product-costing/price-book.js';
 import { importPriceBookWorkbook } from '../lib/product-costing/price-book-import.js';
+import { parseUnitPrice } from '../lib/product-costing/parse-unit-price.js';
 
 export const productCostingRoutes = new Hono();
 
@@ -26,11 +27,6 @@ function requiredText(value: unknown): string | null {
   if (typeof value !== 'string') return null;
   const text = value.trim();
   return text || null;
-}
-
-function nonnegativeNumber(value: unknown): number | null {
-  const number = typeof value === 'number' ? value : Number(value);
-  return Number.isFinite(number) && number >= 0 ? number : null;
 }
 
 productCostingRoutes.get('/procurement/costing/price-book', menuGuard, async (c) => {
@@ -52,7 +48,7 @@ productCostingRoutes.post(
     const category = requiredText(body?.category);
     const materialName = requiredText(body?.materialName);
     const unit = requiredText(body?.unit);
-    const unitPrice = nonnegativeNumber(body?.unitPrice);
+    const unitPrice = parseUnitPrice(body?.unitPrice);
     if (!category || !materialName || !unit || unitPrice === null) {
       return c.json({ message: '大类、材料名称、单位和非负单价为必填项' }, 400);
     }
@@ -102,7 +98,7 @@ productCostingRoutes.patch(
     if (body.spec !== undefined) patch.spec = String(body.spec ?? '').trim();
     if (body.notes !== undefined) patch.notes = String(body.notes ?? '').trim();
     if (body.unitPrice !== undefined) {
-      const unitPrice = nonnegativeNumber(body.unitPrice);
+      const unitPrice = parseUnitPrice(body.unitPrice);
       if (unitPrice === null) return c.json({ message: '单价必须为非负数' }, 400);
       patch.unitPrice = unitPrice;
     }

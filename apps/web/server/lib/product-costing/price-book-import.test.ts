@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { parsePriceBookSheet } from './price-book-import.js';
+import { parsePriceBookSheet, parsePriceBookSheetDetailed } from './price-book-import.js';
 
 describe('parsePriceBookSheet', () => {
   it('maps Chinese headers and normalizes an empty spec', () => {
@@ -40,5 +40,18 @@ describe('parsePriceBookSheet', () => {
 
     assert.equal(rows.length, 1);
     assert.equal(rows[0]?.spec, '12mm');
+  });
+
+  it('counts empty or missing unit price as errors, not rows', () => {
+    const { rows, errors } = parsePriceBookSheetDetailed([
+      ['大类', '材料名称', '规格', '单位', '单价', '备注'],
+      ['板材', '多层板', '18mm', '张', '', '空价格'],
+      ['板材', '多层板', '12mm', '张', 60, '有效'],
+      ['五金', '滑轨', '450mm', '副', undefined, '缺失'],
+    ]);
+
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0]?.spec, '12mm');
+    assert.equal(errors, 2);
   });
 });

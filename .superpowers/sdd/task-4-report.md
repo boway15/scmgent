@@ -39,3 +39,33 @@ Output:
 ℹ pass 6
 ℹ fail 0
 ```
+
+## Review fix (empty unit price import)
+
+Command:
+```
+cd apps/web && pnpm exec tsx --test server/lib/product-costing/price-book-import.test.ts server/lib/product-costing/parse-unit-price.test.ts
+```
+
+Output:
+```
+▶ parseUnitPrice
+  ✔ accepts numbers and non-empty numeric strings (5.9765ms)
+  ✔ rejects empty, null, and undefined (0.7045ms)
+  ✔ rejects invalid or negative values (0.6703ms)
+✔ parseUnitPrice (10.0541ms)
+▶ parsePriceBookSheet
+  ✔ maps Chinese headers and normalizes an empty spec (1.4715ms)
+  ✔ maps English headers (0.2421ms)
+  ✔ skips rows with a negative unit price (0.1527ms)
+  ✔ counts empty or missing unit price as errors, not rows (0.117ms)
+✔ parsePriceBookSheet (2.8829ms)
+ℹ tests 7
+ℹ suites 2
+ℹ pass 7
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 1858.5153
+```

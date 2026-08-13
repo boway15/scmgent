@@ -1,5 +1,6 @@
 import { db } from '@scm/db';
 import { sql } from 'drizzle-orm';
+import { parseUnitPrice } from './parse-unit-price.js';
 
 export type PriceBookImportRow = {
   category: string;
@@ -33,7 +34,7 @@ function headerIndex(header: unknown[], aliases: readonly string[]): number {
   return normalized.findIndex((cell) => aliases.includes(cell as never));
 }
 
-function parsePriceBookSheetDetailed(aoa: unknown[][]): ParsedPriceBookSheet {
+export function parsePriceBookSheetDetailed(aoa: unknown[][]): ParsedPriceBookSheet {
   const header = aoa[0] ?? [];
   const indexes = {
     category: headerIndex(header, HEADER_ALIASES.category),
@@ -56,10 +57,10 @@ function parsePriceBookSheetDetailed(aoa: unknown[][]): ParsedPriceBookSheet {
     const materialName = cellText(line[indexes.materialName]);
     const unit = cellText(line[indexes.unit]);
     const rawPrice = line[indexes.unitPrice];
-    const unitPrice = typeof rawPrice === 'number' ? rawPrice : Number(cellText(rawPrice));
+    const unitPrice = parseUnitPrice(rawPrice);
 
     if (!category && !materialName && !unit && cellText(rawPrice) === '') continue;
-    if (!category || !materialName || !unit || !Number.isFinite(unitPrice) || unitPrice < 0) {
+    if (!category || !materialName || !unit || unitPrice === null) {
       errors += 1;
       continue;
     }

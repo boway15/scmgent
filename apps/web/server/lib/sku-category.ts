@@ -263,27 +263,72 @@ export async function countActiveSkusByCategory(category?: string): Promise<numb
   return countActiveSkusMatchingCategory(category);
 }
 
+export function skuMatchesProjectGroupFilter(
+  skuProjectGroup: string | null | undefined,
+  filter?: string | null,
+): boolean {
+  const normalizedFilter = filter?.trim();
+  if (!normalizedFilter) return true;
+  const projectGroup = skuProjectGroup?.trim();
+  if (!projectGroup) return false;
+  return projectGroup === normalizedFilter || projectGroup.includes(normalizedFilter);
+}
+
+/** 项目组搜索：来自 SKU 主数据 project_group 字段。 */
+export async function searchSkuProjectGroups(query?: string, limit = 50): Promise<string[]> {
+  const safeLimit = Math.min(Math.max(limit, 1), 200);
+  const pattern = categorySearchPattern(query);
+
+  const match = pattern
+    ? and(
+        eq(skus.isActive, true),
+        isNotNull(skus.projectGroup),
+        sql`trim(${skus.projectGroup}) <> ''`,
+        ilike(skus.projectGroup, pattern),
+      )
+    : and(
+        eq(skus.isActive, true),
+        isNotNull(skus.projectGroup),
+        sql`trim(${skus.projectGroup}) <> ''`,
+      );
+
+  const rows = await db
+    .selectDistinct({ projectGroup: skus.projectGroup })
+    .from(skus)
+    .where(match)
+    .limit(safeLimit * 2);
+
+  return mergeDistinctCategories(
+    rows.map((row) => row.projectGroup),
+    safeLimit,
+  );
+}
+
+async function countActiveSkusMatchingProjectGroup(filter?: string): Promise<number> {
+  const rows = await db
+    .select({ projectGroup: skus.projectGroup })
+    .from(skus)
+    .where(eq(skus.isActive, true));
+  const normalizedFilter = filter?.trim();
+  if (!normalizedFilter) return rows.length;
+  return rows.filter((row) => skuMatchesProjectGroupFilter(row.projectGroup, normalizedFilter)).length;
+}
+
 export async function countActiveSkusForForecast(input: {
-  category?: string;
+  projectGroup?: string;
   skuCode?: string;
 }): Promise<number> {
   const skuCode = input.skuCode?.trim();
   if (skuCode) {
     const [row] = await db
-      .select({ id: skus.id, category: skus.category })
+      .select({ id: skus.id, projectGroup: skus.projectGroup })
       .from(skus)
       .where(and(eq(skus.isActive, true), ilike(skus.code, skuCode)))
       .limit(1);
     if (!row) return 0;
-    const category = input.category?.trim();
-    if (!category) return 1;
-    const salesCategoryBySku = await loadLatestSalesHistoryCategoryBySkuIds([row.id]);
-    return skuMatchesCategoryFilter(
-      resolveEffectiveSkuCategory(row.category, salesCategoryBySku.get(row.id)),
-      category,
-    )
-      ? 1
-      : 0;
+    const projectGroup = input.projectGroup?.trim();
+    if (!projectGroup) return 1;
+    return skuMatchesProjectGroupFilter(row.projectGroup, projectGroup) ? 1 : 0;
   }
-  return countActiveSkusMatchingCategory(input.category);
+  return countActiveSkusMatchingProjectGroup(input.projectGroup);
 }

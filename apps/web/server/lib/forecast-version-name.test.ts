@@ -9,12 +9,11 @@ import {
 } from './forecast-version.js';
 
 describe('forecast draft version identity', () => {
-  it('documents that long category labels exceed version_no varchar(50)', () => {
+  it('documents that long project group labels exceed version_no varchar(50)', () => {
     const name = buildBaselineDraftVersionName({
       monthCount: 6,
       platform: 'ALL',
-      category:
-        'DJ01-郑州大件\\非Amazon项目6组-第二曲线-US\\客厅-电视柜 TV Stands & Entertainment Centers',
+      projectGroup: 'Amazon项目6组-第二曲线-US-客厅-电视柜 TV Stands',
       now: new Date('2026-07-23T00:00:00.000Z'),
     });
     assert.ok(name.length > FORECAST_VERSION_NO_MAX_LEN);

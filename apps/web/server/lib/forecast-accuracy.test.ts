@@ -132,7 +132,7 @@ describe('forecast-accuracy', () => {
       '月份',
       '预测日均',
       '实际日均',
-      '当月有符号',
+      '偏差',
     ]);
     assert.deepEqual(FORECAST_ACCURACY_MISS_DETAIL_CSV_HEADERS, [
       '商品编码',

@@ -462,7 +462,7 @@ export function SalesForecastVersionDetailPage() {
                     <th className="p-2 font-normal">预测日均</th>
                     <th className="p-2 font-normal">实际日均</th>
                     {accuracyListTab === 'detail' ? (
-                      <th className="p-2 font-normal">当月有符号</th>
+                      <th className="p-2 font-normal">偏差</th>
                     ) : null}
                   </tr>
                 </thead>

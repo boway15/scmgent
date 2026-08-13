@@ -48,7 +48,7 @@ export const FORECAST_ACCURACY_METRICS: Record<ForecastAccuracyMetricKey, Foreca
   },
   rowMape: {
     label: 'MAPE',
-    short: '当月有符号',
+    short: '偏差',
     primary: true,
     formula: '当月该行：(预测日均−实际日均) ÷ 实际日均。正数=偏高估，负数=偏低估（仅实际>0）。',
   },

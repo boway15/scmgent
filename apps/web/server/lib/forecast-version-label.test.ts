@@ -19,11 +19,11 @@ describe('forecast-version-label', () => {
     assert.equal(
       buildBaselineDraftVersionName({
         monthCount: 6,
-        platform: 'WALMART',
-        category: '家居',
+        platform: 'ALL',
+        projectGroup: '项目1组',
         now,
       }),
-      '6 个月 · 沃尔玛 · 品类 家居 · 2026-07-06',
+      '6 个月 · 全平台 · 项目组 项目1组 · 2026-07-06',
     );
     assert.equal(
       buildBaselineDraftVersionName({

@@ -17,9 +17,7 @@ import {
   getForecastVersionById,
 } from './forecast-version.js';
 import {
-  loadLatestSalesHistoryCategoryBySkuIds,
-  resolveEffectiveSkuCategory,
-  skuMatchesCategoryFilter,
+  skuMatchesProjectGroupFilter,
 } from './sku-category.js';
 import {
   FORECAST_GLOBAL_STATION,
@@ -822,7 +820,7 @@ import { assertForecastWriteAllowed } from './forecast-reset.js';
 export async function generateBaselineForecastVersion(input: {
   station?: string;
   platform?: string;
-  category?: string;
+  projectGroup?: string;
   skuCode?: string;
   versionName?: string;
   monthCount?: number;
@@ -851,7 +849,7 @@ export async function generateBaselineForecastVersion(input: {
 async function generateBaselineForecastVersionForStation(input: {
   station: string;
   platform?: string;
-  category?: string;
+  projectGroup?: string;
   skuCode?: string;
   versionName?: string;
   monthCount?: number;
@@ -924,7 +922,7 @@ async function generateBaselineForecastVersionForStation(input: {
 async function generateBaselineForStationPlatform(input: {
   station: string;
   platform: string;
-  category?: string;
+  projectGroup?: string;
   skuCode?: string;
   versionName?: string;
   monthCount?: number;
@@ -940,7 +938,7 @@ async function generateBaselineForStationPlatform(input: {
 }) {
   const station = resolveForecastGenerationStation(input.station);
   const platform = normalizeSalesPlatform(input.platform);
-  const categoryFilter = input.category?.trim() || undefined;
+  const projectGroupFilter = input.projectGroup?.trim() || undefined;
   const skuCodeFilter = input.skuCode?.trim().toUpperCase() || undefined;
   let version = input.existingVersionId ? await getForecastVersionById(input.existingVersionId) : null;
   if (input.existingVersionId && !version) {
@@ -1009,26 +1007,23 @@ async function generateBaselineForStationPlatform(input: {
       id: skus.id,
       code: skus.code,
       category: skus.category,
+      projectGroup: skus.projectGroup,
       productCategory: skus.productCategory,
       forceForecast: skus.forceForecast,
     })
     .from(skus)
     .where(eq(skus.isActive, true));
 
-  if (categoryFilter) {
-    const salesCategoryBySku = await loadLatestSalesHistoryCategoryBySkuIds(skuRows.map((sku) => sku.id));
+  if (projectGroupFilter) {
     skuRows = skuRows.filter((sku) =>
-      skuMatchesCategoryFilter(
-        resolveEffectiveSkuCategory(sku.category, salesCategoryBySku.get(sku.id)),
-        categoryFilter,
-      ),
+      skuMatchesProjectGroupFilter(sku.projectGroup, projectGroupFilter),
     );
   }
 
   if (skuCodeFilter) {
     skuRows = skuRows.filter((sku) => sku.code.trim().toUpperCase() === skuCodeFilter);
     if (skuRows.length === 0) {
-      throw new Error(`SKU ${input.skuCode?.trim()} 不存在、未启用，或与所选品类不匹配`);
+      throw new Error(`SKU ${input.skuCode?.trim()} 不存在、未启用，或与所选项目组不匹配`);
     }
   }
 

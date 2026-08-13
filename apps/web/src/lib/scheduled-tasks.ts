@@ -14,8 +14,8 @@ export const SCHEDULED_TASKS: ScheduledTask[] = [
     name: '缺货预警检测',
     path: '/api/tasks/stock-alert',
     cron: '0 7 * * *',
-    cronLabel: '每天 07:00',
-    description: '扫描库存并生成缺货/低于 ROP 预警',
+    cronLabel: '已停用（原每天 07:00）',
+    description: '扫描库存并生成缺货/低于 ROP 预警（定时调度已临时关闭）',
   },
   {
     id: 'inventory_query_pull',

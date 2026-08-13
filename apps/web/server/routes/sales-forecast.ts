@@ -24,7 +24,7 @@ import {
   parseForecastMonth,
 } from '../lib/forecast-demand.js';
 import { resolveSalesPlatformCode, listActiveSalesPlatforms } from '../lib/sales-platform.js';
-import { countBaselineForecastPlatforms, isForecastV41PlatformCode, resolveBaselineForecastPlatforms } from '../lib/forecast-platform-scope.js';
+import { countBaselineForecastPlatforms } from '../lib/forecast-platform-scope.js';
 import {
   getOrCreateDraftVersion,
   publishForecastVersion,
@@ -81,7 +81,11 @@ import {
   parseBaselineTaskResult,
 } from '../lib/forecast-baseline-task.js';
 import { getTaskRunById, startTaskRun } from '../lib/task-runs.js';
-import { countActiveSkusForForecast, searchSkuCategories } from '../lib/sku-category.js';
+import {
+  countActiveSkusForForecast,
+  searchSkuCategories,
+  searchSkuProjectGroups,
+} from '../lib/sku-category.js';
 import {
   batchProcessReviewItems,
   clearReviewItems,
@@ -190,7 +194,7 @@ async function requireForecastWrite(c: Context, next: Next) {
   return next();
 }
 
-async function countActiveSkus(input: { category?: string; skuCode?: string }): Promise<number> {
+async function countActiveSkus(input: { projectGroup?: string; skuCode?: string }): Promise<number> {
   return countActiveSkusForForecast(input);
 }
 
@@ -301,12 +305,19 @@ salesForecastRoutes.get('/sales-forecast/categories', requireMenu('data.forecast
   return c.json(await searchSkuCategories(q || undefined, limit));
 });
 
+salesForecastRoutes.get('/sales-forecast/project-groups', requireMenu('data.forecast'), async (c) => {
+  const q = c.req.query('q')?.trim();
+  const limitRaw = Number.parseInt(c.req.query('limit')?.trim() ?? '50', 10);
+  const limit = Number.isFinite(limitRaw) ? limitRaw : 50;
+  return c.json(await searchSkuProjectGroups(q || undefined, limit));
+});
+
 salesForecastRoutes.post('/sales-forecasts/generate-baseline', requireMenu('data.forecast'), requireForecastWrite, async (c) => {
   const user = await getCurrentUser(c);
   const body = await c.req.json<{
     station?: string;
     platform?: string;
-    category?: string;
+    projectGroup?: string;
     skuCode?: string;
     versionName?: string;
     targetVersionId?: string;
@@ -335,33 +346,27 @@ salesForecastRoutes.post('/sales-forecasts/generate-baseline', requireMenu('data
     return c.json({ message: err instanceof Error ? err.message : 'startMonth 无效' }, 400);
   }
   const skuCode = body.skuCode?.trim() || undefined;
-  const perStationSkuCount = await countActiveSkus({ category: body.category?.trim(), skuCode });
+  const projectGroup = body.projectGroup?.trim() || undefined;
+  const perStationSkuCount = await countActiveSkus({ projectGroup, skuCode });
   const activeSkuCount = perStationSkuCount;
   if (skuCode && activeSkuCount === 0) {
-    return c.json({ message: `SKU ${skuCode} 不存在、未启用，或与所选品类不匹配` }, 404);
+    return c.json({ message: `SKU ${skuCode} 不存在、未启用，或与所选项目组不匹配` }, 404);
   }
   const platform = body.platform?.trim() || 'ALL';
-  const baselinePlatforms = resolveBaselineForecastPlatforms(platform);
-  if (baselinePlatforms.length === 1 && !isForecastV41PlatformCode(baselinePlatforms[0]!)) {
-    return c.json(
-      {
-        message: `渠道「${platform}」暂不支持单渠道预测，请选择全平台汇总或亚马逊/沃尔玛/Temu/TikTok`,
-      },
-      400,
-    );
+  if (platform !== 'ALL' && !skuCode) {
+    return c.json({ message: '生成预测仅支持全平台汇总，不再支持单渠道' }, 400);
   }
   const estimatedForecastRows =
     activeSkuCount * monthCount * countBaselineForecastPlatforms(platform);
   const useBackground =
     !skuCode && (body.background === true || estimatedForecastRows > MAX_BASELINE_FORECAST_ROWS);
 
-  const category = body.category?.trim() || undefined;
   const versionName = body.versionName?.trim();
   const targetVersionId = body.targetVersionId?.trim() || undefined;
   const autoVersionName = buildBaselineDraftVersionName({
     monthCount,
     platform,
-    category,
+    projectGroup,
     skuCode,
   });
 
@@ -406,7 +411,7 @@ salesForecastRoutes.post('/sales-forecasts/generate-baseline', requireMenu('data
 
   const taskInput = {
     platform,
-    category,
+    projectGroup,
     skuCode,
     versionName: versionName ?? autoVersionName,
     monthCount,

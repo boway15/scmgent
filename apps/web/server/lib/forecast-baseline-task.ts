@@ -5,7 +5,7 @@ import { writeAuditLog } from './audit-log.js';
 export type BaselineTaskInput = {
   station?: string;
   platform?: string;
-  category?: string;
+  projectGroup?: string;
   skuCode?: string;
   versionName?: string;
   monthCount: number;

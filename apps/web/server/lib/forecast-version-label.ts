@@ -32,7 +32,7 @@ export function parseBaselinePlatformFromVersionName(versionName?: string | null
 export function buildBaselineDraftVersionName(input: {
   monthCount: number;
   platform?: string | null;
-  category?: string | null;
+  projectGroup?: string | null;
   skuCode?: string | null;
   now?: Date;
 }): string {
@@ -40,14 +40,14 @@ export function buildBaselineDraftVersionName(input: {
   const platformCode = normalizeSalesPlatform(input.platform?.trim() || 'ALL');
   const platformLabel = BASELINE_PLATFORM_LABEL[platformCode] ?? platformCode;
   const skuCode = input.skuCode?.trim().toUpperCase();
-  const category = input.category?.trim();
+  const projectGroup = input.projectGroup?.trim();
   const date = (input.now ?? new Date()).toISOString().slice(0, 10);
 
   let scopeLabel = '全量 SKU';
   if (skuCode) {
     scopeLabel = `单 SKU ${skuCode}`;
-  } else if (category) {
-    scopeLabel = `品类 ${category}`;
+  } else if (projectGroup) {
+    scopeLabel = `项目组 ${projectGroup}`;
   }
 
   return `${monthCount} 个月 · ${platformLabel} · ${scopeLabel} · ${date}`;

@@ -2660,10 +2660,17 @@ export const api = {
     const query = qs.toString();
     return request<string[]>(`/api/sales-forecast/categories${query ? `?${query}` : ''}`);
   },
+  getSalesForecastProjectGroups: (q?: string, limit = 50) => {
+    const qs = new URLSearchParams();
+    if (q?.trim()) qs.set('q', q.trim());
+    if (limit) qs.set('limit', String(limit));
+    const query = qs.toString();
+    return request<string[]>(`/api/sales-forecast/project-groups${query ? `?${query}` : ''}`);
+  },
   generateSalesForecastBaseline: async (body: {
     station?: string;
     platform?: string;
-    category?: string;
+    projectGroup?: string;
     skuCode?: string;
     versionName?: string;
     targetVersionId?: string;

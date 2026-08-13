@@ -104,7 +104,7 @@ export const FORECAST_ACCURACY_DETAIL_CSV_HEADERS = [
   '月份',
   '预测日均',
   '实际日均',
-  '当月有符号',
+  '偏差',
 ] as const;
 
 /** 漏报明细 CSV 表头（与页面漏报 Tab 列表列一致） */
@@ -884,7 +884,7 @@ export async function buildForecastAccuracySkuExportCsv(params: {
       '零销误预测',
       '实际日均合计',
       '预测日均合计',
-      '当月有符号',
+      '偏差',
     ],
     skuRows.map((r) => [
       r.skuCode,

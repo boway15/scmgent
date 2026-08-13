@@ -1,26 +1,17 @@
-# Task 5 Acceptance (code-level)
+# Task 5 Report: 产品 / 清单 / 现算详情 API
 
-Date: 2026-08-12
-HEAD: 7db3457
+## Status
+DONE
 
-## Checklist (from plan)
+## Commit
+`feat(costing): add project and BOM line APIs with live cost`
 
-| 场景 | 结果 | 证据 |
-|------|------|------|
-| draft + `?view=accuracy` | PASS (code) | `isViewAllowed` includes draft; availableViews push accuracy for draft |
-| 地平线含当月 → 进行中 | PASS (unit) | forecast-qty-totals.test.ts in_progress case |
-| 全过去月、无销量 → `-` | PASS (unit) | empty_actual case |
-| 有预测与销量 → 数字比 | PASS (unit) | ready formats thousands |
-| 运行回测绑当前 versionId | PASS (code) | backtest mutation `versionId` only |
-| 无走步 UI | PASS (code) | no WalkForward / walkForward in detail page |
-| 列表无新列；草稿准确率 `-` | PASS (code) | ListPage accuracy column unchanged; 复盘 link added |
-| qty-totals API | PASS (code) | route registered |
-| unit tests | 7/7 PASS | tsx --test forecast-qty-totals.test.ts |
+## Tests
+- RED：`service.test.ts` 因 `service.js` 尚不存在按预期失败。
+- GREEN：产品成本 service、`calcCostSummary`、价目匹配和 BOM 数学共 14/14 通过。
+- 路由模块导入检查通过；本任务三个 TypeScript 文件 IDE lint 无错误。
 
-## Live UI / DB
-
-Not exercised in this session (no browser / no backtest against live DB). Recommend smoke: open historical-startMonth draft → 准确率复盘 → confirm label + run 回测.
-
-## Spec
-
-Marked `已实现` in docs/superpowers/specs/2026-08-12-forecast-accuracy-detail-totals-design.md (commit 7db3457)
+## Concerns
+- 全量 `tsconfig.node.json` 类型检查仍有仓库既有错误，本任务文件无诊断。
+- Vite 构建被既有 `SalesAnalyticsPage.tsx` 无法解析 `recharts` 阻塞。
+- 未连接 PostgreSQL 做实际 CRUD/上传集成测试。

@@ -15,6 +15,10 @@
 | `COSTING_DATA_DIR` | 附件目录，默认 `data/costing` |
 | `COSTING_PREPROCESS_MODE` | `fixture`（无 LibreOffice）/ `libreoffice`（生产） |
 
+除 scm-agent 的 `DIFY_WORKFLOW_TIMEOUT_MS=300000` 外，还必须在 **Dify 管理后台**
+将该 workflow/app 的**执行超时**设置为 **≥ 300 秒**。两处超时相互独立；只提高
+scm-agent 调用超时，Dify 仍可能先终止执行。
+
 ## Workflow 输入
 
 | 变量名 | 类型 | 说明 |
@@ -69,6 +73,16 @@
 - Prompt 要求：只输出 `lines` JSON 数组，每项含 `origin`
 - 图文不确定的结构件必须 `origin=template`、`qty_net=0`、`confidence=low`
 - 禁止编造图或文字中未出现的五金件
+
+### 页图传递限制
+
+Dify 的 LLM `vision.variable_selector` 只接受 `File/ArrayFile` 变量，而 Code
+节点不能从 `pages_json.image_base64` 产出该文件类型。因此本 DSL 不能仅靠小幅
+接线修改把 base64 页图接入原生 vision/files 输入；当前将页图作为 Markdown data
+URL 放入 Prompt，是否被识别取决于所选多模态模型及 provider。单图上限已放宽为
+560,000 个 base64 字符，可覆盖后端发送的 400 KiB JPEG。若部署环境的 provider
+不解析 data URL，需要增加可输出 Dify File 的解码插件，或由调用端先上传图片并
+通过文件变量传入，再将 `vision.variable_selector` 指向该变量。
 
 ## 建议节点链
 

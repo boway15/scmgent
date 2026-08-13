@@ -8,7 +8,8 @@
 # - 输入 pages_json 含 page/page_type/text/image_base64（scm-agent 分批，每批最多约 4 页）
 # - 输出 lines：JSON 数组字符串（scm-agent parseWorkflowLines 兼容）
 # - 导入后请将 LLM 换成多模态模型（能看图）；默认 deepseek 插件标识仅保证可导入
-# - 图以 data URL 写入 Prompt（单图 base64 过长会截断），超长页仅保留文本
+# - Dify Code 节点不能输出 File/ArrayFile，故无法接到 LLM vision.variable_selector；
+#   当前图以 data URL 写入 Prompt，是否被模型识别取决于模型/provider，详见配套文档
 
 kind: app
 version: 0.6.0
@@ -138,7 +139,8 @@ workflow:
           code: |
             import json
 
-            MAX_B64 = 120000
+            # 400 KiB JPEG 编码后约 546k base64 字符，预留 data/换行余量。
+            MAX_B64 = 560000
             MAX_IMAGES = 4
 
             def main(category: str, pages_json: str) -> dict:
@@ -353,6 +355,8 @@ workflow:
                     if origin not in ALLOWED_ORIGINS:
                         origin = "template"
                     qty = _num(item.get("qty_net", item.get("qtyNet")), -1)
+                    if origin == "template":
+                        qty = 0.0
                     if qty < 0:
                         continue
                     loss = _num(item.get("loss_rate", item.get("lossRate")), 0.08)

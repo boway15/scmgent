@@ -540,6 +540,13 @@
       "when": 1786357200000,
       "tag": "0074_layered_forecast",
       "breakpoints": true
+    },
+    {
+      "idx": 77,
+      "version": "6",
+      "when": 1786611600000,
+      "tag": "0075_product_costing_tool",
+      "breakpoints": true
     }
   ]
 }

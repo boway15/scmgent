@@ -9,3 +9,7 @@ export function buildProjectNo(d: Date, rand: string): string {
 export function randomProjectSuffix(): string {
   return Math.random().toString(36).slice(2, 6).toUpperCase();
 }
+
+export function nextCostingProjectNo(): string {
+  return buildProjectNo(new Date(), randomProjectSuffix());
+}

@@ -41,9 +41,10 @@ const CONFIDENCE_LABELS: Record<CostingBomLine['confidence'], string> = {
 type BomLinesPanelProps = {
   projectId: string;
   lines: CostingBomLine[];
+  readOnly: boolean;
 };
 
-export function BomLinesPanel({ projectId, lines }: BomLinesPanelProps) {
+export function BomLinesPanel({ projectId, lines, readOnly }: BomLinesPanelProps) {
   const queryClient = useQueryClient();
   const [showNewRow, setShowNewRow] = useState(false);
   const [draft, setDraft] = useState<DraftLine>(EMPTY_DRAFT);
@@ -130,6 +131,7 @@ export function BomLinesPanel({ projectId, lines }: BomLinesPanelProps) {
             key={`${line.id}-materialName-${line.materialName}`}
             className="h-8 min-w-32 border-transparent bg-transparent px-2 focus-visible:border-input"
             defaultValue={line.materialName}
+            disabled={readOnly}
             onBlur={(event) => patchText(line, 'materialName', event.target.value)}
           />
         </td>
@@ -138,6 +140,7 @@ export function BomLinesPanel({ projectId, lines }: BomLinesPanelProps) {
             key={`${line.id}-spec-${line.spec ?? ''}`}
             className="h-8 min-w-28 border-transparent bg-transparent px-2 focus-visible:border-input"
             defaultValue={line.spec ?? ''}
+            disabled={readOnly}
             onBlur={(event) => patchText(line, 'spec', event.target.value)}
           />
         </td>
@@ -146,6 +149,7 @@ export function BomLinesPanel({ projectId, lines }: BomLinesPanelProps) {
             key={`${line.id}-unit-${line.unit}`}
             className="h-8 w-20 border-transparent bg-transparent px-2 focus-visible:border-input"
             defaultValue={line.unit}
+            disabled={readOnly}
             onBlur={(event) => patchText(line, 'unit', event.target.value)}
           />
         </td>
@@ -157,6 +161,7 @@ export function BomLinesPanel({ projectId, lines }: BomLinesPanelProps) {
             min="0"
             step="0.0001"
             defaultValue={line.qtyNet}
+            disabled={readOnly}
             onBlur={(event) => {
               if (numberIsValid(event.target.value) && Number(event.target.value) !== Number(line.qtyNet)) {
                 patchLine.mutate({ lineId: line.id, patch: { qtyNet: Number(event.target.value) } });
@@ -173,6 +178,7 @@ export function BomLinesPanel({ projectId, lines }: BomLinesPanelProps) {
             step="0.01"
             defaultValue={Number(line.lossRate) * 100}
             aria-label="损耗百分比"
+            disabled={readOnly}
             onBlur={(event) => {
               const nextRate = Number(event.target.value) / 100;
               if (numberIsValid(event.target.value) && nextRate !== Number(line.lossRate)) {
@@ -192,6 +198,7 @@ export function BomLinesPanel({ projectId, lines }: BomLinesPanelProps) {
             step="0.0001"
             defaultValue={line.unitPriceOverride ?? line.effectiveUnitPrice ?? ''}
             placeholder="缺价"
+            disabled={readOnly}
             onBlur={(event) => {
               const raw = event.target.value;
               if (raw === '' && line.unitPriceOverride !== null) {
@@ -214,6 +221,7 @@ export function BomLinesPanel({ projectId, lines }: BomLinesPanelProps) {
             key={`${line.id}-source-${line.sourceRef ?? ''}`}
             className="h-8 min-w-24 border-transparent bg-transparent px-2 focus-visible:border-input"
             defaultValue={line.sourceRef ?? ''}
+            disabled={readOnly}
             onBlur={(event) => patchText(line, 'sourceRef', event.target.value)}
           />
         </td>
@@ -222,6 +230,7 @@ export function BomLinesPanel({ projectId, lines }: BomLinesPanelProps) {
             key={`${line.id}-confidence-${line.confidence}`}
             className="h-8 rounded-md border border-transparent bg-transparent px-2 text-sm"
             defaultValue={line.confidence}
+            disabled={readOnly}
             onChange={(event) =>
               patchLine.mutate({
                 lineId: line.id,
@@ -237,14 +246,16 @@ export function BomLinesPanel({ projectId, lines }: BomLinesPanelProps) {
           </select>
         </td>
         <td className="p-1">
-          <Button
-            variant="ghost"
-            size="sm"
-            disabled={deleteLine.isPending}
-            onClick={() => deleteLine.mutate(line.id)}
-          >
-            删除
-          </Button>
+          {!readOnly && (
+            <Button
+              variant="ghost"
+              size="sm"
+              disabled={deleteLine.isPending}
+              onClick={() => deleteLine.mutate(line.id)}
+            >
+              删除
+            </Button>
+          )}
         </td>
       </tr>
     );
@@ -257,13 +268,15 @@ export function BomLinesPanel({ projectId, lines }: BomLinesPanelProps) {
           <CardTitle>材料清单</CardTitle>
           <p className="mt-1 text-sm text-text-hint">单元格修改后失焦即保存，损耗按百分比填写</p>
         </div>
-        <Button variant="outline" onClick={() => setShowNewRow((value) => !value)}>
-          {showNewRow ? '取消新增' : '手工添加'}
-        </Button>
+        {!readOnly && (
+          <Button variant="outline" onClick={() => setShowNewRow((value) => !value)}>
+            {showNewRow ? '取消新增' : '手工添加'}
+          </Button>
+        )}
       </CardHeader>
       <CardContent>
         {error && <p className="mb-3 text-sm text-destructive">{error}</p>}
-        {showNewRow && (
+        {showNewRow && !readOnly && (
           <div className="mb-4 grid gap-3 rounded-md bg-muted/40 p-4 md:grid-cols-4">
             {(
               [

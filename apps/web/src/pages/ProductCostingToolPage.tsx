@@ -7,14 +7,17 @@ import { CostDashboard } from '@/components/costing/CostDashboard';
 import { PriceBookPanel } from '@/components/costing/PriceBookPanel';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
+import { useCurrentUser } from '@/hooks/useAuth';
 
 const CURRENT_PROJECT_KEY = 'costing.currentProjectId';
 
 export function ProductCostingToolPage() {
   const queryClient = useQueryClient();
+  const { data: user } = useCurrentUser();
   const uploadRef = useRef<HTMLInputElement>(null);
   const [projectId, setProjectId] = useState('');
   const [message, setMessage] = useState('');
+  const isReadOnly = user?.role.code === 'viewer';
 
   const projectsQuery = useQuery({
     queryKey: ['costing-projects'],
@@ -97,27 +100,31 @@ export function ProductCostingToolPage() {
               </option>
             ))}
           </select>
-          <Button variant="outline" onClick={handleCreate} disabled={createProject.isPending}>
-            新建
-          </Button>
-          <Button
-            variant="outline"
-            disabled={!projectId || uploadAttachment.isPending}
-            onClick={() => uploadRef.current?.click()}
-          >
-            {uploadAttachment.isPending ? '上传中...' : '上传设计方案'}
-          </Button>
-          <input
-            ref={uploadRef}
-            type="file"
-            accept=".pptx,.pdf"
-            className="hidden"
-            onChange={(event) => {
-              const file = event.target.files?.[0];
-              if (file && projectId) uploadAttachment.mutate(file);
-              event.target.value = '';
-            }}
-          />
+          {!isReadOnly && (
+            <>
+              <Button variant="outline" onClick={handleCreate} disabled={createProject.isPending}>
+                新建
+              </Button>
+              <Button
+                variant="outline"
+                disabled={!projectId || uploadAttachment.isPending}
+                onClick={() => uploadRef.current?.click()}
+              >
+                {uploadAttachment.isPending ? '上传中...' : '上传设计方案'}
+              </Button>
+              <input
+                ref={uploadRef}
+                type="file"
+                accept=".pptx,.pdf"
+                className="hidden"
+                onChange={(event) => {
+                  const file = event.target.files?.[0];
+                  if (file && projectId) uploadAttachment.mutate(file);
+                  event.target.value = '';
+                }}
+              />
+            </>
+          )}
           <Button disabled title="AI 解析将在下一阶段开放">
             解析
           </Button>
@@ -130,7 +137,7 @@ export function ProductCostingToolPage() {
         </p>
       )}
 
-      <PriceBookPanel />
+      <PriceBookPanel projectId={projectId} readOnly={isReadOnly} />
 
       {!projectId && !projectsQuery.isLoading ? (
         <Card>
@@ -155,7 +162,7 @@ export function ProductCostingToolPage() {
             <span>产品：{project.name}</span>
             <span>状态：{project.status}</span>
           </div>
-          <BomLinesPanel projectId={project.id} lines={project.lines} />
+          <BomLinesPanel projectId={project.id} lines={project.lines} readOnly={isReadOnly} />
           <CostDashboard summary={project.summary} />
         </>
       ) : null}

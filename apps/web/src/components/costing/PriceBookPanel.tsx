@@ -24,7 +24,12 @@ const EMPTY_DRAFT: DraftPrice = {
   notes: '',
 };
 
-export function PriceBookPanel() {
+type PriceBookPanelProps = {
+  projectId: string;
+  readOnly: boolean;
+};
+
+export function PriceBookPanel({ projectId, readOnly }: PriceBookPanelProps) {
   const queryClient = useQueryClient();
   const importRef = useRef<HTMLInputElement>(null);
   const [collapsed, setCollapsed] = useState(true);
@@ -38,7 +43,17 @@ export function PriceBookPanel() {
   });
   const items = data?.items ?? [];
 
-  const refresh = () => queryClient.invalidateQueries({ queryKey: ['costing-price-book'] });
+  const refresh = () => {
+    const invalidations = [
+      queryClient.invalidateQueries({ queryKey: ['costing-price-book'] }),
+    ];
+    if (projectId) {
+      invalidations.push(
+        queryClient.invalidateQueries({ queryKey: ['costing-project', projectId] }),
+      );
+    }
+    return Promise.all(invalidations);
+  };
 
   const createItem = useMutation({
     mutationFn: () =>
@@ -54,7 +69,7 @@ export function PriceBookPanel() {
       setMessage('');
       setDraft(EMPTY_DRAFT);
       setShowNewRow(false);
-      refresh();
+      return refresh();
     },
     onError: (error: Error) => setMessage(error.message),
   });
@@ -69,7 +84,7 @@ export function PriceBookPanel() {
     }) => api.updateCostingPriceBookItem(id, patch),
     onSuccess: () => {
       setMessage('');
-      refresh();
+      return refresh();
     },
     onError: (error: Error) => setMessage(error.message),
   });
@@ -112,31 +127,33 @@ export function PriceBookPanel() {
           <CardTitle>原材料价目</CardTitle>
           <span className="text-sm font-normal text-text-hint">{items.length} 项</span>
         </button>
-        <div className="flex gap-2">
-          <Button
-            variant="outline"
-            onClick={() => {
-              setCollapsed(false);
-              setShowNewRow(true);
-            }}
-          >
-            新增
-          </Button>
-          <Button variant="outline" onClick={() => importRef.current?.click()}>
-            导入
-          </Button>
-          <input
-            ref={importRef}
-            type="file"
-            accept=".xlsx,.xls"
-            className="hidden"
-            onChange={(event) => {
-              const file = event.target.files?.[0];
-              if (file) importItems.mutate(file);
-              event.target.value = '';
-            }}
-          />
-        </div>
+        {!readOnly && (
+          <div className="flex gap-2">
+            <Button
+              variant="outline"
+              onClick={() => {
+                setCollapsed(false);
+                setShowNewRow(true);
+              }}
+            >
+              新增
+            </Button>
+            <Button variant="outline" onClick={() => importRef.current?.click()}>
+              导入
+            </Button>
+            <input
+              ref={importRef}
+              type="file"
+              accept=".xlsx,.xls"
+              className="hidden"
+              onChange={(event) => {
+                const file = event.target.files?.[0];
+                if (file) importItems.mutate(file);
+                event.target.value = '';
+              }}
+            />
+          </div>
+        )}
       </CardHeader>
       {!collapsed && (
         <CardContent>
@@ -157,7 +174,7 @@ export function PriceBookPanel() {
                 </tr>
               </thead>
               <tbody>
-                {showNewRow && (
+                {showNewRow && !readOnly && (
                   <tr className="border-b border-border/60 bg-muted/30">
                     {(['category', 'materialName', 'spec', 'unit'] as const).map((key) => (
                       <td key={key} className="p-1">
@@ -215,7 +232,7 @@ export function PriceBookPanel() {
                           key={`${item.id}-${key}-${item[key]}`}
                           className="h-8 border-transparent bg-transparent px-2 focus-visible:border-input"
                           defaultValue={item[key]}
-                          disabled={!item.isActive}
+                          disabled={readOnly || !item.isActive}
                           onBlur={(event) => patchText(item, key, event.target.value)}
                         />
                       </td>
@@ -228,7 +245,7 @@ export function PriceBookPanel() {
                         min="0"
                         step="0.0001"
                         defaultValue={item.unitPrice}
-                        disabled={!item.isActive}
+                        disabled={readOnly || !item.isActive}
                         onBlur={(event) => {
                           const value = Number(event.target.value);
                           if (event.target.value !== '' && value !== Number(item.unitPrice)) {
@@ -242,12 +259,12 @@ export function PriceBookPanel() {
                         key={`${item.id}-notes-${item.notes ?? ''}`}
                         className="h-8 border-transparent bg-transparent px-2 focus-visible:border-input"
                         defaultValue={item.notes ?? ''}
-                        disabled={!item.isActive}
+                        disabled={readOnly || !item.isActive}
                         onBlur={(event) => patchText(item, 'notes', event.target.value)}
                       />
                     </td>
                     <td className="p-1">
-                      {item.isActive ? (
+                      {item.isActive && !readOnly ? (
                         <Button
                           size="sm"
                           variant="ghost"
@@ -256,13 +273,15 @@ export function PriceBookPanel() {
                         >
                           停用
                         </Button>
+                      ) : item.isActive ? (
+                        '已启用'
                       ) : (
                         '已停用'
                       )}
                     </td>
                   </tr>
                 ))}
-                {!showNewRow && !items.length && !isLoading && (
+                {(!showNewRow || readOnly) && !items.length && !isLoading && (
                   <tr>
                     <td colSpan={7} className="p-6 text-center text-text-hint">
                       暂无价目，可新增或导入 xlsx

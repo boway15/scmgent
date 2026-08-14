@@ -48,7 +48,7 @@ export async function preprocessWithLibreOffice(opts: PreprocessOptions): Promis
   }
 
   const prefix = path.join(workDir, 'page');
-  await execFileAsync(pdftoppm, ['-png', '-r', '120', pdfAbs, prefix], { timeout: 180_000 });
+  await execFileAsync(pdftoppm, ['-png', '-r', '96', pdfAbs, prefix], { timeout: 180_000 });
   const pngs = (await readdir(workDir))
     .filter((f) => /^page-\d+\.png$/i.test(f) || /^page\d+\.png$/i.test(f))
     .sort((a, b) => {

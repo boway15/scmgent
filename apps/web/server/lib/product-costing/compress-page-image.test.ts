@@ -1,6 +1,11 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { preparePageImage, preparePageImageBase64 } from './compress-page-image.js';
+import {
+  buildDifyPagesJson,
+  MAX_DIFY_PAGES_JSON_CHARS,
+  preparePageImage,
+  preparePageImageBase64,
+} from './compress-page-image.js';
 
 const TINY_PNG = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
@@ -16,10 +21,32 @@ describe('preparePageImageBase64', () => {
     assert.equal(await preparePageImageBase64(Buffer.alloc(511)), '');
   });
 
-  it('returns png mime for uncompressed page images', async () => {
+  it('returns png mime for small uncompressed page images', async () => {
     const sample = Buffer.alloc(600, 0xff);
     const image = await preparePageImage(sample);
     assert.equal(image.mimeType, 'image/png');
     assert.ok(image.base64.length > 0);
+  });
+
+  it('drops oversized images that would exceed the Dify pages_json limit', async () => {
+    const huge = Buffer.alloc(700_000, 0xab);
+    const image = await preparePageImage(huge);
+    assert.equal(image.base64, '');
+  });
+});
+
+describe('buildDifyPagesJson', () => {
+  it('strips images when the serialized payload exceeds the Dify limit', () => {
+    const json = buildDifyPagesJson([
+      {
+        page: 2,
+        page_type: 'render',
+        text: '产品方案',
+        image_base64: 'a'.repeat(600_000),
+        image_mime_type: 'image/jpeg',
+      },
+    ]);
+    assert.ok(json.length <= MAX_DIFY_PAGES_JSON_CHARS);
+    assert.doesNotMatch(json, /"image_base64":"a+/);
   });
 });

@@ -11,7 +11,7 @@ import {
 import { isCostingBomWorkflowEnabled, runWorkflow } from '../../integrations/dify.js';
 import { calcQtyGross } from './bom-math.js';
 import { applyCategoryTemplate } from './category-template.js';
-import { preparePageImage, isPlaceholderPageImage } from './compress-page-image.js';
+import { buildDifyPagesJson, preparePageImage, isPlaceholderPageImage } from './compress-page-image.js';
 import { appendMatchHint, matchPriceBook } from './match-price.js';
 import { classifyPage, shouldSendPageToDify } from './page-classify.js';
 import { parseWorkflowLines } from './parse-workflow-output.js';
@@ -20,10 +20,17 @@ import { resolveStoragePath } from './storage.js';
 import type { CostingBomLineDraft, PriceBookEntry } from './types.js';
 
 const COSTING_KEY = 'DIFY_API_KEY_COSTING_BOM';
-const BATCH_SIZE = Math.max(
+const BATCH_SIZE = 1;
+/** Dify `pages_json` input max is 500k chars; image batches must stay one page. */
+const _configuredBatchSize = Math.max(
   1,
   Number(process.env.COSTING_EXTRACT_BATCH_SIZE ?? 1) || 1,
 );
+if (_configuredBatchSize > 1) {
+  console.warn(
+    `[costing-extract] COSTING_EXTRACT_BATCH_SIZE=${_configuredBatchSize} ignored; forcing 1 page per Dify batch (pages_json 500k limit)`,
+  );
+}
 const STALE_EXTRACT_RUN_MS = 15 * 60 * 1000;
 
 export type ExtractPageRange = { pageFrom?: number; pageTo?: number };
@@ -204,7 +211,7 @@ async function callDifyBatch(
     COSTING_KEY,
     {
       category: category || '家具',
-      pages_json: JSON.stringify(payload),
+      pages_json: buildDifyPagesJson(payload),
     },
     userId,
   );

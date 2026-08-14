@@ -11,7 +11,7 @@ import {
 import { isCostingBomWorkflowEnabled, runWorkflow } from '../../integrations/dify.js';
 import { calcQtyGross } from './bom-math.js';
 import { applyCategoryTemplate } from './category-template.js';
-import { preparePageImage } from './compress-page-image.js';
+import { preparePageImage, isPlaceholderPageImage } from './compress-page-image.js';
 import { appendMatchHint, matchPriceBook } from './match-price.js';
 import { classifyPage, shouldSendPageToDify } from './page-classify.js';
 import { parseWorkflowLines } from './parse-workflow-output.js';
@@ -609,12 +609,24 @@ export async function executeExtractRun(runId: string): Promise<void> {
     if (!allPages.length) throw new Error('预处理未得到任何页面');
     await persistPageAttachments(run.projectId, allPages);
 
-    const filteredPages = selectPagesInRange(allPages, {
+    const rangedPages = selectPagesInRange(allPages, {
       pageFrom: run.pageFrom ?? undefined,
       pageTo: run.pageTo ?? undefined,
-    })
-      .map((page) => ({ ...page, pageType: classifyPage(page.pageNo, page.text) }))
-      .filter((page) => shouldSendPageToDify(page.pageType, page.text));
+    }).map((page) => ({ ...page, pageType: classifyPage(page.pageNo, page.text) }));
+
+    const filteredPages: Array<(typeof rangedPages)[number]> = [];
+    for (const page of rangedPages) {
+      const imageBuffer = await readFile(page.imagePath);
+      const hasRealImage = !isPlaceholderPageImage(imageBuffer);
+      if (
+        shouldSendPageToDify(page.pageType, page.text, {
+          pageNo: page.pageNo,
+          hasRealImage,
+        })
+      ) {
+        filteredPages.push(page);
+      }
+    }
     if (!filteredPages.length) throw new Error('指定范围内没有需要 AI 解析的页面');
 
     const batches = planExtractBatches(filteredPages, BATCH_SIZE);

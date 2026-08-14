@@ -39,6 +39,10 @@ function isPlaceholderImage(buffer: Buffer): boolean {
   return dimensions?.width === 1 && dimensions.height === 1;
 }
 
+export function isPlaceholderPageImage(buffer: Buffer): boolean {
+  return isPlaceholderImage(buffer);
+}
+
 function loadSharp(): SharpFactory | null {
   try {
     const loaded = createRequire(import.meta.url)('sharp') as

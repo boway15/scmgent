@@ -42,7 +42,14 @@ export function classifyPage(pageNo: number, text: string): PageKind {
   return 'render';
 }
 
-export function shouldSendPageToDify(kind: PageKind, text: string): boolean {
+export function shouldSendPageToDify(
+  kind: PageKind,
+  text: string,
+  options?: { pageNo?: number; hasRealImage?: boolean },
+): boolean {
   if (kind !== 'cover' && kind !== 'render') return true;
-  return hasMaterialKeyword(text);
+  if (hasMaterialKeyword(text)) return true;
+  // Design slides often carry structure/size on the image only; send non-cover pages with real renders.
+  if (options?.hasRealImage && options.pageNo !== 1) return true;
+  return false;
 }

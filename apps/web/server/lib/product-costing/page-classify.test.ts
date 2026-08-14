@@ -27,4 +27,15 @@ describe('page classification', () => {
     assert.equal(shouldSendPageToDify('render', '产品方案：实木桌面'), true);
     assert.equal(shouldSendPageToDify('cover', '18mm 板材'), true);
   });
+
+  it('sends non-cover render pages when a real slide image is available', () => {
+    assert.equal(
+      shouldSendPageToDify('render', '', { pageNo: 3, hasRealImage: true }),
+      true,
+    );
+    assert.equal(
+      shouldSendPageToDify('cover', '', { pageNo: 1, hasRealImage: true }),
+      false,
+    );
+  });
 });

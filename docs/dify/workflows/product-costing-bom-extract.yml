@@ -7,9 +7,7 @@
 # 说明:
 # - 输入 pages_json 含 page/page_type/text/image_base64（scm-agent 分批，每批最多约 4 页）
 # - 输出 lines：JSON 数组字符串（scm-agent parseWorkflowLines 兼容）
-# - 导入后请将 LLM 换成多模态模型（能看图）；默认 deepseek 插件标识仅保证可导入
-# - Dify Code 节点不能输出 File/ArrayFile，故无法接到 LLM vision.variable_selector；
-#   当前图以 data URL 写入 Prompt，是否被模型识别取决于模型/provider，详见配套文档
+# - 页图以 data URL 写入 Prompt（非 LLM vision 变量）；导入后请换多模态模型
 
 kind: app
 version: 0.6.0
@@ -104,6 +102,7 @@ workflow:
         data:
           type: start
           title: 开始
+          desc: ''
           variables:
             - variable: category
               label: 品类提示
@@ -115,7 +114,7 @@ workflow:
               label: 分页图文JSON
               type: paragraph
               required: true
-              max_length: 5000000
+              max_length: 500000
               options: []
 
       - id: prepare_pages
@@ -134,6 +133,7 @@ workflow:
         data:
           type: code
           title: 解析分页输入
+          desc: ''
           code_language: python3
           error_strategy: fail-branch
           code: |
@@ -235,14 +235,12 @@ workflow:
         data:
           type: llm
           title: 抽取物料清单
+          desc: ''
           context:
             enabled: false
             variable_selector: []
           vision:
-            enabled: true
-            configs:
-              detail: high
-              variable_selector: []
+            enabled: false
           model:
             mode: chat
             provider: langgenius/deepseek/deepseek
@@ -305,6 +303,7 @@ workflow:
         data:
           type: code
           title: 规范化lines
+          desc: ''
           code_language: python3
           error_strategy: fail-branch
           code: |
@@ -425,6 +424,7 @@ workflow:
         data:
           type: end
           title: 结束
+          desc: ''
           outputs:
             - variable: lines
               value_selector:

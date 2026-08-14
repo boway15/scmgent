@@ -87,6 +87,15 @@ URL 放入 Prompt，是否被识别取决于所选多模态模型及 provider。
 不解析 data URL，需要增加可输出 Dify File 的解码插件，或由调用端先上传图片并
 通过文件变量传入，再将 `vision.variable_selector` 指向该变量。
 
+## 导入失败排查
+
+| 现象 | 处理 |
+|------|------|
+| 导入时报 LLM / vision 校验错误 | 本 DSL **已关闭** `vision.enabled`；页图走 Prompt 内 data URL。请勿手动开启 Vision 且不选变量 |
+| 提示缺少 deepseek 插件 | 在 Dify 插件市场安装 DeepSeek，或导入后把 LLM 节点模型改成你实例已有的多模态模型 |
+| `pages_json` 超长 | scm-agent 默认每批 1 页；DSL 输入上限 500,000 字符，足够单页图文 |
+| 导入成功但运行无清单 | 检查 `DIFY_API_KEY_COSTING_BOM`、Workflow 超时 ≥300s、模型是否支持读 Prompt 内图片 |
+
 ## 建议节点链
 
 ```

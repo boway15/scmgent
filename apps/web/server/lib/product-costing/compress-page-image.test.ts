@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { preparePageImageBase64 } from './compress-page-image.js';
+import { preparePageImage, preparePageImageBase64 } from './compress-page-image.js';
 
 const TINY_PNG = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
@@ -14,5 +14,12 @@ describe('preparePageImageBase64', () => {
 
   it('returns empty base64 for files smaller than 512 bytes', async () => {
     assert.equal(await preparePageImageBase64(Buffer.alloc(511)), '');
+  });
+
+  it('returns png mime for uncompressed page images', async () => {
+    const sample = Buffer.alloc(600, 0xff);
+    const image = await preparePageImage(sample);
+    assert.equal(image.mimeType, 'image/png');
+    assert.ok(image.base64.length > 0);
   });
 });

@@ -171,13 +171,18 @@ workflow:
                         continue
                     if b64.startswith("data:") and "," in b64[:100]:
                         b64 = b64.split(",", 1)[1]
+                    mime = str(p.get("image_mime_type") or "image/png").strip() or "image/png"
+                    if mime not in ("image/png", "image/jpeg", "image/jpg"):
+                        mime = "image/png"
+                    if mime == "image/jpg":
+                        mime = "image/jpeg"
                     if len(img_parts) >= MAX_IMAGES:
                         continue
                     if len(b64) > MAX_B64:
                         text_parts.append(f"（第 {page} 页图片过大已省略，仅依赖文本）")
                         continue
                     img_parts.append(
-                        f"第{page}页图片:\n![page_{page}](data:image/png;base64,{b64})"
+                        f"第{page}页图片:\n![page_{page}](data:{mime};base64,{b64})"
                     )
 
                 pages_context = "\n\n".join(text_parts)

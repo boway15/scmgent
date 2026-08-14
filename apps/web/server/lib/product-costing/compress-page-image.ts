@@ -3,6 +3,13 @@ import { createRequire } from 'node:module';
 const MAX_IMAGE_BYTES = 400 * 1024;
 const MAX_IMAGE_EDGE = 1280;
 
+export type PageImageMimeType = 'image/png' | 'image/jpeg';
+
+export type PreparedPageImage = {
+  base64: string;
+  mimeType: PageImageMimeType;
+};
+
 type SharpFactory = (input: Buffer) => {
   rotate(): ReturnType<SharpFactory>;
   resize(options: {
@@ -46,13 +53,17 @@ function loadSharp(): SharpFactory | null {
 /**
  * Tiny placeholders are omitted. When optional sharp is available, images are
  * bounded to 1280px and converted to JPEG; deployments without it safely send
- * the original page image.
+ * the original page image as PNG.
  */
-export async function preparePageImageBase64(buffer: Buffer): Promise<string> {
-  if (isPlaceholderImage(buffer)) return '';
+export async function preparePageImage(buffer: Buffer): Promise<PreparedPageImage> {
+  if (isPlaceholderImage(buffer)) {
+    return { base64: '', mimeType: 'image/png' };
+  }
 
   const sharp = loadSharp();
-  if (!sharp) return buffer.toString('base64');
+  if (!sharp) {
+    return { base64: buffer.toString('base64'), mimeType: 'image/png' };
+  }
 
   const convert = (quality: number) =>
     sharp(buffer)
@@ -69,8 +80,13 @@ export async function preparePageImageBase64(buffer: Buffer): Promise<string> {
   try {
     let output = await convert(82);
     if (output.byteLength > MAX_IMAGE_BYTES) output = await convert(60);
-    return output.toString('base64');
+    return { base64: output.toString('base64'), mimeType: 'image/jpeg' };
   } catch {
-    return buffer.toString('base64');
+    return { base64: buffer.toString('base64'), mimeType: 'image/png' };
   }
+}
+
+/** @deprecated Use preparePageImage for mime-aware payloads. */
+export async function preparePageImageBase64(buffer: Buffer): Promise<string> {
+  return (await preparePageImage(buffer)).base64;
 }

@@ -2,13 +2,21 @@ import type { MatchStatus, PriceBookEntry } from './types.js';
 
 const normalize = (value: string): string => value.trim().toLowerCase();
 
+export const MATCH_SPEC_HINT = '规格待确认';
+
 export function appendMatchHint(
   notes: string | null | undefined,
   hint?: string,
 ): string | null {
   const current = notes?.trim() ?? '';
-  if (!hint || current.includes(hint)) return current || null;
-  return current ? `${current}；${hint}` : hint;
+  const withoutSystemHint = current
+    .split('；')
+    .map((part) => part.trim())
+    .filter((part) => part && part !== MATCH_SPEC_HINT)
+    .join('；');
+  if (!hint) return withoutSystemHint || null;
+  if (withoutSystemHint.includes(hint)) return withoutSystemHint || null;
+  return withoutSystemHint ? `${withoutSystemHint}；${hint}` : hint;
 }
 
 export function matchPriceBook(
@@ -29,7 +37,7 @@ export function matchPriceBook(
     return { status: 'name_only', priceBookId: candidates[0].id };
   }
   if (candidates.length > 1) {
-    return { status: 'unmatched', priceBookId: null, hint: '规格待确认' };
+    return { status: 'unmatched', priceBookId: null, hint: MATCH_SPEC_HINT };
   }
   return { status: 'unmatched', priceBookId: null };
 }

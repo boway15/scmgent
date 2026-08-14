@@ -13,7 +13,9 @@
 | `DIFY_API_KEY_COSTING_BOM` | 本 Workflow 的 API Key（`app-…`） |
 | `DIFY_WORKFLOW_TIMEOUT_MS` | 必须 ≥ `300000`（多模态，至少 300 秒） |
 | `COSTING_DATA_DIR` | 附件目录，默认 `data/costing` |
-| `COSTING_PREPROCESS_MODE` | `fixture`（无 LibreOffice）/ `libreoffice`（生产） |
+| `COSTING_PREPROCESS_MODE` | `auto`（默认，优先 LibreOffice）/ `fixture`（本地联调）/ `libreoffice` |
+
+生产 Docker 镜像已包含 `libreoffice` 与 `poppler-utils`（`soffice` + `pdftoppm`），用于 PPT/PDF 页图渲染。
 
 除 scm-agent 的 `DIFY_WORKFLOW_TIMEOUT_MS=300000` 外，还必须在 **Dify 管理后台**
 将该 workflow/app 的**执行超时**设置为 **≥ 300 秒**。两处超时相互独立；只提高
@@ -33,7 +35,8 @@ scm-agent 调用超时，Dify 仍可能先终止执行。
   "page": 1,
   "page_type": "bom_list",
   "text": "台面 1800x800 …",
-  "image_base64": "<png/jpeg base64 不含 data: 前缀>"
+  "image_base64": "<png/jpeg base64 不含 data: 前缀>",
+  "image_mime_type": "image/png"
 }
 ```
 

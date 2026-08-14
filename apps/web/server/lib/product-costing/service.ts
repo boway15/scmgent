@@ -116,15 +116,6 @@ export function calculateCostingLines(
   summary: CostSummary;
 } {
   const matches = sourceLines.map((line) => {
-    if (line.unitPriceOverride !== null) {
-      return {
-        status: line.matchStatus,
-        priceBookId: line.priceBookId,
-        bookUnitPrice: null,
-        hint: undefined,
-      };
-    }
-
     const match = matchPriceBook(
       {
         materialName: line.materialName,
@@ -137,7 +128,12 @@ export function calculateCostingLines(
     return {
       status: match.status,
       priceBookId: match.priceBookId,
-      bookUnitPrice: bookRow ? Number(bookRow.unitPrice) : null,
+      bookUnitPrice:
+        line.unitPriceOverride !== null
+          ? null
+          : bookRow
+            ? Number(bookRow.unitPrice)
+            : null,
       hint: match.hint,
     };
   });

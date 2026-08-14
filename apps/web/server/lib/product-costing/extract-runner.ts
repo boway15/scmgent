@@ -11,7 +11,7 @@ import {
 import { isCostingBomWorkflowEnabled, runWorkflow } from '../../integrations/dify.js';
 import { calcQtyGross } from './bom-math.js';
 import { applyCategoryTemplate } from './category-template.js';
-import { preparePageImageBase64 } from './compress-page-image.js';
+import { preparePageImage } from './compress-page-image.js';
 import { appendMatchHint, matchPriceBook } from './match-price.js';
 import { classifyPage, shouldSendPageToDify } from './page-classify.js';
 import { parseWorkflowLines } from './parse-workflow-output.js';
@@ -28,11 +28,56 @@ const STALE_EXTRACT_RUN_MS = 15 * 60 * 1000;
 
 export type ExtractPageRange = { pageFrom?: number; pageTo?: number };
 
+export type ExtractRunProgress = {
+  batchCurrent: number;
+  batchTotal: number;
+  lastHeartbeatAt: string;
+};
+
 export class ExtractAlreadyRunningError extends Error {
   constructor() {
     super('正在解析中，请稍候');
     this.name = 'ExtractAlreadyRunningError';
   }
+}
+
+export class ExtractRunAbortedError extends Error {
+  constructor() {
+    super('解析任务已中止');
+    this.name = 'ExtractRunAbortedError';
+  }
+}
+
+export function buildExtractProgress(
+  batchCurrent: number,
+  batchTotal: number,
+  at: Date = new Date(),
+): ExtractRunProgress {
+  return {
+    batchCurrent,
+    batchTotal,
+    lastHeartbeatAt: at.toISOString(),
+  };
+}
+
+export function extractRunLastActivityAt(run: {
+  status: string;
+  startedAt: Date | null;
+  createdAt: Date;
+  rawResponse?: unknown;
+}): Date {
+  const heartbeat = extractHeartbeatFromProgress(run.rawResponse);
+  if (heartbeat) return heartbeat;
+  if (run.status === 'pending') return run.createdAt;
+  return run.startedAt ?? run.createdAt;
+}
+
+function extractHeartbeatFromProgress(rawResponse: unknown): Date | null {
+  if (!rawResponse || typeof rawResponse !== 'object') return null;
+  const value = (rawResponse as Record<string, unknown>).lastHeartbeatAt;
+  if (typeof value !== 'string') return null;
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
 }
 
 export function hasActiveExtractRun(
@@ -72,12 +117,24 @@ export function isStaleExtractRun(
     status: string;
     startedAt: Date | null;
     createdAt: Date;
+    rawResponse?: unknown;
   },
   now = new Date(),
 ): boolean {
   if (run.status !== 'pending' && run.status !== 'running') return false;
-  const ageFrom = run.startedAt ?? run.createdAt;
-  return now.getTime() - ageFrom.getTime() > STALE_EXTRACT_RUN_MS;
+  const lastActivity = extractRunLastActivityAt(run);
+  return now.getTime() - lastActivity.getTime() > STALE_EXTRACT_RUN_MS;
+}
+
+async function ensureRunStillActive(runId: string): Promise<void> {
+  const [run] = await db
+    .select({ status: costingExtractRuns.status })
+    .from(costingExtractRuns)
+    .where(eq(costingExtractRuns.id, runId))
+    .limit(1);
+  if (!run || run.status !== 'running') {
+    throw new ExtractRunAbortedError();
+  }
 }
 
 async function loadSourceAttachment(projectId: string) {
@@ -132,12 +189,16 @@ async function callDifyBatch(
   userId: string,
 ): Promise<CostingBomLineDraft[]> {
   const payload = await Promise.all(
-    pages.map(async (page) => ({
-      page: page.pageNo,
-      page_type: page.pageType,
-      text: page.text,
-      image_base64: await preparePageImageBase64(await readFile(page.imagePath)),
-    })),
+    pages.map(async (page) => {
+      const image = await preparePageImage(await readFile(page.imagePath));
+      return {
+        page: page.pageNo,
+        page_type: page.pageType,
+        text: page.text,
+        image_base64: image.base64,
+        image_mime_type: image.mimeType,
+      };
+    }),
   );
   const outputs = await runWorkflow(
     COSTING_KEY,
@@ -336,7 +397,7 @@ async function applyTemplateAndFinish(
       .set({
         status: 'succeeded',
         finishedAt: new Date(),
-        rawResponse: { batchCurrent, batchTotal },
+        rawResponse: buildExtractProgress(batchCurrent, batchTotal),
       })
       .where(eq(costingExtractRuns.id, runId));
     await tx
@@ -366,6 +427,7 @@ export async function startExtractRun(
         status: costingExtractRuns.status,
         startedAt: costingExtractRuns.startedAt,
         createdAt: costingExtractRuns.createdAt,
+        rawResponse: costingExtractRuns.rawResponse,
       })
       .from(costingExtractRuns)
       .where(
@@ -379,7 +441,7 @@ export async function startExtractRun(
     const currentRuns = activeRuns.filter((run) => !activeRunIds.has(run.id));
     let projectStatus = project.status;
     if (staleRuns.length) {
-      const message = '解析任务超过 15 分钟未完成，已自动标记失败，请重试';
+      const message = '解析任务超过 15 分钟无进度更新，已自动标记失败，请重试';
       await tx
         .update(costingExtractRuns)
         .set({ status: 'failed', finishedAt: new Date(), errorMessage: message })
@@ -452,7 +514,7 @@ export async function getExtractRun(projectId: string, runId: string) {
     .limit(1);
   if (!run) return null;
   if (isStaleExtractRun(run)) {
-    const message = '解析任务超过 15 分钟未完成，已自动标记失败，请重试';
+    const message = '解析任务超过 15 分钟无进度更新，已自动标记失败，请重试';
     const finishedAt = new Date();
     await db
       .update(costingExtractRuns)
@@ -522,7 +584,7 @@ export async function executeExtractRun(runId: string): Promise<void> {
       status: 'running',
       startedAt: new Date(),
       errorMessage: null,
-      rawResponse: { batchCurrent: 0, batchTotal: 0 },
+      rawResponse: buildExtractProgress(0, 0),
     })
     .where(eq(costingExtractRuns.id, runId));
 
@@ -559,11 +621,12 @@ export async function executeExtractRun(runId: string): Promise<void> {
     const batchTotal = batches.length;
     await db
       .update(costingExtractRuns)
-      .set({ rawResponse: { batchCurrent: 0, batchTotal } })
+      .set({ rawResponse: buildExtractProgress(0, batchTotal) })
       .where(eq(costingExtractRuns.id, runId));
 
     const isFullExtract = run.pageFrom == null && run.pageTo == null;
     for (let index = 0; index < batches.length; index += 1) {
+      await ensureRunStillActive(runId);
       const batch = batches[index]!;
       const pageNos = batch.map((page) => page.pageNo);
       const pageLabel =
@@ -576,6 +639,7 @@ export async function executeExtractRun(runId: string): Promise<void> {
           batch,
           run.createdBy ?? 'costing-extract',
         );
+        await ensureRunStillActive(runId);
         await persistSuccessfulBatch({
           projectId: run.projectId,
           runId,
@@ -584,19 +648,21 @@ export async function executeExtractRun(runId: string): Promise<void> {
           clearWholeAiList: isFullExtract && index === 0,
         });
       } catch (error) {
+        if (error instanceof ExtractRunAbortedError) throw error;
         await db
           .update(costingExtractRuns)
-          .set({ rawResponse: { batchCurrent: index + 1, batchTotal } })
+          .set({ rawResponse: buildExtractProgress(index + 1, batchTotal) })
           .where(eq(costingExtractRuns.id, runId));
         const detail = error instanceof Error ? error.message : String(error);
         throw new Error(`${pageLabel} ${detail}`);
       }
       await db
         .update(costingExtractRuns)
-        .set({ rawResponse: { batchCurrent: index + 1, batchTotal } })
+        .set({ rawResponse: buildExtractProgress(index + 1, batchTotal) })
         .where(eq(costingExtractRuns.id, runId));
     }
 
+    await ensureRunStillActive(runId);
     await applyTemplateAndFinish(
       run.projectId,
       runId,
@@ -605,6 +671,7 @@ export async function executeExtractRun(runId: string): Promise<void> {
       batchTotal,
     );
   } catch (error) {
+    if (error instanceof ExtractRunAbortedError) return;
     const message = error instanceof Error ? error.message : String(error);
     await db
       .update(costingExtractRuns)

@@ -1,6 +1,16 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { matchPriceBook } from './match-price.js';
+import { appendMatchHint, matchPriceBook } from './match-price.js';
+
+describe('appendMatchHint', () => {
+  it('removes the system spec hint when ambiguity is resolved', () => {
+    assert.equal(appendMatchHint('图纸模糊；规格待确认'), '图纸模糊');
+  });
+
+  it('adds the system spec hint without duplicating user notes', () => {
+    assert.equal(appendMatchHint('图纸模糊', '规格待确认'), '图纸模糊；规格待确认');
+  });
+});
 
 describe('matchPriceBook', () => {
   it('matches name, spec, and unit ignoring case and edge spaces', () => {

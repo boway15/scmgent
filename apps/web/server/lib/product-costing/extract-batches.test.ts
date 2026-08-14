@@ -47,7 +47,7 @@ describe('selectPagesInRange', () => {
 });
 
 describe('isStaleExtractRun', () => {
-  it('treats pending and running runs older than 15 minutes as stale', () => {
+  it('treats pending and running runs without recent heartbeat as stale', () => {
     const now = new Date('2026-08-13T12:30:00.000Z');
     assert.equal(
       isStaleExtractRun(
@@ -81,6 +81,46 @@ describe('isStaleExtractRun', () => {
         now,
       ),
       false,
+    );
+  });
+
+  it('keeps long-running jobs alive when heartbeat is recent', () => {
+    const now = new Date('2026-08-13T12:30:00.000Z');
+    assert.equal(
+      isStaleExtractRun(
+        {
+          status: 'running',
+          startedAt: new Date('2026-08-13T11:00:00.000Z'),
+          createdAt: new Date('2026-08-13T11:00:00.000Z'),
+          rawResponse: {
+            batchCurrent: 8,
+            batchTotal: 10,
+            lastHeartbeatAt: '2026-08-13T12:28:00.000Z',
+          },
+        },
+        now,
+      ),
+      false,
+    );
+  });
+
+  it('marks a run stale when heartbeat is older than 15 minutes', () => {
+    const now = new Date('2026-08-13T12:30:00.000Z');
+    assert.equal(
+      isStaleExtractRun(
+        {
+          status: 'running',
+          startedAt: new Date('2026-08-13T11:00:00.000Z'),
+          createdAt: new Date('2026-08-13T11:00:00.000Z'),
+          rawResponse: {
+            batchCurrent: 8,
+            batchTotal: 10,
+            lastHeartbeatAt: '2026-08-13T12:14:00.000Z',
+          },
+        },
+        now,
+      ),
+      true,
     );
   });
 });

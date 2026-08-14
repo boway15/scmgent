@@ -197,7 +197,14 @@ async function callDifyBatch(
 ): Promise<CostingBomLineDraft[]> {
   const payload = await Promise.all(
     pages.map(async (page) => {
-      const image = await preparePageImage(await readFile(page.imagePath));
+      const imageBuffer = await readFile(page.imagePath);
+      const hasRealImage = !isPlaceholderPageImage(imageBuffer);
+      const image = await preparePageImage(imageBuffer);
+      if (hasRealImage && !image.base64) {
+        throw new Error(
+          `第 ${page.pageNo} 页页图过大且压缩失败，无法多模态解析；请缩小 PPT 或联系管理员`,
+        );
+      }
       return {
         page: page.pageNo,
         page_type: page.pageType,

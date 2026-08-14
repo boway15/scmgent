@@ -36,17 +36,34 @@ describe('preparePageImageBase64', () => {
 });
 
 describe('buildDifyPagesJson', () => {
-  it('strips images when the serialized payload exceeds the Dify limit', () => {
+  it('keeps images and only truncates text when the payload is too large', () => {
     const json = buildDifyPagesJson([
       {
         page: 2,
-        page_type: 'render',
-        text: '产品方案',
-        image_base64: 'a'.repeat(600_000),
+        page_type: 'explosion',
+        text: 'x'.repeat(600_000),
+        image_base64: 'abc123',
         image_mime_type: 'image/jpeg',
       },
     ]);
     assert.ok(json.length <= MAX_DIFY_PAGES_JSON_CHARS);
-    assert.doesNotMatch(json, /"image_base64":"a+/);
+    assert.match(json, /"image_base64":"abc123"/);
+    assert.doesNotMatch(json, /"image_base64":""/);
+  });
+
+  it('throws when text and image together still exceed the Dify limit', () => {
+    assert.throws(
+      () =>
+        buildDifyPagesJson([
+          {
+            page: 2,
+            page_type: 'render',
+            text: '产品方案',
+            image_base64: 'a'.repeat(600_000),
+            image_mime_type: 'image/jpeg',
+          },
+        ]),
+      /超出 Dify 单批上限/,
+    );
   });
 });

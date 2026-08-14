@@ -72,10 +72,16 @@ scm-agent 调用超时，Dify 仍可能先终止执行。
 
 ## 模型要求
 
-- 必须支持**多模态**（看图读尺寸/结构）
+- 必须支持**多模态**（看图读尺寸/结构/爆炸图标注）
+- **不要使用** `deepseek-chat` 等纯文本模型；导入后请在 LLM 节点改为例如：
+  - OpenAI `gpt-4o` / `gpt-4o-mini`
+  - 通义 `qwen-vl-max` / `qwen2.5-vl-72b-instruct`
+  - Google `gemini-2.0-flash`（或你实例已安装的其他 vision 模型）
 - Prompt 要求：只输出 `lines` JSON 数组，每项含 `origin`
 - 图文不确定的结构件必须 `origin=template`、`qty_net=0`、`confidence=low`
 - 禁止编造图或文字中未出现的五金件
+
+scm-agent 每批会同时发送 **text + image_base64 + image_mime_type**；请确认所选模型能解析 Prompt 内的 `data:image/jpeg;base64,...` 图片。
 
 ### 页图传递限制
 

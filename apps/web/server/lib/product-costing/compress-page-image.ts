@@ -65,8 +65,8 @@ async function compressWithSharp(buffer: Buffer): Promise<PreparedPageImage | nu
   const sharp = loadSharp();
   if (!sharp) return null;
 
-  const edges = [MAX_IMAGE_EDGE, 1024, 800];
-  const qualities = [78, 65, 50, 38, 28];
+  const edges = [MAX_IMAGE_EDGE, 1024, 800, 640];
+  const qualities = [78, 65, 50, 38, 28, 22, 18];
 
   for (const edge of edges) {
     for (const quality of qualities) {
@@ -123,22 +123,37 @@ export type DifyPagePayload = {
 };
 
 export function buildDifyPagesJson(pages: DifyPagePayload[]): string {
-  let payload = pages.map((page) => ({
+  const payload = pages.map((page) => ({
     ...page,
-    text: page.text.slice(0, 20_000),
+    text:
+      page.text.trim() ||
+      `(第 ${page.page} 页文本较少，请结合 page_type=${page.page_type} 的页图识别尺寸、结构、材质与五金)`,
+    image_base64: page.image_base64,
+    image_mime_type: page.image_mime_type,
   }));
-  let json = JSON.stringify(payload);
+
+  const serialize = (items: DifyPagePayload[]) =>
+    JSON.stringify(
+      items.map((page) => ({
+        ...page,
+        text: page.text.slice(0, 20_000),
+      })),
+    );
+
+  let json = serialize(payload);
   if (json.length <= MAX_DIFY_PAGES_JSON_CHARS) return json;
 
-  payload = payload.map((page) => ({ ...page, image_base64: '' }));
-  json = JSON.stringify(payload);
+  json = serialize(
+    payload.map((page) => ({
+      ...page,
+      text: page.text.slice(0, 2_000),
+    })),
+  );
   if (json.length <= MAX_DIFY_PAGES_JSON_CHARS) return json;
 
-  payload = payload.map((page) => ({
-    ...page,
-    text: page.text.slice(0, 5_000),
-  }));
-  return JSON.stringify(payload);
+  throw new Error(
+    `第 ${pages.map((page) => page.page).join(',')} 页图文超出 Dify 单批上限（${MAX_DIFY_PAGES_JSON_CHARS} 字符），页图压缩失败`,
+  );
 }
 
 /** @deprecated Use preparePageImage for mime-aware payloads. */

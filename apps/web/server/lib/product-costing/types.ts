@@ -1,7 +1,15 @@
 export type BomConfidence = 'high' | 'medium' | 'low';
 export type BomOrigin = 'explicit' | 'template';
 export type MatchStatus = 'exact' | 'name_only' | 'unmatched';
-export type PageKind = 'bom_list' | 'cmf' | 'size' | 'explosion' | 'notes' | 'cover' | 'render';
+export type PageKind =
+  | 'bom_list'
+  | 'cmf'
+  | 'size'
+  | 'explosion'
+  | 'notes'
+  | 'cover'
+  | 'render'
+  | 'unknown';
 
 export type CostingBomLineDraft = {
   category: string;

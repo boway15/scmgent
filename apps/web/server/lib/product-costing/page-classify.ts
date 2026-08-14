@@ -33,12 +33,14 @@ const isOnlyProductAndDepartment = (text: string): boolean => {
 };
 
 export function classifyPage(pageNo: number, text: string): PageKind {
-  if (/物料清单|bill of materials/i.test(text)) return 'bom_list';
-  if (/cmf|材质选择/i.test(text)) return 'cmf';
-  if (/产品尺寸|product size|W\s*\d/i.test(text)) return 'size';
-  if (/爆炸图|explosion|disassembly/i.test(text)) return 'explosion';
-  if (/设计说明|产品细节|design notes/i.test(text)) return 'notes';
-  if (pageNo === 1 || isOnlyProductAndDepartment(text)) return 'cover';
+  const trimmed = text.trim();
+  if (/物料清单|bill of materials/i.test(trimmed)) return 'bom_list';
+  if (/cmf|材质选择/i.test(trimmed)) return 'cmf';
+  if (/产品尺寸|product size|W\s*\d/i.test(trimmed)) return 'size';
+  if (/爆炸图|explosion|disassembly/i.test(trimmed)) return 'explosion';
+  if (/设计说明|产品细节|design notes/i.test(trimmed)) return 'notes';
+  if (pageNo === 1 || isOnlyProductAndDepartment(trimmed)) return 'cover';
+  if (!trimmed) return 'unknown';
   return 'render';
 }
 
@@ -47,9 +49,7 @@ export function shouldSendPageToDify(
   text: string,
   options?: { pageNo?: number; hasRealImage?: boolean },
 ): boolean {
+  if (kind === 'unknown') return options?.hasRealImage === true;
   if (kind !== 'cover' && kind !== 'render') return true;
-  if (hasMaterialKeyword(text)) return true;
-  // Design slides often carry structure/size on the image only; send non-cover pages with real renders.
-  if (options?.hasRealImage && options.pageNo !== 1) return true;
-  return false;
+  return hasMaterialKeyword(text);
 }

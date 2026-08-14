@@ -223,9 +223,6 @@ async function callDifyBatch(
     userId,
   );
   const lines = parseWorkflowLines(outputs);
-  if (!lines.length) {
-    throw new Error('Dify 未返回有效清单行');
-  }
   return lines.map((line) => ({
     ...line,
     sourceRef: line.sourceRef || (pages.length === 1 ? `p${pages[0]!.pageNo}` : ''),
@@ -651,6 +648,7 @@ export async function executeExtractRun(runId: string): Promise<void> {
       .where(eq(costingExtractRuns.id, runId));
 
     const isFullExtract = run.pageFrom == null && run.pageTo == null;
+    let clearedAiList = false;
     for (let index = 0; index < batches.length; index += 1) {
       await ensureRunStillActive(runId);
       const batch = batches[index]!;
@@ -666,13 +664,16 @@ export async function executeExtractRun(runId: string): Promise<void> {
           run.createdBy ?? 'costing-extract',
         );
         await ensureRunStillActive(runId);
-        await persistSuccessfulBatch({
-          projectId: run.projectId,
-          runId,
-          drafts,
-          pageNos,
-          clearWholeAiList: isFullExtract && index === 0,
-        });
+        if (drafts.length) {
+          await persistSuccessfulBatch({
+            projectId: run.projectId,
+            runId,
+            drafts,
+            pageNos,
+            clearWholeAiList: isFullExtract && !clearedAiList,
+          });
+          clearedAiList = true;
+        }
       } catch (error) {
         if (error instanceof ExtractRunAbortedError) throw error;
         await db
@@ -686,6 +687,19 @@ export async function executeExtractRun(runId: string): Promise<void> {
         .update(costingExtractRuns)
         .set({ rawResponse: buildExtractProgress(index + 1, batchTotal) })
         .where(eq(costingExtractRuns.id, runId));
+    }
+
+    const aiLines = await db
+      .select({ id: costingBomLines.id })
+      .from(costingBomLines)
+      .where(
+        and(eq(costingBomLines.projectId, run.projectId), eq(costingBomLines.isManual, false)),
+      )
+      .limit(1);
+    if (!aiLines.length) {
+      throw new Error(
+        '所有页面均未解析出材料清单，请确认 Dify 已使用多模态模型，且设计方案含爆炸图/尺寸/CMF 等页',
+      );
     }
 
     await ensureRunStillActive(runId);

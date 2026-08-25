@@ -237,6 +237,20 @@ export type ProcurementListInputRow = {
   bitableRecordId?: string;
 };
 
+/** postgres.js 单次 SQL 最多 65534 个绑定参数。 */
+export const PROCUREMENT_LIST_INSERT_PARAMS_PER_ROW = 4;
+/** 每行绑定 listType / rowIndex / bitableRecordId / rowData，500 行远低于参数上限。 */
+export const PROCUREMENT_LIST_INSERT_CHUNK = 500;
+
+export function planProcurementListInsertChunks<T>(rows: T[]): T[][] {
+  if (!rows.length) return [];
+  const chunks: T[][] = [];
+  for (let offset = 0; offset < rows.length; offset += PROCUREMENT_LIST_INSERT_CHUNK) {
+    chunks.push(rows.slice(offset, offset + PROCUREMENT_LIST_INSERT_CHUNK));
+  }
+  return chunks;
+}
+
 /** 归一化行数据；传入 columnOrder 时严格按该表头顺序，并丢弃超出字段。 */
 export function normalizeInputRows(
   rows: ProcurementListInputRow[],
@@ -282,15 +296,14 @@ export async function replaceProcurementListData(params: {
   await db.transaction(async (tx) => {
     await tx.delete(procurementListRows).where(eq(procurementListRows.listType, params.listType));
 
-    if (rows.length) {
-      await tx.insert(procurementListRows).values(
-        rows.map((row, index) => ({
-          listType: params.listType,
-          rowIndex: index,
-          bitableRecordId: row.bitableRecordId,
-          rowData: row.rowData,
-        })),
-      );
+    const insertValues = rows.map((row, index) => ({
+      listType: params.listType,
+      rowIndex: index,
+      bitableRecordId: row.bitableRecordId,
+      rowData: row.rowData,
+    }));
+    for (const chunk of planProcurementListInsertChunks(insertValues)) {
+      await tx.insert(procurementListRows).values(chunk);
     }
 
     await tx

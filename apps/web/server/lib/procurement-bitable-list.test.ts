@@ -7,9 +7,13 @@ import {
   isProcurementListType,
   normalizeInputRows,
   parseProcurementUploadBuffer,
+  planProcurementListInsertChunks,
+  PROCUREMENT_LIST_INSERT_CHUNK,
+  PROCUREMENT_LIST_INSERT_PARAMS_PER_ROW,
   buildFeishuFullReplacePlan,
   writableProcurementFieldNames,
 } from './procurement-bitable-list.js';
+import { MAX_ROWS_BY_IMPORT_TYPE } from './upload-guard.js';
 import {
   missingBitableFieldNames,
   pickExistingBitableFields,
@@ -216,5 +220,34 @@ describe('procurement-bitable-list', () => {
       SKU: 'DJ9',
       单据状态: '待入库',
     });
+  });
+
+  it('chunks list inserts so postgres.js stays under 65534 parameters', () => {
+    const pgMaxParameters = 65534;
+    const followUpMax = MAX_ROWS_BY_IMPORT_TYPE['procurement-purchase_follow_up'] ?? 0;
+    assert.ok(followUpMax > 0, 'expected a procurement follow-up row cap');
+
+    const unchunkedParams = followUpMax * PROCUREMENT_LIST_INSERT_PARAMS_PER_ROW;
+    assert.ok(
+      unchunkedParams > pgMaxParameters,
+      'follow-up cap must be large enough to reproduce MAX_PARAMETERS_EXCEEDED',
+    );
+
+    const rows = Array.from({ length: followUpMax }, (_, index) => index);
+    const chunks = planProcurementListInsertChunks(rows);
+
+    assert.ok(PROCUREMENT_LIST_INSERT_CHUNK > 0);
+    assert.ok(
+      PROCUREMENT_LIST_INSERT_CHUNK * PROCUREMENT_LIST_INSERT_PARAMS_PER_ROW <= pgMaxParameters,
+    );
+    assert.ok(chunks.length > 1);
+    assert.equal(chunks[0]?.length, PROCUREMENT_LIST_INSERT_CHUNK);
+    assert.equal(
+      chunks.reduce((sum, chunk) => sum + chunk.length, 0),
+      followUpMax,
+    );
+    for (const chunk of chunks) {
+      assert.ok(chunk.length * PROCUREMENT_LIST_INSERT_PARAMS_PER_ROW <= pgMaxParameters);
+    }
   });
 });

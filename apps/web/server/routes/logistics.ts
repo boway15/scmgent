@@ -60,6 +60,7 @@ import {
   loadActiveFeeRules,
   rebuildContainerMerchantStats,
   resolveRuleForBillItem,
+  applyLatestFeeRulesToBillItems,
   countPendingExceptions,
   effectiveBillAmount,
   FOB_NON_FOB_MARKER,
@@ -381,7 +382,6 @@ logisticsRoutes.get('/logistics/fob-settlements/:id', async (c) => {
   if (!batchRow) return c.json({ message: 'Batch not found' }, 404);
   const batch = mapFobBatchRow(batchRow);
 
-  await refreshBillItemExceptionFlags(batchId);
   await syncUnbalancedAllocationPlaceholders(batchId);
 
   const [merchantShipments, containerStats, truckingItems, freightItems, allocations] =
@@ -570,59 +570,6 @@ async function syncUnbalancedAllocationPlaceholders(batchId: string): Promise<nu
   }
 
   return inserted;
-}
-
-/** 按最新规则刷新未审核账单行的异常标记（已确认/驳回的不动） */
-async function refreshBillItemExceptionFlags(batchId: string) {
-  const batch = await getBatchOr404(batchId);
-  if (!batch || batch.status === 'confirmed') return;
-
-  const rules = await loadActiveFeeRules();
-  const [trucking, freight] = await Promise.all([
-    db.select().from(fobTruckingBillItems).where(eq(fobTruckingBillItems.batchId, batchId)),
-    db.select().from(fobFreightBillItems).where(eq(fobFreightBillItems.batchId, batchId)),
-  ]);
-
-  for (const item of trucking) {
-    if (item.exceptionStatus === 'confirmed' || item.exceptionStatus === 'rejected') continue;
-    const resolved = resolveRuleForBillItem(
-      rules,
-      item.feeType,
-      'trucking',
-      item.remark,
-      Number(item.amountCny),
-      item.assignedMerchantCode,
-    );
-    await db
-      .update(fobTruckingBillItems)
-      .set({
-        allocationMethod: resolved.allocationMethod,
-        isException: resolved.isException,
-        exceptionStatus: resolved.isException ? 'pending' : null,
-      })
-      .where(eq(fobTruckingBillItems.id, item.id));
-  }
-
-  for (const item of freight) {
-    if (item.exceptionStatus === 'confirmed' || item.exceptionStatus === 'rejected') continue;
-    const resolved = resolveRuleForBillItem(
-      rules,
-      item.feeType,
-      'freight',
-      item.remark,
-      Number(item.amountCny),
-      item.assignedMerchantCode,
-    );
-    await db
-      .update(fobFreightBillItems)
-      .set({
-        allocationMethod: resolved.allocationMethod,
-        isException: resolved.isException,
-        exceptionStatus: resolved.isException ? 'pending' : null,
-        stage: resolved.stage,
-      })
-      .where(eq(fobFreightBillItems.id, item.id));
-  }
 }
 
 function resolveItemExceptionReason(
@@ -952,8 +899,6 @@ logisticsRoutes.get('/logistics/fob-settlements/:id/exceptions', fobMenu, async 
   const batch = await getBatchOr404(batchId);
   if (!batch) return c.json({ message: 'Batch not found' }, 404);
 
-  await refreshBillItemExceptionFlags(batchId);
-
   const rules = await loadActiveFeeRules();
   const [trucking, freight] = await Promise.all([
     db.select().from(fobTruckingBillItems).where(eq(fobTruckingBillItems.batchId, batchId)),
@@ -1103,6 +1048,8 @@ logisticsRoutes.post('/logistics/fob-settlements/:id/calculate', fobMenu, async 
   const batch = await getBatchOr404(batchId);
   if (!batch) return c.json({ message: 'Batch not found' }, 404);
   if (batch.status === 'confirmed') return c.json(confirmedBatchResponse(), 400);
+
+  await applyLatestFeeRulesToBillItems(batchId);
 
   const pendingExceptions = await countPendingExceptions(batchId);
   if (pendingExceptions > 0) {

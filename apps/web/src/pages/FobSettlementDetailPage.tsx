@@ -1098,11 +1098,14 @@ export function FobSettlementDetailPage() {
       }));
       setTab('reconcile');
       qc.invalidateQueries({ queryKey: ['fob-settlement', id] });
+      qc.invalidateQueries({ queryKey: ['fob-exceptions', id] });
       refetchReconcile();
     },
     onError: (err: Error & { warnings?: string[] }) => {
       setCalcError(err.message);
       setCalcWarnings(err.warnings ?? []);
+      qc.invalidateQueries({ queryKey: ['fob-settlement', id] });
+      qc.invalidateQueries({ queryKey: ['fob-exceptions', id] });
     },
   });
 
@@ -1287,8 +1290,14 @@ export function FobSettlementDetailPage() {
 
     if (!readiness.canCalculate) return;
 
-    if (readiness.warnings.length > 0) {
-      setCalculateConfirmWarnings(readiness.warnings);
+    const isRecalc = data.status === 'calculated';
+    const ruleLine = isRecalc
+      ? '将按当前费用分摊规则重新匹配，并覆盖已有分摊结果'
+      : '将按当前费用分摊规则匹配并生成分摊结果';
+    const lines = [...readiness.warnings, ruleLine];
+
+    if (isRecalc || readiness.warnings.length > 0) {
+      setCalculateConfirmWarnings(lines);
       setCalculateConfirmOpen(true);
       return;
     }
@@ -1655,7 +1664,7 @@ export function FobSettlementDetailPage() {
                 <Link to="/logistics/fob-settlement?tab=rules" className="text-primary hover:underline">
                   费用规则配置
                 </Link>
-                ；规则为「需确认」的费用各工厂/主体默认 ¥0，请在下方平账时指定承担方；调账后标记为人工调整
+                。仅「执行分摊核算 / 重新核算」会按点击时的最新规则生成数据；改规则或打开本页不会改已有分摊。规则为「需确认」的费用各工厂/主体默认 ¥0，请在下方平账时指定承担方；调账后标记为人工调整
               </p>
             </CardHeader>
             <CardContent className="space-y-4">
@@ -1719,8 +1728,9 @@ export function FobSettlementDetailPage() {
                         onClick={handleCalculate}
                         disabled={isReadOnly || calculate.isPending || !calculateReadiness.canCalculate}
                       >
-                        重新核算
+                        {calculate.isPending ? '核算中...' : '重新核算'}
                       </Button>
+                      <p className="text-xs text-text-hint">按点击时的最新费用规则重算，将覆盖当前分摊结果</p>
                     </>
                   )}
                   {calcError && <p className="text-sm text-red-600">{calcError}</p>}

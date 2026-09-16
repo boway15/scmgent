@@ -114,7 +114,7 @@ export function FobFeeRulesPanel() {
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="text-sm text-text-sub">
-          导入模板宽表共 32 项拖车、23 项货代；优先级越大平账矩阵列越靠前（默认拖车先于货代）。精确费用名优先于模糊匹配。规则仅支持按体积 / 按票 / 需确认。分摊方式切换后立即保存；优先级修改后失焦保存。
+          导入模板宽表共 32 项拖车、23 项货代；优先级越大平账矩阵列越靠前（默认拖车先于货代）。精确费用名优先于模糊匹配。规则仅支持按体积 / 按票 / 需确认。分摊方式切换后立即保存；优先级修改后失焦保存。保存后不会改已有批次，需到对应批次点「执行分摊核算」或「重新核算」才会按当时最新规则生成数据。
         </p>
         <div className="flex flex-wrap gap-2">
           <Button

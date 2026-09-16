@@ -114,6 +114,122 @@ export function resolveRuleForBillItem(
   };
 }
 
+type ReviewExceptionStatus = 'pending' | 'confirmed' | 'rejected';
+
+function asExceptionStatus(value: string | null | undefined): ReviewExceptionStatus | null {
+  if (value === 'pending' || value === 'confirmed' || value === 'rejected') return value;
+  return null;
+}
+
+type BillItemRuleState = {
+  feeType: string;
+  remark?: string | null;
+  amountCny: number;
+  assignedMerchantCode?: string | null;
+  isException: boolean;
+  exceptionStatus?: string | null;
+};
+
+/** 核算 / 重新核算时按按钮当下的最新规则生成账单行口径；已确认/驳回只改分摊方式，不重开审核。 */
+export function latestRulePatchForBillItem(
+  rules: FeeRuleRow[],
+  item: BillItemRuleState,
+  sourceBillType: 'trucking' | 'freight',
+) {
+  const resolved = resolveRuleForBillItem(
+    rules,
+    item.feeType,
+    sourceBillType,
+    item.remark,
+    item.amountCny,
+    item.assignedMerchantCode,
+  );
+  const reviewLocked = item.exceptionStatus === 'confirmed' || item.exceptionStatus === 'rejected';
+  if (reviewLocked) {
+    return {
+      allocationMethod: resolved.allocationMethod,
+      stage: resolved.stage,
+      isException: item.isException,
+      exceptionStatus: asExceptionStatus(item.exceptionStatus),
+      assignedMerchantCode: item.assignedMerchantCode ?? null,
+    };
+  }
+  return {
+    allocationMethod: resolved.allocationMethod,
+    stage: resolved.stage,
+    isException: resolved.isException,
+    exceptionStatus: resolved.exceptionStatus,
+    assignedMerchantCode: resolved.assignedMerchantCode,
+  };
+}
+
+/** 仅核算动作调用：用当前 active 规则回写未确认批次的账单行口径。 */
+export async function applyLatestFeeRulesToBillItems(batchId: string) {
+  const batch = await db
+    .select({
+      id: fobSettlementBatches.id,
+      status: fobSettlementBatches.status,
+    })
+    .from(fobSettlementBatches)
+    .where(eq(fobSettlementBatches.id, batchId))
+    .limit(1)
+    .then((rows) => rows[0]);
+  if (!batch || batch.status === 'confirmed') return;
+
+  const rules = await loadActiveFeeRules();
+  const [trucking, freight] = await Promise.all([
+    db.select().from(fobTruckingBillItems).where(eq(fobTruckingBillItems.batchId, batchId)),
+    db.select().from(fobFreightBillItems).where(eq(fobFreightBillItems.batchId, batchId)),
+  ]);
+
+  for (const item of trucking) {
+    const patch = latestRulePatchForBillItem(
+      rules,
+      {
+        feeType: item.feeType,
+        remark: item.remark,
+        amountCny: Number(item.amountCny),
+        assignedMerchantCode: item.assignedMerchantCode,
+        isException: item.isException,
+        exceptionStatus: item.exceptionStatus,
+      },
+      'trucking',
+    );
+    await db
+      .update(fobTruckingBillItems)
+      .set({
+        allocationMethod: patch.allocationMethod,
+        isException: patch.isException,
+        exceptionStatus: patch.exceptionStatus,
+      })
+      .where(eq(fobTruckingBillItems.id, item.id));
+  }
+
+  for (const item of freight) {
+    const patch = latestRulePatchForBillItem(
+      rules,
+      {
+        feeType: item.feeType,
+        remark: item.remark,
+        amountCny: Number(item.amountCny),
+        assignedMerchantCode: item.assignedMerchantCode,
+        isException: item.isException,
+        exceptionStatus: item.exceptionStatus,
+      },
+      'freight',
+    );
+    await db
+      .update(fobFreightBillItems)
+      .set({
+        allocationMethod: patch.allocationMethod,
+        isException: patch.isException,
+        exceptionStatus: patch.exceptionStatus,
+        stage: patch.stage,
+      })
+      .where(eq(fobFreightBillItems.id, item.id));
+  }
+}
+
 export async function countPendingExceptions(batchId: string) {
   const [trucking, freight] = await Promise.all([
     db

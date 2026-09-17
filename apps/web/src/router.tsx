@@ -6,6 +6,7 @@ import { InventoryOverviewPage } from '@/pages/InventoryOverviewPage';
 import { InventoryQueryPage } from '@/pages/InventoryQueryPage';
 import { SkuInventoryPlanningPage } from '@/pages/SkuInventoryPlanningPage';
 import { SkuPlanningEntryPage } from '@/pages/SkuPlanningEntryPage';
+import { InventoryPoolsPage } from '@/pages/InventoryPoolsPage';
 import { PlanningDashboardPage } from '@/pages/PlanningDashboardPage';
 import { LeadTimeProfilesPage } from '@/pages/LeadTimeProfilesPage';
 import { SafetyStockPage } from '@/pages/SafetyStockPage';
@@ -50,6 +51,7 @@ export function AppRouter() {
           <Route path="dashboard" element={<DashboardPage />} />
           <Route path="inventory/overview" element={<InventoryOverviewPage />} />
           <Route path="inventory/query" element={<InventoryQueryPage />} />
+          <Route path="inventory/pools" element={<InventoryPoolsPage />} />
           <Route path="inventory/planning-dashboard" element={<PlanningDashboardPage />} />
           <Route path="inventory/planning" element={<SkuPlanningEntryPage />} />
           <Route path="inventory/planning/:skuId" element={<SkuInventoryPlanningPage />} />

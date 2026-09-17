@@ -74,7 +74,7 @@ export function InventoryPoolsPage() {
       {dateUnknownCount > 0 && (
         <Card className="border-amber-200 bg-amber-50">
           <CardContent className="pt-4 text-sm text-amber-900">
-            当前池有 {dateUnknownCount} 条批次缺少可用日（available_at），已高亮，不会进入时间轴确定线。
+            当前池有 {dateUnknownCount} 条批次缺少可用日（available_at），已高亮，不会进入时间轴。
           </CardContent>
         </Card>
       )}

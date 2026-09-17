@@ -36,19 +36,19 @@ export function buildPlanningDashboardCards(
       highlight: dashboard.healthYellowCount > 0,
     },
     {
-      label: '预计7天缺货',
+      label: '7天缺货（确定线）',
       value: String(dashboard.stockoutHorizon7 ?? 0),
       href: '/inventory/alerts',
       highlight: (dashboard.stockoutHorizon7 ?? 0) > 0,
     },
     {
-      label: '预计15天缺货',
+      label: '15天缺货（确定线）',
       value: String(dashboard.stockoutHorizon15 ?? 0),
       href: '/inventory/alerts',
       highlight: (dashboard.stockoutHorizon15 ?? 0) > 0,
     },
     {
-      label: '预计30天缺货',
+      label: '30天缺货（确定线）',
       value: String(dashboard.stockoutHorizon30 ?? 0),
       href: '/inventory/alerts',
       highlight: (dashboard.stockoutHorizon30 ?? 0) > 0,

@@ -29,10 +29,10 @@ describe('PlanningDashboardPage helpers', () => {
 
     assert.equal(byLabel['新计划已来不及']?.value, '4');
     assert.equal(byLabel['新计划已来不及']?.href, '/inventory/alerts');
-    assert.equal(byLabel['预计7天缺货']?.value, '5');
-    assert.equal(byLabel['预计7天缺货']?.href, '/inventory/alerts');
-    assert.equal(byLabel['预计15天缺货']?.value, '10');
-    assert.equal(byLabel['预计30天缺货']?.value, '20');
+    assert.equal(byLabel['7天缺货（确定线）']?.value, '5');
+    assert.equal(byLabel['7天缺货（确定线）']?.href, '/inventory/alerts');
+    assert.equal(byLabel['15天缺货（确定线）']?.value, '10');
+    assert.equal(byLabel['30天缺货（确定线）']?.value, '20');
     assert.equal(byLabel['库存积压']?.value, '7');
     assert.equal(byLabel['红灯风险']?.value, '8');
     assert.equal(byLabel['待处理补货建议']?.href, '/pmc/suggestions');

@@ -5,10 +5,7 @@ import {
   calcSuggestedQtyFromTimeline,
   calcTimelineWindowDays,
   classifySupplyLot,
-  DEFAULT_TIMELINE_HORIZONS,
-  findStockoutDate,
   projectDailyInventory,
-  projectInventoryTimeline,
   type DailyLot,
   type TimelineLot,
 } from './inventory-timeline.js';
@@ -54,37 +51,6 @@ describe('inventory-timeline', () => {
     });
     assert.equal(at45.projectedBalance, -300);
     assert.equal(at45.cumulativeDemand, 2600);
-  });
-
-  it('builds full timeline with default horizons', () => {
-    const timeline = projectInventoryTimeline({
-      lots: sampleLots,
-      today,
-      reservedQty: 0,
-      horizons: DEFAULT_TIMELINE_HORIZONS,
-      cumulativeDemandFn: demandAtHorizon,
-    });
-    assert.equal(timeline.points.length, 5);
-    assert.equal(timeline.points.find((p) => p.horizonDays === 45)?.projectedBalance, -300);
-    assert.equal(timeline.points.find((p) => p.horizonDays === 0)?.projectedBalance, 1000);
-  });
-
-  it('finds first stockout date by scanning daily when avgDaily provided', () => {
-    const stockout = findStockoutDate({
-      lots: sampleLots,
-      today,
-      reservedQty: 0,
-      avgDaily: 2600 / 45,
-      maxDays: 60,
-    });
-    assert.ok(stockout);
-    // 余额首次 <=0 应接近 45 天附近
-    const day = Math.round(
-      (new Date(`${stockout}T00:00:00Z`).getTime() -
-        new Date(`${today}T00:00:00Z`).getTime()) /
-        86400000,
-    );
-    assert.ok(day >= 40 && day <= 50, `stockout day=${day}`);
   });
 
   it('suggests replenishment qty from target horizon gap + safety + MOQ', () => {

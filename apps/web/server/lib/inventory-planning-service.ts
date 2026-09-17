@@ -17,6 +17,8 @@ import type { InventoryPositionBreakdown } from './inventory-position.js';
 import type { ResolvedLeadTime } from './lead-time-resolver.js';
 import { loadMergedPublishedForecastBySkuIds } from './forecast-published-resolve.js';
 import { loadDailySalesBySkuIds } from './sales-history-query.js';
+import { buildSkuWarehouseTimeline } from './inventory-timeline-service.js';
+import type { DailyInventoryResult } from './inventory-timeline.js';
 
 export type SkuPlanningView = {
   skuId: string;
@@ -35,6 +37,7 @@ export type SkuPlanningView = {
   healthStatus: string;
   etaAvailableNearest?: string | null;
   stockoutDateEstimate?: string | null;
+  timeline?: DailyInventoryResult;
 };
 
 type PlanningHealth = Pick<
@@ -106,8 +109,11 @@ export function buildSkuPlanningView(input: {
   health: PlanningHealth;
   etaAvailableNearest?: string | null;
   today?: Date;
+  timeline?: DailyInventoryResult | null;
+  timelineSuggestedQty?: number;
 }): SkuPlanningView {
   const reorderPoint = Number(input.health.metrics.reorderPoint);
+  const stockoutFromTimeline = input.timeline?.stockoutDateConfirmed ?? null;
   return {
     skuId: input.health.skuId,
     skuCode: input.health.skuCode,
@@ -122,15 +128,21 @@ export function buildSkuPlanningView(input: {
     coverageDays: input.health.coverageDays,
     safetyStockDays: input.health.coverage.safetyStockDays,
     ...(Number.isFinite(reorderPoint) ? { reorderPoint } : {}),
-    suggestedQty: input.health.suggestedQty,
-    suggestedDate: input.health.suggestedDate,
+    suggestedQty:
+      input.timelineSuggestedQty != null && input.timelineSuggestedQty > 0
+        ? input.timelineSuggestedQty
+        : input.health.suggestedQty,
+    suggestedDate: input.timeline?.reorderDate ?? input.health.suggestedDate,
     healthStatus: input.health.healthStatus,
     etaAvailableNearest: input.etaAvailableNearest ?? null,
-    stockoutDateEstimate: estimateStockoutDate(
-      input.health.avgDaily,
-      input.health.coverageDays,
-      input.today,
-    ),
+    stockoutDateEstimate:
+      stockoutFromTimeline ??
+      estimateStockoutDate(
+        input.health.avgDaily,
+        input.health.coverageDays,
+        input.today,
+      ),
+    ...(input.timeline ? { timeline: input.timeline } : {}),
   };
 }
 
@@ -217,5 +229,30 @@ export async function getSkuPlanningView(params: {
     warehouse.code,
   );
 
-  return buildSkuPlanningView({ health, etaAvailableNearest });
+  let timeline: DailyInventoryResult | null = null;
+  let timelineSuggestedQty: number | undefined;
+  try {
+    const safetyStockQty = Number(health.metrics.safetyStockQty) || 0;
+    const built = await buildSkuWarehouseTimeline({
+      skuId: sku.id,
+      warehouseCode: warehouse.code,
+      avgDaily: health.avgDaily,
+      forecastMap: forecastEntry.map,
+      totalLeadDays: health.totalLeadDays,
+      safetyStockDays: health.coverage.safetyStockDays,
+      safetyStockQty,
+      moq: sku.skuMoq || sku.spuMoq || undefined,
+    });
+    timeline = built.timeline;
+    timelineSuggestedQty = built.suggestedQty;
+  } catch (err) {
+    console.warn('[getSkuPlanningView] timeline skipped:', err);
+  }
+
+  return buildSkuPlanningView({
+    health,
+    etaAvailableNearest,
+    timeline,
+    timelineSuggestedQty,
+  });
 }

@@ -36,6 +36,8 @@ import {
 } from '../lib/inventory-health-store.js';
 import { syncReplenishLightFromHealth } from '../lib/replenish-light-sync.js';
 import { loadDailySalesBySkuIds } from '../lib/sales-history-query.js';
+import { buildSkuWarehouseTimeline } from '../lib/inventory-timeline-service.js';
+import { syncInventorySupplyLots } from '../lib/inventory-supply-lot-sync.js';
 
 async function upsertSafetyStock(
   skuId: string,
@@ -84,6 +86,12 @@ async function loadPolicyMap(skuId: string) {
 }
 
 export async function runReplenishmentForecast() {
+  try {
+    await syncInventorySupplyLots();
+  } catch (err) {
+    console.warn('[replenishmentForecast] supply lot sync skipped:', err);
+  }
+
   const spuMoqMap = new Map(
     (await db.select({ id: spus.id, moq: spus.moq }).from(spus)).map((s) => [s.id, s.moq]),
   );
@@ -220,10 +228,40 @@ export async function runReplenishmentForecast() {
       }
 
       let suggestedQty = coverage.suggestedQty;
+      try {
+        const safetyStockQty = (health.metrics.safetyStockQty as number) ?? 0;
+        const timelineResult = await buildSkuWarehouseTimeline({
+          skuId: sku.id,
+          warehouseCode: wh.code,
+          avgDaily: health.avgDaily,
+          totalLeadDays: health.totalLeadDays,
+          safetyStockDays: health.coverage.safetyStockDays,
+          safetyStockQty,
+          moq: effectiveMoq || undefined,
+        });
+        if (timelineResult.suggestedQty > 0) {
+          suggestedQty = timelineResult.suggestedQty;
+          health.metrics.timelineSuggestedQty = timelineResult.suggestedQty;
+          health.metrics.timelineStockoutDate = timelineResult.timeline.stockoutDateConfirmed;
+          health.metrics.timelineReorderDate = timelineResult.timeline.reorderDate;
+          health.metrics.timelinePoints = timelineResult.timeline.points.map((p) => ({
+            horizonDays: p.horizonDays,
+            confirmedEnding: p.confirmedEnding,
+            expectedEnding: p.expectedEnding,
+            cumulativeDemand: p.cumulativeDemand,
+          }));
+        }
+      } catch (err) {
+        console.warn(
+          `[replenishmentForecast] timeline qty skipped ${sku.code}/${wh.code}:`,
+          err,
+        );
+      }
+
       if (wh.regionGroup === 'US' && usPool.effectiveQty < usNetworkRop) {
-        const networkQty = coverage.suggestedQty;
+        const networkQty = suggestedQty;
         const split = splitQtyByDailyShare(networkQty, dailyByWh);
-        suggestedQty = split[wh.code] ?? coverage.suggestedQty;
+        suggestedQty = split[wh.code] ?? suggestedQty;
       }
 
       if (suggestedQty <= 0) continue;
@@ -345,8 +383,8 @@ export async function runReplenishmentForecast() {
   }
 
   const engine = difyEnhanced
-    ? 'coverage-lead-time+ai-enhanced'
-    : 'coverage-lead-time';
+    ? 'coverage-timeline+ai-enhanced'
+    : 'coverage-timeline';
 
   return { suggestionCount: count, snapshotCount, engine, difyEnhanced, results };
 }

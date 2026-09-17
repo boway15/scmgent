@@ -22,12 +22,6 @@ export type TimelinePoint = {
   supplyEvents: Array<{ pool: string; qty: number; availableAt: string }>;
 };
 
-export type InventoryTimelineResult = {
-  today: string;
-  points: TimelinePoint[];
-  stockoutDate: string | null;
-};
-
 export type SupplyClass = 'confirmed' | 'expected' | 'planned' | 'excluded';
 
 export type ClassifySupplyLotInput = {
@@ -293,71 +287,6 @@ export function calcProjectedBalance(params: {
     projectedBalance: projectedOverseas - params.cumulativeDemand,
     supplyEvents,
   };
-}
-
-export function projectInventoryTimeline(params: {
-  lots: TimelineLot[];
-  today: string;
-  reservedQty?: number;
-  horizons?: readonly number[];
-  cumulativeDemandFn: (horizonDays: number) => number;
-  avgDaily?: number;
-  maxStockoutScanDays?: number;
-}): InventoryTimelineResult {
-  const horizons = params.horizons ?? DEFAULT_TIMELINE_HORIZONS;
-  const points: TimelinePoint[] = [];
-  for (const horizonDays of horizons) {
-    const asOf = horizonDate(params.today, horizonDays);
-    const balance = calcProjectedBalance({
-      lots: params.lots,
-      today: params.today,
-      horizonDays,
-      reservedQty: params.reservedQty,
-      cumulativeDemand: params.cumulativeDemandFn(horizonDays),
-    });
-    points.push({
-      horizonDays,
-      asOf,
-      ...balance,
-    });
-  }
-
-  const stockoutDate =
-    params.avgDaily != null && params.avgDaily > 0
-      ? findStockoutDate({
-          lots: params.lots,
-          today: params.today,
-          reservedQty: params.reservedQty,
-          avgDaily: params.avgDaily,
-          maxDays: params.maxStockoutScanDays ?? 180,
-        })
-      : points.find((p) => p.projectedBalance <= 0)?.asOf ?? null;
-
-  return { today: params.today, points, stockoutDate };
-}
-
-export function findStockoutDate(params: {
-  lots: TimelineLot[];
-  today: string;
-  reservedQty?: number;
-  avgDaily: number;
-  maxDays?: number;
-}): string | null {
-  if (params.avgDaily <= 0) return null;
-  const maxDays = params.maxDays ?? 180;
-  for (let d = 0; d <= maxDays; d++) {
-    const balance = calcProjectedBalance({
-      lots: params.lots,
-      today: params.today,
-      horizonDays: d,
-      reservedQty: params.reservedQty,
-      cumulativeDemand: params.avgDaily * d,
-    });
-    if (balance.projectedBalance <= 0) {
-      return horizonDate(params.today, d);
-    }
-  }
-  return null;
 }
 
 /**

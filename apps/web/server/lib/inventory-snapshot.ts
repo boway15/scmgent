@@ -1,4 +1,4 @@
-import { eq, desc, and } from 'drizzle-orm';
+import { eq, desc, and, sql } from 'drizzle-orm';
 import { db, inventoryRecords, warehouses } from '@scm/db';
 import { IN_PRODUCTION_WAREHOUSE } from './inventory-constants.js';
 import {
@@ -13,6 +13,7 @@ export type InventorySnapshot = {
   qtyAvailable: number;
   qtyInTransit: number;
   qtyInProduction: number;
+  qtyReserved: number;
   /** 本仓可售 + 在途（不含在产） */
   localEffectiveQty: number;
   /** 兼容旧字段：物理仓 = localEffectiveQty；在产仓 = qtyInProduction */
@@ -44,6 +45,7 @@ export async function getLatestInventorySnapshot(
       qtyAvailable: 0,
       qtyInTransit: 0,
       qtyInProduction,
+      qtyReserved: 0,
       localEffectiveQty: 0,
       effectiveQty: qtyInProduction,
     };
@@ -53,6 +55,7 @@ export async function getLatestInventorySnapshot(
     .select({
       qtyAvailable: inventoryRecords.qtyAvailable,
       qtyInTransit: inventoryRecords.qtyInTransit,
+      qtyReserved: sql<number>`COALESCE(${inventoryRecords.qtyReserved}, 0)`,
     })
     .from(inventoryRecords)
     .where(and(eq(inventoryRecords.skuId, skuId), eq(inventoryRecords.warehouse, warehouseCode)))
@@ -61,6 +64,7 @@ export async function getLatestInventorySnapshot(
 
   const qtyAvailable = record?.qtyAvailable ?? 0;
   const qtyInTransit = record?.qtyInTransit ?? 0;
+  const qtyReserved = Number(record?.qtyReserved ?? 0);
   const localEffectiveQty = qtyAvailable + qtyInTransit;
 
   return {
@@ -68,6 +72,7 @@ export async function getLatestInventorySnapshot(
     qtyAvailable,
     qtyInTransit,
     qtyInProduction: 0,
+    qtyReserved,
     localEffectiveQty,
     effectiveQty: localEffectiveQty,
   };

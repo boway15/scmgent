@@ -75,6 +75,58 @@ describe('inventory planning view', () => {
     });
   });
 
+  it('prefers injected daily timeline fields for qty, reorder, and stockout', () => {
+    const timeline = {
+      today: '2026-07-29',
+      windowDays: 101,
+      totalLeadDays: 87,
+      stockoutDateConfirmed: '2026-08-10',
+      stockoutDateExpected: '2026-09-01',
+      safetyBreachDateConfirmed: '2026-08-05',
+      reorderDate: '2026-06-06',
+      tooLateForNewPo: true,
+      uncoverableByNewPo: true,
+      suggestedQty: 900,
+      points: [
+        {
+          horizonDays: 0,
+          asOf: '2026-07-29',
+          confirmedEnding: 100,
+          expectedEnding: 100,
+          plannedInbound: 0,
+          cumulativeDemand: 5,
+          supplyEvents: [{ pool: 'overseas', qty: 100, availableAt: '2026-07-29', supplyClass: 'confirmed' }],
+        },
+      ],
+    };
+
+    const view = buildSkuPlanningView({
+      health: {
+        skuId: 'sku-1',
+        skuCode: 'SKU-001',
+        warehouseCode: 'US-WEST',
+        avgDaily: 5,
+        demandSource: 'forecast',
+        coverageDays: 31,
+        suggestedQty: 450,
+        suggestedDate: '2026-07-20',
+        healthStatus: 'yellow',
+        metrics: { reorderPoint: 220 },
+        coverage: { safetyStockDays: 14 },
+        position,
+        leadTime,
+      },
+      timeline,
+      timelineSuggestedQty: 900,
+      today: new Date('2026-07-29T00:00:00.000Z'),
+    });
+
+    assert.equal(view.suggestedQty, 900);
+    assert.equal(view.suggestedDate, timeline.reorderDate);
+    assert.equal(view.stockoutDateEstimate, timeline.stockoutDateConfirmed);
+    assert.deepEqual(view.timeline?.points, timeline.points);
+  });
+
   it('does not estimate stockout when demand is zero or coverage is infinite', () => {
     assert.equal(estimateStockoutDate(0, 10, new Date('2026-07-29T00:00:00Z')), null);
     assert.equal(estimateStockoutDate(2, Infinity, new Date('2026-07-29T00:00:00Z')), null);

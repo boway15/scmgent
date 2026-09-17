@@ -3,7 +3,7 @@
  * 调用方应只传入 isLotEligibleForTimeline === true 的批次。
  */
 
-import { addDaysIso } from './inventory-supply-lots.js';
+import { addDaysIso, subtractDaysIso } from './inventory-supply-lots.js';
 
 export const DEFAULT_TIMELINE_HORIZONS = [0, 7, 15, 30, 45] as const;
 
@@ -66,6 +66,178 @@ export function classifySupplyLot(input: ClassifySupplyLotInput): SupplyClass {
   }
 
   return 'planned';
+}
+
+export type DailyLot = {
+  supplyClass: 'confirmed' | 'expected' | 'planned';
+  pool: string;
+  qty: number;
+  availableAt: string;
+};
+
+export type DailyTimelinePoint = {
+  horizonDays: number;
+  asOf: string;
+  confirmedEnding: number;
+  expectedEnding: number;
+  plannedInbound: number;
+  cumulativeDemand: number;
+  supplyEvents: Array<{ pool: string; qty: number; availableAt: string; supplyClass: string }>;
+};
+
+export type DailyInventoryResult = {
+  today: string;
+  windowDays: number;
+  totalLeadDays: number;
+  stockoutDateConfirmed: string | null;
+  stockoutDateExpected: string | null;
+  safetyBreachDateConfirmed: string | null;
+  reorderDate: string | null;
+  tooLateForNewPo: boolean;
+  uncoverableByNewPo: boolean;
+  suggestedQty: number;
+  points: DailyTimelinePoint[];
+};
+
+export function calcTimelineWindowDays(totalLeadDays: number, safetyStockDays: number): number {
+  const raw = Math.ceil(totalLeadDays) + Math.ceil(safetyStockDays);
+  return Math.min(180, Math.max(90, raw));
+}
+
+export function displayHorizonDays(totalLeadDays: number, windowDays: number): number[] {
+  const leadHorizon = Math.min(totalLeadDays, windowDays);
+  return [...new Set([0, 7, 15, 30, leadHorizon].filter((d) => d <= windowDays))].sort(
+    (a, b) => a - b,
+  );
+}
+
+export function projectDailyInventory(params: {
+  lots: DailyLot[];
+  today: string;
+  reservedQty?: number;
+  totalLeadDays: number;
+  safetyStockDays: number;
+  safetyStockQty: number;
+  moq?: number;
+  dailyDemandFn: (horizonDays: number) => number;
+}): DailyInventoryResult {
+  const windowDays = calcTimelineWindowDays(params.totalLeadDays, params.safetyStockDays);
+  const reserved = Math.max(0, params.reservedQty ?? 0);
+  const horizons = displayHorizonDays(params.totalLeadDays, windowDays);
+  const horizonSet = new Set(horizons);
+  const kT = Math.min(params.totalLeadDays, windowDays);
+
+  const points: DailyTimelinePoint[] = [];
+  let demandCum = 0;
+  let allDemandZero = true;
+  let demandCumAtTarget = 0;
+  let supplyExpectedAtTarget = 0;
+  let stockoutDateConfirmed: string | null = null;
+  let stockoutDateExpected: string | null = null;
+  let safetyBreachDateConfirmed: string | null = null;
+  let confirmedStockoutK: number | null = null;
+
+  for (let k = 0; k <= windowDays; k++) {
+    const asOf = horizonDate(params.today, k);
+    const dayDemand = params.dailyDemandFn(k);
+    if (dayDemand !== 0) allDemandZero = false;
+    demandCum += dayDemand;
+
+    let confirmedQty = 0;
+    let expectedQty = 0;
+    let plannedQty = 0;
+    const supplyEvents: DailyTimelinePoint['supplyEvents'] = [];
+    for (const lot of params.lots) {
+      if (lot.availableAt <= asOf) {
+        supplyEvents.push({
+          pool: lot.pool,
+          qty: lot.qty,
+          availableAt: lot.availableAt,
+          supplyClass: lot.supplyClass,
+        });
+        if (lot.supplyClass === 'confirmed') confirmedQty += lot.qty;
+        else if (lot.supplyClass === 'expected') expectedQty += lot.qty;
+        else if (lot.supplyClass === 'planned') plannedQty += lot.qty;
+      }
+    }
+
+    const supplyConfirmed = Math.max(0, confirmedQty - reserved);
+    const supplyExpected = supplyConfirmed + expectedQty;
+    const confirmedEnding = supplyConfirmed - demandCum;
+    const expectedEnding = supplyExpected - demandCum;
+
+    if (k === kT) {
+      demandCumAtTarget = demandCum;
+      supplyExpectedAtTarget = supplyExpected;
+    }
+
+    if (stockoutDateConfirmed == null && confirmedEnding <= 0) {
+      stockoutDateConfirmed = asOf;
+      confirmedStockoutK = k;
+    }
+    if (stockoutDateExpected == null && expectedEnding <= 0) {
+      stockoutDateExpected = asOf;
+    }
+    if (safetyBreachDateConfirmed == null && confirmedEnding < params.safetyStockQty) {
+      safetyBreachDateConfirmed = asOf;
+    }
+
+    if (horizonSet.has(k)) {
+      points.push({
+        horizonDays: k,
+        asOf,
+        confirmedEnding,
+        expectedEnding,
+        plannedInbound: plannedQty,
+        cumulativeDemand: demandCum,
+        supplyEvents,
+      });
+    }
+  }
+
+  let suggestedQty = 0;
+  let reorderDate: string | null = null;
+  let tooLateForNewPo = false;
+  let uncoverableByNewPo = false;
+
+  if (allDemandZero) {
+    stockoutDateConfirmed = null;
+    stockoutDateExpected = null;
+    safetyBreachDateConfirmed = null;
+  } else {
+    suggestedQty = calcSuggestedQtyFromTimeline({
+      projectedOverseasAtTarget: supplyExpectedAtTarget,
+      cumulativeDemandAtTarget: demandCumAtTarget,
+      safetyStockQty: params.safetyStockQty,
+      moq: params.moq,
+    });
+    if (stockoutDateExpected) {
+      const unclamped = subtractDaysIso(stockoutDateExpected, params.totalLeadDays);
+      if (unclamped < params.today) {
+        reorderDate = params.today;
+        tooLateForNewPo = true;
+      } else {
+        reorderDate = unclamped;
+      }
+    }
+    if (confirmedStockoutK != null && confirmedStockoutK < params.totalLeadDays) {
+      uncoverableByNewPo = true;
+    }
+  }
+
+  return {
+    today: params.today,
+    windowDays,
+    totalLeadDays: params.totalLeadDays,
+    stockoutDateConfirmed,
+    stockoutDateExpected,
+    safetyBreachDateConfirmed,
+    reorderDate,
+    tooLateForNewPo,
+    uncoverableByNewPo,
+    suggestedQty,
+    points,
+  };
 }
 
 function horizonDate(today: string, horizonDays: number): string {

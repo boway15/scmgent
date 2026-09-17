@@ -3,10 +3,13 @@ import { describe, it } from 'node:test';
 import {
   calcProjectedBalance,
   calcSuggestedQtyFromTimeline,
+  calcTimelineWindowDays,
   classifySupplyLot,
   DEFAULT_TIMELINE_HORIZONS,
   findStockoutDate,
+  projectDailyInventory,
   projectInventoryTimeline,
+  type DailyLot,
   type TimelineLot,
 } from './inventory-timeline.js';
 
@@ -175,5 +178,118 @@ describe('classifySupplyLot', () => {
       }),
       'excluded',
     );
+  });
+});
+
+describe('projectDailyInventory', () => {
+  const today = '2026-09-17';
+
+  /** k=0..45 inclusive = 46 days, remainder on last day so demandCum(45) is exactly 2600 */
+  function oldSampleDailyDemand(horizonDays: number): number {
+    const days = 46;
+    const total = 2600;
+    const base = Math.floor(total / days);
+    const rem = total - base * days;
+    return horizonDays === 45 ? base + rem : base;
+  }
+
+  it('clamps timeline window between 90 and 180 days', () => {
+    assert.equal(calcTimelineWindowDays(102, 14), 116);
+    assert.equal(calcTimelineWindowDays(10, 5), 90);
+    assert.equal(calcTimelineWindowDays(170, 20), 180);
+  });
+
+  it('subtracts reserved qty once from confirmed supply at k=0', () => {
+    const lots: DailyLot[] = [
+      { supplyClass: 'confirmed', pool: 'overseas', qty: 1000, availableAt: today },
+    ];
+    const r = projectDailyInventory({
+      lots,
+      today,
+      reservedQty: 200,
+      totalLeadDays: 10,
+      safetyStockDays: 5,
+      safetyStockQty: 0,
+      dailyDemandFn: () => 0,
+    });
+    assert.equal(r.points.find((p) => p.horizonDays === 0)?.confirmedEnding, 800);
+  });
+
+  it('matches old sample expectedEnding -300 at horizon 45', () => {
+    const lots: DailyLot[] = [
+      { supplyClass: 'confirmed', pool: 'overseas', qty: 1000, availableAt: today },
+      { supplyClass: 'confirmed', pool: 'in_transit', qty: 500, availableAt: '2026-09-24' },
+      { supplyClass: 'expected', pool: 'local', qty: 300, availableAt: '2026-10-02' },
+      { supplyClass: 'expected', pool: 'local', qty: 500, availableAt: '2026-10-12' },
+    ];
+    const r = projectDailyInventory({
+      lots,
+      today,
+      reservedQty: 0,
+      totalLeadDays: 45,
+      safetyStockDays: 45,
+      safetyStockQty: 0,
+      dailyDemandFn: oldSampleDailyDemand,
+    });
+    assert.equal(r.windowDays, 90);
+    const p45 = r.points.find((p) => p.horizonDays === 45);
+    assert.ok(p45);
+    assert.equal(p45.cumulativeDemand, 2600);
+    assert.equal(p45.expectedEnding, -300);
+  });
+
+  it('projects long-lead confirmed/expected balances and ignores planned in suggestedQty', () => {
+    const lots: DailyLot[] = [
+      { supplyClass: 'confirmed', pool: 'overseas', qty: 1000, availableAt: today },
+      { supplyClass: 'confirmed', pool: 'in_transit', qty: 500, availableAt: '2026-09-24' },
+      { supplyClass: 'expected', pool: 'local', qty: 300, availableAt: '2026-11-08' },
+      { supplyClass: 'planned', pool: 'local', qty: 800, availableAt: '2026-12-28' },
+    ];
+    const r = projectDailyInventory({
+      lots,
+      today,
+      reservedQty: 0,
+      totalLeadDays: 102,
+      safetyStockDays: 14,
+      safetyStockQty: 500,
+      moq: 0,
+      dailyDemandFn: () => 40,
+    });
+    assert.equal(r.windowDays, 116);
+    const p7 = r.points.find((p) => p.horizonDays === 7)!;
+    assert.equal(p7.confirmedEnding, 1180);
+    assert.equal(p7.expectedEnding, 1180);
+    const p30 = r.points.find((p) => p.horizonDays === 30)!;
+    assert.equal(p30.confirmedEnding, 260);
+    assert.equal(p30.expectedEnding, 260);
+    assert.equal(r.suggestedQty, 2820);
+    assert.equal(r.uncoverableByNewPo, true);
+    assert.ok(r.safetyBreachDateConfirmed);
+    assert.ok(r.stockoutDateConfirmed);
+    assert.ok(r.safetyBreachDateConfirmed < r.stockoutDateConfirmed);
+    assert.equal(r.tooLateForNewPo, true);
+    assert.equal(r.reorderDate, '2026-09-17');
+    assert.equal(r.points.find((p) => p.horizonDays === 102)?.plannedInbound, 800);
+  });
+
+  it('returns null stockout dates and zero suggested qty when daily demand is all zero', () => {
+    const lots: DailyLot[] = [
+      { supplyClass: 'confirmed', pool: 'overseas', qty: 1000, availableAt: today },
+    ];
+    const r = projectDailyInventory({
+      lots,
+      today,
+      reservedQty: 0,
+      totalLeadDays: 45,
+      safetyStockDays: 45,
+      safetyStockQty: 500,
+      dailyDemandFn: () => 0,
+    });
+    assert.equal(r.stockoutDateConfirmed, null);
+    assert.equal(r.stockoutDateExpected, null);
+    assert.equal(r.safetyBreachDateConfirmed, null);
+    assert.equal(r.suggestedQty, 0);
+    assert.equal(r.tooLateForNewPo, false);
+    assert.equal(r.uncoverableByNewPo, false);
   });
 });

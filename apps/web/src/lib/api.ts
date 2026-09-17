@@ -335,6 +335,27 @@ export type SkuPlanningView = {
   healthStatus: InventoryHealth;
   etaAvailableNearest?: string | null;
   stockoutDateEstimate?: string | null;
+  timeline?: {
+    today: string;
+    windowDays: number;
+    totalLeadDays: number;
+    stockoutDateConfirmed: string | null;
+    stockoutDateExpected: string | null;
+    safetyBreachDateConfirmed: string | null;
+    reorderDate: string | null;
+    tooLateForNewPo: boolean;
+    uncoverableByNewPo: boolean;
+    suggestedQty: number;
+    points: Array<{
+      horizonDays: number;
+      asOf: string;
+      confirmedEnding: number;
+      expectedEnding: number;
+      plannedInbound: number;
+      cumulativeDemand: number;
+      supplyEvents: Array<{ pool: string; qty: number; availableAt: string; supplyClass: string }>;
+    }>;
+  };
 };
 
 export type PlanningDashboard = {
@@ -346,7 +367,35 @@ export type PlanningDashboard = {
   delayedShipments: number;
   delayedDraftsEtaAvailable: number;
   stockoutRateApprox: number;
+  stockoutHorizon7: number;
+  stockoutHorizon15: number;
+  stockoutHorizon30: number;
+  overstockCount: number;
+  uncoverableByNewPoCount?: number;
+  pendingShipOut: number;
+  pendingTransfer: number;
   calculatedAt: string;
+};
+
+export type SupplyLotRow = {
+  id: string;
+  skuId: string;
+  skuCode: string;
+  skuName: string;
+  warehouseCode: string;
+  pool: 'overseas' | 'in_transit' | 'local';
+  qty: number;
+  factoryCode: string | null;
+  productionStatus: 'in_production' | 'qc_pending' | 'completed' | null;
+  shipReadyAt: string | null;
+  latestShipDate: string | null;
+  availableAt: string | null;
+  source: string;
+  sourceId: string | null;
+  status: string;
+  etaEstimated: boolean;
+  dateUnknown: boolean;
+  updatedAt: string;
 };
 
 export type SkuOverview = {
@@ -1696,6 +1745,39 @@ export const api = {
       : '';
     return request<SkuPlanningView>(`/api/inventory/planning/${skuId}${query}`);
   },
+  getSupplyLots: (params?: {
+    pool?: 'overseas' | 'in_transit' | 'local';
+    warehouse?: string;
+    skuId?: string;
+    limit?: number;
+  }) => {
+    const qs = new URLSearchParams();
+    if (params?.pool) qs.set('pool', params.pool);
+    if (params?.warehouse) qs.set('warehouse', params.warehouse);
+    if (params?.skuId) qs.set('skuId', params.skuId);
+    if (params?.limit) qs.set('limit', String(params.limit));
+    const query = qs.toString();
+    return request<{ items: SupplyLotRow[] }>(
+      `/api/inventory/pools${query ? `?${query}` : ''}`,
+    );
+  },
+  syncSupplyLots: () =>
+    request<{ lotCount: number; eligibleCount: number }>('/api/inventory/pools/sync', {
+      method: 'POST',
+    }),
+  updateSupplyLot: (
+    id: string,
+    data: {
+      productionStatus?: 'in_production' | 'qc_pending' | 'completed';
+      shipReadyAt?: string | null;
+      latestShipDate?: string | null;
+      remainingLogisticsDays?: number;
+    },
+  ) =>
+    request(`/api/inventory/pools/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(data),
+    }),
   getPlanningDashboard: () =>
     request<PlanningDashboard>('/api/planning/dashboard'),
   exportInventoryOverviewCsv: async (params?: {
@@ -1850,9 +1932,12 @@ export const api = {
         skuName: string;
         warehouseCode?: string | null;
         alertType: string;
-        currentQty: number;
-        safetyQty: number;
-        isResolved: boolean;
+          currentQty: number;
+          safetyQty: number;
+          horizonDays?: number | null;
+          projectedQty?: number | null;
+          projectedStockoutDate?: string | null;
+          isResolved: boolean;
       }>;
       summary: string;
       openCount: number;

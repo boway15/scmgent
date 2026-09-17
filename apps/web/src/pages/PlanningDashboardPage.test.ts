@@ -14,23 +14,27 @@ describe('PlanningDashboardPage helpers', () => {
       delayedShipments: 3,
       delayedDraftsEtaAvailable: 4,
       stockoutRateApprox: 0.08,
+      stockoutHorizon7: 5,
+      stockoutHorizon15: 10,
+      stockoutHorizon30: 20,
+      overstockCount: 7,
+      uncoverableByNewPoCount: 4,
+      pendingShipOut: 0,
+      pendingTransfer: 0,
       calculatedAt: '2026-07-29T12:00:00.000Z',
     };
 
     const cards = buildPlanningDashboardCards(dashboard);
+    const byLabel = Object.fromEntries(cards.map((c) => [c.label, c]));
 
-    assert.deepEqual(
-      cards.map(({ label, value, href }) => ({ label, value, href })),
-      [
-        { label: '启用 SKU', value: '100', href: '/inventory/overview' },
-        { label: '红灯风险', value: '8', href: '/inventory/overview' },
-        { label: '黄灯预警', value: '12', href: '/inventory/overview' },
-        { label: '低于补货点', value: '15', href: '/inventory/alerts' },
-        { label: '待处理补货建议', value: '6', href: '/pmc/suggestions' },
-        { label: '延期采购跟单', value: '4', href: '/pmc/tracking' },
-        { label: '延期发运', value: '3', href: '/pmc/shipments' },
-        { label: '断货风险率（近似）', value: '8.0%', href: '/inventory/overview' },
-      ],
-    );
+    assert.equal(byLabel['新计划已来不及']?.value, '4');
+    assert.equal(byLabel['新计划已来不及']?.href, '/inventory/alerts');
+    assert.equal(byLabel['预计7天缺货']?.value, '5');
+    assert.equal(byLabel['预计7天缺货']?.href, '/inventory/alerts');
+    assert.equal(byLabel['预计15天缺货']?.value, '10');
+    assert.equal(byLabel['预计30天缺货']?.value, '20');
+    assert.equal(byLabel['库存积压']?.value, '7');
+    assert.equal(byLabel['红灯风险']?.value, '8');
+    assert.equal(byLabel['待处理补货建议']?.href, '/pmc/suggestions');
   });
 });

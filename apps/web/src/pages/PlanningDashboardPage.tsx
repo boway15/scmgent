@@ -36,6 +36,36 @@ export function buildPlanningDashboardCards(
       highlight: dashboard.healthYellowCount > 0,
     },
     {
+      label: '预计7天缺货',
+      value: String(dashboard.stockoutHorizon7 ?? 0),
+      href: '/inventory/alerts',
+      highlight: (dashboard.stockoutHorizon7 ?? 0) > 0,
+    },
+    {
+      label: '预计15天缺货',
+      value: String(dashboard.stockoutHorizon15 ?? 0),
+      href: '/inventory/alerts',
+      highlight: (dashboard.stockoutHorizon15 ?? 0) > 0,
+    },
+    {
+      label: '预计30天缺货',
+      value: String(dashboard.stockoutHorizon30 ?? 0),
+      href: '/inventory/alerts',
+      highlight: (dashboard.stockoutHorizon30 ?? 0) > 0,
+    },
+    {
+      label: '库存积压',
+      value: String(dashboard.overstockCount ?? 0),
+      href: '/inventory/alerts',
+      highlight: (dashboard.overstockCount ?? 0) > 0,
+    },
+    {
+      label: '新计划已来不及',
+      value: String(dashboard.uncoverableByNewPoCount ?? 0),
+      href: '/inventory/alerts',
+      highlight: (dashboard.uncoverableByNewPoCount ?? 0) > 0,
+    },
+    {
       label: '低于补货点',
       value: String(dashboard.belowRopCount),
       href: '/inventory/alerts',
@@ -69,6 +99,7 @@ export function buildPlanningDashboardCards(
 }
 
 const WORKBENCH_LINKS = [
+  { label: '库存三池', description: '本地 / 在途 / 海外批次与可出货日', href: '/inventory/pools' },
   { label: '补货建议', description: '审核并采纳待处理建议', href: '/pmc/suggestions' },
   { label: '采购跟单', description: '处理预计可用日期延期', href: '/pmc/tracking' },
   { label: '发运管理', description: '检查延期发运与节点', href: '/pmc/shipments' },

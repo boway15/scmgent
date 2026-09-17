@@ -151,7 +151,15 @@ export async function supersedePendingSuggestions(skuId: string, warehouseCode: 
 export async function findOpenStockAlert(params: {
   skuId: string;
   warehouseCode: string | null;
-  alertType: 'stockout' | 'below_safety' | 'below_rop';
+  alertType:
+    | 'stockout'
+    | 'below_safety'
+    | 'below_rop'
+    | 'stockout_horizon'
+    | 'coverage_short'
+    | 'overstock'
+    | 'uncoverable_by_new_po';
+  horizonDays?: number | null;
 }) {
   const conditions = [
     eq(stockAlerts.skuId, params.skuId),
@@ -160,6 +168,14 @@ export async function findOpenStockAlert(params: {
   ];
   if (params.warehouseCode) {
     conditions.push(eq(stockAlerts.warehouseCode, params.warehouseCode));
+  }
+  if (params.horizonDays != null) {
+    conditions.push(eq(stockAlerts.horizonDays, params.horizonDays));
+  } else if (
+    params.alertType === 'stockout_horizon' ||
+    params.horizonDays === null
+  ) {
+    // coverage_short / overstock：horizon 为空
   }
   const [row] = await db
     .select()

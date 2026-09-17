@@ -136,6 +136,7 @@ export async function runStockAlert() {
         overstockThresholdDays:
           row.coverage.overstockThresholdDays ?? DEFAULT_OVERSTOCK_THRESHOLD_DAYS,
         stockoutDate: timeline.stockoutDateConfirmed,
+        uncoverableByNewPo: timeline.uncoverableByNewPo,
       });
 
       for (const candidate of horizonCandidates) {

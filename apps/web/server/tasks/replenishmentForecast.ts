@@ -239,18 +239,16 @@ export async function runReplenishmentForecast() {
           safetyStockQty,
           moq: effectiveMoq || undefined,
         });
-        if (timelineResult.suggestedQty > 0) {
-          suggestedQty = timelineResult.suggestedQty;
-          health.metrics.timelineSuggestedQty = timelineResult.suggestedQty;
-          health.metrics.timelineStockoutDate = timelineResult.timeline.stockoutDateConfirmed;
-          health.metrics.timelineReorderDate = timelineResult.timeline.reorderDate;
-          health.metrics.timelinePoints = timelineResult.timeline.points.map((p) => ({
-            horizonDays: p.horizonDays,
-            confirmedEnding: p.confirmedEnding,
-            expectedEnding: p.expectedEnding,
-            cumulativeDemand: p.cumulativeDemand,
-          }));
-        }
+        suggestedQty = timelineResult.suggestedQty;
+        health.metrics.timelineSuggestedQty = timelineResult.suggestedQty;
+        health.metrics.timelineStockoutDate = timelineResult.timeline.stockoutDateConfirmed;
+        health.metrics.timelineReorderDate = timelineResult.timeline.reorderDate;
+        health.metrics.timelinePoints = timelineResult.timeline.points.map((p) => ({
+          horizonDays: p.horizonDays,
+          confirmedEnding: p.confirmedEnding,
+          expectedEnding: p.expectedEnding,
+          cumulativeDemand: p.cumulativeDemand,
+        }));
       } catch (err) {
         console.warn(
           `[replenishmentForecast] timeline qty skipped ${sku.code}/${wh.code}:`,

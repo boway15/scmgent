@@ -13,7 +13,6 @@ import {
 import { IN_PRODUCTION_WAREHOUSE } from './inventory-constants.js';
 import {
   buildLotsFromInputs,
-  isLotEligibleForTimeline,
   type BuiltSupplyLot,
 } from './inventory-supply-lots.js';
 import { openDraftQty } from './inventory-position.js';

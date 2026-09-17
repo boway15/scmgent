@@ -127,6 +127,29 @@ describe('inventory planning view', () => {
     assert.deepEqual(view.timeline?.points, timeline.points);
   });
 
+  it('uses timelineSuggestedQty zero instead of health suggestedQty', () => {
+    const view = buildSkuPlanningView({
+      health: {
+        skuId: 'sku-1',
+        skuCode: 'SKU-001',
+        warehouseCode: 'US-WEST',
+        avgDaily: 5,
+        demandSource: 'forecast',
+        coverageDays: 31,
+        suggestedQty: 450,
+        suggestedDate: '2026-07-20',
+        healthStatus: 'yellow',
+        metrics: { reorderPoint: 220 },
+        coverage: { safetyStockDays: 14 },
+        position,
+        leadTime,
+      },
+      timelineSuggestedQty: 0,
+    });
+
+    assert.equal(view.suggestedQty, 0);
+  });
+
   it('does not estimate stockout when demand is zero or coverage is infinite', () => {
     assert.equal(estimateStockoutDate(0, 10, new Date('2026-07-29T00:00:00Z')), null);
     assert.equal(estimateStockoutDate(2, Infinity, new Date('2026-07-29T00:00:00Z')), null);

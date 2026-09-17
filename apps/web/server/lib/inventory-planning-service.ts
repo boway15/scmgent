@@ -129,7 +129,7 @@ export function buildSkuPlanningView(input: {
     safetyStockDays: input.health.coverage.safetyStockDays,
     ...(Number.isFinite(reorderPoint) ? { reorderPoint } : {}),
     suggestedQty:
-      input.timelineSuggestedQty != null && input.timelineSuggestedQty > 0
+      input.timelineSuggestedQty != null
         ? input.timelineSuggestedQty
         : input.health.suggestedQty,
     suggestedDate: input.timeline?.reorderDate ?? input.health.suggestedDate,

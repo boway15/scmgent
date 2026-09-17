@@ -59,6 +59,7 @@ export async function buildSkuWarehouseTimeline(params: {
       today: todayStr,
     });
     if (supplyClass === 'excluded') continue;
+    if (lot.availableAt == null) continue;
     lots.push({
       supplyClass,
       pool: lot.pool,

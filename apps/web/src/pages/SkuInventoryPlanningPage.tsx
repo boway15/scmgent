@@ -268,7 +268,7 @@ export function SkuInventoryPlanningPage() {
                 <div>
                   <p className="text-text-sub">预计断货日</p>
                   <p className="font-mono text-text-main">
-                    {item.timeline.stockoutDateConfirmed ?? item.stockoutDateEstimate ?? '暂无'}
+                    {item.timeline.stockoutDateExpected ?? item.stockoutDateEstimate ?? '暂无'}
                   </p>
                 </div>
                 <div>

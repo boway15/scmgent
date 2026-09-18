@@ -1,5 +1,5 @@
-import { eq } from 'drizzle-orm';
-import { db, stockAlerts } from '@scm/db';
+import { eq, inArray } from 'drizzle-orm';
+import { db, skus, stockAlerts } from '@scm/db';
 import { sendFeishuGroupMessage } from '../integrations/feishu.js';
 import { formatAlertSummary } from '../lib/replenishment.js';
 import { generateAlertFeishuMessage } from '../integrations/dify-workflows.js';
@@ -17,8 +17,52 @@ import { shouldDeferReplenishment } from '../lib/warehouse-domain.js';
 import { getRegionPoolSnapshot } from '../lib/inventory-snapshot.js';
 import { syncInventorySupplyLots } from '../lib/inventory-supply-lot-sync.js';
 import { buildSkuWarehouseTimeline } from '../lib/inventory-timeline-service.js';
-import { deriveHorizonAlerts } from '../lib/inventory-horizon-alerts.js';
+import { deriveHorizonAlerts, filterSkippedConfirmedHorizonAlerts } from '../lib/inventory-horizon-alerts.js';
 import { DEFAULT_OVERSTOCK_THRESHOLD_DAYS } from '../lib/replenishment-coverage.js';
+import {
+  allocateByShare,
+  parseSharesFromSnapshot,
+  resolvePlanningAllocation,
+  shouldSkipConfirmedHorizon,
+} from '../lib/inventory-share-allocation.js';
+import { readTurnoverSnapshot, readTurnoverSnapshotAt } from '../lib/inventory-turnover-snapshot.js';
+
+function parseSnapshotQty(snapshot: Record<string, string>, keys: string[]): number {
+  for (const key of keys) {
+    const parsed = parseInt(String(snapshot[key] ?? '').replace(/,/g, ''), 10);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return 0;
+}
+
+function loadShareForSku(
+  skuId: string,
+  encodingMetaBySku: Map<string, unknown>,
+) {
+  return parseSharesFromSnapshot(readTurnoverSnapshot(encodingMetaBySku.get(skuId)));
+}
+
+function resolveAlertAllocationMethod(params: {
+  skuId: string;
+  warehouseCode: string;
+  nativeWarehouseQty: number;
+  encodingMetaBySku: Map<string, unknown>;
+}) {
+  const encodingMeta = params.encodingMetaBySku.get(params.skuId);
+  const snapshot = readTurnoverSnapshot(encodingMeta);
+  const share = loadShareForSku(params.skuId, params.encodingMetaBySku);
+  const overseasTotal = parseSnapshotQty(snapshot, ['海外仓在库', '海外仓库存_合计']);
+  const allocatedQty = allocateByShare(overseasTotal, share).get(params.warehouseCode) ?? 0;
+  return resolvePlanningAllocation({
+    planningWarehouse: params.warehouseCode,
+    nativeWarehouseQty: params.nativeWarehouseQty,
+    overseasTotal,
+    share,
+    allocatedQty,
+    undatedTransitQty: 0,
+    snapshotDate: readTurnoverSnapshotAt(encodingMeta)?.slice(0, 10) ?? null,
+  }).method;
+}
 
 export async function runStockAlert() {
   try {
@@ -30,6 +74,18 @@ export async function runStockAlert() {
   const healthRows = await computeAllInventoryHealth();
   await saveHealthSnapshots(healthRows);
   await syncReplenishLightFromHealth(healthRows);
+
+  const skuIds = [...new Set(healthRows.map((row) => row.skuId))];
+  const encodingMetaBySku = new Map<string, unknown>();
+  if (skuIds.length > 0) {
+    const metaRows = await db
+      .select({ id: skus.id, encodingMeta: skus.encodingMeta })
+      .from(skus)
+      .where(inArray(skus.id, skuIds));
+    for (const metaRow of metaRows) {
+      encodingMetaBySku.set(metaRow.id, metaRow.encodingMeta);
+    }
+  }
 
   const usPoolCache = new Map<string, Awaited<ReturnType<typeof getRegionPoolSnapshot>>>();
   const usRopCache = new Map<string, number>();
@@ -126,7 +182,7 @@ export async function runStockAlert() {
         safetyStockDays: row.coverage.safetyStockDays,
         safetyStockQty,
       });
-      const horizonCandidates = deriveHorizonAlerts({
+      const derived = deriveHorizonAlerts({
         points: timeline.points.map((p) => ({
           horizonDays: p.horizonDays,
           projectedBalance: p.confirmedEnding,
@@ -138,6 +194,15 @@ export async function runStockAlert() {
         stockoutDate: timeline.stockoutDateConfirmed,
         uncoverableByNewPo: timeline.uncoverableByNewPo,
       });
+      const skipConfirmed = shouldSkipConfirmedHorizon(
+        resolveAlertAllocationMethod({
+          skuId: row.skuId,
+          warehouseCode: row.warehouseCode,
+          nativeWarehouseQty: row.position.qtyAvailable,
+          encodingMetaBySku,
+        }),
+      );
+      const horizonCandidates = filterSkippedConfirmedHorizonAlerts(derived, skipConfirmed);
 
       for (const candidate of horizonCandidates) {
         const existing = await findOpenStockAlert({

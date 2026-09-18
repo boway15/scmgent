@@ -1,3 +1,5 @@
+import { eq } from 'drizzle-orm';
+import { db, skus } from '@scm/db';
 import {
   classifySupplyLot,
   projectDailyInventory,
@@ -9,9 +11,42 @@ import { getForecastDailyForDate } from './forecast-demand.js';
 import { loadMergedPublishedForecastBySkuIds } from './forecast-published-resolve.js';
 import { getLatestInventorySnapshot } from './inventory-snapshot.js';
 import { addDaysIso } from './inventory-supply-lots.js';
+import {
+  allocateByShare,
+  parseSharesFromSnapshot,
+  type ShareParseResult,
+} from './inventory-share-allocation.js';
+import { readTurnoverSnapshot } from './inventory-turnover-snapshot.js';
 
 function todayIso(d = new Date()): string {
   return d.toISOString().slice(0, 10);
+}
+
+export function resolveReservedQty(params: {
+  warehouseReserved: number;
+  overseasReserved: number;
+  share: ShareParseResult;
+  planningWarehouse: string;
+}): number {
+  const warehouseReserved = Math.max(0, params.warehouseReserved);
+  if (warehouseReserved > 0) return warehouseReserved;
+  if (params.share.method === 'unallocated') return 0;
+  return (
+    allocateByShare(Math.max(0, params.overseasReserved), params.share).get(
+      params.planningWarehouse,
+    ) ?? 0
+  );
+}
+
+/** 无海外确定批时只用本仓 records 补当天可售，禁止把 OVERSEAS 全量填进目的仓。 */
+export function shouldBackfillNativeAvailable(
+  hasConfirmedOverseas: boolean,
+  nativeQtyAvailable: number,
+  warehouseCode: string,
+): boolean {
+  return (
+    !hasConfirmedOverseas && nativeQtyAvailable > 0 && warehouseCode !== 'OVERSEAS'
+  );
 }
 
 export async function buildSkuWarehouseTimeline(params: {
@@ -31,8 +66,23 @@ export async function buildSkuWarehouseTimeline(params: {
 }> {
   const today = params.today ?? new Date();
   const todayStr = todayIso(today);
-  const snap = await getLatestInventorySnapshot(params.skuId, params.warehouseCode);
-  const reservedQty = Math.max(0, snap.qtyReserved);
+  const [snap, overseasSnap, skuRow] = await Promise.all([
+    getLatestInventorySnapshot(params.skuId, params.warehouseCode),
+    getLatestInventorySnapshot(params.skuId, 'OVERSEAS'),
+    db
+      .select({ encodingMeta: skus.encodingMeta })
+      .from(skus)
+      .where(eq(skus.id, params.skuId))
+      .limit(1)
+      .then((rows) => rows[0]),
+  ]);
+  const share = parseSharesFromSnapshot(readTurnoverSnapshot(skuRow?.encodingMeta));
+  const reservedQty = resolveReservedQty({
+    warehouseReserved: snap.qtyReserved,
+    overseasReserved: overseasSnap.qtyReserved,
+    share,
+    planningWarehouse: params.warehouseCode,
+  });
 
   let forecastMap = params.forecastMap;
   if (!forecastMap) {
@@ -71,7 +121,13 @@ export async function buildSkuWarehouseTimeline(params: {
   const hasConfirmedOverseas = lots.some(
     (lot) => lot.supplyClass === 'confirmed' && lot.pool === 'overseas',
   );
-  if (!hasConfirmedOverseas && snap.qtyAvailable > 0) {
+  if (
+    shouldBackfillNativeAvailable(
+      hasConfirmedOverseas,
+      snap.qtyAvailable,
+      params.warehouseCode,
+    )
+  ) {
     lots.push({
       supplyClass: 'confirmed',
       pool: 'overseas',

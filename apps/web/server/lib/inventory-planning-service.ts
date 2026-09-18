@@ -19,6 +19,18 @@ import { loadMergedPublishedForecastBySkuIds } from './forecast-published-resolv
 import { loadDailySalesBySkuIds } from './sales-history-query.js';
 import { buildSkuWarehouseTimeline } from './inventory-timeline-service.js';
 import type { DailyInventoryResult } from './inventory-timeline.js';
+import {
+  allocateByShare,
+  parseSharesFromSnapshot,
+  resolvePlanningAllocation,
+  type PlanningAllocation,
+} from './inventory-share-allocation.js';
+import { getLatestInventorySnapshot } from './inventory-snapshot.js';
+import { loadOpenLotsForTimeline } from './inventory-supply-lot-sync.js';
+import {
+  readTurnoverSnapshot,
+  readTurnoverSnapshotAt,
+} from './inventory-turnover-snapshot.js';
 
 export type SkuPlanningView = {
   skuId: string;
@@ -38,6 +50,7 @@ export type SkuPlanningView = {
   etaAvailableNearest?: string | null;
   stockoutDateEstimate?: string | null;
   timeline?: DailyInventoryResult;
+  allocation?: PlanningAllocation;
 };
 
 type PlanningHealth = Pick<
@@ -111,6 +124,7 @@ export function buildSkuPlanningView(input: {
   today?: Date;
   timeline?: DailyInventoryResult | null;
   timelineSuggestedQty?: number;
+  allocation?: PlanningAllocation;
 }): SkuPlanningView {
   const reorderPoint = Number(input.health.metrics.reorderPoint);
   const stockoutFromTimeline = input.timeline?.stockoutDateConfirmed ?? null;
@@ -143,6 +157,7 @@ export function buildSkuPlanningView(input: {
         input.today,
       ),
     ...(input.timeline ? { timeline: input.timeline } : {}),
+    ...(input.allocation ? { allocation: input.allocation } : {}),
   };
 }
 
@@ -160,6 +175,7 @@ export async function getSkuPlanningView(params: {
       merchantCode: skus.merchantCode,
       leadTimeDays: skus.leadTimeDays,
       unitCost: skus.unitCost,
+      encodingMeta: skus.encodingMeta,
     })
     .from(skus)
     .leftJoin(spus, eq(skus.spuId, spus.id))
@@ -249,10 +265,37 @@ export async function getSkuPlanningView(params: {
     console.warn('[getSkuPlanningView] timeline skipped:', err);
   }
 
+  const snapshot = readTurnoverSnapshot(sku.encodingMeta);
+  const share = parseSharesFromSnapshot(snapshot);
+  const snapshotDate = readTurnoverSnapshotAt(sku.encodingMeta)?.slice(0, 10) ?? null;
+  const [nativeSnap, overseasSnap, openLots] = await Promise.all([
+    getLatestInventorySnapshot(sku.id, warehouse.code),
+    getLatestInventorySnapshot(sku.id, 'OVERSEAS'),
+    loadOpenLotsForTimeline({ skuId: sku.id, warehouseCode: warehouse.code }),
+  ]);
+  const overseasLots = openLots.filter((lot) => lot.pool === 'overseas');
+  const allocatedQty =
+    overseasLots.length > 0
+      ? overseasLots.reduce((sum, lot) => sum + lot.qty, 0)
+      : (allocateByShare(overseasSnap.qtyAvailable, share).get(warehouse.code) ?? 0);
+  const undatedTransitQty = openLots
+    .filter((lot) => lot.pool === 'in_transit' && lot.dateUnknown)
+    .reduce((sum, lot) => sum + lot.qty, 0);
+  const allocation = resolvePlanningAllocation({
+    planningWarehouse: warehouse.code,
+    nativeWarehouseQty: nativeSnap.qtyAvailable,
+    overseasTotal: overseasSnap.qtyAvailable,
+    share,
+    allocatedQty,
+    undatedTransitQty,
+    snapshotDate,
+  });
+
   return buildSkuPlanningView({
     health,
     etaAvailableNearest,
     timeline,
     timelineSuggestedQty,
+    allocation,
   });
 }

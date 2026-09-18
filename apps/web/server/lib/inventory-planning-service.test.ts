@@ -177,6 +177,36 @@ describe('inventory planning view', () => {
     assert.equal(view.stockoutAdjusted, true);
   });
 
+  it('passes through planning allocation onto the view', () => {
+    const allocation = {
+      method: 'unallocated' as const,
+      snapshotDate: '2026-09-18',
+      overseasTotal: 100,
+      allocatedQty: 0,
+      undatedTransitQty: 0,
+      shareSumWarning: false,
+    };
+    const view = buildSkuPlanningView({
+      health: {
+        skuId: 'sku-1',
+        skuCode: 'SKU-001',
+        warehouseCode: 'US-WEST',
+        avgDaily: 5,
+        demandSource: 'forecast',
+        coverageDays: 31,
+        suggestedQty: 450,
+        suggestedDate: '2026-07-20',
+        healthStatus: 'yellow',
+        metrics: { reorderPoint: 220 },
+        coverage: { safetyStockDays: 14 },
+        position,
+        leadTime,
+      },
+      allocation,
+    });
+    assert.deepEqual(view.allocation, allocation);
+  });
+
   it('selects the nearest future ETA for the requested warehouse', () => {
     assert.equal(
       pickNearestEtaAvailable(

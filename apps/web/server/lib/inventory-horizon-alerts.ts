@@ -80,3 +80,14 @@ export function deriveHorizonAlerts(params: {
 
   return out;
 }
+
+/** stockAlert：未分仓时不写确定线 horizon / uncoverable，仍保留覆盖不足与超储。 */
+export function filterSkippedConfirmedHorizonAlerts(
+  candidates: HorizonAlertCandidate[],
+  skipConfirmedHorizon: boolean,
+): HorizonAlertCandidate[] {
+  if (!skipConfirmedHorizon) return candidates;
+  return candidates.filter(
+    (row) => row.alertType !== 'stockout_horizon' && row.alertType !== 'uncoverable_by_new_po',
+  );
+}

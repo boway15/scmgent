@@ -22,6 +22,7 @@ import { DEFAULT_OVERSTOCK_THRESHOLD_DAYS } from '../lib/replenishment-coverage.
 import {
   buildHorizonSkipAllocation,
   parseSharesFromSnapshot,
+  type ShareParseResult,
 } from '../lib/inventory-share-allocation.js';
 import { readTurnoverSnapshot } from '../lib/inventory-turnover-snapshot.js';
 
@@ -46,6 +47,11 @@ export async function runStockAlert() {
     for (const metaRow of metaRows) {
       encodingMetaBySku.set(metaRow.id, metaRow.encodingMeta);
     }
+  }
+
+  const shareBySku = new Map<string, ShareParseResult>();
+  for (const [skuId, encodingMeta] of encodingMetaBySku) {
+    shareBySku.set(skuId, parseSharesFromSnapshot(readTurnoverSnapshot(encodingMeta)));
   }
 
   const overseasRecordsQtyBySku = new Map<string, number>();
@@ -137,6 +143,7 @@ export async function runStockAlert() {
     // 时间轴 horizon 预警
     try {
       const safetyStockQty = (row.metrics.safetyStockQty as number) ?? 0;
+      const share = shareBySku.get(row.skuId) ?? parseSharesFromSnapshot({});
       const { timeline } = await buildSkuWarehouseTimeline({
         skuId: row.skuId,
         warehouseCode: row.warehouseCode,
@@ -144,6 +151,7 @@ export async function runStockAlert() {
         totalLeadDays: row.totalLeadDays,
         safetyStockDays: row.coverage.safetyStockDays,
         safetyStockQty,
+        share,
       });
       const derived = deriveHorizonAlerts({
         points: timeline.points.map((p) => ({
@@ -166,11 +174,9 @@ export async function runStockAlert() {
         const nativeSnap = await getLatestInventorySnapshot(row.skuId, row.warehouseCode);
         nativeQtyByKey.set(nativeKey, nativeSnap.qtyAvailable);
       }
-      const share = parseSharesFromSnapshot(
-        readTurnoverSnapshot(encodingMetaBySku.get(row.skuId)),
-      );
       const skipConfirmed = buildHorizonSkipAllocation({
         share,
+        planningWarehouse: row.warehouseCode,
         nativeQty: nativeQtyByKey.get(nativeKey) ?? row.position.qtyAvailable,
         overseasRecordsQty: overseasRecordsQtyBySku.get(row.skuId) ?? 0,
       }).shouldSkip;

@@ -245,6 +245,9 @@ export async function getSkuPlanningView(params: {
     warehouse.code,
   );
 
+  const snapshot = readTurnoverSnapshot(sku.encodingMeta);
+  const share = parseSharesFromSnapshot(snapshot);
+
   let timeline: DailyInventoryResult | null = null;
   let timelineSuggestedQty: number | undefined;
   try {
@@ -258,15 +261,13 @@ export async function getSkuPlanningView(params: {
       safetyStockDays: health.coverage.safetyStockDays,
       safetyStockQty,
       moq: sku.skuMoq || sku.spuMoq || undefined,
+      share,
     });
     timeline = built.timeline;
     timelineSuggestedQty = built.suggestedQty;
   } catch (err) {
     console.warn('[getSkuPlanningView] timeline skipped:', err);
   }
-
-  const snapshot = readTurnoverSnapshot(sku.encodingMeta);
-  const share = parseSharesFromSnapshot(snapshot);
   const snapshotDate = readTurnoverSnapshotAt(sku.encodingMeta)?.slice(0, 10) ?? null;
   const [nativeSnap, overseasSnap, openLots] = await Promise.all([
     getLatestInventorySnapshot(sku.id, warehouse.code),

@@ -59,6 +59,8 @@ export async function buildSkuWarehouseTimeline(params: {
   safetyStockQty: number;
   moq?: number;
   today?: Date;
+  share?: ShareParseResult;
+  encodingMeta?: unknown;
 }): Promise<{
   timeline: DailyInventoryResult;
   suggestedQty: number;
@@ -66,17 +68,26 @@ export async function buildSkuWarehouseTimeline(params: {
 }> {
   const today = params.today ?? new Date();
   const todayStr = todayIso(today);
+  const skipSkuLookup = params.share != null || params.encodingMeta !== undefined;
   const [snap, overseasSnap, skuRow] = await Promise.all([
     getLatestInventorySnapshot(params.skuId, params.warehouseCode),
     getLatestInventorySnapshot(params.skuId, 'OVERSEAS'),
-    db
-      .select({ encodingMeta: skus.encodingMeta })
-      .from(skus)
-      .where(eq(skus.id, params.skuId))
-      .limit(1)
-      .then((rows) => rows[0]),
+    skipSkuLookup
+      ? Promise.resolve(undefined)
+      : db
+          .select({ encodingMeta: skus.encodingMeta })
+          .from(skus)
+          .where(eq(skus.id, params.skuId))
+          .limit(1)
+          .then((rows) => rows[0]),
   ]);
-  const share = parseSharesFromSnapshot(readTurnoverSnapshot(skuRow?.encodingMeta));
+  const share =
+    params.share ??
+    parseSharesFromSnapshot(
+      readTurnoverSnapshot(
+        params.encodingMeta !== undefined ? params.encodingMeta : skuRow?.encodingMeta,
+      ),
+    );
   const reservedQty = resolveReservedQty({
     warehouseReserved: snap.qtyReserved,
     overseasReserved: overseasSnap.qtyReserved,

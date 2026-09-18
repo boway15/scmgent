@@ -199,11 +199,12 @@ export function shouldSkipConfirmedHorizon(method: PlanningAllocationMethod): bo
 /** Horizon skip inputs: overseasRecordsQty = getLatestInventorySnapshot(sku, 'OVERSEAS').qtyAvailable */
 export function buildHorizonSkipAllocation(params: {
   share: ShareParseResult;
+  planningWarehouse: string;
   nativeQty: number;
   overseasRecordsQty: number;
 }): { method: PlanningAllocationMethod; shouldSkip: boolean } {
   const method = resolvePlanningAllocation({
-    planningWarehouse: '',
+    planningWarehouse: params.planningWarehouse,
     nativeWarehouseQty: params.nativeQty,
     overseasTotal: params.overseasRecordsQty,
     share: params.share,

@@ -56,6 +56,7 @@ describe('confirmed horizon skip', () => {
     assert.equal(share.method, 'unallocated');
     const result = buildHorizonSkipAllocation({
       share,
+      planningWarehouse: 'US-WEST',
       nativeQty: 0,
       overseasRecordsQty: 100,
     });

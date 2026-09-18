@@ -1,11 +1,21 @@
 import { useQuery } from '@tanstack/react-query';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
-import { api, type SkuPlanningView } from '@/lib/api';
-
-type PlanningView = SkuPlanningView & { stockoutAdjusted?: boolean };
 import { PageHeader } from '@/components/PageHeader';
 import { InventoryHealthBadge } from '@/components/InventoryHealthBadge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { api, type SkuPlanningView } from '@/lib/api';
+
+type PlanningView = SkuPlanningView & {
+  stockoutAdjusted?: boolean;
+  allocation?: {
+    method: 'sales_share' | 'native_warehouse' | 'unallocated';
+    snapshotDate: string | null;
+    overseasTotal: number;
+    allocatedQty: number;
+    undatedTransitQty: number;
+    shareSumWarning: boolean;
+  };
+};
 
 const POSITION_ROWS = [
   ['qtyAvailable', '可售库存', '+'],
@@ -135,8 +145,31 @@ export function SkuInventoryPlanningPage() {
         </CardContent>
       </Card>
 
+      {item.allocation?.method === 'unallocated' ? (
+        <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+          飞书无销售占比，库存记在 OVERSEAS，本仓确定线与 7/15/30 不可用。
+        </p>
+      ) : null}
+      {item.allocation?.method === 'sales_share' ? (
+        <p className="text-sm text-text-hint">
+          按近半年销售占比拆自海外合计；快照日 {item.allocation.snapshotDate ?? '未知'}。
+          {item.allocation.shareSumWarning
+            ? '占比合计未接近 100%，已按相对权重拆分。'
+            : null}
+        </p>
+      ) : null}
+      {(item.allocation?.undatedTransitQty ?? 0) > 0 ? (
+        <p className="text-sm text-text-hint">
+          {item.allocation?.undatedTransitQty} 件在途无可用日，未计入时间轴。
+        </p>
+      ) : null}
+
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-        <MetricCard label="有效供给" value={item.position.effectiveQty} hint="飞书快照口径，与库存总览分仓一致" />
+        <MetricCard
+          label="有效供给"
+          value={item.position.effectiveQty}
+          hint="飞书快照合计在总览；本页确定线按目的仓批次。"
+        />
         <MetricCard label="日均需求" value={item.avgDaily.toFixed(2)} hint="件 / 天" />
         <MetricCard label="覆盖天数" value={coverageLabel} hint={`安全库存 ${item.safetyStockDays} 天`} />
         <MetricCard label="建议补货量" value={item.suggestedQty} hint={`建议下单 ${item.suggestedDate}`} />

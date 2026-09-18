@@ -18,6 +18,15 @@ const PROD_LABEL: Record<string, string> = {
   completed: '已完成',
 };
 
+function shareSourceLabel(sourceId: string | null): string | null {
+  if (!sourceId) return null;
+  if (sourceId.includes('avail-share') || sourceId.includes('transit-share')) {
+    return '占比拆仓';
+  }
+  if (sourceId.endsWith('#share')) return '仓由占比推定';
+  return null;
+}
+
 export function InventoryPoolsPage() {
   const [pool, setPool] = useState<'local' | 'in_transit' | 'overseas'>('local');
   const qc = useQueryClient();
@@ -148,6 +157,7 @@ function LotRow({
     row.productionStatus ?? 'completed',
   );
   const unknown = row.dateUnknown || !row.availableAt;
+  const shareLabel = shareSourceLabel(row.sourceId);
 
   return (
     <tr className={unknown ? 'bg-amber-50/80' : undefined}>
@@ -160,7 +170,12 @@ function LotRow({
         </Link>
         <div className="text-xs text-text-hint">{row.skuName}</div>
       </td>
-      <td className="py-2 pr-3 font-mono">{row.warehouseCode}</td>
+      <td className="py-2 pr-3 font-mono">
+        {row.warehouseCode}
+        {shareLabel ? (
+          <span className="ml-1 text-xs font-sans text-text-hint">{shareLabel}</span>
+        ) : null}
+      </td>
       <td className="py-2 pr-3 font-mono">{row.qty}</td>
       {pool === 'local' && (
         <td className="py-2 pr-3">

@@ -14,55 +14,16 @@ import {
 } from '../lib/inventory-health-store.js';
 import { syncReplenishLightFromHealth } from '../lib/replenish-light-sync.js';
 import { shouldDeferReplenishment } from '../lib/warehouse-domain.js';
-import { getRegionPoolSnapshot } from '../lib/inventory-snapshot.js';
+import { getLatestInventorySnapshot, getRegionPoolSnapshot } from '../lib/inventory-snapshot.js';
 import { syncInventorySupplyLots } from '../lib/inventory-supply-lot-sync.js';
 import { buildSkuWarehouseTimeline } from '../lib/inventory-timeline-service.js';
 import { deriveHorizonAlerts, filterSkippedConfirmedHorizonAlerts } from '../lib/inventory-horizon-alerts.js';
 import { DEFAULT_OVERSTOCK_THRESHOLD_DAYS } from '../lib/replenishment-coverage.js';
 import {
-  allocateByShare,
+  buildHorizonSkipAllocation,
   parseSharesFromSnapshot,
-  resolvePlanningAllocation,
-  shouldSkipConfirmedHorizon,
 } from '../lib/inventory-share-allocation.js';
-import { readTurnoverSnapshot, readTurnoverSnapshotAt } from '../lib/inventory-turnover-snapshot.js';
-
-function parseSnapshotQty(snapshot: Record<string, string>, keys: string[]): number {
-  for (const key of keys) {
-    const parsed = parseInt(String(snapshot[key] ?? '').replace(/,/g, ''), 10);
-    if (Number.isFinite(parsed)) return parsed;
-  }
-  return 0;
-}
-
-function loadShareForSku(
-  skuId: string,
-  encodingMetaBySku: Map<string, unknown>,
-) {
-  return parseSharesFromSnapshot(readTurnoverSnapshot(encodingMetaBySku.get(skuId)));
-}
-
-function resolveAlertAllocationMethod(params: {
-  skuId: string;
-  warehouseCode: string;
-  nativeWarehouseQty: number;
-  encodingMetaBySku: Map<string, unknown>;
-}) {
-  const encodingMeta = params.encodingMetaBySku.get(params.skuId);
-  const snapshot = readTurnoverSnapshot(encodingMeta);
-  const share = loadShareForSku(params.skuId, params.encodingMetaBySku);
-  const overseasTotal = parseSnapshotQty(snapshot, ['海外仓在库', '海外仓库存_合计']);
-  const allocatedQty = allocateByShare(overseasTotal, share).get(params.warehouseCode) ?? 0;
-  return resolvePlanningAllocation({
-    planningWarehouse: params.warehouseCode,
-    nativeWarehouseQty: params.nativeWarehouseQty,
-    overseasTotal,
-    share,
-    allocatedQty,
-    undatedTransitQty: 0,
-    snapshotDate: readTurnoverSnapshotAt(encodingMeta)?.slice(0, 10) ?? null,
-  }).method;
-}
+import { readTurnoverSnapshot } from '../lib/inventory-turnover-snapshot.js';
 
 export async function runStockAlert() {
   try {
@@ -87,6 +48,8 @@ export async function runStockAlert() {
     }
   }
 
+  const overseasRecordsQtyBySku = new Map<string, number>();
+  const nativeQtyByKey = new Map<string, number>();
   const usPoolCache = new Map<string, Awaited<ReturnType<typeof getRegionPoolSnapshot>>>();
   const usRopCache = new Map<string, number>();
 
@@ -194,14 +157,23 @@ export async function runStockAlert() {
         stockoutDate: timeline.stockoutDateConfirmed,
         uncoverableByNewPo: timeline.uncoverableByNewPo,
       });
-      const skipConfirmed = shouldSkipConfirmedHorizon(
-        resolveAlertAllocationMethod({
-          skuId: row.skuId,
-          warehouseCode: row.warehouseCode,
-          nativeWarehouseQty: row.position.qtyAvailable,
-          encodingMetaBySku,
-        }),
+      if (!overseasRecordsQtyBySku.has(row.skuId)) {
+        const overseasSnap = await getLatestInventorySnapshot(row.skuId, 'OVERSEAS');
+        overseasRecordsQtyBySku.set(row.skuId, overseasSnap.qtyAvailable);
+      }
+      const nativeKey = `${row.skuId}::${row.warehouseCode}`;
+      if (!nativeQtyByKey.has(nativeKey)) {
+        const nativeSnap = await getLatestInventorySnapshot(row.skuId, row.warehouseCode);
+        nativeQtyByKey.set(nativeKey, nativeSnap.qtyAvailable);
+      }
+      const share = parseSharesFromSnapshot(
+        readTurnoverSnapshot(encodingMetaBySku.get(row.skuId)),
       );
+      const skipConfirmed = buildHorizonSkipAllocation({
+        share,
+        nativeQty: nativeQtyByKey.get(nativeKey) ?? row.position.qtyAvailable,
+        overseasRecordsQty: overseasRecordsQtyBySku.get(row.skuId) ?? 0,
+      }).shouldSkip;
       const horizonCandidates = filterSkippedConfirmedHorizonAlerts(derived, skipConfirmed);
 
       for (const candidate of horizonCandidates) {

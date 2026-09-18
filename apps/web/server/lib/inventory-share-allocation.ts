@@ -195,3 +195,21 @@ export function resolvePlanningAllocation(params: {
 export function shouldSkipConfirmedHorizon(method: PlanningAllocationMethod): boolean {
   return method === 'unallocated';
 }
+
+/** Horizon skip inputs: overseasRecordsQty = getLatestInventorySnapshot(sku, 'OVERSEAS').qtyAvailable */
+export function buildHorizonSkipAllocation(params: {
+  share: ShareParseResult;
+  nativeQty: number;
+  overseasRecordsQty: number;
+}): { method: PlanningAllocationMethod; shouldSkip: boolean } {
+  const method = resolvePlanningAllocation({
+    planningWarehouse: '',
+    nativeWarehouseQty: params.nativeQty,
+    overseasTotal: params.overseasRecordsQty,
+    share: params.share,
+    allocatedQty: 0,
+    undatedTransitQty: 0,
+    snapshotDate: null,
+  }).method;
+  return { method, shouldSkip: shouldSkipConfirmedHorizon(method) };
+}

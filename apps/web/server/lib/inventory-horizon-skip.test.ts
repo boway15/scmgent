@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { shouldSkipConfirmedHorizon } from './inventory-share-allocation.js';
+import {
+  buildHorizonSkipAllocation,
+  parseSharesFromSnapshot,
+  shouldSkipConfirmedHorizon,
+} from './inventory-share-allocation.js';
 import {
   deriveHorizonAlerts,
   filterSkippedConfirmedHorizonAlerts,
@@ -39,5 +43,23 @@ describe('confirmed horizon skip', () => {
     const filtered = filterSkippedConfirmedHorizonAlerts(candidates, true);
     const types = [...new Set(filtered.map((row) => row.alertType))].sort();
     assert.deepEqual(types, ['coverage_short', 'overstock']);
+  });
+
+  /**
+   * Horizon skip must use inventory_records OVERSEAS qtyAvailable
+   * (getLatestInventorySnapshot(skuId, 'OVERSEAS')), not 海外仓在库 from
+   * the turnover snapshot. resolvePlanningAllocation already covers the
+   * method table; this helper is what stockAlert should pass records qty into.
+   */
+  it('unallocated share + native 0 + records overseasTotal 100 skips confirmed horizon', () => {
+    const share = parseSharesFromSnapshot({});
+    assert.equal(share.method, 'unallocated');
+    const result = buildHorizonSkipAllocation({
+      share,
+      nativeQty: 0,
+      overseasRecordsQty: 100,
+    });
+    assert.equal(result.method, 'unallocated');
+    assert.equal(result.shouldSkip, true);
   });
 });

@@ -385,6 +385,67 @@ describe('inventory-supply-lots pure', () => {
     }
   });
 
+  it('deducts in_transit purchase_draft globally then splits undated OVERSEAS residual', () => {
+    const { lots } = buildLotsFromInputs({
+      snapshots: [
+        {
+          skuId: 'sku-1',
+          warehouseCode: 'OVERSEAS',
+          qtyAvailable: 0,
+          qtyInTransit: 80,
+          qtyReserved: 0,
+          recordedDate: '2026-09-17',
+        },
+      ],
+      drafts: [
+        {
+          draftId: 'd-west-30',
+          skuId: 'sku-1',
+          warehouseCode: 'US-WEST',
+          status: 'in_transit',
+          openQty: 30,
+          etaAvailable: '2026-09-24',
+          remainingLogisticsDays: 7,
+        },
+      ],
+      shipments: [],
+      today: '2026-09-17',
+      defaultTransitLeadDaysByWarehouse: { 'US-WEST': 45 },
+      allocationBySku: allocationMap('sku-1', WEST_EAST_SHARE),
+    });
+
+    const draftLot = lots.find((l) => l.sourceId === 'd-west-30');
+    assert.ok(draftLot);
+    assert.equal(draftLot!.qty, 30);
+    assert.equal(draftLot!.warehouseCode, 'US-WEST');
+    assert.equal(draftLot!.pool, 'in_transit');
+    assert.equal(draftLot!.availableAt, '2026-09-24');
+
+    const residuals = lots.filter(
+      (l) => l.source === 'snapshot' && l.pool === 'in_transit',
+    );
+    assert.equal(residuals.length, 2);
+    assert.equal(
+      residuals.find((l) => l.warehouseCode === 'US-WEST')?.qty,
+      30,
+    );
+    assert.equal(
+      residuals.find((l) => l.warehouseCode === 'US-EAST')?.qty,
+      20,
+    );
+    assert.equal(
+      residuals.reduce((sum, lot) => sum + lot.qty, 0),
+      50,
+    );
+    for (const lot of residuals) {
+      assert.equal(lot.availableAt, null);
+      assert.equal(lot.dateUnknown, true);
+      assert.equal(lot.etaEstimated, true);
+      assert.ok(lot.sourceId?.startsWith('transit-share:'));
+      assert.ok(lot.sourceId?.endsWith(':undated'));
+    }
+  });
+
   it('splits dated residual buckets to planned lots and leaves leftover undated', () => {
     const today = '2026-09-17';
     const { lots } = buildLotsFromInputs({

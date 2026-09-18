@@ -8,6 +8,9 @@ import {
   splitResidualTransit,
   type ShareParseResult,
 } from './inventory-share-allocation.js';
+import { addDaysIso, subtractDaysIso } from './inventory-iso-date.js';
+
+export { addDaysIso, subtractDaysIso } from './inventory-iso-date.js';
 
 export type SupplyLotPool = 'overseas' | 'in_transit' | 'local';
 export type ProductionStatus = 'in_production' | 'qc_pending' | 'completed';
@@ -83,16 +86,6 @@ const LOCAL_STATUSES = new Set([
 ]);
 const TRANSIT_STATUSES = new Set(['in_transit', 'partial_received']);
 const APPROACHING_DAYS = 7;
-
-export function addDaysIso(isoDate: string, days: number): string {
-  const d = new Date(`${isoDate}T00:00:00.000Z`);
-  d.setUTCDate(d.getUTCDate() + days);
-  return d.toISOString().slice(0, 10);
-}
-
-export function subtractDaysIso(isoDate: string, days: number): string {
-  return addDaysIso(isoDate, -days);
-}
 
 export function mapDraftToLotPool(status: string): SupplyLotPool | null {
   if (LOCAL_STATUSES.has(status)) return 'local';

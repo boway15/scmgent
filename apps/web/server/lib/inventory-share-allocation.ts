@@ -1,6 +1,6 @@
 import { FEISHU_REGION_SALES_SHARE_FIELDS } from './inventory-turnover-feishu-headers.js';
 import { TURNOVER_BUCKET_WAREHOUSE_MAP } from './turnover-bucket-warehouse.js';
-import { addDaysIso } from './inventory-supply-lots.js';
+import { addDaysIso } from './inventory-iso-date.js';
 
 export const SHARE_MISMATCH_DELTA = 0.05;
 

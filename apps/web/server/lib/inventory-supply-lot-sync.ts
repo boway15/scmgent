@@ -1,4 +1,4 @@
-import { and, desc, eq, notInArray, sql } from 'drizzle-orm';
+import { and, desc, eq, inArray, notInArray, sql } from 'drizzle-orm';
 import {
   db,
   inventoryRecords,
@@ -12,9 +12,15 @@ import {
 } from '@scm/db';
 import { IN_PRODUCTION_WAREHOUSE } from './inventory-constants.js';
 import {
+  parseSharesFromSnapshot,
+  parseTransitBuckets,
+} from './inventory-share-allocation.js';
+import {
   buildLotsFromInputs,
   type BuiltSupplyLot,
+  type SkuAllocationContext,
 } from './inventory-supply-lots.js';
+import { readTurnoverSnapshot } from './inventory-turnover-snapshot.js';
 import { openDraftQty } from './inventory-position.js';
 import {
   DEFAULT_INBOUND_BUFFER_DAYS,
@@ -56,6 +62,36 @@ async function loadLatestPhysicalSnapshots(): Promise<
     qtyReserved: number;
     recordedDate: string;
   }>);
+}
+
+export function buildAllocationBySku(
+  rows: Array<{ skuId: string; encodingMeta: unknown }>,
+): Map<string, SkuAllocationContext> {
+  const allocationBySku = new Map<string, SkuAllocationContext>();
+  for (const row of rows) {
+    const snapshot = readTurnoverSnapshot(row.encodingMeta);
+    const earliest = snapshot['最早在途上架时间']?.trim() || null;
+    allocationBySku.set(row.skuId, {
+      share: parseSharesFromSnapshot(snapshot),
+      transitBuckets: parseTransitBuckets(snapshot),
+      earliestAvailableAt: earliest,
+    });
+  }
+  return allocationBySku;
+}
+
+async function loadAllocationBySkuIds(
+  skuIds: string[],
+): Promise<Map<string, SkuAllocationContext>> {
+  if (skuIds.length === 0) return new Map();
+  const rows = await db
+    .select({
+      skuId: skus.id,
+      encodingMeta: skus.encodingMeta,
+    })
+    .from(skus)
+    .where(inArray(skus.id, skuIds));
+  return buildAllocationBySku(rows);
 }
 
 /**
@@ -120,18 +156,26 @@ export async function syncInventorySupplyLots(params?: {
     return days;
   }
 
+  const allocationBySku = await loadAllocationBySkuIds([
+    ...new Set([
+      ...snapshots.map((row) => row.skuId),
+      ...openDrafts.map((row) => row.skuId),
+    ]),
+  ]);
+
   const draftInputs = [];
   for (const d of openDrafts) {
     const openQty = openDraftQty(d.qty, d.receivedQty);
     if (openQty <= 0) continue;
-    const wh = d.warehouseCode;
-    if (!wh) continue;
-    const remaining = await remainingLogistics(
-      d.skuId,
-      wh,
-      d.merchantCode,
-      d.skuLeadTimeDays,
-    );
+    const wh = d.warehouseCode ?? null;
+    const remaining = wh
+      ? await remainingLogistics(
+          d.skuId,
+          wh,
+          d.merchantCode,
+          d.skuLeadTimeDays,
+        )
+      : 0;
     draftInputs.push({
       draftId: d.draftId,
       skuId: d.skuId,
@@ -183,6 +227,7 @@ export async function syncInventorySupplyLots(params?: {
     shipments: shipmentInputs,
     today,
     defaultTransitLeadDaysByWarehouse: defaultTransit,
+    allocationBySku,
   });
 
   await persistBuiltLots(lots);

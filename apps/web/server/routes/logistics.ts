@@ -53,14 +53,14 @@ import {
 import { statsByContainer } from '../lib/fob-container-stats.js';
 import {
   EXCEPTION_REASON_LABEL,
-  matchAllocationRule,
-  type ExceptionReason,
+  storedExceptionReason,
 } from '../lib/fob-fee-rules.js';
 import {
   loadActiveFeeRules,
   rebuildContainerMerchantStats,
   resolveRuleForBillItem,
-  applyLatestFeeRulesToBillItems,
+  previewLatestFeeRulesForBatch,
+  persistLatestFeeRulePatches,
   countPendingExceptions,
   effectiveBillAmount,
   FOB_NON_FOB_MARKER,
@@ -572,16 +572,6 @@ async function syncUnbalancedAllocationPlaceholders(batchId: string): Promise<nu
   return inserted;
 }
 
-function resolveItemExceptionReason(
-  feeType: string,
-  billType: 'trucking' | 'freight',
-  rules: Awaited<ReturnType<typeof loadActiveFeeRules>>,
-  remark?: string | null,
-  amountCny?: number,
-): ExceptionReason | undefined {
-  return matchAllocationRule(feeType, billType, rules, remark, amountCny).exceptionReason;
-}
-
 async function buildBatchReconcile(batchId: string) {
   const batch = await getBatchOr404(batchId);
   if (!batch) {
@@ -899,7 +889,6 @@ logisticsRoutes.get('/logistics/fob-settlements/:id/exceptions', fobMenu, async 
   const batch = await getBatchOr404(batchId);
   if (!batch) return c.json({ message: 'Batch not found' }, 404);
 
-  const rules = await loadActiveFeeRules();
   const [trucking, freight] = await Promise.all([
     db.select().from(fobTruckingBillItems).where(eq(fobTruckingBillItems.batchId, batchId)),
     db.select().from(fobFreightBillItems).where(eq(fobFreightBillItems.batchId, batchId)),
@@ -922,13 +911,12 @@ logisticsRoutes.get('/logistics/fob-settlements/:id/exceptions', fobMenu, async 
     row: T,
     billType: 'trucking' | 'freight',
   ) => {
-    const reason = resolveItemExceptionReason(
-      row.feeType,
-      billType,
-      rules,
-      row.remark,
-      Number(row.amountCny),
-    );
+    const reason = storedExceptionReason({
+      isException: true,
+      feeType: row.feeType,
+      remark: row.remark,
+      amountCny: Number(row.amountCny),
+    });
     return {
       id: row.id,
       billType,
@@ -1049,12 +1037,13 @@ logisticsRoutes.post('/logistics/fob-settlements/:id/calculate', fobMenu, async 
   if (!batch) return c.json({ message: 'Batch not found' }, 404);
   if (batch.status === 'confirmed') return c.json(confirmedBatchResponse(), 400);
 
-  await applyLatestFeeRulesToBillItems(batchId);
-
-  const pendingExceptions = await countPendingExceptions(batchId);
-  if (pendingExceptions > 0) {
+  const rulePreview = await previewLatestFeeRulesForBatch(batchId);
+  if (rulePreview.pendingCount > 0) {
     return c.json(
-      { message: `仍有 ${pendingExceptions} 条异常费用待审核，请先处理后再核算`, pendingExceptions },
+      {
+        message: `按当前分摊规则将产生 ${rulePreview.pendingCount} 条待审异常，本次未修改本批次数据。请先处理异常或调整规则后再核算`,
+        pendingExceptions: rulePreview.pendingCount,
+      },
       400,
     );
   }
@@ -1092,6 +1081,8 @@ logisticsRoutes.post('/logistics/fob-settlements/:id/calculate', fobMenu, async 
     );
   }
 
+  await persistLatestFeeRulePatches(rulePreview);
+
   const merchantStats = await buildMerchantStatsMap(batchId);
   const feeLines = await buildFeeLines(batchId, batch.settlementType);
   const { allocations, warnings } = allocateFees(merchantStats, feeLines);
@@ -1107,7 +1098,7 @@ logisticsRoutes.post('/logistics/fob-settlements/:id/calculate', fobMenu, async 
     );
   }
 
-  const reconcile = reconcileAllocations(feeLines, allocations, pendingExceptions);
+  const reconcile = reconcileAllocations(feeLines, allocations, 0);
 
   await db.delete(fobSettlementAllocations).where(eq(fobSettlementAllocations.batchId, batchId));
 

@@ -163,8 +163,23 @@ export function latestRulePatchForBillItem(
   };
 }
 
-/** 仅核算动作调用：用当前 active 规则回写未确认批次的账单行口径。 */
-export async function applyLatestFeeRulesToBillItems(batchId: string) {
+export function pendingCountFromRulePatches(
+  patches: Array<{ isException: boolean; exceptionStatus: ReviewExceptionStatus | null }>,
+) {
+  return patches.filter((p) => p.isException && p.exceptionStatus === 'pending').length;
+}
+
+type BillItemRulePatch = ReturnType<typeof latestRulePatchForBillItem>;
+
+export type LatestFeeRulePreview = {
+  skipped: boolean;
+  pendingCount: number;
+  trucking: Array<{ id: string; patch: BillItemRulePatch }>;
+  freight: Array<{ id: string; patch: BillItemRulePatch }>;
+};
+
+/** 按当前规则预览账单口径，不写库。已确认批次 skipped。 */
+export async function previewLatestFeeRulesForBatch(batchId: string): Promise<LatestFeeRulePreview> {
   const batch = await db
     .select({
       id: fobSettlementBatches.id,
@@ -174,7 +189,9 @@ export async function applyLatestFeeRulesToBillItems(batchId: string) {
     .where(eq(fobSettlementBatches.id, batchId))
     .limit(1)
     .then((rows) => rows[0]);
-  if (!batch || batch.status === 'confirmed') return;
+  if (!batch || batch.status === 'confirmed') {
+    return { skipped: true, pendingCount: 0, trucking: [], freight: [] };
+  }
 
   const rules = await loadActiveFeeRules();
   const [trucking, freight] = await Promise.all([
@@ -182,8 +199,9 @@ export async function applyLatestFeeRulesToBillItems(batchId: string) {
     db.select().from(fobFreightBillItems).where(eq(fobFreightBillItems.batchId, batchId)),
   ]);
 
-  for (const item of trucking) {
-    const patch = latestRulePatchForBillItem(
+  const truckingPatches = trucking.map((item) => ({
+    id: item.id,
+    patch: latestRulePatchForBillItem(
       rules,
       {
         feeType: item.feeType,
@@ -194,19 +212,11 @@ export async function applyLatestFeeRulesToBillItems(batchId: string) {
         exceptionStatus: item.exceptionStatus,
       },
       'trucking',
-    );
-    await db
-      .update(fobTruckingBillItems)
-      .set({
-        allocationMethod: patch.allocationMethod,
-        isException: patch.isException,
-        exceptionStatus: patch.exceptionStatus,
-      })
-      .where(eq(fobTruckingBillItems.id, item.id));
-  }
-
-  for (const item of freight) {
-    const patch = latestRulePatchForBillItem(
+    ),
+  }));
+  const freightPatches = freight.map((item) => ({
+    id: item.id,
+    patch: latestRulePatchForBillItem(
       rules,
       {
         feeType: item.feeType,
@@ -217,7 +227,33 @@ export async function applyLatestFeeRulesToBillItems(batchId: string) {
         exceptionStatus: item.exceptionStatus,
       },
       'freight',
-    );
+    ),
+  }));
+
+  return {
+    skipped: false,
+    pendingCount: pendingCountFromRulePatches([
+      ...truckingPatches.map((row) => row.patch),
+      ...freightPatches.map((row) => row.patch),
+    ]),
+    trucking: truckingPatches,
+    freight: freightPatches,
+  };
+}
+
+export async function persistLatestFeeRulePatches(preview: LatestFeeRulePreview) {
+  if (preview.skipped) return;
+  for (const { id, patch } of preview.trucking) {
+    await db
+      .update(fobTruckingBillItems)
+      .set({
+        allocationMethod: patch.allocationMethod,
+        isException: patch.isException,
+        exceptionStatus: patch.exceptionStatus,
+      })
+      .where(eq(fobTruckingBillItems.id, id));
+  }
+  for (const { id, patch } of preview.freight) {
     await db
       .update(fobFreightBillItems)
       .set({
@@ -226,7 +262,7 @@ export async function applyLatestFeeRulesToBillItems(batchId: string) {
         exceptionStatus: patch.exceptionStatus,
         stage: patch.stage,
       })
-      .where(eq(fobFreightBillItems.id, item.id));
+      .where(eq(fobFreightBillItems.id, id));
   }
 }
 

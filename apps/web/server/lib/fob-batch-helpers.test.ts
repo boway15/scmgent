@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { latestRulePatchForBillItem } from './fob-batch-helpers.js';
+import { latestRulePatchForBillItem, pendingCountFromRulePatches } from './fob-batch-helpers.js';
 import type { FeeRuleRow } from './fob-fee-rules.js';
 
 /** 与 nextFobBatchNo 内序号解析逻辑一致 */
@@ -117,6 +117,36 @@ describe('latestRulePatchForBillItem', () => {
     assert.equal(patch.allocationMethod, 'manual');
     assert.equal(patch.isException, true);
     assert.equal(patch.exceptionStatus, 'rejected');
+  });
+
+  it('counts pending after latest-rule preview so calculate can refuse persist', () => {
+    const patches = [
+      latestRulePatchForBillItem(
+        rules,
+        {
+          feeType: '茶水费',
+          amountCny: 50,
+          remark: null,
+          assignedMerchantCode: null,
+          isException: false,
+          exceptionStatus: null,
+        },
+        'trucking',
+      ),
+      latestRulePatchForBillItem(
+        rules,
+        {
+          feeType: '报关费',
+          amountCny: 200,
+          remark: null,
+          assignedMerchantCode: null,
+          isException: false,
+          exceptionStatus: null,
+        },
+        'trucking',
+      ),
+    ];
+    assert.equal(pendingCountFromRulePatches(patches), 1);
   });
 });
 

@@ -94,6 +94,24 @@ async function loadAllocationBySkuIds(
   return buildAllocationBySku(rows);
 }
 
+const DEFAULT_LEAD_WAREHOUSE = 'US-WEST';
+
+/**
+ * Lead days must follow a destination warehouse, not ship-ready (0).
+ * Unallocated drafts still use first share weight or US-WEST as a proxy dest.
+ */
+export function resolveDraftLeadWarehouse(
+  draftWarehouseCode: string | null | undefined,
+  skuId: string,
+  allocationBySku: Map<string, SkuAllocationContext>,
+): string {
+  return (
+    draftWarehouseCode ||
+    allocationBySku.get(skuId)?.share.weights[0]?.warehouse ||
+    DEFAULT_LEAD_WAREHOUSE
+  );
+}
+
 /**
  * 全量重建 open 批次（保留 manual 行）。
  * 飞书拉取后应调用；未知日期批次仍落库但不进时间轴。
@@ -168,14 +186,17 @@ export async function syncInventorySupplyLots(params?: {
     const openQty = openDraftQty(d.qty, d.receivedQty);
     if (openQty <= 0) continue;
     const wh = d.warehouseCode ?? null;
-    const remaining = wh
-      ? await remainingLogistics(
-          d.skuId,
-          wh,
-          d.merchantCode,
-          d.skuLeadTimeDays,
-        )
-      : 0;
+    const fallbackWarehouse = resolveDraftLeadWarehouse(
+      d.warehouseCode,
+      d.skuId,
+      allocationBySku,
+    );
+    const remaining = await remainingLogistics(
+      d.skuId,
+      fallbackWarehouse,
+      d.merchantCode,
+      d.skuLeadTimeDays,
+    );
     draftInputs.push({
       draftId: d.draftId,
       skuId: d.skuId,

@@ -101,3 +101,18 @@ export const EXCEPTION_REASON_LABEL: Record<ExceptionReason, string> = {
   fee_name: '费用名含异常',
 };
 
+/** 按账单行已存异常标记解释原因，不回读当前全局规则。 */
+export function storedExceptionReason(item: {
+  isException: boolean;
+  feeType: string;
+  remark?: string | null;
+  amountCny?: number;
+}): ExceptionReason | undefined {
+  if (!item.isException) return undefined;
+  const normalizedFee = item.feeType.trim();
+  if (/异常/.test(normalizedFee)) return 'fee_name';
+  if (item.amountCny != null && item.amountCny <= 0) return 'amount';
+  if (item.remark && EXCEPTION_REMARK_PATTERN.test(item.remark)) return 'remark';
+  return 'unconfigured';
+}
+

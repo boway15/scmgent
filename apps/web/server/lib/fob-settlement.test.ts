@@ -10,7 +10,7 @@ import {
   reconcileAllocations,
   shouldPadMerchantPlaceholders,
 } from './fob-settlement.js';
-import { matchAllocationRule } from './fob-fee-rules.js';
+import { matchAllocationRule, storedExceptionReason } from './fob-fee-rules.js';
 import type { FeeLine } from './fob-settlement.js';
 
 function fee(partial: Partial<FeeLine> & Pick<FeeLine, 'key' | 'containerNo' | 'feeType' | 'amountCny'>): FeeLine {
@@ -333,6 +333,36 @@ const merchants = [
   ]);
   assert.equal(allocations.length, 2);
   assert.ok(allocations.every((r) => r.allocatedAmountCny === 0));
+}
+
+{
+  assert.equal(
+    storedExceptionReason({
+      isException: true,
+      feeType: '报关费',
+      remark: null,
+      amountCny: 200,
+    }),
+    'unconfigured',
+  );
+  assert.equal(
+    storedExceptionReason({
+      isException: false,
+      feeType: '报关费',
+      remark: null,
+      amountCny: 200,
+    }),
+    undefined,
+  );
+  assert.equal(
+    storedExceptionReason({
+      isException: true,
+      feeType: '异常费',
+      remark: null,
+      amountCny: 200,
+    }),
+    'fee_name',
+  );
 }
 
 console.log('fob-settlement.test.ts: all passed');

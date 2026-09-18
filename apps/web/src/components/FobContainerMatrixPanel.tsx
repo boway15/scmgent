@@ -1,6 +1,7 @@
 import { Fragment, useMemo, useState, type CSSProperties, type ReactNode } from 'react';
 import { AlertCircle, CheckCircle2, ChevronDown, ChevronRight, CircleCheck } from 'lucide-react';
 import { buildFeePriorityMap, sortFeeChecksByDisplayPriority } from '@/lib/fob-fee-display-priority';
+import { resolveFeeAllocationMethod } from '@/lib/fob-allocation-method-display';
 import { cn } from '@/lib/utils';
 import { Input } from '@/components/ui/input';
 
@@ -55,6 +56,7 @@ type FeeRule = {
   matchPattern: string | null;
   priority: number;
   allocationMethod: 'by_volume' | 'by_ticket' | 'fixed' | 'manual';
+  isActive?: boolean;
 };
 
 type GlobalColumn = {
@@ -218,31 +220,6 @@ function formatColumnTip(col: GlobalColumn) {
   return `费用：${col.feeType}\n分摊：${METHOD_LABEL[col.allocationMethod] ?? col.allocationMethod}\n来源：${BILL_LABEL[col.sourceBillType] ?? col.sourceBillType}`;
 }
 
-function resolveFeeAllocationMethod(
-  feeType: string,
-  sourceBillType: 'trucking' | 'freight',
-  feeRules: FeeRule[],
-  sourceBillItemId?: string,
-  allocationsByBillItem?: Map<string, AllocationItem[]>,
-): string {
-  const normalized = feeType.trim();
-  const active = feeRules
-    .filter((r) => r.sourceBillType === sourceBillType)
-    .sort((a, b) => b.priority - a.priority);
-
-  for (const rule of active) {
-    if (rule.feeType && rule.feeType === normalized) return rule.allocationMethod;
-    if (rule.matchPattern && normalized.includes(rule.matchPattern)) return rule.allocationMethod;
-  }
-
-  if (sourceBillItemId && allocationsByBillItem) {
-    const method = allocationsByBillItem.get(sourceBillItemId)?.[0]?.allocationMethod;
-    if (method) return method;
-  }
-
-  return 'by_volume';
-}
-
 function assignFullAmountForFee(
   feeRows: AllocationItem[],
   targetRowId: string,
@@ -321,6 +298,7 @@ function buildGlobalColumns(
   priorityMap: Map<string, number>,
   feeRules: FeeRule[],
   allocationsByBillItem: Map<string, AllocationItem[]>,
+  billItemMethods?: Map<string, string>,
 ): GlobalColumn[] {
   const map = new Map<string, GlobalColumn>();
   for (const { scopedChecks } of preparedGroups) {
@@ -337,6 +315,7 @@ function buildGlobalColumns(
             feeRules,
             c.sourceBillItemId,
             allocationsByBillItem,
+            billItemMethods,
           ),
         });
       }
@@ -403,6 +382,7 @@ export function FobContainerMatrixPanel({
   containerStats,
   allocations,
   feeRules,
+  billItemMethods,
   editAlloc,
   onEditAmount,
   onSaveRow,
@@ -415,6 +395,7 @@ export function FobContainerMatrixPanel({
   containerStats: ContainerStatRow[];
   allocations: AllocationItem[];
   feeRules: FeeRule[];
+  billItemMethods?: Map<string, string>;
   editAlloc: Record<string, string>;
   onEditAmount: (id: string, value: string) => void;
   onSaveRow: (row: AllocationItem, amount?: string) => void;
@@ -464,8 +445,15 @@ export function FobContainerMatrixPanel({
   }, [allPrepared, filter]);
 
   const globalColumns = useMemo(
-    () => buildGlobalColumns(visiblePrepared, priorityMap, feeRules, allocationsByBillItem),
-    [visiblePrepared, priorityMap, feeRules, allocationsByBillItem],
+    () =>
+      buildGlobalColumns(
+        visiblePrepared,
+        priorityMap,
+        feeRules,
+        allocationsByBillItem,
+        billItemMethods,
+      ),
+    [visiblePrepared, priorityMap, feeRules, allocationsByBillItem, billItemMethods],
   );
 
   const issueCount = allPrepared.filter((p) => !p.scopeTotals.balanced).length;

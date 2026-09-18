@@ -1049,6 +1049,17 @@ export function FobSettlementDetailPage() {
     enabled: !!id && tab === 'reconcile',
   });
 
+  const billItemMethods = useMemo(() => {
+    const map = new Map<string, string>();
+    if (!data) return map;
+    for (const row of [...data.truckingItems, ...data.freightItems]) {
+      const itemId = typeof row.id === 'string' ? row.id : '';
+      const method = typeof row.allocationMethod === 'string' ? row.allocationMethod : '';
+      if (itemId && method) map.set(itemId, method);
+    }
+    return map;
+  }, [data]);
+
   const importTrucking = useMutation({
     mutationFn: (file: File) => api.importFobTrucking(id, file),
     onSuccess: (r) => {
@@ -2011,6 +2022,7 @@ export function FobSettlementDetailPage() {
                     containerStats={data.containerStats}
                     allocations={sortedAllocations}
                     feeRules={feeRules}
+                    billItemMethods={billItemMethods}
                     readOnly={isReadOnly}
                     editAlloc={editAlloc}
                     savingRowId={savingRowId}

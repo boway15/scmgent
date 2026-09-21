@@ -194,7 +194,83 @@ describe('forecast-walkforward-backtest', () => {
       ]),
     });
     assert.equal(result.status, 'computed');
-    assert.equal(result.unconstrainedWmape, Math.abs(forecastDaily - actualDaily) / actualDaily);
+    assert.equal(result.unconstrainedWmape, null);
+  });
+
+  it('excludes non-reconstructed months from unconstrained WMAPE', () => {
+    const mayRows: Array<{ saleDate: string; qtySold: number }> = [];
+    for (let d = 1; d <= 31; d += 1) {
+      mayRows.push({
+        saleDate: `2026-05-${String(d).padStart(2, '0')}`,
+        qtySold: d <= 10 ? 0 : 10,
+      });
+    }
+    const juneRows = Array.from({ length: 30 }, (_, i) => ({
+      saleDate: `2026-06-${String(i + 1).padStart(2, '0')}`,
+      qtySold: 10,
+    }));
+    const dailySales = [...mayRows, ...juneRows];
+    const mayDays = daysInCalendarMonth(2026, 5);
+    const juneDays = daysInCalendarMonth(2026, 6);
+    const mayActualDaily = (21 * 10) / mayDays;
+    const juneActualDaily = (30 * 10) / juneDays;
+    const mayU = unconstrainMonthQty({
+      year: 2026,
+      month: 5,
+      rawQty: mayActualDaily * mayDays,
+      dailySales,
+      skuMayUnconstrain: true,
+      firstSaleDate: '2025-01-01',
+    });
+    const juneU = unconstrainMonthQty({
+      year: 2026,
+      month: 6,
+      rawQty: juneActualDaily * juneDays,
+      dailySales,
+      skuMayUnconstrain: true,
+      firstSaleDate: '2025-01-01',
+    });
+    assert.equal(mayU.reconstructed, true);
+    assert.equal(juneU.reconstructed, false);
+
+    const mayUnconstrainedDaily = mayU.cleanedQty / mayDays;
+    const juneUnconstrainedDaily = juneU.cleanedQty / juneDays;
+    const mayForecast = 5;
+    const juneForecast = 20;
+    const reconstructedOnlyWmape =
+      Math.abs(mayForecast - mayUnconstrainedDaily) / mayUnconstrainedDaily;
+    const combinedWmape =
+      (Math.abs(mayForecast - mayUnconstrainedDaily) +
+        Math.abs(juneForecast - juneUnconstrainedDaily)) /
+      (mayUnconstrainedDaily + juneUnconstrainedDaily);
+
+    const result = computeWalkForwardUnconstrainedWmape({
+      rows: [
+        {
+          skuKey: 'SKU-CORE',
+          forecastYear: 2026,
+          month: 5,
+          forecastDaily: mayForecast,
+          actualDaily: mayActualDaily,
+          profileSegment: 'T1',
+        },
+        {
+          skuKey: 'SKU-CORE',
+          forecastYear: 2026,
+          month: 6,
+          forecastDaily: juneForecast,
+          actualDaily: juneActualDaily,
+          profileSegment: 'T1',
+        },
+      ],
+      dailyBySku: new Map([['SKU-CORE', dailySales]]),
+      skuMetaByKey: new Map([
+        ['SKU-CORE', { calendar90AtAsOf: 4, lifecycle: 'mature', firstSaleDate: '2025-01-01' }],
+      ]),
+    });
+    assert.equal(result.status, 'computed');
+    assert.notEqual(combinedWmape, reconstructedOnlyWmape);
+    assert.equal(result.unconstrainedWmape, reconstructedOnlyWmape);
   });
 
   it('keeps original actual when the target month is a full stockout', () => {

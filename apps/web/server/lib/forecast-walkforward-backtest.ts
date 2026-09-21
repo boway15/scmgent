@@ -275,6 +275,7 @@ export function computeWalkForwardUnconstrainedWmape(input: {
       skuMayUnconstrain,
       firstSaleDate: meta?.firstSaleDate,
     });
+    if (!monthU.reconstructed) continue;
     const unconstrainedActualDaily = monthU.stockoutFullMonth
       ? row.actualDaily
       : monthU.cleanedQty / days;

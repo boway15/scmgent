@@ -102,7 +102,7 @@ export const FORECAST_METHODOLOGY_SECTIONS: ForecastMethodologySection[] = [
         [
           '近 90 天窗口',
           'recent90',
-          '[windowEnd−89, windowEnd] 内销量 ÷ 90（断货日剔除后）',
+          '[windowEnd−89, windowEnd] 内销量 ÷ 90',
           '3/3–5/31 共 450 件 → 5.0 件/天',
         ],
         [

@@ -2,11 +2,9 @@ import { and, asc, eq, inArray } from 'drizzle-orm';
 import { db, salesForecastMonthly, salesForecastVersions, skus } from '@scm/db';
 import {
   classifySalesLifecycle,
-  collectStockoutExcludedDates,
   computeLifecycleBaselineWeights,
   DEFAULT_SALES_HISTORY_LOOKBACK_DAYS,
   effectiveRecentWindowEnd,
-  filterSalesRowsExcludingDates,
   resolveLastYearSameMonthDailyAvg,
   roundDaily,
   type LifecycleBaselineWeights,
@@ -25,6 +23,7 @@ import {
   loadFirstSaleDateBySkuIds,
   loadMonthlySalesBySkuIds,
 } from './sales-history-query.js';
+import { resolveRecentDemandWindows } from './forecast-demand-unconstrain.js';
 
 export type ForecastVersionSummary = {
   monthCount: number;
@@ -298,9 +297,7 @@ export async function buildSkuForecastContextMap(input: {
         group.station,
         warehouseStationByCode,
       );
-      const stockoutExcluded = collectStockoutExcludedDates(rawSalesRows, recent90Since, recentWindowEnd);
-      const salesRows = filterSalesRowsExcludingDates(rawSalesRows, stockoutExcluded);
-      recent90BySkuId.set(sku.id, roundDaily(sumQtySince(salesRows, recent90Since) / 90));
+      recent90BySkuId.set(sku.id, roundDaily(sumQtySince(rawSalesRows, recent90Since) / 90));
     }
     const categoryRefBySku = computeCategoryReferenceBySku(groupSkuRows, recent90BySkuId);
 
@@ -314,30 +311,38 @@ export async function buildSkuForecastContextMap(input: {
         identity.station,
         warehouseStationByCode,
       );
-      const stockoutExcluded = collectStockoutExcludedDates(rawSalesRows, recent90Since, recentWindowEnd);
-      const salesRows = filterSalesRowsExcludingDates(rawSalesRows, stockoutExcluded);
       const monthlySalesRows = monthlyBySku.get(sku.id) ?? [];
       const firstSaleDate = firstSaleBySku.get(sku.id) ?? null;
 
-      const recent30DailyAvg = roundDaily(sumQtySince(salesRows, recent30Since) / 30);
-      const recent90DailyAvg = recent90BySkuId.get(sku.id) ?? 0;
-      const salesDays90 = countSalesDaysSince(salesRows, recent90Since);
+      const calendar30 = roundDaily(sumQtySince(rawSalesRows, recent30Since) / 30);
+      const calendar90 = roundDaily(sumQtySince(rawSalesRows, recent90Since) / 90);
+      const salesDays90 = countSalesDaysSince(rawSalesRows, recent90Since);
       const ageDays = computeAgeDaysFromFirstSale(firstSaleDate, today);
       const maxZeroRunDays = computeMaxZeroRunDays(rawSalesRows, recent90Since, recentWindowEnd);
 
       const lifecycle = classifySalesLifecycle({
         ageDays,
         salesDayRatio90: salesDays90 / 90,
-        recent30DailyAvg,
-        recent90DailyAvg,
+        recent30DailyAvg: calendar30,
+        recent90DailyAvg: calendar90,
         maxZeroRunDays,
       });
+      const recentWindows = resolveRecentDemandWindows({
+        sales: rawSalesRows,
+        recent30Since,
+        recent90Since,
+        recentWindowEnd,
+        lifecycle,
+        firstSaleDate,
+      });
+      const recent30DailyAvg = recentWindows.recent30DailyAvg;
+      const recent90DailyAvg = recentWindows.recent90DailyAvg;
 
       const stored = storedByKey.get(key);
       const anchorYear = stored?.forecastYear ?? today.getUTCFullYear();
       const anchorMonth = stored?.month ?? today.getUTCMonth() + 1;
       const lastYearSameMonthDailyAvg = resolveLastYearSameMonthDailyAvg({
-        dailyRows: salesRows,
+        dailyRows: rawSalesRows,
         monthlyRows: monthlySalesRows,
         forecastYear: anchorYear,
         month: anchorMonth,

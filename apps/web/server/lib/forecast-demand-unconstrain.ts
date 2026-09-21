@@ -162,6 +162,50 @@ export function applySkuVolumeGate(
   };
 }
 
+export function resolveRecentDemandWindows(input: {
+  sales: Array<{ saleDate: string; qtySold: number }>;
+  recent30Since: Date;
+  recent90Since: Date;
+  recentWindowEnd: Date;
+  lifecycle: SalesLifecycle;
+  firstSaleDate?: string | null;
+}): {
+  calendar30: number;
+  calendar90: number;
+  recent30DailyAvg: number;
+  recent90DailyAvg: number;
+  recon30: UnconstrainRecentDailyResult;
+  recon90: UnconstrainRecentDailyResult;
+  demandReconstruct: DemandReconstructAudit;
+} {
+  const recon90 = unconstrainRecentDaily({
+    sales: input.sales,
+    windowStart: input.recent90Since,
+    windowEnd: input.recentWindowEnd,
+    lifecycle: input.lifecycle,
+    firstSaleDate: input.firstSaleDate,
+  });
+  const recon30 = applySkuVolumeGate(
+    unconstrainRecentDaily({
+      sales: input.sales,
+      windowStart: input.recent30Since,
+      windowEnd: input.recentWindowEnd,
+      lifecycle: input.lifecycle,
+      firstSaleDate: input.firstSaleDate,
+    }),
+    recon90.calendarDaily,
+  );
+  return {
+    calendar30: recon30.calendarDaily,
+    calendar90: recon90.calendarDaily,
+    recent30DailyAvg: recon30.unconstrainedDaily,
+    recent90DailyAvg: recon90.unconstrainedDaily,
+    recon30,
+    recon90,
+    demandReconstruct: toDemandReconstructAudit(recon90),
+  };
+}
+
 export type UnconstrainMonthQtyResult = {
   cleanedQty: number;
   rawQty: number;

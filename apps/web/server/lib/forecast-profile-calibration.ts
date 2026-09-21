@@ -4,9 +4,8 @@
 import { eq, inArray } from 'drizzle-orm';
 import { db, skus, warehouses } from '@scm/db';
 import {
-  collectStockoutExcludedDates,
+  classifySalesLifecycle,
   effectiveRecentWindowEnd,
-  filterSalesRowsExcludingDates,
   roundDaily,
 } from './forecast-baseline.js';
 import { filterSalesRowsByStation } from './forecast-collaboration.js';
@@ -26,6 +25,7 @@ import {
   loadMonthlySalesBySkuIds,
 } from './sales-history-query.js';
 import { DEFAULT_MONTHLY_HISTORY_LOOKBACK_MONTHS } from './sales-history-monthly.js';
+import { resolveRecentDemandWindows } from './forecast-demand-unconstrain.js';
 
 export type SkuFeatureSnapshot = {
   skuCode: string;
@@ -76,6 +76,38 @@ function sumQtySince(rows: Array<{ saleDate: string; qtySold: number }>, since: 
   return rows.reduce((sum, row) => {
     return String(row.saleDate).slice(0, 10) >= sinceKey ? sum + Number(row.qtySold) : sum;
   }, 0);
+}
+
+function countSalesDaysSince(rows: Array<{ saleDate: string; qtySold: number }>, since: Date): number {
+  const sinceKey = toDateOnly(since);
+  const days = new Set<string>();
+  for (const row of rows) {
+    const saleDate = String(row.saleDate).slice(0, 10);
+    if (saleDate >= sinceKey && Number(row.qtySold) > 0) {
+      days.add(saleDate);
+    }
+  }
+  return days.size;
+}
+
+function computeMaxZeroRunDays(
+  rows: Array<{ saleDate: string; qtySold: number }>,
+  start: Date,
+  end: Date,
+): number {
+  const qtyByDate = new Map(rows.map((row) => [String(row.saleDate).slice(0, 10), Number(row.qtySold)]));
+  let maxRun = 0;
+  let currentRun = 0;
+  for (let cursor = new Date(start); cursor <= end; cursor = addDays(cursor, 1)) {
+    const qty = qtyByDate.get(toDateOnly(cursor)) ?? 0;
+    if (qty <= 0) {
+      currentRun++;
+      maxRun = Math.max(maxRun, currentRun);
+    } else {
+      currentRun = 0;
+    }
+  }
+  return maxRun;
 }
 
 async function loadWarehouseStationMap(): Promise<Map<string, string>> {
@@ -254,16 +286,27 @@ export async function buildSkuFeatureSnapshot(input: {
     input.station,
     input.warehouseStationByCode,
   );
-  const stockoutExcluded = collectStockoutExcludedDates(
-    rawSalesRows,
-    recent90Since,
-    recentWindowEnd,
-  );
-  const salesRows = filterSalesRowsExcludingDates(rawSalesRows, stockoutExcluded);
   const monthlySalesRows = input.monthlyBySku.get(input.skuId) ?? [];
   const monthlyQty = buildLast12MonthlyQty(monthlySalesRows, recentWindowEnd);
-  const recent30DailyAvg = roundDaily(sumQtySince(salesRows, recent30Since) / 30);
-  const recent90DailyAvg = roundDaily(sumQtySince(salesRows, recent90Since) / 90);
+  const calendar30 = roundDaily(sumQtySince(rawSalesRows, recent30Since) / 30);
+  const calendar90 = roundDaily(sumQtySince(rawSalesRows, recent90Since) / 90);
+  const salesDays90 = countSalesDaysSince(rawSalesRows, recent90Since);
+  const lifecycle = classifySalesLifecycle({
+    ageDays: 365,
+    salesDayRatio90: salesDays90 / 90,
+    recent30DailyAvg: calendar30,
+    recent90DailyAvg: calendar90,
+    maxZeroRunDays: computeMaxZeroRunDays(rawSalesRows, recent90Since, recentWindowEnd),
+  });
+  const recentWindows = resolveRecentDemandWindows({
+    sales: rawSalesRows,
+    recent30Since,
+    recent90Since,
+    recentWindowEnd,
+    lifecycle,
+  });
+  const recent30DailyAvg = recentWindows.recent30DailyAvg;
+  const recent90DailyAvg = recentWindows.recent90DailyAvg;
   const profile = resolveSkuProfileSnapshot({
     monthlyQty,
     asOf: recentWindowEnd,

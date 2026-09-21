@@ -119,10 +119,8 @@ import {
 } from './forecast-monthly-abcd.js';
 import { cleanMonthlyQtyForTraining } from './forecast-monthly-clean.js';
 import {
-  applySkuVolumeGate,
-  toDemandReconstructAudit,
+  resolveRecentDemandWindows,
   unconstrainLast12MonthlyQty,
-  unconstrainRecentDaily,
 } from './forecast-demand-unconstrain.js';
 
 export type { EligibilityStats };
@@ -1238,24 +1236,17 @@ async function generateBaselineForStationPlatform(input: {
       recent90DailyAvg: calendar90,
       maxZeroRunDays,
     });
-    const recon90 = unconstrainRecentDaily({
+    const recentWindows = resolveRecentDemandWindows({
       sales: rawSalesRows,
-      windowStart: recent90Since,
-      windowEnd: recentWindowEnd,
+      recent30Since,
+      recent90Since,
+      recentWindowEnd,
       lifecycle,
       firstSaleDate,
     });
-    const recon30raw = unconstrainRecentDaily({
-      sales: rawSalesRows,
-      windowStart: recent30Since,
-      windowEnd: recentWindowEnd,
-      lifecycle,
-      firstSaleDate,
-    });
-    const recon30 = applySkuVolumeGate(recon30raw, recon90.calendarDaily);
-    const recent90DailyAvg = recon90.unconstrainedDaily;
-    const recent30DailyAvg = recon30.unconstrainedDaily;
-    const demandReconstruct = toDemandReconstructAudit(recon90);
+    const recent90DailyAvg = recentWindows.recent90DailyAvg;
+    const recent30DailyAvg = recentWindows.recent30DailyAvg;
+    const demandReconstruct = recentWindows.demandReconstruct;
     const allChannelRows = filterSalesRowsByStation(
       dailyAllBySku.get(sku.id) ?? [],
       station,

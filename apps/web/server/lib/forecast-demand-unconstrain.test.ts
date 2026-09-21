@@ -1,6 +1,10 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { unconstrainMonthQty, unconstrainRecentDaily } from './forecast-demand-unconstrain.js';
+import {
+  resolveRecentDemandWindows,
+  unconstrainMonthQty,
+  unconstrainRecentDaily,
+} from './forecast-demand-unconstrain.js';
 
 function utcDate(iso: string): Date {
   return new Date(`${iso}T00:00:00.000Z`);
@@ -181,6 +185,56 @@ describe('unconstrainRecentDaily', () => {
     if (result.reconstructed) {
       assert.ok(result.unconstrainedDaily <= result.calendarDaily * 1.5 + 1e-9);
     }
+  });
+});
+
+describe('resolveRecentDemandWindows', () => {
+  it('reconstructs core SKU 90d window: 20 consecutive zeros → recent90DailyAvg > calendar90', () => {
+    const recentWindowEnd = utcDate('2026-05-31');
+    const recent90Since = utcDate('2026-03-03');
+    const recent30Since = utcDate('2026-05-02');
+    const rows = daysBetweenInclusive(recent90Since, recentWindowEnd);
+    for (const row of rows) {
+      if (row.saleDate <= '2026-05-11') row.qtySold = 100 / 70;
+    }
+
+    const result = resolveRecentDemandWindows({
+      sales: rows,
+      recent30Since,
+      recent90Since,
+      recentWindowEnd,
+      lifecycle: 'mature',
+      firstSaleDate: '2025-01-01',
+    });
+
+    assert.equal(result.recon90.reconstructed, true);
+    assert.ok(result.recent90DailyAvg > result.calendar90);
+    assert.equal(result.demandReconstruct.demandReconstructed, true);
+    assert.equal(result.recent90DailyAvg, result.recon90.unconstrainedDaily);
+    assert.equal(result.recent30DailyAvg, result.recon30.unconstrainedDaily);
+  });
+
+  it('does not classify lifecycle: new skips reconstruction even with core volume', () => {
+    const recentWindowEnd = utcDate('2026-05-31');
+    const recent90Since = utcDate('2026-03-03');
+    const recent30Since = utcDate('2026-05-02');
+    const rows = daysBetweenInclusive(recent90Since, recentWindowEnd);
+    for (const row of rows) {
+      if (row.saleDate <= '2026-05-11') row.qtySold = 100 / 70;
+    }
+
+    const result = resolveRecentDemandWindows({
+      sales: rows,
+      recent30Since,
+      recent90Since,
+      recentWindowEnd,
+      lifecycle: 'new',
+      firstSaleDate: '2025-01-01',
+    });
+
+    assert.equal(result.recon90.reconstructed, false);
+    assert.equal(result.recon90.skipReason, 'new');
+    assert.equal(result.recent90DailyAvg, result.calendar90);
   });
 });
 

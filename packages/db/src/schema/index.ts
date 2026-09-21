@@ -20,4 +20,3 @@ export * from './cs-reply-quality';
 export * from './lead-time';
 export * from './shipments';
 export * from './inventory-supply-lots';
-export * from './inventory-dest-allocations';

@@ -40,6 +40,7 @@ export function cleanMonthlyQtyForTraining(
   opts?: {
     categoryMeanQty?: number;
     promoFlags?: boolean[];
+    winsorizePromo?: boolean;
   },
 ): CleanMonthlyQtyResult {
   const raw = monthlyQty.map((q) => Math.max(0, Number(q) || 0));
@@ -48,6 +49,7 @@ export function cleanMonthlyQtyForTraining(
   const skuMean = positive.length ? positive.reduce((a, b) => a + b, 0) / positive.length : 0;
   const fillMean = opts?.categoryMeanQty ?? skuMean;
   const p90 = percentile([...positive].sort((a, b) => a - b), 0.9);
+  const winsorizePromo = opts?.winsorizePromo !== false;
 
   const cells: CleanedMonthlyCell[] = [];
   const cleaned = raw.map((q, i) => {
@@ -55,7 +57,7 @@ export function cleanMonthlyQtyForTraining(
     let out = q;
     if (flagged === 'stockout') {
       out = fillMean > 0 ? fillMean : q;
-    } else if (flagged === 'promo') {
+    } else if (flagged === 'promo' && winsorizePromo) {
       const cap = p90 > 0 ? p90 : fillMean > 0 ? fillMean * 1.5 : q;
       out = Math.min(q, cap > 0 ? cap : q);
     }

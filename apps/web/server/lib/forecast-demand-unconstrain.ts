@@ -1,5 +1,6 @@
 import {
   collectStockoutExcludedDates,
+  daysInCalendarMonth,
   roundDaily,
   type SalesLifecycle,
 } from './forecast-baseline.js';
@@ -159,4 +160,86 @@ export function applySkuVolumeGate(
     stockoutDays: 0,
     effectiveDays: result.windowDays,
   };
+}
+
+export type UnconstrainMonthQtyResult = {
+  cleanedQty: number;
+  rawQty: number;
+  reconstructed: boolean;
+  stockoutFullMonth: boolean;
+};
+
+function monthBounds(year: number, month: number): { start: Date; end: Date; days: number } {
+  const days = daysInCalendarMonth(year, month);
+  return {
+    start: new Date(Date.UTC(year, month - 1, 1)),
+    end: new Date(Date.UTC(year, month - 1, days)),
+    days,
+  };
+}
+
+export function unconstrainMonthQty(input: {
+  year: number;
+  month: number;
+  rawQty: number;
+  dailySales: Array<{ saleDate: string; qtySold: number }>;
+  skuMayUnconstrain: boolean;
+  firstSaleDate?: string | null;
+}): UnconstrainMonthQtyResult {
+  const rawQty = Math.max(0, Number(input.rawQty) || 0);
+  if (!input.skuMayUnconstrain) {
+    return { cleanedQty: rawQty, rawQty, reconstructed: false, stockoutFullMonth: false };
+  }
+  const { start, end, days } = monthBounds(input.year, input.month);
+  const excluded = collectStockoutExcludedDates(
+    input.dailySales,
+    start,
+    end,
+    UNCONSTRAIN_MIN_RUN_DAYS,
+  );
+  const firstSale = input.firstSaleDate?.slice(0, 10) ?? null;
+  if (firstSale) {
+    for (const key of [...excluded]) {
+      if (key < firstSale) excluded.delete(key);
+    }
+  }
+  if (excluded.size === 0) {
+    return { cleanedQty: rawQty, rawQty, reconstructed: false, stockoutFullMonth: false };
+  }
+  const sellingDays = days - excluded.size;
+  if (sellingDays <= 0) {
+    return { cleanedQty: 0, rawQty, reconstructed: false, stockoutFullMonth: true };
+  }
+  const monthU = (rawQty / sellingDays) * days;
+  const cleanedQty = roundDaily(Math.min(monthU, rawQty * UNCONSTRAIN_CAP_RATIO));
+  return { cleanedQty, rawQty, reconstructed: cleanedQty !== rawQty, stockoutFullMonth: false };
+}
+
+export function unconstrainLast12MonthlyQty(input: {
+  monthlyQty: number[];
+  asOf: Date;
+  dailySales: Array<{ saleDate: string; qtySold: number }>;
+  skuMayUnconstrain: boolean;
+  firstSaleDate?: string | null;
+}): number[] {
+  const qty = input.monthlyQty.slice();
+  let y = input.asOf.getUTCFullYear();
+  let m = input.asOf.getUTCMonth() + 1;
+  for (let i = qty.length - 1; i >= 0; i -= 1) {
+    const cell = unconstrainMonthQty({
+      year: y,
+      month: m,
+      rawQty: qty[i] ?? 0,
+      dailySales: input.dailySales,
+      skuMayUnconstrain: input.skuMayUnconstrain,
+      firstSaleDate: input.firstSaleDate,
+    });
+    qty[i] = cell.cleanedQty;
+    m -= 1;
+    if (m < 1) {
+      m = 12;
+      y -= 1;
+    }
+  }
+  return qty;
 }

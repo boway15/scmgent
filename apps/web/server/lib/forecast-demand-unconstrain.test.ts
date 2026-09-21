@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { unconstrainRecentDaily } from './forecast-demand-unconstrain.js';
+import { unconstrainMonthQty, unconstrainRecentDaily } from './forecast-demand-unconstrain.js';
 
 function utcDate(iso: string): Date {
   return new Date(`${iso}T00:00:00.000Z`);
@@ -181,5 +181,58 @@ describe('unconstrainRecentDaily', () => {
     if (result.reconstructed) {
       assert.ok(result.unconstrainedDaily <= result.calendarDaily * 1.5 + 1e-9);
     }
+  });
+});
+
+describe('unconstrainMonthQty', () => {
+  it('scales a month with a 10-day zero run using selling-day average, cap 1.5×', () => {
+    const rows: Array<{ saleDate: string; qtySold: number }> = [];
+    for (let d = 1; d <= 31; d += 1) {
+      const saleDate = `2026-05-${String(d).padStart(2, '0')}`;
+      rows.push({ saleDate, qtySold: d <= 10 ? 0 : 5 });
+    }
+    const rawQty = 21 * 5;
+    const result = unconstrainMonthQty({
+      year: 2026,
+      month: 5,
+      rawQty,
+      dailySales: rows,
+      skuMayUnconstrain: true,
+      firstSaleDate: '2025-01-01',
+    });
+    const sellingDays = 21;
+    const expected = Math.min((rawQty / sellingDays) * 31, rawQty * 1.5);
+    assert.equal(result.stockoutFullMonth, false);
+    assert.ok(Math.abs(result.cleanedQty - expected) < 1e-4);
+  });
+
+  it('keeps zero when the whole month is stockout after prior sales', () => {
+    const rows = Array.from({ length: 30 }, (_, i) => ({
+      saleDate: `2026-04-${String(i + 1).padStart(2, '0')}`,
+      qtySold: 0,
+    }));
+    const result = unconstrainMonthQty({
+      year: 2026,
+      month: 4,
+      rawQty: 0,
+      dailySales: rows,
+      skuMayUnconstrain: true,
+      firstSaleDate: '2025-01-01',
+    });
+    assert.equal(result.cleanedQty, 0);
+    assert.equal(result.stockoutFullMonth, true);
+  });
+
+  it('leaves month unchanged when skuMayUnconstrain is false', () => {
+    const result = unconstrainMonthQty({
+      year: 2026,
+      month: 5,
+      rawQty: 40,
+      dailySales: [],
+      skuMayUnconstrain: false,
+      firstSaleDate: '2025-01-01',
+    });
+    assert.equal(result.cleanedQty, 40);
+    assert.equal(result.reconstructed, false);
   });
 });

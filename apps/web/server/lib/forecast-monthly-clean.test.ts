@@ -25,4 +25,12 @@ describe('forecast-monthly-clean', () => {
     assert.ok(result.cleaned[3]! < 200);
     assert.equal(result.cells[3]?.anomaly, 'promo');
   });
+
+  it('keeps raw promo qty when winsorizePromo is false', () => {
+    const result = cleanMonthlyQtyForTraining([10, 10, 10, 200, 10, 10], {
+      winsorizePromo: false,
+    });
+    assert.equal(result.cleaned[3], 200);
+    assert.equal(result.cells[3]?.anomaly, 'promo');
+  });
 });

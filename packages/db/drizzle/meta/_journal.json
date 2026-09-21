@@ -561,6 +561,20 @@
       "when": 1787203600000,
       "tag": "0094_alert_uncoverable_by_new_po",
       "breakpoints": true
+    },
+    {
+      "idx": 80,
+      "version": "6",
+      "when": 1787415000000,
+      "tag": "0095_inventory_data_issues",
+      "breakpoints": true
+    },
+    {
+      "idx": 81,
+      "version": "6",
+      "when": 1787418600000,
+      "tag": "0096_demand_plan",
+      "breakpoints": true
     }
   ]
 }

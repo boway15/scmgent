@@ -1783,11 +1783,11 @@ async function generateBaselineForStationPlatform(input: {
       }),
     );
 
-    if (recent90DailyAvg > 0) {
+    if (calendar90 > 0) {
       highValueCandidates.push({
         skuId: sku.id,
         skuCode: sku.code,
-        recent90Total: recent90DailyAvg * 90,
+        recent90Total: calendar90 * 90,
         suggestedDailyAvg:
           horizon.length > 0 ? roundDaily(forecastDailyAvgSum / horizon.length) : recent90DailyAvg,
       });

@@ -7,6 +7,8 @@ import { InventoryQueryPage } from '@/pages/InventoryQueryPage';
 import { SkuInventoryPlanningPage } from '@/pages/SkuInventoryPlanningPage';
 import { SkuPlanningEntryPage } from '@/pages/SkuPlanningEntryPage';
 import { InventoryPoolsPage } from '@/pages/InventoryPoolsPage';
+import { InventoryDataIssuesPage } from '@/pages/InventoryDataIssuesPage';
+import { InventoryUnallocatedPage } from '@/pages/InventoryUnallocatedPage';
 import { PlanningDashboardPage } from '@/pages/PlanningDashboardPage';
 import { LeadTimeProfilesPage } from '@/pages/LeadTimeProfilesPage';
 import { SafetyStockPage } from '@/pages/SafetyStockPage';
@@ -26,6 +28,7 @@ import { ProductMasterPage } from '@/pages/ProductMasterPage';
 import { DashboardPage } from '@/pages/DashboardPage';
 import { SalesHistoryPage } from '@/pages/SalesHistoryPage';
 import { SalesForecastListPage } from '@/pages/SalesForecastListPage';
+import { DemandPlanPilotPage } from '@/pages/DemandPlanPilotPage';
 import { SalesForecastVersionDetailPage } from '@/pages/SalesForecastVersionDetailPage';
 import { LayeredForecastListPage } from '@/pages/LayeredForecastListPage';
 import { LayeredForecastDetailPage } from '@/pages/LayeredForecastDetailPage';
@@ -52,6 +55,8 @@ export function AppRouter() {
           <Route path="inventory/overview" element={<InventoryOverviewPage />} />
           <Route path="inventory/query" element={<InventoryQueryPage />} />
           <Route path="inventory/pools" element={<InventoryPoolsPage />} />
+          <Route path="inventory/data-issues" element={<InventoryDataIssuesPage />} />
+          <Route path="inventory/unallocated" element={<InventoryUnallocatedPage />} />
           <Route path="inventory/planning-dashboard" element={<PlanningDashboardPage />} />
           <Route path="inventory/planning" element={<SkuPlanningEntryPage />} />
           <Route path="inventory/planning/:skuId" element={<SkuInventoryPlanningPage />} />
@@ -71,6 +76,7 @@ export function AppRouter() {
           <Route path="data/import" element={<ImportLegacyRedirect />} />
           <Route path="data/sales" element={<SalesHistoryPage />} />
           <Route path="data/forecast" element={<SalesForecastListPage />} />
+          <Route path="data/demand-plan" element={<DemandPlanPilotPage />} />
           <Route path="data/forecast/strategy" element={<Navigate to="/data/forecast?tab=strategy" replace />} />
           <Route path="data/forecast/:versionId" element={<SalesForecastVersionDetailPage />} />
           <Route path="data/layered-forecast" element={<LayeredForecastListPage />} />

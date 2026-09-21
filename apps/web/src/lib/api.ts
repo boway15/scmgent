@@ -84,14 +84,51 @@ export type ProcurementListRow = {
   createdAt: string;
 };
 
+export type CostingProvenanceTag =
+  | '设计明示'
+  | '规则开料'
+  | '模板补全'
+  | '库价'
+  | '本单补价'
+  | '人工修改';
+
+export type CostingExtractSnapshot = {
+  materialName: string;
+  spec: string | null;
+  qtyNet: number;
+  origin: string;
+  sourceRef: string | null;
+};
+
+export type CostingReviewIssue = {
+  lineId?: string;
+  materialName: string;
+  code:
+    | 'missing_price'
+    | 'missing_qty'
+    | 'missing_thickness'
+    | 'unmatched'
+    | 'template_pending'
+    | 'low_confidence'
+    | 'inferred_cut'
+    | 'front_rail_qty_conflict';
+  severity: 'block' | 'warn';
+  message: string;
+};
+
 export type CostingPriceBookItem = {
   id: string;
   category: string;
   materialName: string;
   spec: string;
+  standard: string;
   unit: string;
   unitPrice: string;
   notes: string | null;
+  regionId: string | null;
+  factoryId: string | null;
+  effectiveFrom: string | null;
+  effectiveTo: string | null;
   isActive: boolean;
   createdAt: string;
   updatedAt: string;
@@ -99,11 +136,16 @@ export type CostingPriceBookItem = {
 
 export type CostingProjectListItem = {
   id: string;
+  projectNo: string;
   name: string;
   category: string | null;
+  regionName: string | null;
+  factoryName: string | null;
   status: string;
   updatedAt: string;
 };
+
+export type CostingMatchScope = 'factory' | 'region' | 'global';
 
 export type CostingBomLineInput = {
   category: string;
@@ -116,6 +158,9 @@ export type CostingBomLineInput = {
   confidence?: 'high' | 'medium' | 'low';
   notes?: string | null;
   unitPriceOverride?: number | null;
+  processOverrides?: Record<string, number | null>;
+  substrate?: string | null;
+  isManual?: boolean;
 };
 
 export type CostingBomLine = {
@@ -133,19 +178,77 @@ export type CostingBomLine = {
   notes: string | null;
   isManual: boolean;
   origin: string;
+  substrate?: string | null;
   priceBookId: string | null;
   unitPriceOverride: string | null;
+  processOverrides?: Record<string, number | null>;
   matchStatus: 'exact' | 'name_only' | 'unmatched';
+  matchScope?: CostingMatchScope | null;
   effectiveUnitPrice: number | null;
   lineAmount: number;
+  provenanceTags?: CostingProvenanceTag[];
+  extractSnapshot?: CostingExtractSnapshot | null;
+  extractDiff?: string | null;
+};
+
+export type CostingFeeItem = {
+  name: string;
+  rate: number;
+  amount: number;
+  scope: CostingMatchScope;
+};
+
+export type CostingBoardSheetRow = {
+  lineId?: string;
+  materialName: string;
+  substrate: string;
+  thicknessMm: number | null;
+  lengthMm: number;
+  widthMm: number;
+  usableWidthMm: number;
+  usableLengthMm: number;
+  qty: number;
+  sheetPrice: number;
+  piecesPerSheet: number;
+  boardCost: number;
+  cutMeters: number;
+  cutRate: number;
+  cutAmount: number;
+  bandMeters: number;
+  bandRate: number;
+  bandAmount: number;
+  drillCount: number;
+  drillRate: number;
+  drillAmount: number;
+  grooveMeters: number;
+  grooveRate: number;
+  grooveAmount: number;
+  paintAreaM2: number;
+  paintRate: number;
+  paintAmount: number;
+  subtotal: number;
+  pricingMode: 'sheet' | 'area';
 };
 
 export type CostingSummary = {
+  materialAmount: number;
+  processAmount: number;
+  feeAmount: number;
   totalAmount: number;
   byCategory: Array<{ category: string; amount: number; share: number }>;
+  feeItems: CostingFeeItem[];
   missingPriceCount: number;
   missingQtyCount: number;
   lines: Array<{ qtyGross: number; effectiveUnitPrice: number | null; lineAmount: number }>;
+  boardSheet?: CostingBoardSheetRow[];
+};
+
+export type CostingHardwareFact = { name: string; spec: string; qty: number };
+
+export type CostingComputeBlocker = {
+  lineId?: string;
+  materialName: string;
+  reason: 'missing_price' | 'missing_qty' | 'missing_thickness';
 };
 
 export type CostingProjectDetail = {
@@ -153,12 +256,38 @@ export type CostingProjectDetail = {
   projectNo: string;
   name: string;
   category: string | null;
+  constructionType: string | null;
+  drawerCount: number | null;
+  defaultSubstrate: string | null;
+  carcassThicknessMm: number | null;
+  drawerBottomThicknessMm: number | null;
+  sideThicknessMm: number | null;
+  backThicknessMm: number | null;
+  bottomThicknessMm: number | null;
+  structureSummary: string | null;
+  designPrinciples: string | null;
+  hardwareFacts: CostingHardwareFact[];
+  otherHardwarePct: number | null;
+  regionId: string | null;
+  factoryId: string | null;
   status: string;
   extractError: string | null;
   lines: CostingBomLine[];
   summary: CostingSummary;
+  costComputedAt: string | null;
+  costStale: boolean;
+  applyFactsStale?: boolean;
+  computeBlockers: CostingComputeBlocker[];
+  reviewIssues: CostingReviewIssue[];
+  priceAsOf: string;
   hasSourceAttachment: boolean;
   pageCount: number;
+  structureBrief: {
+    title: string;
+    summary: string;
+    items: string[];
+    slots: string[];
+  };
   latestExtractRun: Pick<
     CostingExtractRun,
     'id' | 'status' | 'errorMessage' | 'rawResponse'
@@ -178,11 +307,75 @@ export type CostingExtractRun = {
   finishedAt: string | null;
 };
 
+export type CostingRegion = {
+  id: string;
+  code: string;
+  name: string;
+  sortOrder: number;
+  isActive: boolean;
+};
+
+export type CostingFactory = {
+  id: string;
+  code: string;
+  name: string;
+  regionId: string | null;
+  sortOrder: number;
+  isActive: boolean;
+  packProfile?: {
+    cornerAllowanceMm?: number;
+    foamThicknessMm?: number;
+    foamYuanPerM3?: number;
+    cartonYuanPerM2?: number;
+    cornerYuanEach?: number;
+  } | null;
+};
+
+export type CostingPackProfileInput = {
+  cornerAllowanceMm?: number;
+  foamThicknessMm?: number;
+  foamYuanPerM3?: number;
+  cartonYuanPerM2?: number;
+  cornerYuanEach?: number;
+};
+
+export type CostingFeeRate = {
+  id: string;
+  name: string;
+  rate: string;
+  regionId: string;
+  factoryId: string;
+  isActive: boolean;
+  sortOrder: number;
+};
+
 export type ReplenishLight = 'red' | 'yellow' | 'green';
 
 export type InventoryHealth = 'red' | 'yellow' | 'green' | 'blue' | 'gray';
 
 export type SafetyStockMethod = 'coverage_days' | 'z_demand' | 'z_demand_leadtime';
+
+export type SafetyStockSuggestionView = {
+  skuId: string;
+  skuCode: string;
+  warehouseCode: string;
+  configured: {
+    safetyStockDays: number | null;
+    safetyStockQty: number;
+    reorderPoint: number;
+    safetyStockMethod: SafetyStockMethod;
+  };
+  suggested: {
+    safetyStockQty: number | null;
+    safetyStockDays: number | null;
+    reorderPoint: number | null;
+    confidence: 'high' | 'medium' | 'low';
+    flags: string[];
+  };
+  deltaDays: number | null;
+  deltaQty: number | null;
+  deltaPctDays: number | null;
+};
 
 export type Spu = {
   id: string;
@@ -356,12 +549,46 @@ export type SkuPlanningView = {
       supplyEvents: Array<{ pool: string; qty: number; availableAt: string; supplyClass: string }>;
     }>;
   };
+  allocation?: {
+    method: 'sales_share' | 'native_warehouse' | 'unallocated';
+    snapshotDate: string | null;
+    overseasTotal: number;
+    allocatedQty: number;
+    undatedTransitQty: number;
+    shareSumWarning: boolean;
+  };
+  unallocatedNetworkQty?: number;
   planningDemandSource?: 'demand_plan' | 'forecast';
   planningDemandFlags?: string[];
   championStockoutDateConfirmed?: string | null;
   championSuggestedQty?: number | null;
   inStockDayRatio?: number | null;
   healthDemandNote?: string;
+};
+
+export type DemandPlanVersionListItem = {
+  id: string;
+  versionNo: string;
+  versionName: string;
+  status: string;
+  projectGroup: string;
+  warehouseCode: string;
+};
+
+export type DemandPlanMonthRow = {
+  id: string;
+  skuCode?: string;
+  period: string;
+  systemDailyAvg: string;
+  manualDailyAvg: string | null;
+  championForecastDaily: string | null;
+  source: string;
+  adjustReason?: string | null;
+};
+
+export type DemandPlanDetail = {
+  version: DemandPlanVersionListItem;
+  months: DemandPlanMonthRow[];
 };
 
 export type PlanningDashboard = {
@@ -381,6 +608,27 @@ export type PlanningDashboard = {
   pendingShipOut: number;
   pendingTransfer: number;
   calculatedAt: string;
+  openDataIssueCount?: number;
+  openUnallocatedLotCount?: number;
+};
+
+export type InventoryDataIssueRow = {
+  id: string;
+  fingerprint: string;
+  skuId: string;
+  skuCode: string;
+  skuName: string;
+  warehouseCode: string;
+  issueType: 'missing_available_at' | 'unallocated_warehouse' | 'share_sum_mismatch';
+  impactModule: string;
+  example: string;
+  qty: number;
+  status: 'open' | 'in_progress' | 'resolved' | 'dismissed';
+  ownerId: string | null;
+  resolutionNote: string | null;
+  lastSeenAt: string;
+  createdAt: string;
+  updatedAt: string;
 };
 
 export type SupplyLotRow = {
@@ -402,6 +650,10 @@ export type SupplyLotRow = {
   etaEstimated: boolean;
   dateUnknown: boolean;
   updatedAt: string;
+};
+
+export type UnallocatedSupplyRow = SupplyLotRow & {
+  suggestedDestinations: Array<{ warehouseCode: string; qty: number }>;
 };
 
 export type SkuOverview = {
@@ -1786,6 +2038,58 @@ export const api = {
     }),
   getPlanningDashboard: () =>
     request<PlanningDashboard>('/api/planning/dashboard'),
+  getInventoryDataIssues: (params?: { status?: string; type?: string }) => {
+    const qs = new URLSearchParams();
+    if (params?.status) qs.set('status', params.status);
+    if (params?.type) qs.set('type', params.type);
+    const query = qs.toString();
+    return request<{
+      items: InventoryDataIssueRow[];
+      count: number;
+      openByType: Record<string, number>;
+    }>(`/api/inventory/data-issues${query ? `?${query}` : ''}`);
+  },
+  updateInventoryDataIssue: (
+    id: string,
+    data: {
+      status?: InventoryDataIssueRow['status'];
+      ownerId?: string | null;
+      resolutionNote?: string;
+    },
+  ) =>
+    request(`/api/inventory/data-issues/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(data),
+    }),
+  scanInventoryDataIssues: () =>
+    request<{
+      scannedLots: number;
+      scannedSkus: number;
+      detected: number;
+      inserted: number;
+      refreshed: number;
+      autoResolved: number;
+    }>('/api/tasks/inventory-data-issue-scan', { method: 'POST' }),
+  getUnallocatedSupply: (params?: { skuId?: string; pool?: string }) => {
+    const qs = new URLSearchParams();
+    if (params?.skuId) qs.set('skuId', params.skuId);
+    if (params?.pool) qs.set('pool', params.pool);
+    const query = qs.toString();
+    return request<{
+      items: UnallocatedSupplyRow[];
+      count: number;
+      openCount: number;
+      openQty: number;
+    }>(`/api/inventory/unallocated${query ? `?${query}` : ''}`);
+  },
+  assignUnallocatedLot: (
+    id: string,
+    data: { assignments: Array<{ warehouseCode: string; qty: number }> },
+  ) =>
+    request<{ items: Array<{ warehouseCode: string; qty: number }> }>(
+      `/api/inventory/unallocated/${id}/assign`,
+      { method: 'POST', body: JSON.stringify(data) },
+    ),
   exportInventoryOverviewCsv: async (params?: {
     q?: string;
     category?: string;
@@ -1897,6 +2201,7 @@ export const api = {
         safetyStockQty: number | null;
         reorderPoint: number | null;
         reorderQty: number | null;
+        safetyStockDays: number | null;
         safetyStockMethod: SafetyStockMethod;
         serviceLevel: string | null;
         demandStdDev: string | null;
@@ -1904,12 +2209,31 @@ export const api = {
         calcMethod: string | null;
       }>
     >('/api/safety-stock'),
+  getSafetyStockSuggestions: (params?: {
+    warehouse?: string;
+    serviceLevel?: number;
+    sort?: string;
+    limit?: number;
+    offset?: number;
+  }) => {
+    const qs = new URLSearchParams();
+    if (params?.warehouse) qs.set('warehouse', params.warehouse);
+    if (params?.serviceLevel != null) qs.set('serviceLevel', String(params.serviceLevel));
+    if (params?.sort) qs.set('sort', params.sort);
+    if (params?.limit != null) qs.set('limit', String(params.limit));
+    if (params?.offset != null) qs.set('offset', String(params.offset));
+    const query = qs.toString();
+    return request<{ items: SafetyStockSuggestionView[]; total: number; limit: number; offset: number }>(
+      `/api/safety-stock/suggestions${query ? `?${query}` : ''}`,
+    );
+  },
   updateSafetyStock: (
     skuId: string,
     data: {
       safetyStockQty: number;
       reorderPoint: number;
       reorderQty: number;
+      safetyStockDays?: number | null;
       safetyStockMethod: SafetyStockMethod;
       serviceLevel: number | null;
     },
@@ -1938,12 +2262,12 @@ export const api = {
         skuName: string;
         warehouseCode?: string | null;
         alertType: string;
-          currentQty: number;
-          safetyQty: number;
-          horizonDays?: number | null;
-          projectedQty?: number | null;
-          projectedStockoutDate?: string | null;
-          isResolved: boolean;
+        currentQty: number;
+        safetyQty: number;
+        horizonDays?: number | null;
+        projectedQty?: number | null;
+        projectedStockoutDate?: string | null;
+        isResolved: boolean;
       }>;
       summary: string;
       openCount: number;
@@ -2174,10 +2498,18 @@ export const api = {
       source: 'upload';
     };
   },
-  listCostingPriceBook: (params?: { q?: string; category?: string; activeOnly?: boolean }) => {
+  listCostingPriceBook: (params?: {
+    q?: string;
+    category?: string;
+    regionId?: string;
+    factoryId?: string;
+    activeOnly?: boolean;
+  }) => {
     const qs = new URLSearchParams();
     if (params?.q) qs.set('q', params.q);
     if (params?.category) qs.set('category', params.category);
+    if (params?.regionId) qs.set('regionId', params.regionId);
+    if (params?.factoryId) qs.set('factoryId', params.factoryId);
     if (params?.activeOnly) qs.set('activeOnly', 'true');
     const query = qs.toString();
     return request<{ items: CostingPriceBookItem[] }>(
@@ -2185,8 +2517,13 @@ export const api = {
     );
   },
   createCostingPriceBookItem: (
-    data: Omit<CostingBomLineInput, 'qtyNet' | 'lossRate' | 'sourceRef' | 'confidence' | 'unitPriceOverride'> & {
+    data: Omit<CostingBomLineInput, 'qtyNet' | 'lossRate' | 'sourceRef' | 'confidence' | 'unitPriceOverride' | 'isManual'> & {
       unitPrice: number;
+      standard?: string;
+      regionId?: string | null;
+      factoryId?: string | null;
+      effectiveFrom?: string | null;
+      effectiveTo?: string | null;
     },
   ) =>
     request<CostingPriceBookItem>('/api/procurement/costing/price-book', {
@@ -2199,9 +2536,14 @@ export const api = {
       category: string;
       materialName: string;
       spec: string;
+      standard: string;
       unit: string;
       unitPrice: number;
       notes: string;
+      regionId: string | null;
+      factoryId: string | null;
+      effectiveFrom: string | null;
+      effectiveTo: string | null;
     }>,
   ) =>
     request<CostingPriceBookItem>(`/api/procurement/costing/price-book/${id}`, {
@@ -2225,7 +2567,7 @@ export const api = {
   },
   listCostingProjects: () =>
     request<{ items: CostingProjectListItem[] }>('/api/procurement/costing/projects'),
-  createCostingProject: (data: { name: string; category?: string }) =>
+  createCostingProject: (data: { name?: string } = {}) =>
     request<{ id: string; projectNo: string; name: string; status: string }>(
       '/api/procurement/costing/projects',
       { method: 'POST', body: JSON.stringify(data) },
@@ -2248,7 +2590,28 @@ export const api = {
     anchor.click();
     URL.revokeObjectURL(url);
   },
-  patchCostingProject: (id: string, data: { name?: string; category?: string | null }) =>
+  patchCostingProject: (
+    id: string,
+    data: {
+      name?: string;
+      category?: string | null;
+      constructionType?: string | null;
+      drawerCount?: number | null;
+      defaultSubstrate?: string | null;
+      carcassThicknessMm?: number | null;
+      drawerBottomThicknessMm?: number | null;
+      sideThicknessMm?: number | null;
+      backThicknessMm?: number | null;
+      bottomThicknessMm?: number | null;
+      structureSummary?: string | null;
+      designPrinciples?: string | null;
+      hardwareFacts?: CostingHardwareFact[];
+      otherHardwarePct?: number | null;
+      regionId?: string | null;
+      factoryId?: string | null;
+      priceAsOf?: string | null;
+    },
+  ) =>
     request<CostingProjectDetail>(`/api/procurement/costing/projects/${id}`, {
       method: 'PATCH',
       body: JSON.stringify(data),
@@ -2268,10 +2631,26 @@ export const api = {
     if (!res.ok) throw new Error(payload.message ?? '上传失败');
     return payload as { ok: boolean };
   },
+  analyzeCostingFacts: (id: string) =>
+    request<{ started: true }>(`/api/procurement/costing/projects/${id}/analyze-facts`, {
+      method: 'POST',
+    }),
+  confirmCostingDesignForApply: (id: string) =>
+    request<CostingProjectDetail>(`/api/procurement/costing/projects/${id}/confirm-design`, {
+      method: 'POST',
+    }),
   startCostingExtract: (id: string, range?: { pageFrom?: number; pageTo?: number }) =>
     request<{ runId: string }>(`/api/procurement/costing/projects/${id}/extract`, {
       method: 'POST',
       body: JSON.stringify(range ?? {}),
+    }),
+  applyCostingFacts: (id: string) =>
+    request<CostingProjectDetail>(`/api/procurement/costing/projects/${id}/apply-facts`, {
+      method: 'POST',
+    }),
+  computeCostingProject: (id: string) =>
+    request<CostingProjectDetail>(`/api/procurement/costing/projects/${id}/compute`, {
+      method: 'POST',
     }),
   getCostingExtractRun: (id: string, runId: string) =>
     request<CostingExtractRun>(
@@ -2292,12 +2671,72 @@ export const api = {
       method: 'PATCH',
       body: JSON.stringify(patch),
     }),
+  bindCostingBomLinePriceBook: (id: string, lineId: string, priceBookId: string) =>
+    request<CostingBomLine>(
+      `/api/procurement/costing/projects/${id}/bom-lines/${lineId}/bind-price-book`,
+      {
+        method: 'POST',
+        body: JSON.stringify({ priceBookId }),
+      },
+    ),
   deleteCostingBomLine: (id: string, lineId: string) =>
     request<{ ok: boolean }>(`/api/procurement/costing/projects/${id}/bom-lines/${lineId}`, {
       method: 'DELETE',
     }),
   getCostingStatus: () =>
-    request<{ difyEnabled: boolean; preprocessMode: string }>('/api/procurement/costing/status'),
+    request<{
+      difyEnabled: boolean;
+      preprocessMode: string;
+      productCategories: string[];
+      categoryFamilies: Array<{ category: string; familyId: string }>;
+      bomLineCategories?: string[];
+    }>('/api/procurement/costing/status'),
+  listCostingRegions: (activeOnly = false) =>
+    request<{ items: CostingRegion[] }>(
+      `/api/procurement/costing/regions${activeOnly ? '?activeOnly=true' : ''}`,
+    ),
+  createCostingRegion: (data: { name: string; code?: string }) =>
+    request<CostingRegion>('/api/procurement/costing/regions', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+  listCostingFactories: (activeOnly = false) =>
+    request<{ items: CostingFactory[] }>(
+      `/api/procurement/costing/factories${activeOnly ? '?activeOnly=true' : ''}`,
+    ),
+  createCostingFactory: (data: { name: string; code?: string; regionId?: string | null }) =>
+    request<CostingFactory>('/api/procurement/costing/factories', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+  patchCostingFactoryPackProfile: (id: string, packProfile: CostingPackProfileInput | null) =>
+    request<CostingFactory>(`/api/procurement/costing/factories/${id}/pack-profile`, {
+      method: 'PATCH',
+      body: JSON.stringify({ packProfile }),
+    }),
+  listCostingFeeRates: (params?: { regionId?: string; factoryId?: string }) => {
+    const qs = new URLSearchParams();
+    if (params?.regionId) qs.set('regionId', params.regionId);
+    if (params?.factoryId) qs.set('factoryId', params.factoryId);
+    const query = qs.toString();
+    return request<{ items: CostingFeeRate[] }>(
+      `/api/procurement/costing/fee-rates${query ? `?${query}` : ''}`,
+    );
+  },
+  upsertCostingFeeRate: (data: {
+    name: string;
+    regionId: string;
+    factoryId: string;
+    rate: number;
+  }) =>
+    request<CostingFeeRate>('/api/procurement/costing/fee-rates', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+  disableCostingFeeRate: (id: string) =>
+    request<{ ok: boolean }>(`/api/procurement/costing/fee-rates/${id}/disable`, {
+      method: 'POST',
+    }),
   clearProcurementList: (type: ProcurementListType) =>
     request<{ deleted: number }>(`/api/procurement/lists/${type}/clear`, { method: 'POST' }),
   getPmcPlans: () =>
@@ -4043,6 +4482,56 @@ export const api = {
     }>('/api/sales-forecasts/accuracy/walkforward', {
       method: 'POST',
       body: JSON.stringify(body ?? {}),
+    }),
+  listDemandPlanVersions: () =>
+    request<
+      Array<{
+        id: string;
+        versionNo: string;
+        versionName: string;
+        status: string;
+        projectGroup: string;
+        warehouseCode: string;
+      }>
+    >('/api/demand-plans'),
+  getDemandPlan: (id: string) =>
+    request<{
+      version: {
+        id: string;
+        versionNo: string;
+        versionName: string;
+        status: string;
+        projectGroup: string;
+        warehouseCode: string;
+      };
+      months: Array<{
+        id: string;
+        skuCode?: string;
+        period: string;
+        systemDailyAvg: string;
+        manualDailyAvg: string | null;
+        championForecastDaily: string | null;
+        source: string;
+        adjustReason?: string | null;
+      }>;
+    }>(`/api/demand-plans/${id}`),
+  generateDemandPlan: (body: { projectGroup: string; warehouseCode: string; versionName?: string }) =>
+    request<{
+      version: DemandPlanVersionListItem;
+      skipped: Array<{ skuId: string; skuCode: string; reason: string }>;
+    }>('/api/demand-plans/generate', { method: 'POST', body: JSON.stringify(body) }),
+  publishDemandPlan: (id: string) =>
+    request<DemandPlanVersionListItem>(`/api/demand-plans/${id}/publish`, { method: 'POST' }),
+  archiveDemandPlan: (id: string) =>
+    request<DemandPlanVersionListItem>(`/api/demand-plans/${id}/archive`, { method: 'POST' }),
+  updateDemandPlanMonth: (
+    versionId: string,
+    monthId: string,
+    body: { manualDailyAvg: number | null; adjustReason: string },
+  ) =>
+    request(`/api/demand-plans/${versionId}/months/${monthId}`, {
+      method: 'PATCH',
+      body: JSON.stringify(body),
     }),
 };
 

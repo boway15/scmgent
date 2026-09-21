@@ -49,6 +49,15 @@ export function SalesForecastListPage() {
     queryFn: () => api.getSalesForecastVersions({ includeStats: true }),
   });
 
+  const demandPlansQuery = useQuery({
+    queryKey: ['demand-plan-versions'],
+    queryFn: api.listDemandPlanVersions,
+    retry: false,
+  });
+  const hasPublishedDemandPlanPilot = (demandPlansQuery.data ?? []).some(
+    (row) => row.status === 'pilot_published',
+  );
+
   const publishedVersions = useMemo(
     () =>
       versions
@@ -222,6 +231,14 @@ export function SalesForecastListPage() {
           </Button>
         </div>
       </PageHeader>
+
+      {hasPublishedDemandPlanPilot ? (
+        <Card className="border-primary/20 bg-primary/5">
+          <CardContent className="py-3 text-sm text-text-sub">
+            已发布需求计划试点，匹配项目组在 US-WEST 的补货以需求计划为准，本页改预测不改变该仓建议。
+          </CardContent>
+        </Card>
+      ) : null}
 
       <div className="flex flex-wrap gap-2">
         {(['versions', 'strategy'] as ListTab[]).map((tab) => (

@@ -136,18 +136,39 @@ export function SkuInventoryPlanningPage() {
             ))}
           </select>
           <InventoryHealthBadge health={item.healthStatus} />
+          {item.healthDemandNote ? (
+            <span className="text-xs text-text-hint">{item.healthDemandNote}</span>
+          ) : null}
           <span className="text-sm text-text-sub">
             需求口径：{item.demandSource === 'forecast' ? '已发布销售预测' : '历史销量回退'}
+            {item.planningDemandSource ? (
+              <span className="ml-2">
+                时间轴需求：{item.planningDemandSource === 'demand_plan' ? '需求计划' : '销售预测'}
+              </span>
+            ) : null}
             {showStockoutAdjustedNote && (
               <span className="ml-2 text-text-hint">· 日需求已按有库存天数修正</span>
             )}
           </span>
+          {item.championStockoutDateConfirmed ? (
+            <span className="text-sm text-text-sub">
+              若用预测缺货日：{item.championStockoutDateConfirmed}
+            </span>
+          ) : null}
         </CardContent>
       </Card>
 
       {item.allocation?.method === 'unallocated' ? (
         <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
           飞书无销售占比，库存记在 OVERSEAS，本仓确定线与 7/15/30 不可用。
+        </p>
+      ) : null}
+      {(item.unallocatedNetworkQty ?? 0) > 0 ? (
+        <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+          网络未定仓 {item.unallocatedNetworkQty} 件，确认目的仓后才计入各仓确定线。
+          <Link className="ml-2 underline" to={`/inventory/unallocated?skuId=${encodeURIComponent(item.skuId)}`}>
+            去待分配
+          </Link>
         </p>
       ) : null}
       {item.allocation?.method === 'sales_share' ? (

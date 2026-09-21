@@ -356,6 +356,12 @@ export type SkuPlanningView = {
       supplyEvents: Array<{ pool: string; qty: number; availableAt: string; supplyClass: string }>;
     }>;
   };
+  planningDemandSource?: 'demand_plan' | 'forecast';
+  planningDemandFlags?: string[];
+  championStockoutDateConfirmed?: string | null;
+  championSuggestedQty?: number | null;
+  inStockDayRatio?: number | null;
+  healthDemandNote?: string;
 };
 
 export type PlanningDashboard = {

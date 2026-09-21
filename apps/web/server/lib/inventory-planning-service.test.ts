@@ -207,6 +207,43 @@ describe('inventory planning view', () => {
     assert.deepEqual(view.allocation, allocation);
   });
 
+  it('exposes demand-plan shadow fields without changing health demandSource', () => {
+    const view = buildSkuPlanningView({
+      health: {
+        skuId: 'sku-1',
+        skuCode: 'SKU-001',
+        warehouseCode: 'US-WEST',
+        avgDaily: 5,
+        demandSource: 'forecast',
+        coverageDays: 31,
+        suggestedQty: 450,
+        suggestedDate: '2026-07-20',
+        healthStatus: 'yellow',
+        metrics: { reorderPoint: 220 },
+        coverage: { safetyStockDays: 14 },
+        position,
+        leadTime,
+      },
+      planningDemandSource: 'demand_plan',
+      planningDemandFlags: ['pilot_hit'],
+      championStockoutDateConfirmed: '2026-08-20',
+      championSuggestedQty: 600,
+      inStockDayRatio: 0.85,
+      today: new Date('2026-07-29T00:00:00.000Z'),
+    });
+
+    assert.equal(view.demandSource, 'forecast');
+    assert.equal(view.planningDemandSource, 'demand_plan');
+    assert.deepEqual(view.planningDemandFlags, ['pilot_hit']);
+    assert.equal(view.championStockoutDateConfirmed, '2026-08-20');
+    assert.equal(view.championSuggestedQty, 600);
+    assert.equal(view.inStockDayRatio, 0.85);
+    assert.equal(
+      view.healthDemandNote,
+      '健康灯仍按现网预测/历史，缺货日与建议量以时间轴为准',
+    );
+  });
+
   it('selects the nearest future ETA for the requested warehouse', () => {
     assert.equal(
       pickNearestEtaAvailable(

@@ -51,7 +51,16 @@ export type SkuPlanningView = {
   stockoutDateEstimate?: string | null;
   timeline?: DailyInventoryResult;
   allocation?: PlanningAllocation;
+  planningDemandSource?: 'demand_plan' | 'forecast';
+  planningDemandFlags?: string[];
+  championStockoutDateConfirmed?: string | null;
+  championSuggestedQty?: number | null;
+  inStockDayRatio?: number | null;
+  healthDemandNote?: string;
 };
+
+const HEALTH_DEMAND_NOTE =
+  '健康灯仍按现网预测/历史，缺货日与建议量以时间轴为准';
 
 type PlanningHealth = Pick<
   SkuHealthRow,
@@ -125,6 +134,11 @@ export function buildSkuPlanningView(input: {
   timeline?: DailyInventoryResult | null;
   timelineSuggestedQty?: number;
   allocation?: PlanningAllocation;
+  planningDemandSource?: 'demand_plan' | 'forecast';
+  planningDemandFlags?: string[];
+  championStockoutDateConfirmed?: string | null;
+  championSuggestedQty?: number | null;
+  inStockDayRatio?: number | null;
 }): SkuPlanningView {
   const reorderPoint = Number(input.health.metrics.reorderPoint);
   const stockoutFromTimeline = input.timeline?.stockoutDateConfirmed ?? null;
@@ -158,6 +172,24 @@ export function buildSkuPlanningView(input: {
       ),
     ...(input.timeline ? { timeline: input.timeline } : {}),
     ...(input.allocation ? { allocation: input.allocation } : {}),
+    ...(input.planningDemandSource
+      ? {
+          planningDemandSource: input.planningDemandSource,
+          healthDemandNote: HEALTH_DEMAND_NOTE,
+        }
+      : {}),
+    ...(input.planningDemandFlags != null && input.planningDemandFlags.length > 0
+      ? { planningDemandFlags: input.planningDemandFlags }
+      : {}),
+    ...(input.championStockoutDateConfirmed !== undefined
+      ? { championStockoutDateConfirmed: input.championStockoutDateConfirmed }
+      : {}),
+    ...(input.championSuggestedQty !== undefined
+      ? { championSuggestedQty: input.championSuggestedQty }
+      : {}),
+    ...(input.inStockDayRatio !== undefined
+      ? { inStockDayRatio: input.inStockDayRatio }
+      : {}),
   };
 }
 
@@ -250,6 +282,10 @@ export async function getSkuPlanningView(params: {
 
   let timeline: DailyInventoryResult | null = null;
   let timelineSuggestedQty: number | undefined;
+  let planningDemandSource: 'demand_plan' | 'forecast' | undefined;
+  let planningDemandFlags: string[] | undefined;
+  let championStockoutDateConfirmed: string | null | undefined;
+  let championSuggestedQty: number | null | undefined;
   try {
     const safetyStockQty = Number(health.metrics.safetyStockQty) || 0;
     const built = await buildSkuWarehouseTimeline({
@@ -262,9 +298,16 @@ export async function getSkuPlanningView(params: {
       safetyStockQty,
       moq: sku.skuMoq || sku.spuMoq || undefined,
       share,
+      includeChampionShadow: true,
     });
     timeline = built.timeline;
     timelineSuggestedQty = built.suggestedQty;
+    planningDemandSource = built.planningDemand.source;
+    planningDemandFlags = built.planningDemand.flags;
+    if (built.championTimeline) {
+      championStockoutDateConfirmed = built.championTimeline.stockoutDateConfirmed;
+      championSuggestedQty = built.championTimeline.suggestedQty;
+    }
   } catch (err) {
     console.warn('[getSkuPlanningView] timeline skipped:', err);
   }
@@ -298,5 +341,9 @@ export async function getSkuPlanningView(params: {
     timeline,
     timelineSuggestedQty,
     allocation,
+    planningDemandSource,
+    planningDemandFlags,
+    championStockoutDateConfirmed,
+    championSuggestedQty,
   });
 }

@@ -4,6 +4,7 @@ import { resolveResidualSpreadRatio } from './forecast-residual-bucket.js';
 import type { ACoreAlgoConfig } from './forecast-profile-config.js';
 import { DEFAULT_ACORE_ALGO_CONFIG } from './forecast-profile-config.js';
 import { MAX_FORECAST_MONTH_COUNT } from './forecast-limits.js';
+import type { DemandReconstructAudit } from './forecast-demand-unconstrain.js';
 
 export type SalesLifecycle =
   | 'mature'
@@ -73,6 +74,13 @@ export type HorizonFactorSnapshot = {
   wNear: number;
   wYoy: number;
   horizonMonthIndex: number;
+  demandReconstructed?: boolean;
+  stockoutDays90?: number;
+  effectiveDays90?: number;
+  calendarDaily90?: number;
+  unconstrainedDaily90?: number;
+  reconstructCapHit?: boolean;
+  reconstructSkipReason?: string | null;
 };
 
 export function parseHorizonFactors(raw: unknown): HorizonFactorSnapshot | null {
@@ -102,7 +110,7 @@ export function parseHorizonFactors(raw: unknown): HorizonFactorSnapshot | null 
   ) {
     return null;
   }
-  return {
+  const snapshot: HorizonFactorSnapshot = {
     nearLevel,
     structuralLevel,
     yoyMonthLevel,
@@ -112,6 +120,26 @@ export function parseHorizonFactors(raw: unknown): HorizonFactorSnapshot | null 
     wYoy,
     horizonMonthIndex,
   };
+  if (value.demandReconstructed === true) {
+    snapshot.demandReconstructed = true;
+    const stockoutDays90 = num('stockoutDays90');
+    const effectiveDays90 = num('effectiveDays90');
+    const calendarDaily90 = num('calendarDaily90');
+    const unconstrainedDaily90 = num('unconstrainedDaily90');
+    if (stockoutDays90 != null) snapshot.stockoutDays90 = stockoutDays90;
+    if (effectiveDays90 != null) snapshot.effectiveDays90 = effectiveDays90;
+    if (calendarDaily90 != null) snapshot.calendarDaily90 = calendarDaily90;
+    if (unconstrainedDaily90 != null) snapshot.unconstrainedDaily90 = unconstrainedDaily90;
+    if (typeof value.reconstructCapHit === 'boolean') {
+      snapshot.reconstructCapHit = value.reconstructCapHit;
+    }
+    if ('reconstructSkipReason' in value) {
+      const reason = value.reconstructSkipReason;
+      snapshot.reconstructSkipReason =
+        reason == null || reason === '' ? null : String(reason);
+    }
+  }
+  return snapshot;
 }
 
 export function computeLifecycleBaselineWeights(lifecycle: SalesLifecycle = 'mature'): LifecycleBaselineWeights {
@@ -830,6 +858,7 @@ export function computeForecastDailyAvgForMonth(input: {
   profileClass?: ProfileClass;
   volumeTier?: VolumeTier;
   aCoreConfig?: ACoreAlgoConfig;
+  demandReconstruct?: DemandReconstructAudit;
 }): MonthlyForecastDailyAvgResult {
   const lifecycle = input.lifecycle ?? 'mature';
   const horizonIndex = input.horizonMonthIndex ?? 0;
@@ -857,6 +886,7 @@ export function computeForecastDailyAvgForMonth(input: {
         wNear: 1,
         wYoy: 0,
         horizonMonthIndex: horizonIndex,
+        ...(input.demandReconstruct ?? {}),
       },
     };
   }
@@ -1001,6 +1031,7 @@ export function computeForecastDailyAvgForMonth(input: {
       wNear,
       wYoy,
       horizonMonthIndex: horizonIndex,
+      ...(input.demandReconstruct ?? {}),
     },
   };
 }

@@ -1,14 +1,28 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { eq, and } from 'drizzle-orm';
-import { db, salesForecastMonthly, skus, forecastAccuracyMonthly } from '@scm/db';
-import { buildMonthlyForecastHorizon, roundDaily } from './forecast-baseline.js';
-import { formatForecastMonth } from './forecast-demand.js';
+import { db, salesForecastMonthly, skus, forecastAccuracyMonthly, warehouses } from '@scm/db';
+import {
+  buildMonthlyForecastHorizon,
+  classifySalesLifecycle,
+  daysInCalendarMonth,
+  effectiveRecentWindowEnd,
+  roundDaily,
+  type SalesLifecycle,
+} from './forecast-baseline.js';
+import { formatForecastMonth, stationForWarehouse } from './forecast-demand.js';
 import { forecastPlatformCondition } from './forecast-platform-scope.js';
 import {
+  computeAgeDaysFromFirstSale,
+  filterSalesRowsByStation,
   generateBaselineForecastVersion,
   prepareWalkForwardVersion,
 } from './forecast-collaboration.js';
+import { unconstrainMonthQty, sumQtyInWindow } from './forecast-demand-unconstrain.js';
+import {
+  loadDailySalesBySkuIdsInRange,
+  loadFirstSaleDateBySkuIds,
+} from './sales-history-query.js';
 import {
   computeForecastAccuracyForMonth,
   summarizeForecastAccuracy,
@@ -122,6 +136,232 @@ export function formatWalkForwardMonthTierSummaryLines(
 function fmtPctAbs(value: number | null): string {
   if (value == null || Number.isNaN(value)) return '—';
   return `${Math.round(value * 100)}%`;
+}
+
+function toDateOnly(date: Date): string {
+  return date.toISOString().slice(0, 10);
+}
+
+function addUtcDays(date: Date, days: number): Date {
+  return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate() + days));
+}
+
+function countSalesDaysInWindow(
+  sales: Array<{ saleDate: string; qtySold: number }>,
+  windowStart: Date,
+  windowEnd: Date,
+): number {
+  const startKey = toDateOnly(windowStart);
+  const endKey = toDateOnly(windowEnd);
+  const days = new Set<string>();
+  for (const row of sales) {
+    const key = String(row.saleDate).slice(0, 10);
+    if (key < startKey || key > endKey) continue;
+    if ((Number(row.qtySold) || 0) > 0) days.add(key);
+  }
+  return days.size;
+}
+
+function computeMaxZeroRunDays(
+  rows: Array<{ saleDate: string; qtySold: number }>,
+  start: Date,
+  end: Date,
+): number {
+  const qtyByDate = new Map(
+    rows.map((row) => [String(row.saleDate).slice(0, 10), Number(row.qtySold)]),
+  );
+  let maxRun = 0;
+  let currentRun = 0;
+  for (let cursor = new Date(start); cursor <= end; cursor = addUtcDays(cursor, 1)) {
+    const qty = qtyByDate.get(toDateOnly(cursor)) ?? 0;
+    if (qty <= 0) {
+      currentRun += 1;
+      maxRun = Math.max(maxRun, currentRun);
+    } else {
+      currentRun = 0;
+    }
+  }
+  return maxRun;
+}
+
+function hasAnyDailyRows(
+  dailyBySku: Map<string, Array<{ saleDate: string; qtySold: number }>>,
+): boolean {
+  for (const rows of dailyBySku.values()) {
+    if (rows.length > 0) return true;
+  }
+  return false;
+}
+
+export type WalkForwardSkuUnconstrainMeta = {
+  calendar90AtAsOf: number;
+  lifecycle: SalesLifecycle;
+  firstSaleDate?: string | null;
+};
+
+export type WalkForwardUnconstrainedWmapeStatus = 'computed' | 'skipped_no_daily';
+
+export type WalkForwardUnconstrainedWmapeResult = {
+  unconstrainedWmape: number | null;
+  status: WalkForwardUnconstrainedWmapeStatus;
+};
+
+/** asOf 时日历近 90 + lifecycle，不含目标月（未来）销量。 */
+export function resolveWalkForwardSkuUnconstrainMeta(input: {
+  dailySales: Array<{ saleDate: string; qtySold: number }>;
+  asOf: Date;
+  firstSaleDate?: string | null;
+}): WalkForwardSkuUnconstrainMeta {
+  const recentWindowEnd = effectiveRecentWindowEnd(input.asOf);
+  const recent90Since = addUtcDays(recentWindowEnd, -89);
+  const recent30Since = addUtcDays(recentWindowEnd, -29);
+  const calendar90AtAsOf = roundDaily(sumQtyInWindow(input.dailySales, recent90Since, recentWindowEnd) / 90);
+  const calendar30AtAsOf = roundDaily(sumQtyInWindow(input.dailySales, recent30Since, recentWindowEnd) / 30);
+  const salesDays90 = countSalesDaysInWindow(input.dailySales, recent90Since, recentWindowEnd);
+  const lifecycle = classifySalesLifecycle({
+    ageDays: computeAgeDaysFromFirstSale(input.firstSaleDate, input.asOf),
+    salesDayRatio90: salesDays90 / 90,
+    recent30DailyAvg: calendar30AtAsOf,
+    recent90DailyAvg: calendar90AtAsOf,
+    maxZeroRunDays: computeMaxZeroRunDays(input.dailySales, recent90Since, recentWindowEnd),
+  });
+  return {
+    calendar90AtAsOf,
+    lifecycle,
+    firstSaleDate: input.firstSaleDate ?? null,
+  };
+}
+
+export function computeWalkForwardUnconstrainedWmape(input: {
+  rows: Array<{
+    skuKey: string;
+    forecastYear: number;
+    month: number;
+    forecastDaily: number;
+    actualDaily: number;
+    profileSegment?: string | null;
+  }>;
+  dailyBySku: Map<string, Array<{ saleDate: string; qtySold: number }>> | null | undefined;
+  skuMetaByKey: Map<string, WalkForwardSkuUnconstrainMeta>;
+}): WalkForwardUnconstrainedWmapeResult {
+  if (!input.dailyBySku || !hasAnyDailyRows(input.dailyBySku)) {
+    return { unconstrainedWmape: null, status: 'skipped_no_daily' };
+  }
+
+  const wmapeRows: Array<{
+    skuCode: string;
+    actualDaily: number;
+    forecastDaily: number;
+    mape: null;
+    biasRate: null;
+    profileSegment?: string;
+  }> = [];
+  for (const row of input.rows) {
+    const dailySales = input.dailyBySku.get(row.skuKey);
+    if (!dailySales?.length) continue;
+
+    const meta = input.skuMetaByKey.get(row.skuKey);
+    const skuMayUnconstrain =
+      !!meta &&
+      meta.calendar90AtAsOf >= 1 &&
+      meta.lifecycle !== 'new' &&
+      meta.lifecycle !== 'intermittent';
+    const days = daysInCalendarMonth(row.forecastYear, row.month);
+    const monthU = unconstrainMonthQty({
+      year: row.forecastYear,
+      month: row.month,
+      rawQty: row.actualDaily * days,
+      dailySales,
+      skuMayUnconstrain,
+      firstSaleDate: meta?.firstSaleDate,
+    });
+    const unconstrainedActualDaily = monthU.stockoutFullMonth
+      ? row.actualDaily
+      : monthU.cleanedQty / days;
+    if (unconstrainedActualDaily <= 0) continue;
+
+    wmapeRows.push({
+      skuCode: row.skuKey,
+      actualDaily: unconstrainedActualDaily,
+      forecastDaily: row.forecastDaily,
+      mape: null,
+      biasRate: null,
+      profileSegment: row.profileSegment ?? undefined,
+    });
+  }
+
+  return {
+    unconstrainedWmape: computeWeightedMape(wmapeRows),
+    status: 'computed',
+  };
+}
+
+async function loadWarehouseStationMap(): Promise<Map<string, string>> {
+  const rows = await db
+    .select({
+      code: warehouses.code,
+      regionGroup: warehouses.regionGroup,
+      countryCode: warehouses.countryCode,
+    })
+    .from(warehouses)
+    .where(eq(warehouses.isActive, true));
+  return new Map(
+    rows.map((row) => [
+      row.code,
+      stationForWarehouse(row.regionGroup, row.countryCode).toUpperCase(),
+    ]),
+  );
+}
+
+/** 销量日表，不是库存 API。空结果返回 null，由调用方记 skipped_no_daily。 */
+async function tryLoadWalkForwardDailyBySku(input: {
+  skuIds: string[];
+  asOf: Date;
+  targetMonths: Array<{ forecastYear: number; month: number }>;
+  station?: string;
+  platform?: string;
+}): Promise<{
+  dailyBySku: Map<string, Array<{ saleDate: string; qtySold: number }>>;
+  firstSaleBySku: Map<string, string | null>;
+} | null> {
+  if (!input.skuIds.length || !input.targetMonths.length) return null;
+
+  const platform = input.platform?.trim() || 'ALL';
+  const recent90Since = addUtcDays(effectiveRecentWindowEnd(input.asOf), -89);
+  const lastMonth = input.targetMonths[input.targetMonths.length - 1]!;
+  const lastDay = daysInCalendarMonth(lastMonth.forecastYear, lastMonth.month);
+  const fromDate = toDateOnly(recent90Since);
+  const toDate = `${lastMonth.forecastYear}-${String(lastMonth.month).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;
+
+  const [rawDaily, firstSaleBySku] = await Promise.all([
+    loadDailySalesBySkuIdsInRange({
+      skuIds: input.skuIds,
+      fromDate,
+      toDate,
+      platform,
+    }),
+    loadFirstSaleDateBySkuIds({
+      skuIds: input.skuIds,
+      platform,
+    }),
+  ]);
+
+  const warehouseStationByCode = input.station ? await loadWarehouseStationMap() : null;
+  const dailyBySku = new Map<string, Array<{ saleDate: string; qtySold: number }>>();
+  for (const skuId of input.skuIds) {
+    const raw = rawDaily.get(skuId) ?? [];
+    const filtered =
+      input.station && warehouseStationByCode
+        ? filterSalesRowsByStation(raw, input.station, warehouseStationByCode)
+        : raw;
+    dailyBySku.set(
+      skuId,
+      filtered.map((row) => ({ saleDate: row.saleDate, qtySold: row.qtySold })),
+    );
+  }
+
+  if (!hasAnyDailyRows(dailyBySku)) return null;
+  return { dailyBySku, firstSaleBySku };
 }
 
 export type WalkForwardBacktestInput = {
@@ -555,6 +795,7 @@ export async function runWalkForwardAccuracyBacktest(input: WalkForwardBacktestI
     .filter((row) => row.actualDailyAvg != null)
     .map((row) => ({
       skuCode: row.skuCode,
+      skuId: row.skuId,
       actualDaily: row.actualDailyAvg ?? 0,
       forecastDaily: row.forecastDailyAvg,
       mape: row.mape,
@@ -611,6 +852,50 @@ export async function runWalkForwardAccuracyBacktest(input: WalkForwardBacktestI
     pageSize: 20,
   });
 
+  const skuIds = [...new Set(exportRows.map((row) => row.skuId).filter(Boolean))];
+  const dailyLoaded = await tryLoadWalkForwardDailyBySku({
+    skuIds,
+    asOf,
+    targetMonths,
+    station,
+    platform,
+  });
+  let unconstrainedWmape: number | null = null;
+  let unconstrainedWmapeStatus: WalkForwardUnconstrainedWmapeStatus = 'skipped_no_daily';
+  if (dailyLoaded) {
+    const skuMetaByKey = new Map<string, WalkForwardSkuUnconstrainMeta>();
+    for (const skuId of skuIds) {
+      skuMetaByKey.set(
+        skuId,
+        resolveWalkForwardSkuUnconstrainMeta({
+          dailySales: dailyLoaded.dailyBySku.get(skuId) ?? [],
+          asOf,
+          firstSaleDate: dailyLoaded.firstSaleBySku.get(skuId) ?? null,
+        }),
+      );
+    }
+    const unconstrained = computeWalkForwardUnconstrainedWmape({
+      rows: accuracyRows
+        .filter((row) => row.actualDaily > 0 && isAllCatV41KpiComparableTier(row.profileSegment))
+        .map((row) => ({
+          skuKey: row.skuId,
+          forecastYear: row.forecastYear!,
+          month: row.month!,
+          forecastDaily: row.forecastDaily,
+          actualDaily: row.actualDaily,
+          profileSegment: row.profileSegment,
+        })),
+      dailyBySku: dailyLoaded.dailyBySku,
+      skuMetaByKey,
+    });
+    unconstrainedWmape = unconstrained.unconstrainedWmape;
+    unconstrainedWmapeStatus = unconstrained.status;
+  }
+  const unconstrainedWmapeLine =
+    unconstrainedWmapeStatus === 'skipped_no_daily'
+      ? 'unconstrainedWmape: skipped_no_daily'
+      : `unconstrainedWmape: ${fmtPctAbs(unconstrainedWmape)}`;
+
   const summary = [
     '【走步回测】',
     `截止日 asOf：${asOfLabel}`,
@@ -624,6 +909,7 @@ export async function runWalkForwardAccuracyBacktest(input: WalkForwardBacktestI
     dRiskForecastRows > 0 || t99ForecastRows > 0
       ? `非 KPI 层：T4B 保底 ${dRiskForecastRows} 行 · T99 不预测 ${t99ForecastRows} 行（不计入准确率）`
       : '',
+    unconstrainedWmapeLine,
     '',
     `CSV 导出：${csvRows} 行 → ${csvPath}`,
   ]
@@ -649,6 +935,9 @@ export async function runWalkForwardAccuracyBacktest(input: WalkForwardBacktestI
     dGhostCount: 0,
     accuracyList,
     monthTierSummary,
+    unconstrainedWmape,
+    wmapeVsUnconstrainedDemand: unconstrainedWmape,
+    unconstrainedWmapeStatus,
     summary,
   };
 }

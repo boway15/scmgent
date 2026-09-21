@@ -3,13 +3,16 @@ import assert from 'node:assert/strict';
 import {
   buildWalkForwardVersionName,
   buildWalkForwardMonthTierSummary,
+  computeWalkForwardUnconstrainedWmape,
   formatWalkForwardMonthTierSummaryLines,
   parseWalkForwardAsOf,
+  resolveWalkForwardSkuUnconstrainMeta,
   resolveWalkForwardVersionName,
 } from './forecast-walkforward-backtest.js';
-import { buildMonthlyForecastHorizon } from './forecast-baseline.js';
+import { buildMonthlyForecastHorizon, daysInCalendarMonth } from './forecast-baseline.js';
 import { formatForecastMonth } from './forecast-demand.js';
 import { computeWalkForwardAsOf } from './sales-history-monthly.js';
+import { unconstrainMonthQty } from './forecast-demand-unconstrain.js';
 
 describe('forecast-walkforward-backtest', () => {
   it('parses asOf date as UTC midnight', () => {
@@ -77,5 +80,177 @@ describe('forecast-walkforward-backtest', () => {
       [{ forecastYear: 2026, month: 1, monthLabel: '2026-01' }],
     );
     assert.ok(lines.some((l) => l.includes('WMAPE')));
+  });
+
+  it('skips unconstrained WMAPE when daily history is missing', () => {
+    const result = computeWalkForwardUnconstrainedWmape({
+      rows: [
+        {
+          skuKey: 'SKU-1',
+          forecastYear: 2026,
+          month: 5,
+          forecastDaily: 5,
+          actualDaily: 3,
+          profileSegment: 'T1',
+        },
+      ],
+      dailyBySku: null,
+      skuMetaByKey: new Map(),
+    });
+    assert.equal(result.status, 'skipped_no_daily');
+    assert.equal(result.unconstrainedWmape, null);
+  });
+
+  it('skips unconstrained WMAPE when daily map has no rows', () => {
+    const result = computeWalkForwardUnconstrainedWmape({
+      rows: [
+        {
+          skuKey: 'SKU-1',
+          forecastYear: 2026,
+          month: 5,
+          forecastDaily: 5,
+          actualDaily: 3,
+          profileSegment: 'T1',
+        },
+      ],
+      dailyBySku: new Map([['SKU-1', []]]),
+      skuMetaByKey: new Map([
+        ['SKU-1', { calendar90AtAsOf: 4, lifecycle: 'mature', firstSaleDate: '2025-01-01' }],
+      ]),
+    });
+    assert.equal(result.status, 'skipped_no_daily');
+    assert.equal(result.unconstrainedWmape, null);
+  });
+
+  it('computes WMAPE against unconstrained month actual when daily history exists', () => {
+    const rows: Array<{ saleDate: string; qtySold: number }> = [];
+    for (let d = 1; d <= 31; d += 1) {
+      rows.push({
+        saleDate: `2026-05-${String(d).padStart(2, '0')}`,
+        qtySold: d <= 10 ? 0 : 5,
+      });
+    }
+    const days = daysInCalendarMonth(2026, 5);
+    const actualDaily = (21 * 5) / days;
+    const monthU = unconstrainMonthQty({
+      year: 2026,
+      month: 5,
+      rawQty: actualDaily * days,
+      dailySales: rows,
+      skuMayUnconstrain: true,
+      firstSaleDate: '2025-01-01',
+    });
+    const unconstrainedActualDaily = monthU.cleanedQty / days;
+    const forecastDaily = 4;
+    const result = computeWalkForwardUnconstrainedWmape({
+      rows: [
+        {
+          skuKey: 'SKU-CORE',
+          forecastYear: 2026,
+          month: 5,
+          forecastDaily,
+          actualDaily,
+          profileSegment: 'T1',
+        },
+      ],
+      dailyBySku: new Map([['SKU-CORE', rows]]),
+      skuMetaByKey: new Map([
+        ['SKU-CORE', { calendar90AtAsOf: 4, lifecycle: 'mature', firstSaleDate: '2025-01-01' }],
+      ]),
+    });
+    assert.equal(result.status, 'computed');
+    assert.ok(unconstrainedActualDaily > actualDaily);
+    assert.equal(
+      result.unconstrainedWmape,
+      Math.abs(forecastDaily - unconstrainedActualDaily) / unconstrainedActualDaily,
+    );
+  });
+
+  it('does not unconstrain when asOf lifecycle is new even if the target month has a zero run', () => {
+    const rows: Array<{ saleDate: string; qtySold: number }> = [];
+    for (let d = 1; d <= 31; d += 1) {
+      rows.push({
+        saleDate: `2026-05-${String(d).padStart(2, '0')}`,
+        qtySold: d <= 10 ? 0 : 5,
+      });
+    }
+    const days = daysInCalendarMonth(2026, 5);
+    const actualDaily = (21 * 5) / days;
+    const forecastDaily = 5;
+    const result = computeWalkForwardUnconstrainedWmape({
+      rows: [
+        {
+          skuKey: 'SKU-NEW',
+          forecastYear: 2026,
+          month: 5,
+          forecastDaily,
+          actualDaily,
+          profileSegment: 'T1',
+        },
+      ],
+      dailyBySku: new Map([['SKU-NEW', rows]]),
+      skuMetaByKey: new Map([
+        ['SKU-NEW', { calendar90AtAsOf: 4, lifecycle: 'new', firstSaleDate: '2026-04-01' }],
+      ]),
+    });
+    assert.equal(result.status, 'computed');
+    assert.equal(result.unconstrainedWmape, Math.abs(forecastDaily - actualDaily) / actualDaily);
+  });
+
+  it('keeps original actual when the target month is a full stockout', () => {
+    const rows = Array.from({ length: 30 }, (_, i) => ({
+      saleDate: `2026-04-${String(i + 1).padStart(2, '0')}`,
+      qtySold: 0,
+    }));
+    const result = computeWalkForwardUnconstrainedWmape({
+      rows: [
+        {
+          skuKey: 'SKU-OUT',
+          forecastYear: 2026,
+          month: 4,
+          forecastDaily: 5,
+          actualDaily: 0,
+          profileSegment: 'T1',
+        },
+      ],
+      dailyBySku: new Map([['SKU-OUT', rows]]),
+      skuMetaByKey: new Map([
+        ['SKU-OUT', { calendar90AtAsOf: 3, lifecycle: 'mature', firstSaleDate: '2025-01-01' }],
+      ]),
+    });
+    assert.equal(result.status, 'computed');
+    assert.equal(result.unconstrainedWmape, null);
+  });
+
+  it('computes asOf calendar90 and lifecycle without using future month sales', () => {
+    const daily: Array<{ saleDate: string; qtySold: number }> = [];
+    for (let d = 3; d <= 31; d += 1) {
+      daily.push({ saleDate: `2025-10-${String(d).padStart(2, '0')}`, qtySold: 2 });
+    }
+    for (let d = 1; d <= 30; d += 1) {
+      daily.push({ saleDate: `2025-11-${String(d).padStart(2, '0')}`, qtySold: 2 });
+    }
+    for (let d = 1; d <= 31; d += 1) {
+      daily.push({ saleDate: `2025-12-${String(d).padStart(2, '0')}`, qtySold: 2 });
+    }
+    for (let d = 1; d <= 31; d += 1) {
+      daily.push({ saleDate: `2026-05-${String(d).padStart(2, '0')}`, qtySold: 80 });
+    }
+    const asOf = parseWalkForwardAsOf('2026-01-01');
+    const meta = resolveWalkForwardSkuUnconstrainMeta({
+      dailySales: daily,
+      asOf,
+      firstSaleDate: '2024-01-01',
+    });
+    assert.ok(meta.calendar90AtAsOf >= 1);
+    assert.ok(meta.calendar90AtAsOf < 10);
+    assert.notEqual(meta.lifecycle, 'new');
+    assert.notEqual(meta.lifecycle, 'intermittent');
+    const newMeta = resolveWalkForwardSkuUnconstrainMeta({
+      dailySales: daily,
+      asOf,
+      firstSaleDate: '2025-12-15',
+    });
+    assert.equal(newMeta.lifecycle, 'new');
   });
 });

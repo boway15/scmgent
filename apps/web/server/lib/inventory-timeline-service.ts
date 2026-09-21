@@ -17,9 +17,22 @@ import {
   type ShareParseResult,
 } from './inventory-share-allocation.js';
 import { readTurnoverSnapshot } from './inventory-turnover-snapshot.js';
+import { loadPlanningDemandForSkuWarehouse } from './demand-plan-load.js';
+import {
+  pickDemandMapForTimeline,
+  type PlanningDemandResult,
+} from './demand-plan-resolve.js';
 
 function todayIso(d = new Date()): string {
   return d.toISOString().slice(0, 10);
+}
+
+export function pickTimelineFallbackDaily(input: {
+  source: 'demand_plan' | 'forecast';
+  planningFallbackDaily: number;
+  avgDaily: number;
+}): number {
+  return input.source === 'demand_plan' ? input.planningFallbackDaily : input.avgDaily;
 }
 
 export function resolveReservedQty(params: {
@@ -61,10 +74,13 @@ export async function buildSkuWarehouseTimeline(params: {
   today?: Date;
   share?: ShareParseResult;
   encodingMeta?: unknown;
+  includeChampionShadow?: boolean;
 }): Promise<{
   timeline: DailyInventoryResult;
   suggestedQty: number;
   reservedQty: number;
+  planningDemand: PlanningDemandResult;
+  championTimeline?: DailyInventoryResult;
 }> {
   const today = params.today ?? new Date();
   const todayStr = todayIso(today);
@@ -100,7 +116,23 @@ export async function buildSkuWarehouseTimeline(params: {
     const merged = await loadMergedPublishedForecastBySkuIds([params.skuId]);
     forecastMap = merged.get(params.skuId)?.map;
   }
-  forecastMap = forecastMap ?? new Map<string, number>();
+  const stationForecastMap = forecastMap ?? new Map<string, number>();
+
+  const planningDemand = await loadPlanningDemandForSkuWarehouse({
+    skuId: params.skuId,
+    warehouseCode: params.warehouseCode,
+    championForecastMap: stationForecastMap,
+  });
+  const timelineMap = pickDemandMapForTimeline({
+    source: planningDemand.source,
+    demandMap: planningDemand.demandMap,
+    stationForecastMap,
+  });
+  const fallbackDaily = pickTimelineFallbackDaily({
+    source: planningDemand.source,
+    planningFallbackDaily: planningDemand.fallbackDaily,
+    avgDaily: params.avgDaily,
+  });
 
   const openLots = await loadOpenLotsForTimeline({
     skuId: params.skuId,
@@ -148,12 +180,12 @@ export async function buildSkuWarehouseTimeline(params: {
   }
 
   const dailyDemandFn = (k: number) => {
-    if (params.avgDaily <= 0 && forecastMap.size === 0) return 0;
+    if (fallbackDaily <= 0 && timelineMap.size === 0) return 0;
     const asOf = addDaysIso(todayStr, k);
     return getForecastDailyForDate(
-      forecastMap,
+      timelineMap,
       new Date(`${asOf}T00:00:00.000Z`),
-      params.avgDaily,
+      fallbackDaily,
     );
   };
 
@@ -168,5 +200,32 @@ export async function buildSkuWarehouseTimeline(params: {
     dailyDemandFn,
   });
 
-  return { timeline, suggestedQty: timeline.suggestedQty, reservedQty };
+  let championTimeline: DailyInventoryResult | undefined;
+  if (params.includeChampionShadow && planningDemand.championMap.size > 0) {
+    championTimeline = projectDailyInventory({
+      lots,
+      today: todayStr,
+      reservedQty,
+      totalLeadDays: params.totalLeadDays,
+      safetyStockDays: params.safetyStockDays,
+      safetyStockQty: params.safetyStockQty,
+      moq: params.moq,
+      dailyDemandFn: (k: number) => {
+        const asOf = addDaysIso(todayStr, k);
+        return getForecastDailyForDate(
+          planningDemand.championMap,
+          new Date(`${asOf}T00:00:00.000Z`),
+          params.avgDaily,
+        );
+      },
+    });
+  }
+
+  return {
+    timeline,
+    suggestedQty: timeline.suggestedQty,
+    reservedQty,
+    planningDemand,
+    ...(championTimeline ? { championTimeline } : {}),
+  };
 }

@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { parseSharesFromSnapshot } from './inventory-share-allocation.js';
 import {
+  pickTimelineFallbackDaily,
   resolveReservedQty,
   shouldBackfillNativeAvailable,
 } from './inventory-timeline-service.js';
@@ -43,6 +44,30 @@ describe('resolveReservedQty', () => {
         planningWarehouse: 'US-WEST',
       }),
       0,
+    );
+  });
+});
+
+describe('pickTimelineFallbackDaily', () => {
+  it('uses planning fallback when source is demand_plan', () => {
+    assert.equal(
+      pickTimelineFallbackDaily({
+        source: 'demand_plan',
+        planningFallbackDaily: 8,
+        avgDaily: 3,
+      }),
+      8,
+    );
+  });
+
+  it('uses avgDaily when source is forecast', () => {
+    assert.equal(
+      pickTimelineFallbackDaily({
+        source: 'forecast',
+        planningFallbackDaily: 8,
+        avgDaily: 3,
+      }),
+      3,
     );
   });
 });

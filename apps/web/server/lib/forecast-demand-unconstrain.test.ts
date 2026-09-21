@@ -110,6 +110,60 @@ describe('unconstrainRecentDaily', () => {
     assert.equal(result.skipReason === 'no_run' || result.stockoutDays === 0, true);
   });
 
+  it('sets reconstructCapHit when raw U exceeds 1.5× calendar daily', () => {
+    const windowEnd = utcDate('2026-05-31');
+    const windowStart = utcDate('2026-03-03'); // 90 days
+    const rows = daysBetweenInclusive(windowStart, windowEnd);
+    const sellDays = 55;
+    const qtyTotal = 180;
+    for (const row of rows.slice(0, sellDays)) row.qtySold = qtyTotal / sellDays;
+    const qtySum = rows.reduce((s, r) => s + r.qtySold, 0);
+    assert.ok(Math.abs(qtySum - qtyTotal) < 0.01);
+
+    const result = unconstrainRecentDaily({
+      sales: rows,
+      windowStart,
+      windowEnd,
+      lifecycle: 'mature',
+      firstSaleDate: '2025-01-01',
+    });
+    assert.equal(result.reconstructed, true);
+    assert.equal(result.stockoutDays, 35);
+    assert.equal(result.effectiveDays, 55);
+    const calendar = qtyTotal / 90;
+    const cap = 1.5 * calendar;
+    assert.ok(qtyTotal / sellDays > cap + 1e-12);
+    assert.equal(result.reconstructCapHit, true);
+    assert.ok(Math.abs(result.unconstrainedDaily - cap) < 1e-4);
+  });
+
+  it('reconstructs stockout_suspected SKU when volume/coverage gates pass', () => {
+    const windowEnd = utcDate('2026-05-31');
+    const windowStart = utcDate('2026-03-03'); // 90 days
+    const rows = daysBetweenInclusive(windowStart, windowEnd);
+    for (const row of rows) {
+      if (row.saleDate <= '2026-05-11') row.qtySold = 100 / 70;
+    }
+    const qtySum = rows.reduce((s, r) => s + r.qtySold, 0);
+    assert.ok(Math.abs(qtySum - 100) < 0.01);
+
+    const result = unconstrainRecentDaily({
+      sales: rows,
+      windowStart,
+      windowEnd,
+      lifecycle: 'stockout_suspected',
+      firstSaleDate: '2025-01-01',
+    });
+    assert.equal(result.reconstructed, true);
+    assert.equal(result.stockoutDays, 20);
+    assert.equal(result.effectiveDays, 70);
+    assert.equal(result.skipReason, null);
+    const calendar = 100 / 90;
+    const expected = Math.min(100 / 70, 1.5 * calendar);
+    assert.ok(Math.abs(result.unconstrainedDaily - expected) < 1e-4);
+    assert.equal(result.reconstructCapHit, false);
+  });
+
   it('caps at 1.5× calendar daily', () => {
     const windowEnd = utcDate('2026-04-29');
     const windowStart = utcDate('2026-01-30');

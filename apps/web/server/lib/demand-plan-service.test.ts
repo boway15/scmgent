@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
   assertManualAdjust,
+  championCoversHorizon,
   nextDemandPlanVersionNo,
   shouldArchivePrevious,
 } from './demand-plan-service.js';
@@ -44,5 +45,46 @@ describe('shouldArchivePrevious', () => {
     assert.equal(shouldArchivePrevious({ existingStatus: 'pilot_published' }), true);
     assert.equal(shouldArchivePrevious({ existingStatus: 'draft' }), false);
     assert.equal(shouldArchivePrevious({ existingStatus: 'archived' }), false);
+  });
+});
+
+describe('championCoversHorizon', () => {
+  it('rejects a 3-month champion as insufficient for 6-month horizon', () => {
+    const forecastMap = new Map<string, number>([
+      ['2026-09', 1.2],
+      ['2026-10', 1.1],
+      ['2026-11', 1.0],
+    ]);
+    assert.equal(championCoversHorizon(forecastMap, '2026-09', 6), false);
+  });
+
+  it('accepts 6 consecutive positive months from startMonth', () => {
+    const forecastMap = new Map<string, number>([
+      ['2026-09', 1],
+      ['2026-10', 1],
+      ['2026-11', 1],
+      ['2026-12', 1],
+      ['2027-01', 1],
+      ['2027-02', 1],
+    ]);
+    assert.equal(championCoversHorizon(forecastMap, '2026-09', 6), true);
+  });
+
+  it('accepts 12 months when the first 6 keys are present and positive', () => {
+    const forecastMap = new Map<string, number>([
+      ['2026-09', 1],
+      ['2026-10', 1],
+      ['2026-11', 1],
+      ['2026-12', 1],
+      ['2027-01', 1],
+      ['2027-02', 1],
+      ['2027-03', 1],
+      ['2027-04', 1],
+      ['2027-05', 1],
+      ['2027-06', 1],
+      ['2027-07', 1],
+      ['2027-08', 1],
+    ]);
+    assert.equal(championCoversHorizon(forecastMap, '2026-09', 6), true);
   });
 });

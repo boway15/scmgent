@@ -1,9 +1,10 @@
-import { and, eq, gte, inArray, like } from 'drizzle-orm';
+import { and, eq, gte, inArray, like, lte } from 'drizzle-orm';
 import {
   db,
   demandPlanMonthly,
   demandPlanPilotSnapshots,
   demandPlanVersions,
+  demandPlanWeekly,
   inventoryDailySnapshots,
   safetyStockConfig,
   skus,
@@ -16,18 +17,27 @@ import {
 import {
   championRefLevel,
   classifyReconstructSource,
-  systemDailyAvgForMonth,
+  systemDailyAvgForWeek,
   warehouseShareWeight,
+  weekWeightedForecastDaily,
 } from './demand-plan-reconstruct.js';
 import { calcEffectiveDailyDemand } from './effective-daily-demand.js';
 import { forecastMonthKey } from './forecast-demand.js';
+import { FORECAST_HORIZON_MONTHS } from './forecast-limits.js';
 import { loadMergedPublishedForecastBySkuIds } from './forecast-published-resolve.js';
 import { parseSharesFromSnapshot } from './inventory-share-allocation.js';
 import { buildSkuWarehouseTimeline } from './inventory-timeline-service.js';
 import { readTurnoverSnapshot } from './inventory-turnover-snapshot.js';
 import { resolveLeadTimeForSkuWarehouse } from './lead-time-resolver.js';
+import {
+  buildIsoWeekHorizon,
+  DEMAND_PLAN_HORIZON_WEEKS,
+  isoWeekMondayUtc,
+  monthKeyFromUtcDate,
+  planningRecentWindowEnd,
+} from './planning-calendar.js';
 import { DEFAULT_SAFETY_STOCK_DAYS } from './replenishment-coverage.js';
-import { loadDailySalesBySkuIds } from './sales-history-query.js';
+import { loadDailySalesBySkuIdsInRange } from './sales-history-query.js';
 
 export type DemandPlanVersionStatus = 'draft' | 'pilot_published' | 'archived';
 
@@ -58,6 +68,17 @@ function horizonMonths(startMonth: string, count: number): string[] {
     periods.push(forecastMonthKey(cursor.getUTCFullYear(), cursor.getUTCMonth() + 1));
   }
   return periods;
+}
+
+export function championCoversHorizon(
+  forecastMap: Map<string, number>,
+  startMonth: string,
+  monthCount: number,
+): boolean {
+  return horizonMonths(startMonth, monthCount).every((period) => {
+    const daily = forecastMap.get(period);
+    return daily != null && daily > 0;
+  });
 }
 
 function qtyAvailableFromPayload(payload: unknown, warehouseCode: string): number {
@@ -126,12 +147,11 @@ async function allocateDemandPlanVersionNo(now: Date): Promise<string> {
  * generateDemandPlanDraft:
  * 1. Config lists must be non-empty; projectGroup/warehouse must match.
  * 2. Active SKUs in the group; skip cross-group SPUs (logged).
- * 3. startMonth = UTC YYYY-MM, horizonMonths = 12.
- * 4. Load sales, daily-snapshot availability, published forecast, turnover share.
- * 5. U = calcEffectiveDailyDemand when availability series present, else calendar 90d.
- * 6. No share → skip monthly (runtime falls back to forecast).
- * 7. No published forecast months in horizon → skip. Else systemDailyAvgForMonth.
- * 8. Insert draft version + monthly rows.
+ * 3. 26 ISO weeks from asOf; startMonth = week-start month; horizonMonths = 6 (doc only).
+ * 4. Recent 90d sales on [windowEnd-89, windowEnd] via planningRecentWindowEnd.
+ * 5. U = calcEffectiveDailyDemand with asOf = windowEnd+1d.
+ * 6. No share → skip. Champion must cover 6 consecutive YYYY-MM from startMonth.
+ * 7. Insert draft version + demand_plan_weekly rows (no monthly inserts).
  */
 export async function generateDemandPlanDraft(params: {
   projectGroup: string;
@@ -142,6 +162,7 @@ export async function generateDemandPlanDraft(params: {
   env?: NodeJS.ProcessEnv;
 }) {
   const now = params.now ?? new Date();
+  const asOf = now;
   assertPilotScope(params.projectGroup, params.warehouseCode, params.env);
 
   const groupSkus = await db
@@ -185,15 +206,24 @@ export async function generateDemandPlanDraft(params: {
   });
 
   const skuIds = eligible.map((row) => row.skuId);
-  const startMonth = forecastMonthKey(now.getUTCFullYear(), now.getUTCMonth() + 1);
-  const months = horizonMonths(startMonth, 12);
-  const windowStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
-  windowStart.setUTCDate(windowStart.getUTCDate() - 90);
+  const weeks = buildIsoWeekHorizon(asOf, DEMAND_PLAN_HORIZON_WEEKS);
+  const startWeek = weeks[0]!;
+  const startMonth = monthKeyFromUtcDate(isoWeekMondayUtc(startWeek));
+  const windowEnd = planningRecentWindowEnd(asOf);
+  const windowStart = new Date(windowEnd.getTime());
+  windowStart.setUTCDate(windowStart.getUTCDate() - 89);
   const windowStartKey = windowStart.toISOString().slice(0, 10);
+  const windowEndKey = windowEnd.toISOString().slice(0, 10);
+  const demandAsOf = new Date(windowEnd.getTime() + 86_400_000);
 
   const [salesBySku, forecastBySku, snapshotRows] = skuIds.length
     ? await Promise.all([
-        loadDailySalesBySkuIds(skuIds, 90),
+        loadDailySalesBySkuIdsInRange({
+          skuIds,
+          fromDate: windowStartKey,
+          toDate: windowEndKey,
+          platform: 'ALL',
+        }),
         loadMergedPublishedForecastBySkuIds(skuIds),
         db
           .select({
@@ -206,6 +236,7 @@ export async function generateDemandPlanDraft(params: {
             and(
               inArray(inventoryDailySnapshots.skuId, skuIds),
               gte(inventoryDailySnapshots.snapshotDate, windowStartKey),
+              lte(inventoryDailySnapshots.snapshotDate, windowEndKey),
             ),
           ),
       ])
@@ -221,7 +252,7 @@ export async function generateDemandPlanDraft(params: {
     availabilityBySku.set(row.skuId, list);
   }
 
-  const monthlyValues: Array<typeof demandPlanMonthly.$inferInsert> = [];
+  const weeklyValues: Array<typeof demandPlanWeekly.$inferInsert> = [];
   for (const sku of eligible) {
     const share = warehouseShareWeight(
       params.warehouseCode,
@@ -233,13 +264,7 @@ export async function generateDemandPlanDraft(params: {
     }
 
     const forecastMap = forecastBySku.get(sku.skuId)?.map ?? new Map<string, number>();
-    const monthForecasts = months
-      .map((period) => {
-        const daily = forecastMap.get(period);
-        return daily == null ? null : { period, daily };
-      })
-      .filter((row): row is { period: string; daily: number } => row != null);
-    if (monthForecasts.length === 0) {
+    if (!championCoversHorizon(forecastMap, startMonth, FORECAST_HORIZON_MONTHS)) {
       skipped.push({ skuId: sku.skuId, skuCode: sku.skuCode, reason: 'no_forecast' });
       continue;
     }
@@ -253,34 +278,35 @@ export async function generateDemandPlanDraft(params: {
       })),
       availability: hasAvailabilitySeries ? availability : [],
       windowDays: 90,
-      asOf: now,
+      asOf: demandAsOf,
     });
-    const source = classifyReconstructSource({
-      hasAvailabilitySeries,
-      inStockDays: reconstructed.inStockDays,
-    });
+    const source = hasAvailabilitySeries
+      ? classifyReconstructSource({
+          hasAvailabilitySeries,
+          inStockDays: reconstructed.inStockDays,
+        })
+      : 'calendar_recent';
     const unconstrainedRecentDaily = reconstructed.avgDaily;
-    const inStockDayRatio = reconstructed.windowDays > 0
-      ? reconstructed.inStockDays / reconstructed.windowDays
-      : 0;
-    const championRefDaily = championRefLevel(monthForecasts.map((row) => row.daily));
+    const championRefDaily = championRefLevel(
+      horizonMonths(startMonth, FORECAST_HORIZON_MONTHS).map((period) => forecastMap.get(period) ?? 0),
+    );
 
-    for (const month of monthForecasts) {
-      monthlyValues.push({
+    for (const week of weeks) {
+      const weekForecastDaily = weekWeightedForecastDaily(week, forecastMap);
+      weeklyValues.push({
         skuId: sku.skuId,
         warehouseCode: params.warehouseCode,
-        period: month.period,
+        period: week,
         systemDailyAvg: toNumeric(
-          systemDailyAvgForMonth({
+          systemDailyAvgForWeek({
             unconstrainedRecentDaily,
             share,
-            monthForecastDaily: month.daily,
+            weekForecastDaily,
             championRefDaily,
           }),
         )!,
         unconstrainedRecentDaily: toNumeric(unconstrainedRecentDaily),
-        championForecastDaily: toNumeric(month.daily * share),
-        inStockDayRatio: toNumeric(inStockDayRatio),
+        championForecastDaily: toNumeric(weekForecastDaily * share),
         source,
       });
     }
@@ -293,8 +319,10 @@ export async function generateDemandPlanDraft(params: {
       versionNo,
       versionName: params.versionName?.trim() || versionNo,
       status: 'draft',
+      startWeek,
+      horizonWeeks: DEMAND_PLAN_HORIZON_WEEKS,
       startMonth,
-      horizonMonths: 12,
+      horizonMonths: FORECAST_HORIZON_MONTHS,
       projectGroup: params.projectGroup,
       warehouseCode: params.warehouseCode,
       createdBy: params.createdBy ?? null,
@@ -302,9 +330,9 @@ export async function generateDemandPlanDraft(params: {
     .returning();
   if (!version) throw new Error('Failed to insert demand plan version');
 
-  if (monthlyValues.length) {
-    await db.insert(demandPlanMonthly).values(
-      monthlyValues.map((row) => ({ ...row, versionId: version.id })),
+  if (weeklyValues.length) {
+    await db.insert(demandPlanWeekly).values(
+      weeklyValues.map((row) => ({ ...row, versionId: version.id })),
     );
   }
 

@@ -1,11 +1,14 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
+  assertAdoptWeeklyComplete,
   assertManualAdjust,
   canAdoptWeeklyCounts,
   championCoversHorizon,
+  isAdoptWeeklyComplete,
   nextDemandPlanVersionNo,
   shouldArchivePrevious,
+  shouldResetAdoptionOnArchive,
   shouldWriteAdoptionOnPublish,
 } from './demand-plan-service.js';
 
@@ -64,6 +67,66 @@ describe('shouldWriteAdoptionOnPublish', () => {
     assert.equal(shouldWriteAdoptionOnPublish(undefined), false);
     assert.equal(shouldWriteAdoptionOnPublish(false), false);
     assert.equal(shouldWriteAdoptionOnPublish(true), true);
+  });
+});
+
+describe('shouldResetAdoptionOnArchive', () => {
+  it('is true only when adoption points at the archived version', () => {
+    assert.equal(
+      shouldResetAdoptionOnArchive({ archivedVersionId: 'v1', adoptionVersionId: 'v1' }),
+      true,
+    );
+    assert.equal(
+      shouldResetAdoptionOnArchive({ archivedVersionId: 'v1', adoptionVersionId: 'v2' }),
+      false,
+    );
+    assert.equal(
+      shouldResetAdoptionOnArchive({ archivedVersionId: 'v1', adoptionVersionId: null }),
+      false,
+    );
+  });
+});
+
+describe('isAdoptWeeklyComplete', () => {
+  const complete = {
+    horizonWeeks: 26 as const,
+    startWeek: '2026-W03',
+    skuWeekCounts: [26],
+  };
+
+  it('allows draft only when allowDraft is true (publish adopt precheck)', () => {
+    assert.equal(
+      isAdoptWeeklyComplete({ status: 'draft', ...complete, allowDraft: true }),
+      true,
+    );
+    assert.equal(isAdoptWeeklyComplete({ status: 'draft', ...complete }), false);
+    assert.equal(isAdoptWeeklyComplete({ status: 'pilot_published', ...complete }), true);
+  });
+
+  it('rejects incomplete weeks even for draft precheck', () => {
+    assert.equal(
+      isAdoptWeeklyComplete({
+        status: 'draft',
+        allowDraft: true,
+        horizonWeeks: 26,
+        startWeek: '2026-W03',
+        skuWeekCounts: [26, 13],
+      }),
+      false,
+    );
+    assert.throws(
+      () =>
+        assertAdoptWeeklyComplete({
+          status: 'draft',
+          allowDraft: true,
+          horizonWeeks: 26,
+          startWeek: null,
+          skuWeekCounts: [26],
+        }),
+      (err: unknown) =>
+        (err as { status?: number; message?: string }).status === 400 &&
+        (err as Error).message === '该版本周行不完整，不能采用',
+    );
   });
 });
 

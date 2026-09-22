@@ -134,6 +134,35 @@ export function shouldWriteAdoptionOnPublish(adopt?: boolean): boolean {
   return adopt === true;
 }
 
+export function shouldResetAdoptionOnArchive(input: {
+  archivedVersionId: string;
+  adoptionVersionId: string | null | undefined;
+}): boolean {
+  return Boolean(input.adoptionVersionId) && input.adoptionVersionId === input.archivedVersionId;
+}
+
+export type AdoptWeeklyCompletenessInput = {
+  status: DemandPlanVersionStatus;
+  horizonWeeks: number | null;
+  startWeek: string | null | undefined;
+  skuWeekCounts: number[];
+  allowDraft?: boolean;
+};
+
+export function isAdoptWeeklyComplete(input: AdoptWeeklyCompletenessInput): boolean {
+  const statusOk =
+    input.status === 'pilot_published' || (input.allowDraft === true && input.status === 'draft');
+  if (!statusOk) return false;
+  if (input.horizonWeeks !== ADOPT_WEEK_COUNT || !input.startWeek) return false;
+  return canAdoptWeeklyCounts(input.skuWeekCounts);
+}
+
+export function assertAdoptWeeklyComplete(input: AdoptWeeklyCompletenessInput): void {
+  if (!isAdoptWeeklyComplete(input)) {
+    httpError(ADOPT_INCOMPLETE_MESSAGE, 400);
+  }
+}
+
 function weeklyCountsBySku(rows: Array<{ skuId: string }>): number[] {
   const counts = new Map<string, number>();
   for (const row of rows) {
@@ -149,20 +178,43 @@ export async function canAdoptWeeklyVersion(versionId: string): Promise<DemandPl
     .where(eq(demandPlanVersions.id, versionId))
     .limit(1);
   if (!version) httpError('需求计划版本不存在', 404);
-  if (version.status !== 'pilot_published') {
-    httpError(ADOPT_INCOMPLETE_MESSAGE, 400);
-  }
-  if (version.horizonWeeks !== ADOPT_WEEK_COUNT || !version.startWeek) {
-    httpError(ADOPT_INCOMPLETE_MESSAGE, 400);
-  }
+  assertAdoptWeeklyComplete({
+    status: version.status,
+    horizonWeeks: version.horizonWeeks,
+    startWeek: version.startWeek,
+    skuWeekCounts: await loadSkuWeekCounts(versionId),
+  });
+  return version;
+}
+
+async function loadSkuWeekCounts(versionId: string): Promise<number[]> {
   const weekRows = await db
     .select({ skuId: demandPlanWeekly.skuId })
     .from(demandPlanWeekly)
     .where(eq(demandPlanWeekly.versionId, versionId));
-  if (!canAdoptWeeklyCounts(weeklyCountsBySku(weekRows))) {
-    httpError(ADOPT_INCOMPLETE_MESSAGE, 400);
+  return weeklyCountsBySku(weekRows);
+}
+
+async function resetAdoptionIfPointingAt(versionId: string, adoptedBy?: string): Promise<void> {
+  const [adoption] = await db
+    .select()
+    .from(planningDemandAdoptions)
+    .where(eq(planningDemandAdoptions.demandPlanVersionId, versionId))
+    .limit(1);
+  if (
+    !adoption ||
+    !shouldResetAdoptionOnArchive({
+      archivedVersionId: versionId,
+      adoptionVersionId: adoption.demandPlanVersionId,
+    })
+  ) {
+    return;
   }
-  return version;
+  await adoptForecast({
+    projectGroup: adoption.projectGroup,
+    warehouseCode: adoption.warehouseCode,
+    adoptedBy,
+  });
 }
 
 async function upsertAdoption(params: {
@@ -433,6 +485,16 @@ export async function publishDemandPlan(params: {
   if (!version) httpError('需求计划版本不存在', 404);
   if (version.status !== 'draft') httpError('仅草稿版本可发布', 400);
 
+  if (shouldWriteAdoptionOnPublish(params.adopt)) {
+    assertAdoptWeeklyComplete({
+      status: version.status,
+      horizonWeeks: version.horizonWeeks,
+      startWeek: version.startWeek,
+      skuWeekCounts: await loadSkuWeekCounts(version.id),
+      allowDraft: true,
+    });
+  }
+
   const previous = await db
     .select()
     .from(demandPlanVersions)
@@ -447,10 +509,7 @@ export async function publishDemandPlan(params: {
   for (const row of previous) {
     if (row.id === version.id) continue;
     if (shouldArchivePrevious({ existingStatus: row.status })) {
-      await db
-        .update(demandPlanVersions)
-        .set({ status: 'archived', updatedAt: now })
-        .where(eq(demandPlanVersions.id, row.id));
+      await archiveDemandPlan(row.id, params.publishedBy);
     }
   }
 
@@ -580,18 +639,7 @@ export async function archiveDemandPlan(versionId: string, archivedBy?: string) 
     .limit(1);
   if (!existing) httpError('需求计划版本不存在', 404);
 
-  const [adoption] = await db
-    .select()
-    .from(planningDemandAdoptions)
-    .where(eq(planningDemandAdoptions.demandPlanVersionId, versionId))
-    .limit(1);
-  if (adoption) {
-    await adoptForecast({
-      projectGroup: adoption.projectGroup,
-      warehouseCode: adoption.warehouseCode,
-      adoptedBy: archivedBy,
-    });
-  }
+  await resetAdoptionIfPointingAt(versionId, archivedBy);
 
   const [row] = await db
     .update(demandPlanVersions)

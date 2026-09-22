@@ -133,8 +133,9 @@ export function DemandPlanPilotPage() {
   const selected = versions.find((row) => row.id === selectedId) ?? detailQuery.data?.version;
   const isDraft = selected?.status === 'draft';
   const weeks = detailQuery.data?.weeks;
-  const grain: 'week' | 'month' = weeks != null ? 'week' : 'month';
-  const periodRows: DemandPlanWeekRow[] = weeks ?? detailQuery.data?.months ?? [];
+  const useWeeks = (weeks?.length ?? 0) > 0;
+  const grain: 'week' | 'month' = useWeeks ? 'week' : 'month';
+  const periodRows: DemandPlanWeekRow[] = useWeeks ? weeks! : (detailQuery.data?.months ?? []);
   const adoption = detailQuery.data?.adoption;
   const adoptedVersionNo =
     adoption?.source === 'demand_plan'
@@ -263,7 +264,11 @@ export function DemandPlanPilotPage() {
                         adoptMonthly.isPending
                       }
                       adoptedVersionId={
-                        adoption?.source === 'demand_plan' ? adoption.demandPlanVersionId : null
+                        adoption?.source === 'demand_plan' &&
+                        version.projectGroup === adoption.projectGroup &&
+                        version.warehouseCode === adoption.warehouseCode
+                          ? adoption.demandPlanVersionId
+                          : null
                       }
                       onSelect={() => selectVersion(version.id)}
                       onPublish={() => publish.mutate({ id: version.id, adopt: false })}

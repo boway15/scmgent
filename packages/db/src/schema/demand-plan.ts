@@ -29,6 +29,8 @@ export const demandPlanVersions = pgTable(
     status: demandPlanVersionStatusEnum('status').notNull().default('draft'),
     startMonth: varchar('start_month', { length: 7 }).notNull(),
     horizonMonths: integer('horizon_months').notNull().default(12),
+    startWeek: varchar('start_week', { length: 8 }),
+    horizonWeeks: integer('horizon_weeks'),
     projectGroup: varchar('project_group', { length: 20 }).notNull(),
     warehouseCode: varchar('warehouse_code', { length: 50 }).notNull(),
     publishedAt: timestamp('published_at', { withTimezone: true }),
@@ -79,6 +81,59 @@ export const demandPlanMonthly = pgTable(
   }),
 );
 
+export const demandPlanWeekly = pgTable(
+  'demand_plan_weekly',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    versionId: uuid('version_id')
+      .notNull()
+      .references(() => demandPlanVersions.id, { onDelete: 'cascade' }),
+    skuId: uuid('sku_id')
+      .notNull()
+      .references(() => skus.id, { onDelete: 'cascade' }),
+    warehouseCode: varchar('warehouse_code', { length: 50 }).notNull(),
+    period: varchar('period', { length: 8 }).notNull(),
+    systemDailyAvg: numeric('system_daily_avg', { precision: 12, scale: 4 }).notNull(),
+    manualDailyAvg: numeric('manual_daily_avg', { precision: 12, scale: 4 }),
+    adjustReason: text('adjust_reason'),
+    unconstrainedRecentDaily: numeric('unconstrained_recent_daily', { precision: 12, scale: 4 }),
+    championForecastDaily: numeric('champion_forecast_daily', { precision: 12, scale: 4 }),
+    source: varchar('source', { length: 30 }).notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    uniqueIdx: uniqueIndex('demand_plan_weekly_unique_idx').on(
+      table.versionId,
+      table.skuId,
+      table.warehouseCode,
+      table.period,
+    ),
+  }),
+);
+
+export const planningDemandAdoptions = pgTable(
+  'planning_demand_adoptions',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    projectGroup: varchar('project_group', { length: 20 }).notNull(),
+    warehouseCode: varchar('warehouse_code', { length: 50 }).notNull(),
+    source: varchar('source', { length: 20 }).notNull(),
+    demandPlanVersionId: uuid('demand_plan_version_id').references(() => demandPlanVersions.id, {
+      onDelete: 'set null',
+    }),
+    adoptedAt: timestamp('adopted_at', { withTimezone: true }).notNull().defaultNow(),
+    adoptedBy: uuid('adopted_by').references(() => users.id),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    uniqueIdx: uniqueIndex('planning_demand_adoptions_group_wh_unique_idx').on(
+      table.projectGroup,
+      table.warehouseCode,
+    ),
+  }),
+);
+
 export const demandPlanPilotSnapshots = pgTable(
   'demand_plan_pilot_snapshots',
   {
@@ -104,6 +159,7 @@ export const demandPlanPilotSnapshots = pgTable(
 
 export const demandPlanVersionsRelations = relations(demandPlanVersions, ({ many }) => ({
   months: many(demandPlanMonthly),
+  weeks: many(demandPlanWeekly),
 }));
 
 export const demandPlanMonthlyRelations = relations(demandPlanMonthly, ({ one }) => ({
@@ -112,4 +168,23 @@ export const demandPlanMonthlyRelations = relations(demandPlanMonthly, ({ one })
     references: [demandPlanVersions.id],
   }),
   sku: one(skus, { fields: [demandPlanMonthly.skuId], references: [skus.id] }),
+}));
+
+export const demandPlanWeeklyRelations = relations(demandPlanWeekly, ({ one }) => ({
+  version: one(demandPlanVersions, {
+    fields: [demandPlanWeekly.versionId],
+    references: [demandPlanVersions.id],
+  }),
+  sku: one(skus, { fields: [demandPlanWeekly.skuId], references: [skus.id] }),
+}));
+
+export const planningDemandAdoptionsRelations = relations(planningDemandAdoptions, ({ one }) => ({
+  version: one(demandPlanVersions, {
+    fields: [planningDemandAdoptions.demandPlanVersionId],
+    references: [demandPlanVersions.id],
+  }),
+  adoptedByUser: one(users, {
+    fields: [planningDemandAdoptions.adoptedBy],
+    references: [users.id],
+  }),
 }));

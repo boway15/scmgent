@@ -1,14 +1,14 @@
 import { and, eq } from 'drizzle-orm';
 import {
   db,
-  demandPlanMonthly,
   demandPlanVersions,
+  demandPlanWeekly,
+  planningDemandAdoptions,
   skus,
 } from '@scm/db';
 import { parseDemandPlanPilotConfig } from './demand-plan-config.js';
 import {
   excludedCrossGroupSpuIds,
-  isSkuWarehouseInPilot,
   type SkuPilotInput,
 } from './demand-plan-eligibility.js';
 import { warehouseShareWeight } from './demand-plan-reconstruct.js';
@@ -32,10 +32,19 @@ export type LoadPublishedDemandRow = {
   manualDailyAvg: number | string | null;
 };
 
+export type LoadPlanningDemandAdoption = {
+  source: 'forecast' | 'demand_plan';
+  demandPlanVersionId: string | null;
+};
+
 export type LoadPlanningDemandDeps = {
   env?: NodeJS.ProcessEnv;
   loadSku?: (skuId: string) => Promise<LoadPlanningDemandSku | undefined>;
   loadSiblingSkus?: (spuId: string) => Promise<SkuPilotInput[]>;
+  loadAdoption?: (input: {
+    projectGroup: string;
+    warehouseCode: string;
+  }) => Promise<LoadPlanningDemandAdoption | undefined>;
   loadPublishedDemandRows?: (input: {
     skuId: string;
     warehouseCode: string;
@@ -101,6 +110,31 @@ async function defaultLoadSiblingSkus(spuId: string): Promise<SkuPilotInput[]> {
     .where(and(eq(skus.spuId, spuId), eq(skus.isActive, true)));
 }
 
+async function defaultLoadAdoption(input: {
+  projectGroup: string;
+  warehouseCode: string;
+}): Promise<LoadPlanningDemandAdoption | undefined> {
+  const rows = await db
+    .select({
+      source: planningDemandAdoptions.source,
+      demandPlanVersionId: planningDemandAdoptions.demandPlanVersionId,
+    })
+    .from(planningDemandAdoptions)
+    .where(
+      and(
+        eq(planningDemandAdoptions.projectGroup, input.projectGroup),
+        eq(planningDemandAdoptions.warehouseCode, input.warehouseCode),
+      ),
+    )
+    .limit(1);
+  const row = rows[0];
+  if (!row) return undefined;
+  return {
+    source: row.source === 'demand_plan' ? 'demand_plan' : 'forecast',
+    demandPlanVersionId: row.demandPlanVersionId,
+  };
+}
+
 async function defaultLoadPublishedDemandRows(input: {
   skuId: string;
   warehouseCode: string;
@@ -108,19 +142,26 @@ async function defaultLoadPublishedDemandRows(input: {
 }): Promise<LoadPublishedDemandRow[]> {
   return db
     .select({
-      period: demandPlanMonthly.period,
-      systemDailyAvg: demandPlanMonthly.systemDailyAvg,
-      manualDailyAvg: demandPlanMonthly.manualDailyAvg,
+      period: demandPlanWeekly.period,
+      systemDailyAvg: demandPlanWeekly.systemDailyAvg,
+      manualDailyAvg: demandPlanWeekly.manualDailyAvg,
     })
-    .from(demandPlanMonthly)
-    .innerJoin(demandPlanVersions, eq(demandPlanMonthly.versionId, demandPlanVersions.id))
+    .from(demandPlanWeekly)
+    .innerJoin(demandPlanVersions, eq(demandPlanWeekly.versionId, demandPlanVersions.id))
+    .innerJoin(
+      planningDemandAdoptions,
+      and(
+        eq(planningDemandAdoptions.demandPlanVersionId, demandPlanWeekly.versionId),
+        eq(planningDemandAdoptions.projectGroup, input.projectGroup),
+        eq(planningDemandAdoptions.warehouseCode, input.warehouseCode),
+        eq(planningDemandAdoptions.source, 'demand_plan'),
+      ),
+    )
     .where(
       and(
         eq(demandPlanVersions.status, 'pilot_published'),
-        eq(demandPlanVersions.projectGroup, input.projectGroup),
-        eq(demandPlanVersions.warehouseCode, input.warehouseCode),
-        eq(demandPlanMonthly.skuId, input.skuId),
-        eq(demandPlanMonthly.warehouseCode, input.warehouseCode),
+        eq(demandPlanWeekly.skuId, input.skuId),
+        eq(demandPlanWeekly.warehouseCode, input.warehouseCode),
       ),
     );
 }
@@ -136,13 +177,15 @@ export async function loadPlanningDemandForSkuWarehouse(
   const config = parseDemandPlanPilotConfig(deps.env ?? process.env);
   const loadSku = deps.loadSku ?? defaultLoadSku;
   const loadSiblingSkus = deps.loadSiblingSkus ?? defaultLoadSiblingSkus;
+  const loadAdoption = deps.loadAdoption ?? defaultLoadAdoption;
   const loadPublishedDemandRows =
     deps.loadPublishedDemandRows ?? defaultLoadPublishedDemandRows;
 
   const skuRow = await loadSku(input.skuId);
   if (!skuRow) {
     return resolvePlanningDemandFromInputs({
-      inPilot: false,
+      pilotEnabled: false,
+      adoptionSource: 'forecast',
       excludedSpu: false,
       hasShare: false,
       demandRows: [],
@@ -166,7 +209,8 @@ export async function loadPlanningDemandForSkuWarehouse(
 
   if (!config.enabled) {
     return resolvePlanningDemandFromInputs({
-      inPilot: false,
+      pilotEnabled: false,
+      adoptionSource: 'forecast',
       excludedSpu: false,
       hasShare,
       demandRows: [],
@@ -179,19 +223,21 @@ export async function loadPlanningDemandForSkuWarehouse(
     sku.spuId != null ? await loadSiblingSkus(sku.spuId) : [sku];
   const excludedSpuIds = excludedCrossGroupSpuIds(siblingSkus);
   const excludedSpu = Boolean(sku.spuId && excludedSpuIds.has(sku.spuId));
-  const inPilot = isSkuWarehouseInPilot({
-    sku,
-    warehouseCode: input.warehouseCode,
-    config,
-    excludedSpuIds,
-  });
+
+  const adoption = sku.projectGroup
+    ? await loadAdoption({
+        projectGroup: sku.projectGroup,
+        warehouseCode: input.warehouseCode,
+      })
+    : undefined;
+  const adoptionSource = adoption?.source === 'demand_plan' ? 'demand_plan' : 'forecast';
 
   let demandRows: Array<{
     period: string;
     systemDailyAvg: number;
     manualDailyAvg: number | null;
   }> = [];
-  if (inPilot && sku.projectGroup) {
+  if (adoptionSource === 'demand_plan' && sku.projectGroup) {
     demandRows = parseDemandPlanMonthlyNumbers(
       await loadPublishedDemandRows({
         skuId: input.skuId,
@@ -202,7 +248,8 @@ export async function loadPlanningDemandForSkuWarehouse(
   }
 
   return resolvePlanningDemandFromInputs({
-    inPilot,
+    pilotEnabled: true,
+    adoptionSource,
     excludedSpu,
     hasShare,
     demandRows,

@@ -29,7 +29,8 @@ function baseInput(
   overrides: Partial<Parameters<typeof resolvePlanningDemandFromInputs>[0]> = {},
 ) {
   return {
-    inPilot: false,
+    pilotEnabled: false,
+    adoptionSource: 'forecast' as const,
     excludedSpu: false,
     hasShare: true,
     demandRows,
@@ -56,12 +57,23 @@ describe('monthMapFromRows', () => {
     assert.equal(map.get('2026-09'), 8);
     assert.equal(map.get('2026-10'), 6);
   });
+
+  it('maps weekly period keys into demandMap', () => {
+    const map = monthMapFromRows([
+      { period: '2026-W03', systemDailyAvg: 4, manualDailyAvg: null },
+    ]);
+    assert.equal(map.get('2026-W03'), 4);
+  });
 });
 
 describe('resolvePlanningDemandFromInputs', () => {
   it('uses station forecast when excluded even if in pilot', () => {
     const result = resolvePlanningDemandFromInputs(
-      baseInput({ inPilot: true, excludedSpu: true }),
+      baseInput({
+        pilotEnabled: true,
+        adoptionSource: 'demand_plan',
+        excludedSpu: true,
+      }),
     );
     assert.equal(result.source, 'forecast');
     assert.equal(result.demandMap, stationForecastMap);
@@ -89,7 +101,11 @@ describe('resolvePlanningDemandFromInputs', () => {
 
   it('falls back to station forecast with no_share when in pilot without share', () => {
     const result = resolvePlanningDemandFromInputs(
-      baseInput({ inPilot: true, hasShare: false }),
+      baseInput({
+        pilotEnabled: true,
+        adoptionSource: 'demand_plan',
+        hasShare: false,
+      }),
     );
     assert.equal(result.source, 'forecast');
     assert.equal(result.demandMap, stationForecastMap);
@@ -98,7 +114,12 @@ describe('resolvePlanningDemandFromInputs', () => {
 
   it('falls back to station forecast when in pilot with share but no demand rows', () => {
     const result = resolvePlanningDemandFromInputs(
-      baseInput({ inPilot: true, hasShare: true, demandRows: [] }),
+      baseInput({
+        pilotEnabled: true,
+        adoptionSource: 'demand_plan',
+        hasShare: true,
+        demandRows: [],
+      }),
     );
     assert.equal(result.source, 'forecast');
     assert.equal(result.demandMap, stationForecastMap);
@@ -107,7 +128,11 @@ describe('resolvePlanningDemandFromInputs', () => {
 
   it('uses demand rows and champion rows on pilot hit', () => {
     const result = resolvePlanningDemandFromInputs(
-      baseInput({ inPilot: true, hasShare: true }),
+      baseInput({
+        pilotEnabled: true,
+        adoptionSource: 'demand_plan',
+        hasShare: true,
+      }),
     );
     assert.equal(result.source, 'demand_plan');
     assert.deepEqual(result.flags, ['pilot_hit']);
@@ -122,10 +147,44 @@ describe('resolvePlanningDemandFromInputs', () => {
     ]);
   });
 
+  it('puts weekly period keys into demandMap on adoption hit', () => {
+    const result = resolvePlanningDemandFromInputs(
+      baseInput({
+        pilotEnabled: true,
+        adoptionSource: 'demand_plan',
+        demandRows: [
+          { period: '2026-W03', systemDailyAvg: 4, manualDailyAvg: null },
+        ],
+      }),
+    );
+    assert.equal(result.source, 'demand_plan');
+    assert.equal(result.demandMap.get('2026-W03'), 4);
+  });
+
+  it('ignores weekly rows when pilot disabled even if adopted', () => {
+    const result = resolvePlanningDemandFromInputs(
+      baseInput({ pilotEnabled: false, adoptionSource: 'demand_plan', demandRows }),
+    );
+    assert.equal(result.source, 'forecast');
+  });
+
+  it('uses forecast when adopted weekly but demandRows empty', () => {
+    const result = resolvePlanningDemandFromInputs(
+      baseInput({
+        pilotEnabled: true,
+        adoptionSource: 'demand_plan',
+        demandRows: [],
+      }),
+    );
+    assert.equal(result.source, 'forecast');
+    assert.deepEqual(result.flags, ['demand_missing_fallback_forecast']);
+  });
+
   it('uses mean of last three positive demand values as fallbackDaily on pilot hit', () => {
     const result = resolvePlanningDemandFromInputs(
       baseInput({
-        inPilot: true,
+        pilotEnabled: true,
+        adoptionSource: 'demand_plan',
         hasShare: true,
         demandRows: [
           { period: '2026-06', systemDailyAvg: 10, manualDailyAvg: null },

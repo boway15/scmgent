@@ -25,10 +25,11 @@ type ChampionRow = {
 };
 
 type ResolvePlanningDemandInput = {
-  inPilot: boolean;
+  pilotEnabled: boolean;
+  adoptionSource: 'forecast' | 'demand_plan';
   excludedSpu: boolean;
   hasShare: boolean;
-  demandRows: DemandRow[];
+  demandRows: DemandRow[]; // period 可为 YYYY-Www
   championWarehouseRows: ChampionRow[];
   stationForecastMap: Map<string, number>;
 };
@@ -83,7 +84,10 @@ export function resolvePlanningDemandFromInputs(
   if (input.excludedSpu) {
     return forecastFallback(input, ['cross_spu_excluded']);
   }
-  if (!input.inPilot) {
+  if (!input.pilotEnabled) {
+    return forecastFallback(input, []);
+  }
+  if (input.adoptionSource !== 'demand_plan') {
     return forecastFallback(input, []);
   }
   if (!input.hasShare) {

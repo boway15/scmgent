@@ -4,6 +4,7 @@ import {
   api,
   type DemandPlanMonthRow,
   type DemandPlanVersionListItem,
+  type DemandPlanWeekRow,
 } from '@/lib/api';
 import { PageHeader } from '@/components/PageHeader';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -81,7 +82,19 @@ export function DemandPlanPilotPage() {
   });
 
   const publish = useMutation({
-    mutationFn: (id: string) => api.publishDemandPlan(id),
+    mutationFn: ({ id, adopt }: { id: string; adopt: boolean }) =>
+      api.publishDemandPlan(id, { adopt }),
+    onSuccess: invalidate,
+  });
+
+  const adoptWeekly = useMutation({
+    mutationFn: (id: string) => api.adoptDemandPlan(id),
+    onSuccess: invalidate,
+  });
+
+  const adoptMonthly = useMutation({
+    mutationFn: (input: { projectGroup: string; warehouseCode: string }) =>
+      api.adoptForecast(input),
     onSuccess: invalidate,
   });
 
@@ -90,16 +103,26 @@ export function DemandPlanPilotPage() {
     onSuccess: invalidate,
   });
 
-  const saveMonth = useMutation({
-    mutationFn: (input: { monthId: string; manualDailyAvg: number | null; adjustReason: string }) =>
-      api.updateDemandPlanMonth(selectedId!, input.monthId, {
-        manualDailyAvg: input.manualDailyAvg,
-        adjustReason: input.adjustReason,
-      }),
+  const savePeriod = useMutation({
+    mutationFn: (input: {
+      periodId: string;
+      grain: 'week' | 'month';
+      manualDailyAvg: number | null;
+      adjustReason: string;
+    }) =>
+      input.grain === 'week'
+        ? api.updateDemandPlanWeek(selectedId!, input.periodId, {
+            manualDailyAvg: input.manualDailyAvg,
+            adjustReason: input.adjustReason,
+          })
+        : api.updateDemandPlanMonth(selectedId!, input.periodId, {
+            manualDailyAvg: input.manualDailyAvg,
+            adjustReason: input.adjustReason,
+          }),
     onSuccess: async (_data, variables) => {
       setEdits((current) => {
         const next = { ...current };
-        delete next[variables.monthId];
+        delete next[variables.periodId];
         return next;
       });
       await queryClient.invalidateQueries({ queryKey: ['demand-plan', selectedId] });
@@ -109,12 +132,20 @@ export function DemandPlanPilotPage() {
   const versions = versionsQuery.data ?? [];
   const selected = versions.find((row) => row.id === selectedId) ?? detailQuery.data?.version;
   const isDraft = selected?.status === 'draft';
-  const months = detailQuery.data?.months ?? [];
-  const filteredMonths = useMemo(() => {
+  const weeks = detailQuery.data?.weeks;
+  const grain: 'week' | 'month' = weeks != null ? 'week' : 'month';
+  const periodRows: DemandPlanWeekRow[] = weeks ?? detailQuery.data?.months ?? [];
+  const adoption = detailQuery.data?.adoption;
+  const adoptedVersionNo =
+    adoption?.source === 'demand_plan'
+      ? versions.find((row) => row.id === adoption.demandPlanVersionId)?.versionNo ??
+        (adoption.demandPlanVersionId === selected?.id ? selected.versionNo : null)
+      : null;
+  const filteredRows = useMemo(() => {
     const needle = skuFilter.trim().toUpperCase();
-    if (!needle) return months;
-    return months.filter((row) => (row.skuCode ?? '').toUpperCase().includes(needle));
-  }, [months, skuFilter]);
+    if (!needle) return periodRows;
+    return periodRows.filter((row) => (row.skuCode ?? '').toUpperCase().includes(needle));
+  }, [periodRows, skuFilter]);
 
   const selectVersion = (id: string) => {
     setEdits({});
@@ -127,7 +158,7 @@ export function DemandPlanPilotPage() {
     const reason = (draft?.reason ?? row.adjustReason ?? '').trim();
     const manualDailyAvg = raw === '' ? null : Number(raw);
     if (manualDailyAvg != null && !Number.isFinite(manualDailyAvg)) return;
-    saveMonth.mutate({ monthId: row.id, manualDailyAvg, adjustReason: reason });
+    savePeriod.mutate({ periodId: row.id, grain, manualDailyAvg, adjustReason: reason });
   };
 
   return (
@@ -192,6 +223,13 @@ export function DemandPlanPilotPage() {
       <Card className="shadow-card">
         <CardHeader>
           <CardTitle>版本列表</CardTitle>
+          {adoption ? (
+            <p className="text-sm font-normal text-text-sub">
+              {adoption.source === 'demand_plan'
+                ? `补货：周计划 ${adoptedVersionNo ?? ''}`.trim()
+                : '补货：月预测'}
+            </p>
+          ) : null}
         </CardHeader>
         <CardContent>
           {versionsQuery.isLoading ? (
@@ -218,9 +256,25 @@ export function DemandPlanPilotPage() {
                       key={version.id}
                       version={version}
                       selected={version.id === selectedId}
-                      busy={publish.isPending || archive.isPending}
+                      busy={
+                        publish.isPending ||
+                        archive.isPending ||
+                        adoptWeekly.isPending ||
+                        adoptMonthly.isPending
+                      }
+                      adoptedVersionId={
+                        adoption?.source === 'demand_plan' ? adoption.demandPlanVersionId : null
+                      }
                       onSelect={() => selectVersion(version.id)}
-                      onPublish={() => publish.mutate(version.id)}
+                      onPublish={() => publish.mutate({ id: version.id, adopt: false })}
+                      onPublishAndAdopt={() => publish.mutate({ id: version.id, adopt: true })}
+                      onAdoptWeekly={() => adoptWeekly.mutate(version.id)}
+                      onAdoptMonthly={() =>
+                        adoptMonthly.mutate({
+                          projectGroup: version.projectGroup,
+                          warehouseCode: version.warehouseCode,
+                        })
+                      }
                       onArchive={() => archive.mutate(version.id)}
                     />
                   ))}
@@ -228,9 +282,11 @@ export function DemandPlanPilotPage() {
               </table>
             </div>
           )}
-          {(publish.isError || archive.isError) && (
+          {(publish.isError || archive.isError || adoptWeekly.isError || adoptMonthly.isError) && (
             <p className="mt-2 text-sm text-destructive">
-              {mutationErrorMessage(publish.error ?? archive.error)}
+              {mutationErrorMessage(
+                publish.error ?? archive.error ?? adoptWeekly.error ?? adoptMonthly.error,
+              )}
             </p>
           )}
         </CardContent>
@@ -240,7 +296,7 @@ export function DemandPlanPilotPage() {
         <Card className="shadow-card">
           <CardHeader>
             <CardTitle>
-              月度明细
+              {grain === 'week' ? '周度明细' : '月度明细'}
               {selected ? (
                 <span className="ml-2 text-sm font-normal text-text-sub">
                   {selected.versionNo} · {selected.projectGroup} · {selected.warehouseCode}
@@ -262,15 +318,15 @@ export function DemandPlanPilotPage() {
               <p className="text-sm text-text-sub">加载明细中…</p>
             ) : detailQuery.isError ? (
               <p className="text-sm text-destructive">{mutationErrorMessage(detailQuery.error)}</p>
-            ) : !filteredMonths.length ? (
-              <p className="text-sm text-text-sub">暂无月度行。</p>
+            ) : !filteredRows.length ? (
+              <p className="text-sm text-text-sub">{grain === 'week' ? '暂无周度行。' : '暂无月度行。'}</p>
             ) : (
               <div className="overflow-auto">
                 <table className="min-w-full text-sm">
                   <thead>
                     <tr className="border-b border-border text-left text-text-sub">
                       <th className="p-2 font-normal">SKU</th>
-                      <th className="p-2 font-normal">月份</th>
+                      <th className="p-2 font-normal">{grain === 'week' ? '周' : '月'}</th>
                       <th className="p-2 font-normal">系统日均</th>
                       <th className="p-2 font-normal">人工日均</th>
                       <th className="p-2 font-normal">Champion</th>
@@ -280,7 +336,7 @@ export function DemandPlanPilotPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {filteredMonths.map((row) => {
+                    {filteredRows.map((row) => {
                       const draft = edits[row.id];
                       return (
                         <tr key={row.id} className="border-b border-border/60">
@@ -334,7 +390,7 @@ export function DemandPlanPilotPage() {
                               <Button
                                 variant="outline"
                                 size="sm"
-                                disabled={saveMonth.isPending}
+                                disabled={savePeriod.isPending}
                                 onClick={() => saveRow(row)}
                               >
                                 保存
@@ -348,8 +404,8 @@ export function DemandPlanPilotPage() {
                 </table>
               </div>
             )}
-            {saveMonth.isError && (
-              <p className="text-sm text-destructive">{mutationErrorMessage(saveMonth.error)}</p>
+            {savePeriod.isError && (
+              <p className="text-sm text-destructive">{mutationErrorMessage(savePeriod.error)}</p>
             )}
           </CardContent>
         </Card>
@@ -362,17 +418,27 @@ function VersionRow({
   version,
   selected,
   busy,
+  adoptedVersionId,
   onSelect,
   onPublish,
+  onPublishAndAdopt,
+  onAdoptWeekly,
+  onAdoptMonthly,
   onArchive,
 }: {
   version: DemandPlanVersionListItem;
   selected: boolean;
   busy: boolean;
+  adoptedVersionId: string | null;
   onSelect: () => void;
   onPublish: () => void;
+  onPublishAndAdopt: () => void;
+  onAdoptWeekly: () => void;
+  onAdoptMonthly: () => void;
   onArchive: () => void;
 }) {
+  const isDraft = version.status === 'draft';
+  const isPublished = version.status === 'pilot_published';
   return (
     <tr className={`border-b border-border/60 ${selected ? 'bg-highlight-warm/60' : ''}`}>
       <td className="p-2">
@@ -391,9 +457,24 @@ function VersionRow({
           <Button variant="ghost" size="sm" onClick={onSelect}>
             明细
           </Button>
-          {version.status === 'draft' ? (
+          {isDraft ? (
             <Button variant="outline" size="sm" disabled={busy} onClick={onPublish}>
               发布
+            </Button>
+          ) : null}
+          {isDraft ? (
+            <Button variant="outline" size="sm" disabled={busy} onClick={onPublishAndAdopt}>
+              发布并采用
+            </Button>
+          ) : null}
+          {isPublished && adoptedVersionId !== version.id ? (
+            <Button variant="outline" size="sm" disabled={busy} onClick={onAdoptWeekly}>
+              采用
+            </Button>
+          ) : null}
+          {isPublished ? (
+            <Button variant="outline" size="sm" disabled={busy} onClick={onAdoptMonthly}>
+              采用月预测
             </Button>
           ) : null}
           {version.status !== 'archived' ? (

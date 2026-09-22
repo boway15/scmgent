@@ -143,7 +143,7 @@ export function SkuInventoryPlanningPage() {
             需求口径：{item.demandSource === 'forecast' ? '已发布销售预测' : '历史销量回退'}
             {item.planningDemandSource ? (
               <span className="ml-2">
-                时间轴需求：{item.planningDemandSource === 'demand_plan' ? '需求计划' : '销售预测'}
+                需求决策：{item.planningDemandSource === 'demand_plan' ? '已采用周需求计划' : '已发布月预测'}
               </span>
             ) : null}
             {showStockoutAdjustedNote && (

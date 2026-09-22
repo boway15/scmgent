@@ -38,6 +38,7 @@ import {
 } from './forecast-accuracy-tier.js';
 import { resolveActualMonthlyDailyAvg } from './sales-history-monthly.js';
 import { horizonBandFromIndex, horizonMonthIndex } from './forecast-horizon-band.js';
+import { FORECAST_HORIZON_MONTHS } from './forecast-limits.js';
 import { getKpiTarget, isKpiMet } from './forecast-kpi-targets.js';
 import { segmentLabel, type ProfileSegment } from './forecast-profile-class.js';
 import { isAllCatV41KpiComparableTier } from './forecast-allcat-v41.js';
@@ -690,7 +691,7 @@ function assertWalkForwardRowCounts(input: {
  */
 export async function runWalkForwardAccuracyBacktest(input: WalkForwardBacktestInput) {
   const asOf = parseWalkForwardAsOf(input.asOf);
-  const monthCount = Math.min(24, Math.max(1, Math.floor(input.monthCount ?? 6)));
+  const monthCount = FORECAST_HORIZON_MONTHS;
   const station = input.station?.trim().toUpperCase();
   const platform = input.platform?.trim() || undefined;
   const replaceVersion = input.replaceVersion ?? false;

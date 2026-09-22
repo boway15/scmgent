@@ -50,6 +50,7 @@ import {
   type SalesLifecycle,
 } from './forecast-baseline.js';
 import { horizonBandFromIndex } from './forecast-horizon-band.js';
+import { FORECAST_HORIZON_MONTHS } from './forecast-limits.js';
 import { resolveBaselineGenerationAsOf } from './forecast-start-month.js';
 import {
   buildCategoryPoolKey,
@@ -976,7 +977,7 @@ async function generateBaselineForStationPlatform(input: {
   const calibration = loadForecastCalibrationConfig();
   const profileConfig = calibration.profile;
   const aCoreConfig = calibration.aCore;
-  const horizon = buildMonthlyForecastHorizon(today, input.monthCount ?? 12);
+  const horizon = buildMonthlyForecastHorizon(today, FORECAST_HORIZON_MONTHS);
   const warehouseStationByCode = await loadWarehouseStationMap();
   {
     const previousStartMonth = version.startMonth ?? null;

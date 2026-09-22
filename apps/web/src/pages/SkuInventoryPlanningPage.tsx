@@ -1,11 +1,21 @@
 import { useQuery } from '@tanstack/react-query';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
-import { api, type SkuPlanningView } from '@/lib/api';
-
-type PlanningView = SkuPlanningView & { stockoutAdjusted?: boolean };
 import { PageHeader } from '@/components/PageHeader';
 import { InventoryHealthBadge } from '@/components/InventoryHealthBadge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { api, type SkuPlanningView } from '@/lib/api';
+
+type PlanningView = SkuPlanningView & {
+  stockoutAdjusted?: boolean;
+  allocation?: {
+    method: 'sales_share' | 'native_warehouse' | 'unallocated';
+    snapshotDate: string | null;
+    overseasTotal: number;
+    allocatedQty: number;
+    undatedTransitQty: number;
+    shareSumWarning: boolean;
+  };
+};
 
 const POSITION_ROWS = [
   ['qtyAvailable', '可售库存', '+'],
@@ -45,6 +55,20 @@ function MetricCard({
   );
 }
 
+function leadHorizonExpectedEnding(item: PlanningView): string {
+  const points = item.timeline?.points;
+  if (!points?.length) return '暂无';
+  const match = points.find((p) => p.horizonDays === item.leadTime.totalLeadDays);
+  const point = match ?? points.reduce((best, p) => (p.horizonDays > best.horizonDays ? p : best));
+  return String(Math.round(point.expectedEnding));
+}
+
+function timelinePoWarning(timeline: NonNullable<SkuPlanningView['timeline']>): string | null {
+  if (timeline.uncoverableByNewPo) return '新计划已来不及覆盖确定缺货。';
+  if (timeline.tooLateForNewPo) return '已过最晚下单日，新计划可能赶不上确定缺货。';
+  return null;
+}
+
 export function SkuInventoryPlanningPage() {
   const { skuId = '' } = useParams<{ skuId: string }>();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -77,6 +101,7 @@ export function SkuInventoryPlanningPage() {
   const coverageLabel = Number.isFinite(item.coverageDays)
     ? `${item.coverageDays} 天`
     : '无消耗';
+  const poWarning = item.timeline ? timelinePoWarning(item.timeline) : null;
 
   return (
     <div className="space-y-6">
@@ -111,21 +136,137 @@ export function SkuInventoryPlanningPage() {
             ))}
           </select>
           <InventoryHealthBadge health={item.healthStatus} />
+          {item.coverageHealthStatus && item.coverageHealthStatus !== item.healthStatus ? (
+            <span className="text-xs text-text-hint">
+              覆盖天数灯（影子）：{item.coverageHealthStatus}
+            </span>
+          ) : null}
+          {item.needsManualConfirm ? (
+            <span className="rounded-md border border-amber-200 bg-amber-50 px-2 py-1 text-xs text-amber-900">
+              需人工确认
+              {item.demandGateFlags?.length ? `（${item.demandGateFlags.join(', ')}）` : ''}
+            </span>
+          ) : null}
           <span className="text-sm text-text-sub">
             需求口径：{item.demandSource === 'forecast' ? '已发布销售预测' : '历史销量回退'}
+            {item.planningDemandSource ? (
+              <span className="ml-2">
+                时间轴需求：
+                {item.planningDemandSource === 'demand_plan' ? '需求计划' : '销售预测'}
+              </span>
+            ) : null}
             {showStockoutAdjustedNote && (
               <span className="ml-2 text-text-hint">· 日需求已按有库存天数修正</span>
             )}
           </span>
+          {item.championStockoutDateConfirmed ? (
+            <span className="text-sm text-text-sub">
+              若用预测缺货日：{item.championStockoutDateConfirmed}
+            </span>
+          ) : null}
         </CardContent>
       </Card>
 
+      {item.allocation?.method === 'unallocated' ? (
+        <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+          飞书无销售占比，库存记在 OVERSEAS，本仓确定线与 7/15/30 不可用。
+        </p>
+      ) : null}
+      {(item.unallocatedNetworkQty ?? 0) > 0 ? (
+        <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+          网络未定仓 {item.unallocatedNetworkQty} 件，确认目的仓后才计入各仓确定线。
+          <Link className="ml-2 underline" to={`/inventory/unallocated?skuId=${encodeURIComponent(item.skuId)}`}>
+            去待分配
+          </Link>
+        </p>
+      ) : null}
+      {item.allocation?.method === 'sales_share' ? (
+        <p className="text-sm text-text-hint">
+          按近半年销售占比拆自海外合计；快照日 {item.allocation.snapshotDate ?? '未知'}。
+          {item.allocation.shareSumWarning
+            ? '占比合计未接近 100%，已按相对权重拆分。'
+            : null}
+        </p>
+      ) : null}
+      {(item.allocation?.undatedTransitQty ?? 0) > 0 ? (
+        <p className="text-sm text-text-hint">
+          {item.allocation?.undatedTransitQty} 件在途无可用日，未计入时间轴。
+        </p>
+      ) : null}
+
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-        <MetricCard label="有效供给" value={item.position.effectiveQty} hint="飞书快照口径，与库存总览分仓一致" />
+        <MetricCard
+          label="有效供给"
+          value={item.position.effectiveQty}
+          hint="飞书快照合计在总览；本页确定线按目的仓批次。"
+        />
         <MetricCard label="日均需求" value={item.avgDaily.toFixed(2)} hint="件 / 天" />
-        <MetricCard label="覆盖天数" value={coverageLabel} hint={`安全库存 ${item.safetyStockDays} 天`} />
-        <MetricCard label="建议补货量" value={item.suggestedQty} hint={`建议下单 ${item.suggestedDate}`} />
+        <MetricCard
+          label="覆盖天数"
+          value={coverageLabel}
+          hint={
+            item.confirmedCoverageDays != null
+              ? `确定线 ${
+                  Number.isFinite(item.confirmedCoverageDays)
+                    ? `${Number(item.confirmedCoverageDays).toFixed(1)} 天`
+                    : '∞'
+                } · 安全库存 ${item.safetyStockDays} 天`
+              : `安全库存 ${item.safetyStockDays} 天`
+          }
+        />
+        <MetricCard
+          label="建议补货量"
+          value={item.suggestedQty}
+          hint={
+            item.suggestedQtyGross != null && item.suggestedQtyGross !== item.suggestedQty
+              ? `净缺口（含计划）· 毛缺口 ${item.suggestedQtyGross} · 建议下单 ${item.suggestedDate}`
+              : `建议下单 ${item.suggestedDate}`
+          }
+        />
       </div>
+
+      {item.demandUnconstrainedDaily != null ? (
+        <p className="text-sm text-text-hint">
+          还原近窗日均 {item.demandUnconstrainedDaily.toFixed(2)}
+          {item.demandStockoutDays != null ? ` · 疑似缺货约 ${item.demandStockoutDays} 天` : ''}
+          {item.demandCapped ? ' · 已打 1.5 倍封顶' : ''}
+        </p>
+      ) : null}
+
+      {item.latePoActions && item.latePoActions.length > 0 ? (
+        <Card className="shadow-card">
+          <CardHeader>
+            <CardTitle>新单来不及时的可选动作（只读）</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-2 text-sm">
+            {item.latePoActions.map((action) => (
+              <div key={`${action.kind}-${action.label}`} className="rounded-md border border-border p-3">
+                <p className="font-medium text-text-main">{action.label}</p>
+                <p className="mt-1 text-text-sub">{action.detail}</p>
+              </div>
+            ))}
+          </CardContent>
+        </Card>
+      ) : null}
+
+      {item.timeline?.points?.length ? (
+        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+          <MetricCard
+            label="确定缺货日"
+            value={item.timeline.stockoutDateConfirmed ?? '暂无'}
+          />
+          <MetricCard
+            label="破安全库存日"
+            value={item.timeline.safetyBreachDateConfirmed ?? '暂无'}
+          />
+          <MetricCard label="最晚下单日" value={item.timeline.reorderDate ?? '暂无'} />
+          <MetricCard
+            label="交期地平线预计余额"
+            value={leadHorizonExpectedEnding(item)}
+            hint={`交期 ${item.leadTime.totalLeadDays} 天`}
+          />
+        </div>
+      ) : null}
 
       <div className="grid gap-6 xl:grid-cols-2">
         <Card className="shadow-card">
@@ -173,31 +314,111 @@ export function SkuInventoryPlanningPage() {
 
       <Card className="shadow-card">
         <CardHeader>
-          <CardTitle>库存消耗与补给节点</CardTitle>
+          <CardTitle>库存时间轴（未来可售投影）</CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
-          <div className="relative h-2 rounded-full bg-gradient-to-r from-primary via-amber-300 to-emerald-400" />
-          <div className="grid gap-3 text-sm md:grid-cols-4">
-            <div>
-              <p className="text-text-sub">当前有效供给</p>
-              <p className="font-mono text-text-main">{item.position.effectiveQty}</p>
-            </div>
-            <div>
-              <p className="text-text-sub">预计断货日</p>
-              <p className="font-mono text-text-main">{item.stockoutDateEstimate ?? '暂无'}</p>
-            </div>
-            <div>
-              <p className="text-text-sub">最近预计可售日</p>
-              <p className="font-mono text-text-main">{item.etaAvailableNearest ?? '暂无跟单补给'}</p>
-            </div>
-            <div>
-              <p className="text-text-sub">再订货点</p>
-              <p className="font-mono text-text-main">{item.reorderPoint ?? '暂无'}</p>
-            </div>
-          </div>
-          <p className="text-xs text-text-hint">
-            简化说明：有效供给按飞书同步库存快照计算（不含跟单开放量）。最近预计可售日来自采购跟单，仅作运营参考，不参与覆盖天数与建议量。
-          </p>
+          {item.timeline?.points?.length ? (
+            <>
+              {poWarning ? (
+                <p className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                  {poWarning}
+                </p>
+              ) : null}
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b text-left text-text-sub">
+                    <th className="py-2 pr-2">节点</th>
+                    <th className="py-2 pr-2">日期</th>
+                    <th className="py-2 pr-2">确定余额</th>
+                    <th className="py-2 pr-2">预计余额</th>
+                    <th className="py-2 pr-2">累计需求</th>
+                    <th className="py-2 pr-2">管道</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {item.timeline.points.map((point) => (
+                    <tr
+                      key={point.horizonDays}
+                      className={
+                        point.confirmedEnding <= 0 ? 'bg-red-50' : 'border-b border-border/50'
+                      }
+                    >
+                      <td className="py-2 pr-2 font-mono">
+                        {point.horizonDays === 0 ? '今天' : `${point.horizonDays}天`}
+                      </td>
+                      <td className="py-2 pr-2 font-mono">{point.asOf}</td>
+                      <td
+                        className={`py-2 pr-2 font-mono font-semibold ${
+                          point.confirmedEnding <= 0 ? 'text-red-600' : 'text-text-main'
+                        }`}
+                      >
+                        {Math.round(point.confirmedEnding)}
+                      </td>
+                      <td className="py-2 pr-2 font-mono">
+                        {Math.round(point.expectedEnding)}
+                      </td>
+                      <td className="py-2 pr-2 font-mono">
+                        {Math.round(point.cumulativeDemand)}
+                      </td>
+                      <td className="py-2 pr-2 font-mono text-xs text-text-sub">
+                        {point.plannedInbound > 0 ? `管道 +${point.plannedInbound}` : '—'}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              <div className="grid gap-3 text-sm md:grid-cols-4">
+                <div>
+                  <p className="text-text-sub">当前有效供给（快照）</p>
+                  <p className="font-mono text-text-main">{item.position.effectiveQty}</p>
+                </div>
+                <div>
+                  <p className="text-text-sub">预计断货日</p>
+                  <p className="font-mono text-text-main">
+                    {item.timeline.stockoutDateExpected ?? item.stockoutDateEstimate ?? '暂无'}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-text-sub">最近预计可售日</p>
+                  <p className="font-mono text-text-main">
+                    {item.etaAvailableNearest ?? '暂无跟单补给'}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-text-sub">再订货点</p>
+                  <p className="font-mono text-text-main">{item.reorderPoint ?? '暂无'}</p>
+                </div>
+              </div>
+              <p className="text-xs text-text-hint">
+                确定线=海外可售+真实 ETA 在途；预计线=已达出货交期的本地货（可用日=出货交期+剩余物流）；计划线（在产/估期）不填近窗、不挡建议量。
+              </p>
+            </>
+          ) : (
+            <>
+              <div className="relative h-2 rounded-full bg-gradient-to-r from-primary via-amber-300 to-emerald-400" />
+              <div className="grid gap-3 text-sm md:grid-cols-4">
+                <div>
+                  <p className="text-text-sub">当前有效供给</p>
+                  <p className="font-mono text-text-main">{item.position.effectiveQty}</p>
+                </div>
+                <div>
+                  <p className="text-text-sub">预计断货日</p>
+                  <p className="font-mono text-text-main">{item.stockoutDateEstimate ?? '暂无'}</p>
+                </div>
+                <div>
+                  <p className="text-text-sub">最近预计可售日</p>
+                  <p className="font-mono text-text-main">{item.etaAvailableNearest ?? '暂无跟单补给'}</p>
+                </div>
+                <div>
+                  <p className="text-text-sub">再订货点</p>
+                  <p className="font-mono text-text-main">{item.reorderPoint ?? '暂无'}</p>
+                </div>
+              </div>
+              <p className="text-xs text-text-hint">
+                尚未生成供给批次时间轴。请先在「库存三池」同步快照/跟单，或等待每日流水线任务。
+              </p>
+            </>
+          )}
         </CardContent>
       </Card>
     </div>

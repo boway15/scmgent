@@ -62,6 +62,15 @@ describe('forecast-collaboration', () => {
         message: 'sku-2 历史销量数据不足，请复核低置信度基线预测。',
         suggestedDailyAvg: 0.8,
       },
+      {
+        skuId: 'sku-2',
+        station: 'US',
+        platform: 'ALL',
+        issueType: 'missing_history',
+        severity: 'warning',
+        message: 'sku-2 为新品/上架不足 90 天，预测为低置信度，请人工确认或填写预期日均。',
+        suggestedDailyAvg: 0.8,
+      },
     ]);
   });
 
@@ -103,18 +112,12 @@ describe('forecast-collaboration', () => {
     const asOf = new Date('2026-05-31T00:00:00.000Z');
     const factors = computeSeasonalityFactors(
       [
-        {
-          dimensionType: 'category',
-          dimensionValue: 'Patio',
-          month: '2026-04',
-          qtySold: 100,
-        },
-        {
-          dimensionType: 'category',
-          dimensionValue: 'Patio',
-          month: '2026-05',
-          qtySold: 120,
-        },
+        { dimensionType: 'category', dimensionValue: 'Patio', month: '2025-12', qtySold: 100 },
+        { dimensionType: 'category', dimensionValue: 'Patio', month: '2026-01', qtySold: 100 },
+        { dimensionType: 'category', dimensionValue: 'Patio', month: '2026-02', qtySold: 100 },
+        { dimensionType: 'category', dimensionValue: 'Patio', month: '2026-03', qtySold: 140 },
+        { dimensionType: 'category', dimensionValue: 'Patio', month: '2026-04', qtySold: 100 },
+        { dimensionType: 'category', dimensionValue: 'Patio', month: '2026-05', qtySold: 120 },
       ],
       asOf,
     );
@@ -128,36 +131,14 @@ describe('forecast-collaboration', () => {
     const asOf = new Date('2026-06-30T00:00:00.000Z');
     const factors = computeSeasonalityFactors(
       [
-        {
-          dimensionType: 'project_group',
-          dimensionValue: 'Outdoor',
-          month: '2026-05',
-          qtySold: 60,
-        },
-        {
-          dimensionType: 'category',
-          dimensionValue: 'Patio',
-          month: '2026-06',
-          qtySold: 150,
-        },
-        {
-          dimensionType: 'category',
-          dimensionValue: 'Patio',
-          month: '2026-04',
-          qtySold: 100,
-        },
-        {
-          dimensionType: 'project_group',
-          dimensionValue: 'Outdoor',
-          month: '2026-04',
-          qtySold: 50,
-        },
-        {
-          dimensionType: 'category',
-          dimensionValue: 'Patio',
-          month: '2026-05',
-          qtySold: 120,
-        },
+        { dimensionType: 'project_group', dimensionValue: 'Outdoor', month: '2026-04', qtySold: 50 },
+        { dimensionType: 'project_group', dimensionValue: 'Outdoor', month: '2026-05', qtySold: 60 },
+        { dimensionType: 'category', dimensionValue: 'Patio', month: '2026-01', qtySold: 100 },
+        { dimensionType: 'category', dimensionValue: 'Patio', month: '2026-02', qtySold: 100 },
+        { dimensionType: 'category', dimensionValue: 'Patio', month: '2026-03', qtySold: 100 },
+        { dimensionType: 'category', dimensionValue: 'Patio', month: '2026-04', qtySold: 100 },
+        { dimensionType: 'category', dimensionValue: 'Patio', month: '2026-05', qtySold: 125 },
+        { dimensionType: 'category', dimensionValue: 'Patio', month: '2026-06', qtySold: 150 },
       ],
       asOf,
     );
@@ -174,30 +155,20 @@ describe('forecast-collaboration', () => {
     const asOf = new Date('2026-03-31T00:00:00.000Z');
     const factors = computeSeasonalityFactors(
       [
-        {
-          dimensionType: 'category',
-          dimensionValue: 'Desk',
-          month: '2026-01',
-          qtySold: 0,
-        },
-        {
-          dimensionType: 'category',
-          dimensionValue: 'Desk',
-          month: '2026-02',
-          qtySold: 7,
-        },
-        {
-          dimensionType: 'category',
-          dimensionValue: 'Desk',
-          month: '2026-03',
-          qtySold: 10,
-        },
+        { dimensionType: 'category', dimensionValue: 'Desk', month: '2025-10', qtySold: 70 },
+        { dimensionType: 'category', dimensionValue: 'Desk', month: '2025-11', qtySold: 70 },
+        { dimensionType: 'category', dimensionValue: 'Desk', month: '2025-12', qtySold: 70 },
+        { dimensionType: 'category', dimensionValue: 'Desk', month: '2026-01', qtySold: 100 },
+        { dimensionType: 'category', dimensionValue: 'Desk', month: '2026-02', qtySold: 100 },
+        { dimensionType: 'category', dimensionValue: 'Desk', month: '2026-03', qtySold: 100 },
       ],
       asOf,
     );
 
     const march = factors.find((f) => f.month === 3)!;
+    const september = factors.find((f) => f.month === 9)!;
     assert.equal(march.trendFactor, 1.4286);
+    assert.equal(september.trendFactor, 1);
   });
 
   it('returns all sales rows when station scope is global ALL', () => {

@@ -70,9 +70,114 @@ describe('inventory planning view', () => {
       suggestedQty: 450,
       suggestedDate: '2026-07-20',
       healthStatus: 'yellow',
+      coverageHealthStatus: 'yellow',
       etaAvailableNearest: '2026-08-15',
       stockoutDateEstimate: '2026-08-29',
     });
+  });
+
+  it('prefers injected daily timeline fields for qty, reorder, and stockout', () => {
+    const timeline = {
+      today: '2026-07-29',
+      windowDays: 101,
+      totalLeadDays: 87,
+      stockoutDateConfirmed: '2026-08-10',
+      stockoutDateExpected: '2026-09-01',
+      safetyBreachDateConfirmed: '2026-08-05',
+      reorderDate: '2026-06-06',
+      tooLateForNewPo: true,
+      uncoverableByNewPo: true,
+      suggestedQty: 900,
+      suggestedQtyGross: 900,
+      points: [
+        {
+          horizonDays: 0,
+          asOf: '2026-07-29',
+          confirmedEnding: 100,
+          expectedEnding: 100,
+          plannedInbound: 0,
+          cumulativeDemand: 5,
+          supplyEvents: [{ pool: 'overseas', qty: 100, availableAt: '2026-07-29', supplyClass: 'confirmed' }],
+        },
+      ],
+    };
+
+    const view = buildSkuPlanningView({
+      health: {
+        skuId: 'sku-1',
+        skuCode: 'SKU-001',
+        warehouseCode: 'US-WEST',
+        avgDaily: 5,
+        demandSource: 'forecast',
+        coverageDays: 31,
+        suggestedQty: 450,
+        suggestedDate: '2026-07-20',
+        healthStatus: 'green',
+        metrics: { reorderPoint: 220 },
+        coverage: { safetyStockDays: 14, overstockThresholdDays: 180 },
+        position,
+        leadTime,
+      },
+      timeline,
+      timelineSuggestedQty: 900,
+      today: new Date('2026-07-29T00:00:00.000Z'),
+    });
+
+    assert.equal(view.suggestedQty, 900);
+    assert.equal(view.suggestedDate, timeline.reorderDate);
+    assert.equal(view.stockoutDateEstimate, timeline.stockoutDateConfirmed);
+    assert.equal(view.healthStatus, 'red');
+    assert.equal(view.coverageHealthStatus, 'green');
+    assert.deepEqual(view.timeline?.points, timeline.points);
+  });
+
+  it('uses timeline decision green when coverage health is yellow but timeline suggests zero', () => {
+    const timeline = {
+      today: '2026-07-29',
+      windowDays: 101,
+      totalLeadDays: 87,
+      stockoutDateConfirmed: '2027-01-01',
+      stockoutDateExpected: null,
+      safetyBreachDateConfirmed: null,
+      reorderDate: null,
+      tooLateForNewPo: false,
+      uncoverableByNewPo: false,
+      suggestedQty: 0,
+      suggestedQtyGross: 0,
+      points: [
+        {
+          horizonDays: 0,
+          asOf: '2026-07-29',
+          confirmedEnding: 600,
+          expectedEnding: 600,
+          plannedInbound: 0,
+          cumulativeDemand: 5,
+          supplyEvents: [],
+        },
+      ],
+    };
+    const view = buildSkuPlanningView({
+      health: {
+        skuId: 'sku-1',
+        skuCode: 'SKU-001',
+        warehouseCode: 'US-WEST',
+        avgDaily: 5,
+        demandSource: 'forecast',
+        coverageDays: 80,
+        suggestedQty: 450,
+        suggestedDate: '2026-07-20',
+        healthStatus: 'yellow',
+        metrics: { reorderPoint: 220 },
+        coverage: { safetyStockDays: 14, overstockThresholdDays: 180 },
+        position,
+        leadTime,
+      },
+      timeline,
+      timelineSuggestedQty: 0,
+    });
+    assert.equal(view.healthStatus, 'green');
+    assert.equal(view.coverageHealthStatus, 'yellow');
+    assert.equal(view.suggestedQty, 0);
   });
 
   it('does not estimate stockout when demand is zero or coverage is infinite', () => {
@@ -100,6 +205,92 @@ describe('inventory planning view', () => {
     });
 
     assert.equal(view.stockoutAdjusted, true);
+  });
+
+  it('passes through planning allocation onto the view', () => {
+    const allocation = {
+      method: 'unallocated' as const,
+      snapshotDate: '2026-09-18',
+      overseasTotal: 100,
+      allocatedQty: 0,
+      undatedTransitQty: 0,
+      shareSumWarning: false,
+    };
+    const view = buildSkuPlanningView({
+      health: {
+        skuId: 'sku-1',
+        skuCode: 'SKU-001',
+        warehouseCode: 'US-WEST',
+        avgDaily: 5,
+        demandSource: 'forecast',
+        coverageDays: 31,
+        suggestedQty: 450,
+        suggestedDate: '2026-07-20',
+        healthStatus: 'yellow',
+        metrics: { reorderPoint: 220 },
+        coverage: { safetyStockDays: 14 },
+        position,
+        leadTime,
+      },
+      allocation,
+    });
+    assert.deepEqual(view.allocation, allocation);
+  });
+
+  it('exposes demand-plan shadow fields without changing health demandSource', () => {
+    const view = buildSkuPlanningView({
+      health: {
+        skuId: 'sku-1',
+        skuCode: 'SKU-001',
+        warehouseCode: 'US-WEST',
+        avgDaily: 5,
+        demandSource: 'forecast',
+        coverageDays: 31,
+        suggestedQty: 450,
+        suggestedDate: '2026-07-20',
+        healthStatus: 'yellow',
+        metrics: { reorderPoint: 220 },
+        coverage: { safetyStockDays: 14 },
+        position,
+        leadTime,
+      },
+      planningDemandSource: 'demand_plan',
+      planningDemandFlags: ['pilot_hit'],
+      championStockoutDateConfirmed: '2026-08-20',
+      championSuggestedQty: 600,
+      inStockDayRatio: 0.85,
+      today: new Date('2026-07-29T00:00:00.000Z'),
+    });
+
+    assert.equal(view.demandSource, 'forecast');
+    assert.equal(view.planningDemandSource, 'demand_plan');
+    assert.deepEqual(view.planningDemandFlags, ['pilot_hit']);
+    assert.equal(view.championStockoutDateConfirmed, '2026-08-20');
+    assert.equal(view.championSuggestedQty, 600);
+    assert.equal(view.inStockDayRatio, 0.85);
+    assert.equal('healthDemandNote' in view, false);
+  });
+
+  it('exposes unallocatedNetworkQty only when positive', () => {
+    const health = {
+      skuId: 'sku-1',
+      skuCode: 'SKU-001',
+      warehouseCode: 'US-WEST',
+      avgDaily: 5,
+      demandSource: 'forecast' as const,
+      coverageDays: 31,
+      suggestedQty: 450,
+      suggestedDate: '2026-07-20',
+      healthStatus: 'yellow',
+      metrics: { reorderPoint: 220 },
+      coverage: { safetyStockDays: 14 },
+      position,
+      leadTime,
+    };
+    const withQty = buildSkuPlanningView({ health, unallocatedNetworkQty: 373 });
+    assert.equal(withQty.unallocatedNetworkQty, 373);
+    const without = buildSkuPlanningView({ health, unallocatedNetworkQty: 0 });
+    assert.equal('unallocatedNetworkQty' in without, false);
   });
 
   it('selects the nearest future ETA for the requested warehouse', () => {

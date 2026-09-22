@@ -102,7 +102,7 @@ export const FORECAST_METHODOLOGY_SECTIONS: ForecastMethodologySection[] = [
         [
           '近 90 天窗口',
           'recent90',
-          '[windowEnd−89, windowEnd] 内销量 ÷ 90（断货日剔除后）',
+          '[windowEnd−89, windowEnd] 内销量 ÷ 90',
           '3/3–5/31 共 450 件 → 5.0 件/天',
         ],
         [
@@ -250,16 +250,16 @@ export const FORECAST_METHODOLOGY_SECTIONS: ForecastMethodologySection[] = [
       ]),
       t('断货抑制规则', ['规则', '条件', '处理', '影响'], [
         [
-          '零销段剔除',
-          '近90天内连续 ≥7 天 qty=0',
-          '这些日期从近期窗口剔除后再算日均',
-          '避免断货把 recent90 压低',
+          '有销日折算',
+          '日历近90日均≥1，非新品/间歇，连续≥7天为0，有效天数≥30%窗口',
+          'U=min(sum/有效天数, 1.5×日历日均)',
+          '近端不再被缺货零压低',
         ],
         [
-          '疑似断货生命周期',
-          '最长零销≥7 且 recent90>0 且 age≥90 且动销日≥10%',
-          '标记 stockout_suspected，写入风险提示',
-          'near_level 仍用 65%×90d+35%×30d',
+          '不还原',
+          '长尾/新品/间歇/无连续零销/覆盖不足',
+          '仍用日历 ÷30/÷90',
+          '避免把卖不动写成缺货',
         ],
       ]),
     ],

@@ -6,6 +6,8 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { PageHeader } from '@/components/PageHeader';
+import { ListPagination } from '@/components/ListPagination';
+import { ListSearchBar } from '@/components/ListSearchBar';
 import { FobBatchStatusBadge } from '@/components/FobStatusBadge';
 import { FobFeeRulesPanel } from '@/components/FobFeeRulesPanel';
 import { FobServiceProvidersPanel } from '@/components/FobServiceProvidersPanel';
@@ -28,12 +30,17 @@ export function FobSettlementListPage() {
   const qc = useQueryClient();
   const [searchParams, setSearchParams] = useSearchParams();
   const tab = parseTab(searchParams.get('tab'));
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
+  const [keyword, setKeyword] = useState('');
+  const [appliedKeyword, setAppliedKeyword] = useState('');
 
-  const { data: batches = [], isLoading } = useQuery({
-    queryKey: ['fob-settlements'],
-    queryFn: api.getFobSettlements,
+  const { data, isLoading } = useQuery({
+    queryKey: ['fob-settlements', page, pageSize, appliedKeyword],
+    queryFn: () => api.getFobSettlements({ page, pageSize, q: appliedKeyword || undefined }),
     enabled: tab === 'batches',
   });
+  const batches = data?.items ?? [];
 
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState({
@@ -232,6 +239,15 @@ export function FobSettlementListPage() {
             </CardHeader>
             <CardContent>
               {deleteError && <p className="mb-3 text-sm text-destructive">{deleteError}</p>}
+              <ListSearchBar
+                keyword={keyword}
+                onKeywordChange={setKeyword}
+                onSearch={() => {
+                  setAppliedKeyword(keyword.trim());
+                  setPage(1);
+                }}
+                placeholder="批次编号 / 名称 / 账期"
+              />
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b border-border text-left text-text-sub">
@@ -292,6 +308,16 @@ export function FobSettlementListPage() {
                   )}
                 </tbody>
               </table>
+              <ListPagination
+                page={page}
+                pageSize={pageSize}
+                total={data?.total ?? 0}
+                onPageChange={setPage}
+                onPageSizeChange={(next) => {
+                  setPageSize(next);
+                  setPage(1);
+                }}
+              />
             </CardContent>
           </Card>
         </>

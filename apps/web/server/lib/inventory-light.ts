@@ -2,7 +2,11 @@
  * 库存健康五档亮灯（覆盖天数 + 生命周期）
  *
  * 蓝：库存超多 | 绿：库存健康 | 黄：有风险 | 红：必须补货 | 灰：滞销/即将停售
+ *
+ * 下单决策灯见 `calcTimelineDecisionHealth`（时间轴口径）；`calcInventoryHealth` 保留为影子。
  */
+
+import { addDaysIso, diffDaysIso } from './inventory-iso-date.js';
 
 export type InventoryHealth = 'red' | 'yellow' | 'green' | 'blue' | 'gray';
 
@@ -129,4 +133,83 @@ export function estimateInventoryHealthQuick(params: {
 
 export function needsReplenishmentByHealth(health: InventoryHealth): boolean {
   return health === 'red' || health === 'yellow';
+}
+
+/**
+ * 确定供给折算覆盖天数：有确定缺货日用日历差；否则用今日确定余额 / 日均。
+ */
+export function calcConfirmedCoverageDays(params: {
+  today: string;
+  stockoutDateConfirmed: string | null;
+  confirmedEndingToday: number;
+  avgDaily: number;
+}): number {
+  if (params.stockoutDateConfirmed) {
+    return Math.max(0, diffDaysIso(params.today, params.stockoutDateConfirmed));
+  }
+  if (params.avgDaily <= 0) {
+    return params.confirmedEndingToday > 0 ? Number.POSITIVE_INFINITY : 0;
+  }
+  return params.confirmedEndingToday / params.avgDaily;
+}
+
+/**
+ * 时间轴决策灯：决定要不要补货、总览补货灯、规划页主灯。
+ * 覆盖天数灯继续用 `calcInventoryHealth`，仅作影子对照。
+ */
+export function calcTimelineDecisionHealth(params: {
+  today: string;
+  totalLeadDays: number;
+  safetyStockDays: number;
+  overstockThresholdDays: number;
+  suggestedQty: number;
+  uncoverableByNewPo: boolean;
+  stockoutDateConfirmed: string | null;
+  safetyBreachDateConfirmed: string | null;
+  confirmedCoverageDays: number;
+  lifecycle?: string | null;
+  effectiveQty?: number;
+  avgDaily?: number;
+}): InventoryHealth {
+  const avgDaily = params.avgDaily ?? 0;
+  const effectiveQty = params.effectiveQty ?? 0;
+
+  if (isGrayLifecycle(params.lifecycle)) return 'gray';
+  if (
+    isSlowMovingStock({
+      effectiveQty,
+      avgDaily,
+      coverageDays: params.confirmedCoverageDays,
+    })
+  ) {
+    return 'gray';
+  }
+
+  const leadHorizon = addDaysIso(params.today, Math.ceil(params.totalLeadDays));
+  const safetyHorizon = addDaysIso(
+    params.today,
+    Math.ceil(params.totalLeadDays) + Math.ceil(params.safetyStockDays),
+  );
+
+  const stockoutWithinLead =
+    params.stockoutDateConfirmed != null && params.stockoutDateConfirmed <= leadHorizon;
+  if (params.uncoverableByNewPo || stockoutWithinLead) return 'red';
+
+  const safetyBreachWithinWindow =
+    params.safetyBreachDateConfirmed != null &&
+    params.safetyBreachDateConfirmed <= safetyHorizon;
+  if (params.suggestedQty > 0 || safetyBreachWithinWindow) return 'yellow';
+
+  if (
+    params.suggestedQty <= 0 &&
+    Number.isFinite(params.confirmedCoverageDays) &&
+    params.confirmedCoverageDays > params.overstockThresholdDays
+  ) {
+    return 'blue';
+  }
+  if (!Number.isFinite(params.confirmedCoverageDays) && params.confirmedCoverageDays > 0) {
+    return 'blue';
+  }
+
+  return 'green';
 }

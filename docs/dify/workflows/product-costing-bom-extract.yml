@@ -1,0 +1,532 @@
+# 产品成本核算 · AI 拆原材料清单（多模态）
+# 导入: Dify 控制台 → 工作室 → 导入 DSL
+# 对接: scm-agent POST /api/procurement/costing/:id/extract
+# 环境变量: DIFY_API_KEY_COSTING_BOM=app-xxxx
+# 约定: docs/dify/workflows/product-costing-bom-extract.md
+#
+# 说明:
+# - 输入 pages_json 含 page/page_type/text/image_base64（scm-agent 分批，每批 1 页）
+# - 输入 extract_hints：品类规则、外形尺寸、抽屉数、价目标准名、本页任务
+# - 输出 lines：JSON 数组字符串（scm-agent parseWorkflowLines 兼容）
+# - 页图以 data URL 写入 Prompt（非 LLM vision 变量）；导入后请换多模态模型
+
+kind: app
+version: 0.6.0
+app:
+  mode: workflow
+  name: 产品成本核算-AI拆BOM
+  description: 根据设计方案分页文本与页图抽取原材料清单 JSON，供 scm-agent 产品成本核算使用
+  icon: 🪑
+  icon_background: '#FFF7E6'
+dependencies:
+  - type: marketplace
+    value:
+      marketplace_plugin_unique_identifier: langgenius/deepseek:0.0.15@bc5b794a1b0b4f7e9c2d8a1e3f5b7c9d
+workflow:
+  environment_variables: []
+  conversation_variables: []
+  features:
+    file_upload:
+      enabled: false
+    opening_statement: ''
+    retriever_resource:
+      enabled: false
+    sensitive_word_avoidance:
+      enabled: false
+    speech_to_text:
+      enabled: false
+    suggested_questions: []
+    suggested_questions_after_answer:
+      enabled: false
+    text_to_speech:
+      enabled: false
+  graph:
+    edges:
+      - id: edge-start-prepare
+        source: start
+        target: prepare_pages
+        sourceHandle: source
+        targetHandle: target
+        type: custom
+        data:
+          sourceType: start
+          targetType: code
+          isInIteration: false
+          isInLoop: false
+      - id: edge-prepare-llm
+        source: prepare_pages
+        target: extract_bom
+        sourceHandle: source
+        targetHandle: target
+        type: custom
+        data:
+          sourceType: code
+          targetType: llm
+          isInIteration: false
+          isInLoop: false
+      - id: edge-llm-parse
+        source: extract_bom
+        target: parse_lines
+        sourceHandle: source
+        targetHandle: target
+        type: custom
+        data:
+          sourceType: llm
+          targetType: code
+          isInIteration: false
+          isInLoop: false
+      - id: edge-parse-end
+        source: parse_lines
+        target: end
+        sourceHandle: source
+        targetHandle: target
+        type: custom
+        data:
+          sourceType: code
+          targetType: end
+          isInIteration: false
+          isInLoop: false
+    nodes:
+      - id: start
+        type: custom
+        width: 242
+        height: 140
+        position:
+          x: 80
+          y: 280
+        positionAbsolute:
+          x: 80
+          y: 280
+        sourcePosition: right
+        targetPosition: left
+        selected: false
+        data:
+          type: start
+          title: 开始
+          desc: ''
+          variables:
+            - variable: category
+              label: 品类提示
+              type: text-input
+              required: false
+              max_length: 200
+              options: []
+            - variable: extract_hints
+              label: 拆单提示
+              type: paragraph
+              required: false
+              max_length: 8000
+              options: []
+            - variable: pages_json
+              label: 分页图文JSON
+              type: paragraph
+              required: true
+              max_length: 500000
+              options: []
+
+      - id: prepare_pages
+        type: custom
+        width: 242
+        height: 90
+        position:
+          x: 380
+          y: 280
+        positionAbsolute:
+          x: 380
+          y: 280
+        sourcePosition: right
+        targetPosition: left
+        selected: false
+        data:
+          type: code
+          title: 解析分页输入
+          desc: ''
+          code_language: python3
+          error_strategy: fail-branch
+          code: |
+            import json
+
+            # 400 KiB JPEG 编码后约 546k base64 字符，预留 data/换行余量。
+            MAX_B64 = 560000
+            MAX_IMAGES = 4
+
+            def main(category: str, pages_json: str, extract_hints: str) -> dict:
+                cat = (category or "家具").strip() or "家具"
+                hints = (extract_hints or "").strip()[:8000]
+                try:
+                    pages = json.loads(pages_json or "[]")
+                except Exception:
+                    pages = []
+                if not isinstance(pages, list):
+                    pages = []
+
+                text_parts = []
+                img_parts = []
+                page_types = []
+                for p in pages:
+                    if not isinstance(p, dict):
+                        continue
+                    page = p.get("page") if p.get("page") is not None else p.get("pageNo")
+                    page = page if page is not None else "?"
+                    page_type = str(p.get("page_type") or p.get("pageType") or "unknown").strip()
+                    page_types.append(f"p{page}:{page_type}")
+                    text = (p.get("text") or "").strip()
+                    text_parts.append(
+                        f"===== 第 {page} 页（page_type={page_type}）文本 =====\n"
+                        f"{text if text else '(无文本，请看图)'}"
+                    )
+
+                    b64 = p.get("image_base64") or ""
+                    if not isinstance(b64, str) or not b64:
+                        continue
+                    if b64.startswith("data:") and "," in b64[:100]:
+                        b64 = b64.split(",", 1)[1]
+                    mime = str(p.get("image_mime_type") or "image/png").strip() or "image/png"
+                    if mime not in ("image/png", "image/jpeg", "image/jpg"):
+                        mime = "image/png"
+                    if mime == "image/jpg":
+                        mime = "image/jpeg"
+                    if len(img_parts) >= MAX_IMAGES:
+                        continue
+                    if len(b64) > MAX_B64:
+                        text_parts.append(f"（第 {page} 页图片过大已省略，仅依赖文本）")
+                        continue
+                    img_parts.append(
+                        f"第{page}页图片:\n![page_{page}](data:{mime};base64,{b64})"
+                    )
+
+                pages_context = "\n\n".join(text_parts)
+                if len(pages_context) > 100000:
+                    pages_context = pages_context[:100000] + "\n…(文本截断)"
+
+                images_markdown = "\n\n".join(img_parts)
+                page_types_line = ", ".join(page_types) if page_types else "(未知)"
+                return {
+                    "category": cat,
+                    "extract_hints": hints,
+                    "page_count": float(len(pages)),
+                    "page_types_line": page_types_line,
+                    "pages_context": pages_context,
+                    "images_markdown": images_markdown or "(本批无可用页图)",
+                }
+          outputs:
+            category:
+              type: string
+              children: null
+            extract_hints:
+              type: string
+              children: null
+            page_count:
+              type: number
+              children: null
+            page_types_line:
+              type: string
+              children: null
+            pages_context:
+              type: string
+              children: null
+            images_markdown:
+              type: string
+              children: null
+          variables:
+            - variable: category
+              value_selector:
+                - start
+                - category
+            - variable: pages_json
+              value_selector:
+                - start
+                - pages_json
+            - variable: extract_hints
+              value_selector:
+                - start
+                - extract_hints
+
+      - id: extract_bom
+        type: custom
+        width: 242
+        height: 98
+        position:
+          x: 680
+          y: 280
+        positionAbsolute:
+          x: 680
+          y: 280
+        sourcePosition: right
+        targetPosition: left
+        selected: false
+        data:
+          type: llm
+          title: 抽取物料清单
+          desc: ''
+          context:
+            enabled: false
+            variable_selector: []
+          vision:
+            enabled: false
+          model:
+            mode: chat
+            provider: langgenius/deepseek/deepseek
+            name: deepseek-chat
+            completion_params:
+              temperature: 0.2
+              max_tokens: 4000
+          prompt_template:
+            - id: sys-prompt-costing-bom-001
+              role: system
+              text: |
+                你是家具/办公桌类产品的工艺与采购成本专家。任务：根据设计方案的分页文本与页图，拆出原材料（BOM）清单。
+
+                【多模态要求 — 必须遵守】
+                - 本批同时提供「分页文本」与「分页图片（Markdown data URL）」；不得只读文字忽略图片。
+                - 尺寸、爆炸图标注、CMF 基材、五金数量等若只在图中出现，也必须从图中读取并写入清单。
+                - 文字与图片冲突时，以图片上的标注为准，并在 notes 说明。
+                - 若某页仅有图无字，仍必须读图；不得因文本为空而跳过该页信息。
+
+                要求：
+                1. 结合文字与图片中的尺寸、材质、五金、封边、油漆、包装等信息。
+                2. 只输出一个 JSON 数组，不要 markdown 代码块，不要额外说明。
+                3. 每项字段必须为：
+                   category, material_name, spec, unit, qty_net, loss_rate, source_ref, confidence, origin, notes
+                4. category 仅允许：板材/五金/表面工艺/包装/其他
+                5. unit 用常见采购单位：张/米/个/套/kg/升 等
+                6. qty_net 为单套产品净用量（数字）。图文明确时 origin=explicit；结构件可能存在但图文无法确认用量时，origin=template、qty_net=0、confidence=low，禁止猜测数量
+                7. loss_rate 为 0~0.3 的小数，默认 0.05~0.1；无法判断用 0.08
+                8. source_ref 用页码，如 p3 或 p3,p5
+                9. confidence 仅允许 high / medium / low
+                10. 图上读不清的尺寸/用量必须 low，并在 notes 说明原因
+                11. 不要输出 qty_gross（由下游系统计算）
+                12. 严禁编造图或文字中未出现的五金件；可漏不可乱
+                13. origin 仅允许 explicit / template
+                14. 只处理 BOM 相关 page_type；render/cover 等效果图页即使传入也不要据此补造结构或五金
+                15. 按本批 page_type 限定抽取范围，不要每页都拆一整张 BOM：
+                    - size：抽取整柜 W×D×H（写入 notes，禁止「产品尺寸/外形尺寸」BOM 行）；尺寸图必须识别抽面开料并输出 material_name=「抽面」（origin=explicit）；spec 必须含图上宽×高（如 521×210 或 521.0×210.0），禁止用柜宽÷列数推算；不要把抽面写成颗粒板/密度板；不要输出抽侧/抽后/抽底
+                    - explosion：只拆物料清单（名称与图上数量/局部尺寸）；前拉条/正面拉条/背拉条/侧板有标注件数则 origin=explicit；抽面若图上有尺寸可列；不要拆抽侧/抽后/抽底开料；滑轨按一抽一套（qty_net=抽屉数，单位套，名称用「抽屉滑轨」）；不要把本页小板开料当成整柜外形；「高度/盖住」不是物料
+                    - cmf：只记录饰面、封边色/厚度；不要补结构件数量；**禁止**输出 material_name 仅为密度板/颗粒板/多层实木板且无 spec、qty_net=0 的行
+                    - bom_list：配件/五金名称与数量；名称对齐价目（抽屉滑轨、防倾倒配件）
+                    - notes：设计规则与默认标准（箱体板厚、抽底板厚、饰面厚度、滑轨、螺丝/喷漆/斜切）；信息写 notes，qty_net=0；**禁止**输出「设计标准-xxx」「设计规则-xxx」假物料行；**禁止**输出纯基材占位行；**禁止**输出带板尺寸/qty>0 的工艺说明行
+                    - render/cover：除非文本含材料关键词，否则不要输出结构或五金
+                16. 用户消息【拆单提示】含第一步已确认的品类/结构/抽屉数/基材/拆料原则。默认基材已在拆单提示中给出，**不要**再输出「密度板/颗粒板」纯占位 BOM 行；必须按已确认原则拆料，不得改品类或另造结构；材料名优先用价目标准名，同义词归一（中纤板=密度板、刨花板=颗粒板、金属防倾倒装置=防倾倒配件、滚珠滑轨=抽屉滑轨）；同一 synonym 只输出一行
+                17. 同一材料跨页不要重复造行。侧板/顶底板/背板/抽侧/抽后/抽底/拉条等结构开料由下游规则计算；你只负责图文明确的部分（抽面尺寸、爆炸图件数、五金数量、表面工艺）
+                18. 板件单位用张/块，不要用米；踢脚/拉条仅在图上有长度时才给 qty；qty_net 不得填小于 0.01 的臆造微量
+                19. 五金「套/个」视为同一计数单位，防倾倒只输出一行
+                20. 工艺说明不得拆成独立板材行：名称含开槽/拉槽/斜切/倒角/铣型且不是标准槽位名（抽面/抽底/抽侧/抽后）时，不要输出 BOM 项；抽面开料只能在 size 页且 material_name 必须是「抽面」
+                21. **本批页型最低产出（有图可读时不得空输出）**：
+                    - 含 size：至少 1 行「抽面」+ 图上宽×高（origin=explicit）；读不清则 confidence=low 并在 notes 说明
+                    - 含 explosion：图上有滑轨/防倾倒/拉手则必须输出；有标注件数的拉条/侧板等必须输出
+                    - 含 bom_list：每个清单项至少 1 行
+                    - 含 notes/cmf：可 0 行 BOM（规则信息已在 notes 页文本中），但**禁止**用纯基材行凑数
+                22. 胡桃/浮雕/木皮/色板是饰面记录，不要输出为可计价板材行（qty_net=0 且无开料尺寸时不要输出）
+
+                输出示例（size 页 + 爆炸图页各 1 行）：
+                [{"category":"板材","material_name":"抽面","spec":"12mm 521×210","unit":"块","qty_net":9,"loss_rate":0.08,"source_ref":"p4","confidence":"high","origin":"explicit","notes":""},{"category":"五金","material_name":"抽屉滑轨","spec":"2节12寸","unit":"套","qty_net":9,"loss_rate":0.08,"source_ref":"p5","confidence":"high","origin":"explicit","notes":""}]
+            - id: user-prompt-costing-bom-001
+              role: user
+              text: |
+                【品类】{{#prepare_pages.category#}}
+                【本批页数】{{#prepare_pages.page_count#}}
+                【本批页型】{{#prepare_pages.page_types_line#}}
+
+                【拆单提示】
+                {{#prepare_pages.extract_hints#}}
+
+                【分页文本】
+                {{#prepare_pages.pages_context#}}
+
+                【分页图片 — 必须结合上文文本一起阅读】
+                {{#prepare_pages.images_markdown#}}
+
+                请结合文本与图片输出 lines JSON 数组，且每项必须包含 origin。
+                若本批含 size 页，必须输出至少 1 行「抽面」及图上宽×高；若含 explosion/bom_list 页，必须输出图上可见的五金与有标注件数的零件。
+                禁止输出纯基材占位行（密度板/颗粒板且无 spec、qty=0）及「设计标准/设计规则-xxx」假物料行。
+
+      - id: parse_lines
+        type: custom
+        width: 242
+        height: 90
+        position:
+          x: 980
+          y: 280
+        positionAbsolute:
+          x: 980
+          y: 280
+        sourcePosition: right
+        targetPosition: left
+        selected: false
+        data:
+          type: code
+          title: 规范化lines
+          desc: ''
+          code_language: python3
+          error_strategy: fail-branch
+          code: |
+            import json
+            import re
+
+            ALLOWED = {"high", "medium", "low"}
+            ALLOWED_ORIGINS = {"explicit", "template"}
+            PROCESS_MISNAME = re.compile(r"(开槽|拉槽|铣槽|斜切|倒角|铣型)")
+            CANONICAL_PART = re.compile(r"^(抽面|抽侧|抽后|抽底)$")
+            SUBSTRATE_ONLY = re.compile(r"^(密度板|颗粒板|多层实木板|中纤板|mdf)$", re.I)
+            DESIGN_META = re.compile(
+                r"^(设计(?:标准|规则)[-—])|(?:规格标准|结构标准|厚度标准|板厚标准)$",
+                re.I,
+            )
+            SIZE_ROW = re.compile(r"产品尺寸|外形尺寸|整体尺寸")
+            DECOR_FINISH = re.compile(r"胡桃|浮雕|木皮|饰面|色板")
+
+            def _is_process_misnamed_row(name: str) -> bool:
+                text = (name or "").strip()
+                if not text:
+                    return False
+                if CANONICAL_PART.match(text):
+                    return False
+                return bool(PROCESS_MISNAME.search(text))
+
+            def _should_drop_row(name: str, spec: str, qty: float) -> bool:
+                text = (name or "").strip()
+                spec_text = (spec or "").strip()
+                if not text:
+                    return True
+                if SIZE_ROW.search(text):
+                    return True
+                if DESIGN_META.search(text):
+                    return True
+                if SUBSTRATE_ONLY.match(text) and not spec_text and qty <= 0:
+                    return True
+                if DECOR_FINISH.search(text) and qty <= 0 and not re.search(
+                    r"\d+\s*[x×]\s*\d+", spec_text, re.I
+                ):
+                    return True
+                return False
+
+            def _extract_array(text: str):
+                if not text:
+                    return []
+                text = text.strip()
+                m = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", text)
+                if m:
+                    text = m.group(1).strip()
+                start = text.find("[")
+                end = text.rfind("]")
+                if start >= 0 and end > start:
+                    text = text[start : end + 1]
+                data = json.loads(text)
+                return data if isinstance(data, list) else []
+
+            def _num(v, default=0.0):
+                try:
+                    return float(v)
+                except Exception:
+                    return default
+
+            def main(text: str) -> dict:
+                try:
+                    raw = _extract_array(text or "")
+                except Exception as e:
+                    return {
+                        "lines": "[]",
+                        "line_count": 0.0,
+                        "parse_ok": False,
+                        "error_message": f"parse failed: {e}",
+                    }
+
+                lines = []
+                for item in raw:
+                    if not isinstance(item, dict):
+                        continue
+                    name = str(item.get("material_name") or item.get("materialName") or "").strip()
+                    unit = str(item.get("unit") or "").strip()
+                    if not name or not unit:
+                        continue
+                    if _is_process_misnamed_row(name):
+                        continue
+                    conf = str(item.get("confidence") or "medium").strip().lower()
+                    if conf not in ALLOWED:
+                        conf = "low"
+                    origin = str(item.get("origin") or "template").strip().lower()
+                    if origin not in ALLOWED_ORIGINS:
+                        origin = "template"
+                    qty = _num(item.get("qty_net", item.get("qtyNet")), -1)
+                    if origin == "template":
+                        qty = 0.0
+                    if qty < 0:
+                        continue
+                    spec = str(item.get("spec") or "").strip()
+                    if _should_drop_row(name, spec, qty):
+                        continue
+                    loss = _num(item.get("loss_rate", item.get("lossRate")), 0.08)
+                    if loss < 0:
+                        loss = 0.0
+                    if loss > 0.5:
+                        loss = 0.5
+                    lines.append(
+                        {
+                            "category": str(item.get("category") or "未分类").strip() or "未分类",
+                            "material_name": name,
+                            "spec": spec,
+                            "unit": unit,
+                            "qty_net": qty,
+                            "loss_rate": loss,
+                            "source_ref": str(item.get("source_ref") or item.get("sourceRef") or "").strip(),
+                            "confidence": conf,
+                            "origin": origin,
+                            "notes": str(item.get("notes") or "").strip(),
+                        }
+                    )
+
+                return {
+                    "lines": json.dumps(lines, ensure_ascii=False),
+                    "line_count": float(len(lines)),
+                    "parse_ok": True,
+                    "error_message": "",
+                }
+          outputs:
+            lines:
+              type: string
+              children: null
+            line_count:
+              type: number
+              children: null
+            parse_ok:
+              type: boolean
+              children: null
+            error_message:
+              type: string
+              children: null
+          variables:
+            - variable: text
+              value_selector:
+                - extract_bom
+                - text
+
+      - id: end
+        type: custom
+        width: 242
+        height: 116
+        position:
+          x: 1280
+          y: 280
+        positionAbsolute:
+          x: 1280
+          y: 280
+        sourcePosition: right
+        targetPosition: left
+        selected: false
+        data:
+          type: end
+          title: 结束
+          desc: ''
+          outputs:
+            - variable: lines
+              value_selector:
+                - parse_lines
+                - lines
+            - variable: line_count
+              value_selector:
+                - parse_lines
+                - line_count
+            - variable: parse_ok
+              value_selector:
+                - parse_lines
+                - parse_ok

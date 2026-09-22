@@ -324,6 +324,24 @@ describe('forecast-baseline', () => {
     assert.equal(parsed?.horizonMonthIndex, 8);
   });
 
+  it('parseHorizonFactors keeps demand reconstruct audit when present', () => {
+    const parsed = parseHorizonFactors({
+      nearLevel: 1,
+      structuralLevel: 1,
+      yoyMonthLevel: 1,
+      yoyAnchorLevel: 1,
+      growthFactor: 1,
+      wNear: 0.65,
+      wYoy: 0.35,
+      horizonMonthIndex: 0,
+      demandReconstructed: true,
+      stockoutDays90: 20,
+      unconstrainedDaily90: 1.4286,
+    });
+    assert.equal(parsed?.demandReconstructed, true);
+    assert.equal(parsed?.stockoutDays90, 20);
+  });
+
   it('clips out-of-bounds combined seasonality factors', () => {
     const result = computeForecastDailyAvgForMonth({
       recent30DailyAvg: 10,

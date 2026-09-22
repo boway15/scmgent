@@ -27,6 +27,7 @@ import {
   loadMonthlySalesBySkuIds,
 } from './sales-history-query.js';
 import { DEFAULT_MONTHLY_HISTORY_LOOKBACK_MONTHS } from './sales-history-monthly.js';
+import { resolveRecentDemandWindows } from './forecast-demand-unconstrain.js';
 
 export type ACoreSkuContext = {
   skuCode: string;
@@ -334,17 +335,26 @@ export async function buildACoreCalibrationContextCache(input: {
     const salesRows = filterSalesRowsByStation(rawDaily, station, warehouseStationByCode);
     const monthlyRows = monthlyBySku.get(sku.id) ?? [];
     const monthlyQty = buildLast12MonthlyQty(monthlyRows, recentWindowEnd);
-    const recent30DailyAvg = roundDaily(sumQtySince(salesRows, recent30Since) / 30);
-    const recent90DailyAvg = roundDaily(sumQtySince(salesRows, recent90Since) / 90);
+    const calendar30 = roundDaily(sumQtySince(salesRows, recent30Since) / 30);
+    const calendar90 = roundDaily(sumQtySince(salesRows, recent90Since) / 90);
     const salesDays90 = countSalesDaysSince(salesRows, recent90Since);
     const maxZeroRunDays = computeMaxZeroRunDays(salesRows, recent90Since, recentWindowEnd);
     const lifecycle = classifySalesLifecycle({
       ageDays: 365,
       salesDayRatio90: salesDays90 / 90,
-      recent30DailyAvg,
-      recent90DailyAvg,
+      recent30DailyAvg: calendar30,
+      recent90DailyAvg: calendar90,
       maxZeroRunDays,
     });
+    const recentWindows = resolveRecentDemandWindows({
+      sales: salesRows,
+      recent30Since,
+      recent90Since,
+      recentWindowEnd,
+      lifecycle,
+    });
+    const recent30DailyAvg = recentWindows.recent30DailyAvg;
+    const recent90DailyAvg = recentWindows.recent90DailyAvg;
     const yoyAnchorDailyAvg = computeYoyAnchorDailyAvg(
       monthlyRows,
       recentWindowEnd.getUTCFullYear(),

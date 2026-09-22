@@ -36,113 +36,125 @@ const MENU_SEEDS: MenuSeed[] = [
   },
   {
     code: 'inventory',
-    name: '库存管理',
+    name: '库存运营',
     icon: 'Package',
-    sortOrder: 1,
+    sortOrder: 10,
     isLeaf: false,
     children: [
-      { code: 'inventory.overview', name: '库存总览', path: '/inventory/overview', sortOrder: 1, isLeaf: true },
-      { code: 'inventory.safety', name: '安全库存设置', path: '/inventory/safety', sortOrder: 2, isLeaf: true },
-      { code: 'inventory.alert', name: '缺货预警', path: '/inventory/alerts', sortOrder: 3, isLeaf: true },
-      { code: 'inventory.planning', name: 'SKU 库存规划', path: '/inventory/planning', sortOrder: 4, isLeaf: true },
-      { code: 'inventory.lead_time', name: '交期配置', path: '/inventory/lead-time', sortOrder: 5, isLeaf: true },
-      { code: 'inventory.planning_dashboard', name: '规划驾驶舱', path: '/inventory/planning-dashboard', sortOrder: 6, isLeaf: true },
+      {
+        code: 'inventory.planning_dashboard',
+        name: '规划驾驶舱',
+        path: '/inventory/planning-dashboard',
+        sortOrder: 10,
+        isLeaf: true,
+      },
+      { code: 'inventory.alert', name: '缺货预警', path: '/inventory/alerts', sortOrder: 20, isLeaf: true },
+      { code: 'inventory.overview', name: '库存周转', path: '/inventory/overview', sortOrder: 30, isLeaf: true },
+      { code: 'inventory.planning', name: 'SKU 库存规划', path: '/inventory/planning', sortOrder: 40, isLeaf: true },
+      { code: 'inventory.pools', name: '库存三池', path: '/inventory/pools', sortOrder: 50, isLeaf: true },
+      { code: 'inventory.query', name: '库存查询', path: '/inventory/query', sortOrder: 60, isLeaf: true },
+      {
+        code: 'inventory.data_issues',
+        name: '数据问题',
+        path: '/inventory/data-issues',
+        sortOrder: 70,
+        isLeaf: true,
+      },
+      {
+        code: 'inventory.unallocated',
+        name: '未定仓供应',
+        path: '/inventory/unallocated',
+        sortOrder: 80,
+        isLeaf: true,
+      },
+      { code: 'inventory.safety', name: '安全库存设置', path: '/inventory/safety', sortOrder: 90, isLeaf: true },
+      { code: 'inventory.lead_time', name: '交期配置', path: '/inventory/lead-time', sortOrder: 100, isLeaf: true },
     ],
   },
   {
-    code: 'pmc',
-    name: '下单计划',
-    icon: 'ClipboardList',
-    sortOrder: 2,
+    code: 'supply',
+    name: '采购发运',
+    icon: 'Truck',
+    sortOrder: 20,
     isLeaf: false,
     children: [
-      { code: 'pmc.suggestion', name: '补货建议', path: '/pmc/suggestions', sortOrder: 1, isLeaf: true },
-      { code: 'pmc.list', name: '计划列表', path: '/pmc/list', sortOrder: 2, isLeaf: true },
-      { code: 'pmc.tracking', name: '采购跟单', path: '/pmc/tracking', sortOrder: 3, isLeaf: true },
-      { code: 'pmc.shipments', name: '发运管理', path: '/pmc/shipments', sortOrder: 4, isLeaf: true },
-    ],
-  },
-  {
-    code: 'procurement',
-    name: '采购管理',
-    icon: 'ShoppingCart',
-    sortOrder: 3,
-    isLeaf: false,
-    children: [
+      { code: 'pmc.suggestion', name: '补货建议', path: '/pmc/suggestions', sortOrder: 10, isLeaf: true },
+      { code: 'pmc.list', name: '计划列表', path: '/pmc/list', sortOrder: 20, isLeaf: true },
+      { code: 'pmc.tracking', name: '计划跟单', path: '/pmc/tracking', sortOrder: 30, isLeaf: true },
+      { code: 'pmc.shipments', name: '发运管理', path: '/pmc/shipments', sortOrder: 40, isLeaf: true },
       {
         code: 'procurement.bulk_stock',
         name: '大件备货申请',
         path: '/procurement/bulk-stock',
-        sortOrder: 1,
+        sortOrder: 50,
         isLeaf: true,
       },
       {
         code: 'procurement.follow_up',
-        name: '采购跟单',
+        name: '供应商跟单',
         path: '/procurement/follow-up',
-        sortOrder: 2,
+        sortOrder: 60,
         isLeaf: true,
       },
-    ],
-  },
-  {
-    code: 'cs',
-    name: '客服管理',
-    icon: 'Headphones',
-    sortOrder: 4,
-    isLeaf: false,
-    children: [
-      { code: 'cs.quality', name: '回复评分', path: '/cs/quality', sortOrder: 1, isLeaf: true },
-    ],
-  },
-  {
-    code: 'logistics',
-    name: '物流管理',
-    icon: 'Truck',
-    sortOrder: 5,
-    isLeaf: false,
-    children: [
+      {
+        code: 'procurement.costing',
+        name: '产品成本核算',
+        path: '/procurement/costing',
+        sortOrder: 70,
+        isLeaf: true,
+      },
       {
         code: 'logistics.fob_settlement',
-        name: 'FOB分账',
+        name: 'FOB 分账',
         path: '/logistics/fob-settlement',
-        sortOrder: 1,
+        sortOrder: 80,
         isLeaf: true,
       },
-    ],
-  },
-  {
-    code: 'ai',
-    name: 'AI 知识库',
-    icon: 'Bot',
-    sortOrder: 6,
-    isLeaf: false,
-    children: [
-      { code: 'ai.chat', name: '知识问答', path: '/ai/chat', sortOrder: 1, isLeaf: true },
     ],
   },
   {
     code: 'data',
-    name: '数据中心',
-    icon: 'ClipboardList',
-    sortOrder: 7,
+    name: '数据分析',
+    icon: 'TrendingUp',
+    sortOrder: 30,
     isLeaf: false,
     children: [
-      { code: 'data.products', name: '商品主数据', path: '/data/products', sortOrder: 1, isLeaf: true },
-      { code: 'data.sales', name: '销量历史', path: '/data/sales', sortOrder: 2, isLeaf: true },
-      { code: 'data.forecast', name: '销售预测', path: '/data/forecast', sortOrder: 3, isLeaf: true },
-      { code: 'data.sales_analytics', name: '销售分析看板', path: '/data/sales-analytics', sortOrder: 4, isLeaf: true },
-      { code: 'data.layered_forecast', name: '分层销量预测', path: '/data/layered-forecast', sortOrder: 5, isLeaf: true },
+      {
+        code: 'data.sales_analytics',
+        name: '销售分析看板',
+        path: '/data/sales-analytics',
+        sortOrder: 10,
+        isLeaf: true,
+      },
+      { code: 'data.products', name: '商品主数据', path: '/data/products', sortOrder: 20, isLeaf: true },
+      { code: 'data.sales', name: '销量历史', path: '/data/sales', sortOrder: 30, isLeaf: true },
+      { code: 'data.forecast', name: '销售预测', path: '/data/forecast', sortOrder: 40, isLeaf: true },
+      {
+        code: 'data.layered_forecast',
+        name: '分层销量预测',
+        path: '/data/layered-forecast',
+        sortOrder: 50,
+        isLeaf: true,
+      },
+      {
+        code: 'data.demand_plan',
+        name: '需求计划试点',
+        path: '/data/demand-plan',
+        sortOrder: 60,
+        isLeaf: true,
+      },
     ],
   },
   {
-    code: 'intel',
-    name: '跨境资讯',
-    icon: 'Newspaper',
-    sortOrder: 8,
+    code: 'assistant',
+    name: '智能助手',
+    icon: 'Bot',
+    sortOrder: 40,
     isLeaf: false,
     children: [
-      { code: 'intel.news', name: '资讯采集', path: '/intel/news', sortOrder: 1, isLeaf: true },
+      { code: 'ai.chat', name: '知识问答', path: '/ai/chat', sortOrder: 10, isLeaf: true },
+      { code: 'intel.news', name: '跨境资讯', path: '/intel/news', sortOrder: 20, isLeaf: true },
+      { code: 'cs.quality', name: '客服回复评分', path: '/cs/quality', sortOrder: 30, isLeaf: true },
     ],
   },
   {
@@ -150,25 +162,25 @@ const MENU_SEEDS: MenuSeed[] = [
     name: '帮助中心',
     icon: 'HelpCircle',
     path: '/help',
-    sortOrder: 98,
+    sortOrder: 90,
     isLeaf: true,
   },
   {
     code: 'system',
     name: '系统设置',
     icon: 'Settings',
-    sortOrder: 99,
+    sortOrder: 100,
     isLeaf: false,
     children: [
-      { code: 'system.users', name: '用户管理', path: '/system/users', sortOrder: 1, isLeaf: true },
-      { code: 'system.roles', name: '角色与菜单', path: '/system/roles', sortOrder: 2, isLeaf: true },
-      { code: 'system.logs', name: '操作日志', icon: 'ScrollText', path: '/system/logs', sortOrder: 3, isLeaf: true },
-      { code: 'system.tasks', name: '定时任务', path: '/system/tasks', sortOrder: 4, isLeaf: true },
+      { code: 'system.users', name: '用户管理', path: '/system/users', sortOrder: 10, isLeaf: true },
+      { code: 'system.roles', name: '角色与菜单', path: '/system/roles', sortOrder: 20, isLeaf: true },
+      { code: 'system.tasks', name: '定时任务', path: '/system/tasks', sortOrder: 30, isLeaf: true },
+      { code: 'system.logs', name: '操作日志', icon: 'ScrollText', path: '/system/logs', sortOrder: 40, isLeaf: true },
     ],
   },
 ];
 
-/** 已合并到其他菜单的废弃项，seed 时清理 */
+/** 已合并到其他菜单的废弃项，seed 时清理（先子后父） */
 const DEPRECATED_MENU_CODES = [
   'pmc.import',
   'pmc.drafts',
@@ -183,14 +195,131 @@ const DEPRECATED_MENU_CODES = [
   'compliance',
   'data.import',
   'data.forecast.strategy',
+  'pmc',
+  'procurement',
+  'logistics',
+  'cs',
+  'ai',
+  'intel',
 ];
 
+const SUPPLY_MENU_CODES = [
+  'supply',
+  'pmc.suggestion',
+  'pmc.list',
+  'pmc.tracking',
+  'pmc.shipments',
+  'procurement.bulk_stock',
+  'procurement.follow_up',
+  'procurement.costing',
+  'logistics.fob_settlement',
+] as const;
+
+const ASSISTANT_MENU_CODES = ['assistant', 'ai.chat', 'cs.quality', 'intel.news'] as const;
+
+const DATA_MENU_CODES = [
+  'data',
+  'data.sales_analytics',
+  'data.products',
+  'data.sales',
+  'data.forecast',
+  'data.layered_forecast',
+] as const;
+
+const INVENTORY_MENU_CODES = [
+  'inventory',
+  'inventory.planning_dashboard',
+  'inventory.alert',
+  'inventory.overview',
+  'inventory.planning',
+  'inventory.pools',
+  'inventory.query',
+  'inventory.data_issues',
+  'inventory.unallocated',
+  'inventory.safety',
+  'inventory.lead_time',
+] as const;
+
 const ROLE_MENU_CODES: Record<string, string[]> = {
-  super_admin: ['dashboard', 'inventory', 'inventory.overview', 'inventory.safety', 'inventory.alert', 'inventory.planning', 'inventory.lead_time', 'inventory.planning_dashboard', 'pmc', 'pmc.suggestion', 'pmc.list', 'pmc.tracking', 'pmc.shipments', 'procurement', 'procurement.bulk_stock', 'procurement.follow_up', 'cs', 'cs.quality', 'logistics', 'logistics.fob_settlement', 'data', 'data.products', 'data.sales', 'data.forecast', 'data.sales_analytics', 'data.layered_forecast', 'intel', 'intel.news', 'ai', 'ai.chat', 'help', 'system', 'system.users', 'system.roles', 'system.logs', 'system.tasks'],
-  pmc_planner: ['dashboard', 'inventory', 'inventory.overview', 'inventory.safety', 'inventory.lead_time', 'inventory.planning', 'inventory.planning_dashboard', 'pmc', 'pmc.suggestion', 'pmc.list', 'pmc.shipments', 'procurement', 'procurement.bulk_stock', 'logistics', 'logistics.fob_settlement', 'cs', 'cs.quality', 'data', 'data.products', 'data.sales', 'data.forecast', 'data.sales_analytics', 'data.layered_forecast', 'ai', 'ai.chat', 'help'],
-  warehouse: ['dashboard', 'inventory', 'inventory.overview', 'inventory.alert', 'pmc', 'pmc.list', 'logistics', 'logistics.fob_settlement', 'cs', 'cs.quality', 'data', 'data.products', 'data.sales', 'data.forecast', 'data.sales_analytics', 'data.layered_forecast', 'ai', 'ai.chat', 'help'],
-  purchaser: ['dashboard', 'inventory', 'inventory.overview', 'inventory.safety', 'inventory.alert', 'inventory.lead_time', 'inventory.planning', 'inventory.planning_dashboard', 'pmc', 'pmc.list', 'pmc.tracking', 'pmc.shipments', 'procurement', 'procurement.bulk_stock', 'procurement.follow_up', 'logistics', 'logistics.fob_settlement', 'cs', 'cs.quality', 'data', 'data.products', 'data.sales', 'data.forecast', 'data.sales_analytics', 'data.layered_forecast', 'ai', 'ai.chat', 'help'],
-  viewer: ['dashboard', 'inventory', 'inventory.overview', 'pmc', 'pmc.suggestion', 'pmc.list', 'pmc.tracking', 'procurement', 'procurement.bulk_stock', 'procurement.follow_up', 'logistics', 'logistics.fob_settlement', 'cs', 'cs.quality', 'data', 'data.sales', 'data.forecast', 'data.sales_analytics', 'data.layered_forecast', 'ai', 'ai.chat', 'help'],
+  super_admin: [
+    'dashboard',
+    ...INVENTORY_MENU_CODES,
+    ...SUPPLY_MENU_CODES,
+    ...DATA_MENU_CODES,
+    'data.demand_plan',
+    ...ASSISTANT_MENU_CODES,
+    'help',
+    'system',
+    'system.users',
+    'system.roles',
+    'system.logs',
+    'system.tasks',
+  ],
+  pmc_planner: [
+    'dashboard',
+    ...INVENTORY_MENU_CODES,
+    'supply',
+    'pmc.suggestion',
+    'pmc.list',
+    'pmc.shipments',
+    'procurement.bulk_stock',
+    'logistics.fob_settlement',
+    ...DATA_MENU_CODES,
+    'data.demand_plan',
+    'assistant',
+    'ai.chat',
+    'cs.quality',
+    'help',
+  ],
+  warehouse: [
+    'dashboard',
+    'inventory',
+    'inventory.overview',
+    'inventory.alert',
+    'inventory.query',
+    'inventory.data_issues',
+    'inventory.unallocated',
+    'supply',
+    'pmc.list',
+    'logistics.fob_settlement',
+    ...DATA_MENU_CODES,
+    'assistant',
+    'ai.chat',
+    'cs.quality',
+    'help',
+  ],
+  purchaser: [
+    'dashboard',
+    ...INVENTORY_MENU_CODES,
+    ...SUPPLY_MENU_CODES,
+    ...DATA_MENU_CODES,
+    'assistant',
+    'ai.chat',
+    'cs.quality',
+    'help',
+  ],
+  viewer: [
+    'dashboard',
+    'inventory',
+    'inventory.overview',
+    'inventory.query',
+    'inventory.pools',
+    'inventory.data_issues',
+    'inventory.unallocated',
+    'supply',
+    'pmc.suggestion',
+    'pmc.list',
+    'pmc.tracking',
+    'procurement.bulk_stock',
+    'procurement.follow_up',
+    'procurement.costing',
+    'logistics.fob_settlement',
+    ...DATA_MENU_CODES.filter((code) => code !== 'data.products'),
+    'assistant',
+    'ai.chat',
+    'cs.quality',
+    'help',
+  ],
 };
 
 async function removeMenuTreeByCode(code: string) {
@@ -225,23 +354,30 @@ async function seedMenus(items: MenuSeed[], parentId?: string): Promise<Map<stri
   const codeToId = new Map<string, string>();
 
   for (const item of items) {
-    const [menu] = await db
-      .insert(menus)
-      .values({
-        code: item.code,
-        name: item.name,
-        icon: item.icon,
-        path: item.path,
-        parentId,
-        sortOrder: item.sortOrder,
-        isLeaf: item.isLeaf,
-      })
-      .onConflictDoNothing({ target: menus.code })
-      .returning({ id: menus.id });
+    const values = {
+      code: item.code,
+      name: item.name,
+      icon: item.icon,
+      path: item.path,
+      parentId: parentId ?? null,
+      sortOrder: item.sortOrder,
+      isLeaf: item.isLeaf,
+    };
 
-    const menuId =
-      menu?.id ??
-      (await db.select({ id: menus.id }).from(menus).where(eq(menus.code, item.code)).limit(1))[0]?.id;
+    const [existing] = await db
+      .select({ id: menus.id })
+      .from(menus)
+      .where(eq(menus.code, item.code))
+      .limit(1);
+
+    let menuId: string | undefined;
+    if (existing) {
+      await db.update(menus).set(values).where(eq(menus.id, existing.id));
+      menuId = existing.id;
+    } else {
+      const [inserted] = await db.insert(menus).values(values).returning({ id: menus.id });
+      menuId = inserted?.id;
+    }
 
     if (!menuId) continue;
     codeToId.set(item.code, menuId);

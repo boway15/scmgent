@@ -31,6 +31,9 @@ export type ReconcileResult = {
  * When lockedSum <= parentQty, returned qty sums to parentQty.
  * When lockedSum > parentQty (over-lock), unlocked items receive 0 and locked
  * items keep their qty — the total may exceed parentQty.
+ *
+ * 上层总量（分层预测）只作父级约束；不单独驱动补货。同语义的轻量纯函数见
+ * `reconcileSkuQtyToParentTotal`（demand-plan-freeze）。
  */
 export function reconcileUnlocked(input: {
   parentQty: number;
@@ -100,3 +103,6 @@ function allocateWithLockPool<T extends { id: string; locked: boolean; qty: numb
     return { id: item.id, qty, systemQty: qty };
   });
 }
+
+/** 需求计划侧共用的父级总量约束（分层预测不单独驱动采购）。 */
+export { reconcileSkuQtyToParentTotal } from './demand-plan-freeze.js';

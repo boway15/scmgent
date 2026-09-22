@@ -5,7 +5,7 @@
 
 import { existsSync } from 'fs';
 
-const WORKFLOW_TIMEOUT_MS = Number(process.env.DIFY_WORKFLOW_TIMEOUT_MS ?? 120_000);
+const WORKFLOW_TIMEOUT_MS = Number(process.env.DIFY_WORKFLOW_TIMEOUT_MS ?? 300_000);
 
 function runningInDocker(): boolean {
   return process.env.RUNNING_IN_DOCKER === 'true' || existsSync('/.dockerenv');
@@ -79,6 +79,20 @@ export function isCsReplyQualityWorkflowEnabled(): boolean {
 
 export function isSalesForecastWorkflowEnabled(): boolean {
   return isDifyKeyConfigured('DIFY_API_KEY_SALES_FORECAST');
+}
+
+export function isCostingBomWorkflowEnabled(): boolean {
+  return isDifyKeyConfigured('DIFY_API_KEY_COSTING_BOM');
+}
+
+export function costingFactsWorkflowKey(): 'DIFY_API_KEY_COSTING_FACTS' | 'DIFY_API_KEY_COSTING_BOM' | null {
+  if (isDifyKeyConfigured('DIFY_API_KEY_COSTING_FACTS')) return 'DIFY_API_KEY_COSTING_FACTS';
+  if (isDifyKeyConfigured('DIFY_API_KEY_COSTING_BOM')) return 'DIFY_API_KEY_COSTING_BOM';
+  return null;
+}
+
+export function isCostingFactsWorkflowEnabled(): boolean {
+  return costingFactsWorkflowKey() !== null;
 }
 
 export function getDifyConfigSummary() {

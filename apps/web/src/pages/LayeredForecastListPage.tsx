@@ -6,6 +6,8 @@ import {
   type LayeredForecastVersion,
 } from '@/lib/layered-forecast-api';
 import { PageHeader } from '@/components/PageHeader';
+import { ListPagination } from '@/components/ListPagination';
+import { ListSearchBar } from '@/components/ListSearchBar';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -20,12 +22,22 @@ export function LayeredForecastListPage() {
   const [horizonMonths, setHorizonMonths] = useState(12);
   const [projectGroup, setProjectGroup] = useState('');
   const [category, setCategory] = useState('');
+  const [page, setPage] = useState(1);
+  const [pageSize] = useState(20);
+  const [keyword, setKeyword] = useState('');
+  const [appliedKeyword, setAppliedKeyword] = useState('');
   const startMonthOptions = useMemo(() => buildForecastStartMonthOptions(), []);
 
   const { data, isLoading } = useQuery({
-    queryKey: ['layered-forecast-versions'],
-    queryFn: layeredForecastApi.listVersions,
+    queryKey: ['layered-forecast-versions', page, pageSize, appliedKeyword],
+    queryFn: () =>
+      layeredForecastApi.listVersions({
+        page,
+        pageSize,
+        q: appliedKeyword || undefined,
+      }),
   });
+  const total = data?.total ?? 0;
 
   const generate = useMutation({
     mutationFn: () =>
@@ -114,9 +126,18 @@ export function LayeredForecastListPage() {
 
       <Card>
         <CardHeader>
-          <CardTitle>预测版本</CardTitle>
+          <CardTitle>预测版本（{total}）</CardTitle>
         </CardHeader>
         <CardContent>
+          <ListSearchBar
+            keyword={keyword}
+            onKeywordChange={setKeyword}
+            onSearch={() => {
+              setAppliedKeyword(keyword.trim());
+              setPage(1);
+            }}
+            placeholder="版本号 / 名称 / 开始月"
+          />
           {isLoading ? (
             <p className="text-sm text-text-sub">加载中…</p>
           ) : !data?.items.length ? (
@@ -138,6 +159,12 @@ export function LayeredForecastListPage() {
                   {data.items.map((version) => <LayeredVersionRow key={version.id} version={version} />)}
                 </tbody>
               </table>
+              <ListPagination
+                page={page}
+                pageSize={pageSize}
+                total={total}
+                onPageChange={setPage}
+              />
             </div>
           )}
         </CardContent>

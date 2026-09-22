@@ -16,7 +16,7 @@ RUN pnpm --filter @scm/web build
 
 FROM node:20-alpine AS runner
 RUN corepack enable && corepack prepare pnpm@10.33.2 --activate
-RUN apk add --no-cache postgresql-client chromium
+RUN apk add --no-cache postgresql-client chromium libreoffice poppler-utils
 WORKDIR /app
 
 COPY --from=build /app /app

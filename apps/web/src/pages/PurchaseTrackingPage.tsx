@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api, type PurchaseDraftStatus } from '@/lib/api';
@@ -6,6 +6,8 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { PageHeader } from '@/components/PageHeader';
+import { ListPagination } from '@/components/ListPagination';
+import { ListSearchBar } from '@/components/ListSearchBar';
 
 type EditableMilestone = 'etd' | 'etaPort' | 'etaWarehouse' | 'etaAvailable';
 
@@ -65,15 +67,26 @@ export function PurchaseTrackingPage() {
   const [milestoneDates, setMilestoneDates] = useState<
     Record<string, Partial<Record<EditableMilestone, string>>>
   >({});
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
+  const [keyword, setKeyword] = useState('');
+  const [appliedKeyword, setAppliedKeyword] = useState('');
 
-  const { data: records = [], isLoading } = useQuery({
-    queryKey: ['purchase-tracking', statusFilter],
-    queryFn: () => api.getPurchaseTracking(statusFilter),
+  const { data, isLoading } = useQuery({
+    queryKey: ['purchase-tracking', statusFilter, page, pageSize, appliedKeyword],
+    queryFn: () =>
+      api.getPurchaseTracking({
+        status: statusFilter,
+        page,
+        pageSize,
+        q: appliedKeyword || undefined,
+      }),
   });
+  const records = data?.items ?? [];
 
   const { data: shipmentData } = useQuery({
     queryKey: ['shipments', 'tracking-links'],
-    queryFn: () => api.getShipments(),
+    queryFn: () => api.getShipments({ pageSize: 500 }),
   });
 
   const linkedDraftIds = new Set(
@@ -133,6 +146,10 @@ export function PurchaseTrackingPage() {
     },
   });
 
+  useEffect(() => {
+    setPage(1);
+  }, [statusFilter]);
+
   if (isLoading) return <p className="text-text-sub">加载中...</p>;
 
   return (
@@ -152,6 +169,15 @@ export function PurchaseTrackingPage() {
           </p>
         </CardHeader>
         <CardContent>
+          <ListSearchBar
+            keyword={keyword}
+            onKeywordChange={setKeyword}
+            onSearch={() => {
+              setAppliedKeyword(keyword.trim());
+              setPage(1);
+            }}
+            placeholder="跟单单号 / SKU / 计划 / 商家"
+          />
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-border text-left text-text-sub">
@@ -412,6 +438,16 @@ export function PurchaseTrackingPage() {
               )}
             </tbody>
           </table>
+          <ListPagination
+            page={page}
+            pageSize={pageSize}
+            total={data?.total ?? 0}
+            onPageChange={setPage}
+            onPageSizeChange={(next) => {
+              setPageSize(next);
+              setPage(1);
+            }}
+          />
           {receiveDraft.isError && (
             <p className="mt-4 text-sm text-destructive">{(receiveDraft.error as Error).message}</p>
           )}

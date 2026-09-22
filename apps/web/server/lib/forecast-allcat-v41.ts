@@ -14,6 +14,7 @@ import {
   seasonalNaiveMonthlyQty,
 } from './forecast-monthly-abcd.js';
 import { buildLast12MonthlyQty } from './forecast-profile-snapshot.js';
+import type { DemandReconstructAudit } from './forecast-demand-unconstrain.js';
 
 export type AllCatV41Tier = 'T1' | 'T2' | 'T3' | 'T3P' | 'T4A' | 'T4B' | 'T99';
 
@@ -1208,6 +1209,7 @@ export function computeAllCatV41ForecastForMonth(input: {
    * 单月 walk-forward 评估脚本可不传；批量生成（含过去开始月）必须传。
    */
   historyCapEnd?: Date;
+  demandReconstruct?: DemandReconstructAudit;
 }): AllCatV41ForecastResult {
   const tierMetrics = computeWalkForwardMetrics(
     input.monthlyRows,
@@ -1273,6 +1275,7 @@ export function computeAllCatV41ForecastForMonth(input: {
     metrics: tierMetrics,
     historyCutoff,
   });
+  Object.assign(horizonFactors, input.demandReconstruct ?? {});
   if (input.recent30DailyAvg != null && input.recent30DailyAvg > 0) {
     horizonFactors.recent30DailyAvg = roundDaily(input.recent30DailyAvg);
   }

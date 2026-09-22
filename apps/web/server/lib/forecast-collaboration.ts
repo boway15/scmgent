@@ -32,7 +32,6 @@ import {
   buildMonthlyForecastHorizon,
   classifySalesLifecycle,
   clipCombinedSeasonality,
-  collectStockoutExcludedDates,
   computeForecastDailyAvgForMonth,
   computeFloorForecast,
   computeBClassPointForecast,
@@ -40,7 +39,6 @@ import {
   computeYoyAnchorDailyAvg,
   DEFAULT_SALES_HISTORY_LOOKBACK_DAYS,
   effectiveRecentWindowEnd,
-  filterSalesRowsExcludingDates,
   resolveEffectiveLastYearDailyAvg,
   resolveConservativeCategoryFactor,
   roundDaily,
@@ -52,6 +50,7 @@ import {
   type SalesLifecycle,
 } from './forecast-baseline.js';
 import { horizonBandFromIndex } from './forecast-horizon-band.js';
+import { FORECAST_HORIZON_MONTHS } from './forecast-limits.js';
 import { resolveBaselineGenerationAsOf } from './forecast-start-month.js';
 import {
   buildCategoryPoolKey,
@@ -120,6 +119,10 @@ import {
   type MonthlyAbcdCPoolContext,
 } from './forecast-monthly-abcd.js';
 import { cleanMonthlyQtyForTraining } from './forecast-monthly-clean.js';
+import {
+  resolveRecentDemandWindows,
+  unconstrainLast12MonthlyQty,
+} from './forecast-demand-unconstrain.js';
 
 export type { EligibilityStats };
 
@@ -974,7 +977,7 @@ async function generateBaselineForStationPlatform(input: {
   const calibration = loadForecastCalibrationConfig();
   const profileConfig = calibration.profile;
   const aCoreConfig = calibration.aCore;
-  const horizon = buildMonthlyForecastHorizon(today, input.monthCount ?? 12);
+  const horizon = buildMonthlyForecastHorizon(today, FORECAST_HORIZON_MONTHS);
   const warehouseStationByCode = await loadWarehouseStationMap();
   {
     const previousStartMonth = version.startMonth ?? null;
@@ -1103,13 +1106,7 @@ async function generateBaselineForStationPlatform(input: {
       station,
       warehouseStationByCode,
     );
-    const stockoutExcluded = collectStockoutExcludedDates(
-      rawSalesRows,
-      recent90Since,
-      recentWindowEnd,
-    );
-    const salesRows = filterSalesRowsExcludingDates(rawSalesRows, stockoutExcluded);
-    recent90BySkuId.set(sku.id, roundDaily(sumQtySince(salesRows, recent90Since) / 90));
+    recent90BySkuId.set(sku.id, roundDaily(sumQtySince(rawSalesRows, recent90Since) / 90));
   }
 
   const categoryRefBySku = computeCategoryReferenceBySku(skuRows, recent90BySkuId);
@@ -1127,7 +1124,6 @@ async function generateBaselineForStationPlatform(input: {
   for (const sku of skuRows) {
     const monthlySalesRows = monthlyBySku.get(sku.id) ?? [];
     const rawMonthlyQty = buildLast12MonthlyQty(monthlySalesRows, recentWindowEnd);
-    const categoryRefDaily = categoryRefBySku.get(sku.id) ?? 0;
     const recent90DailyAvg = recent90BySkuId.get(sku.id) ?? 0;
     const profile = resolveSkuProfileSnapshot({
       monthlyQty: rawMonthlyQty,
@@ -1144,11 +1140,34 @@ async function generateBaselineForStationPlatform(input: {
       t1SubBySku.set(sku.id, resolveT1SubSegment(tierResolved.features));
     }
     if (profile.profileClass === 'C') {
-      const cleanedForPool = useMonthlyAbcd
-        ? cleanMonthlyQtyForTraining(rawMonthlyQty, {
-            categoryMeanQty: categoryRefDaily > 0 ? categoryRefDaily * 30 : undefined,
-          }).cleaned
-        : rawMonthlyQty;
+      let cleanedForPool = rawMonthlyQty;
+      if (useMonthlyAbcd) {
+        const rawSalesRows = filterSalesRowsByStation(
+          dailyBySku.get(sku.id) ?? [],
+          station,
+          warehouseStationByCode,
+        );
+        const firstSaleDate = firstSaleBySku.get(sku.id) ?? null;
+        const calendar30 = roundDaily(sumQtySince(rawSalesRows, recent30Since) / 30);
+        const salesDays90 = countSalesDaysSince(rawSalesRows, recent90Since);
+        const lifecycleForPool = classifySalesLifecycle({
+          ageDays: computeAgeDaysFromFirstSale(firstSaleDate, today),
+          salesDayRatio90: salesDays90 / 90,
+          recent30DailyAvg: calendar30,
+          recent90DailyAvg,
+          maxZeroRunDays: computeMaxZeroRunDays(rawSalesRows, recent90Since, recentWindowEnd),
+        });
+        cleanedForPool = unconstrainLast12MonthlyQty({
+          monthlyQty: rawMonthlyQty,
+          asOf: recentWindowEnd,
+          dailySales: rawSalesRows,
+          skuMayUnconstrain:
+            recent90DailyAvg >= 1 &&
+            lifecycleForPool !== 'new' &&
+            lifecycleForPool !== 'intermittent',
+          firstSaleDate,
+        });
+      }
       cPoolInputs.push({
         skuId: sku.id,
         skuCode: sku.code,
@@ -1194,32 +1213,19 @@ async function generateBaselineForStationPlatform(input: {
       station,
       warehouseStationByCode,
     );
-    const stockoutExcluded = collectStockoutExcludedDates(
-      rawSalesRows,
-      recent90Since,
-      recentWindowEnd,
-    );
-    const salesRows = filterSalesRowsExcludingDates(rawSalesRows, stockoutExcluded);
     const monthlySalesRows = monthlyBySku.get(sku.id) ?? [];
     const firstSaleDate = firstSaleBySku.get(sku.id) ?? null;
 
-    const platformLookbackQty = salesRows.reduce((sum, row) => sum + row.qtySold, 0);
+    const platformLookbackQty = rawSalesRows.reduce((sum, row) => sum + row.qtySold, 0);
     if (platformLookbackQty <= 0 && !(sku.forceForecast ?? false)) {
       continue;
     }
 
-    const recent30DailyAvg = roundDaily(sumQtySince(salesRows, recent30Since) / 30);
-    const recent90DailyAvg = recent90BySkuId.get(sku.id) ?? 0;
-    const allChannelRows = filterSalesRowsByStation(
-      dailyAllBySku.get(sku.id) ?? [],
-      station,
-      warehouseStationByCode,
-    );
-    const allRecent30DailyAvg = roundDaily(sumQtySince(allChannelRows, recent30Since) / 30);
-    const peerPlatformRecentDaily = roundDaily(Math.max(0, allRecent30DailyAvg - recent30DailyAvg));
-    const salesDays90 = countSalesDaysSince(salesRows, recent90Since);
+    const calendar90 = roundDaily(sumQtySince(rawSalesRows, recent90Since) / 90);
+    const calendar30 = roundDaily(sumQtySince(rawSalesRows, recent30Since) / 30);
+    const salesDays90 = countSalesDaysSince(rawSalesRows, recent90Since);
     const salesDays365 = countSalesDaysSince(
-      salesRows,
+      rawSalesRows,
       addDays(recentWindowEnd, -DEFAULT_SALES_HISTORY_LOOKBACK_DAYS),
     );
     const ageDays = computeAgeDaysFromFirstSale(firstSaleDate, today);
@@ -1227,14 +1233,32 @@ async function generateBaselineForStationPlatform(input: {
     const lifecycle = classifySalesLifecycle({
       ageDays,
       salesDayRatio90: salesDays90 / 90,
-      recent30DailyAvg,
-      recent90DailyAvg,
+      recent30DailyAvg: calendar30,
+      recent90DailyAvg: calendar90,
       maxZeroRunDays,
     });
+    const recentWindows = resolveRecentDemandWindows({
+      sales: rawSalesRows,
+      recent30Since,
+      recent90Since,
+      recentWindowEnd,
+      lifecycle,
+      firstSaleDate,
+    });
+    const recent90DailyAvg = recentWindows.recent90DailyAvg;
+    const recent30DailyAvg = recentWindows.recent30DailyAvg;
+    const demandReconstruct = recentWindows.demandReconstruct;
+    const allChannelRows = filterSalesRowsByStation(
+      dailyAllBySku.get(sku.id) ?? [],
+      station,
+      warehouseStationByCode,
+    );
+    const allRecent30DailyAvg = roundDaily(sumQtySince(allChannelRows, recent30Since) / 30);
+    const peerPlatformRecentDaily = roundDaily(Math.max(0, allRecent30DailyAvg - calendar30));
 
     const eligibility = evaluateForecastEligibility({
-      recent30DailyAvg,
-      recent90DailyAvg,
+      recent30DailyAvg: calendar30,
+      recent90DailyAvg: calendar90,
       salesDays365,
       forceForecast: sku.forceForecast ?? false,
     });
@@ -1267,6 +1291,7 @@ async function generateBaselineForStationPlatform(input: {
         recent90DailyAvg,
         peerPlatformRecentDaily,
         historyCapEnd,
+        demandReconstruct,
       });
       const anchorTier = anchorV41.tier;
       const anchorForecastable = isAllCatV41Forecastable(anchorTier);
@@ -1308,6 +1333,7 @@ async function generateBaselineForStationPlatform(input: {
           recent90DailyAvg,
           peerPlatformRecentDaily,
           historyCapEnd,
+          demandReconstruct,
         });
 
         if (!anchorForecastable) {
@@ -1479,7 +1505,7 @@ async function generateBaselineForStationPlatform(input: {
 
     for (const [horizonIndex, horizonMonth] of horizon.entries()) {
       const lastYearSameMonthDailyAvg = resolveEffectiveLastYearDailyAvg({
-        dailyRows: salesRows,
+        dailyRows: rawSalesRows,
         monthlyRows: monthlySalesRows,
         forecastYear: horizonMonth.forecastYear,
         month: horizonMonth.month,
@@ -1556,6 +1582,7 @@ async function generateBaselineForStationPlatform(input: {
             wNear: 1,
             wYoy: 0,
             horizonMonthIndex: horizonIndex,
+            ...demandReconstruct,
           },
         };
         forecastModel = abcd.model;
@@ -1582,6 +1609,7 @@ async function generateBaselineForStationPlatform(input: {
             wNear: 1,
             wYoy: 0,
             horizonMonthIndex: horizonIndex,
+            ...demandReconstruct,
           },
         };
       } else if (profileInfo.profileClass === 'C') {
@@ -1604,6 +1632,7 @@ async function generateBaselineForStationPlatform(input: {
             wNear: 1,
             wYoy: 0,
             horizonMonthIndex: horizonIndex,
+            ...demandReconstruct,
           },
         };
       } else if (profileInfo.profileClass === 'B') {
@@ -1630,6 +1659,7 @@ async function generateBaselineForStationPlatform(input: {
           profileClass: profileInfo.profileClass,
           volumeTier: profileInfo.volumeTier,
           aCoreConfig,
+          demandReconstruct,
         });
         monthly = {
           ...monthly,
@@ -1654,6 +1684,7 @@ async function generateBaselineForStationPlatform(input: {
           profileClass: profileInfo.profileClass,
           volumeTier: profileInfo.volumeTier,
           aCoreConfig,
+          demandReconstruct,
         });
       }
 
@@ -1744,11 +1775,11 @@ async function generateBaselineForStationPlatform(input: {
       }),
     );
 
-    if (recent90DailyAvg > 0) {
+    if (calendar90 > 0) {
       highValueCandidates.push({
         skuId: sku.id,
         skuCode: sku.code,
-        recent90Total: recent90DailyAvg * 90,
+        recent90Total: calendar90 * 90,
         suggestedDailyAvg:
           horizon.length > 0 ? roundDaily(forecastDailyAvgSum / horizon.length) : recent90DailyAvg,
       });

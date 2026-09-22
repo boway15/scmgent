@@ -6,6 +6,9 @@ import { InventoryOverviewPage } from '@/pages/InventoryOverviewPage';
 import { InventoryQueryPage } from '@/pages/InventoryQueryPage';
 import { SkuInventoryPlanningPage } from '@/pages/SkuInventoryPlanningPage';
 import { SkuPlanningEntryPage } from '@/pages/SkuPlanningEntryPage';
+import { InventoryPoolsPage } from '@/pages/InventoryPoolsPage';
+import { InventoryDataIssuesPage } from '@/pages/InventoryDataIssuesPage';
+import { InventoryUnallocatedPage } from '@/pages/InventoryUnallocatedPage';
 import { PlanningDashboardPage } from '@/pages/PlanningDashboardPage';
 import { LeadTimeProfilesPage } from '@/pages/LeadTimeProfilesPage';
 import { SafetyStockPage } from '@/pages/SafetyStockPage';
@@ -25,6 +28,7 @@ import { ProductMasterPage } from '@/pages/ProductMasterPage';
 import { DashboardPage } from '@/pages/DashboardPage';
 import { SalesHistoryPage } from '@/pages/SalesHistoryPage';
 import { SalesForecastListPage } from '@/pages/SalesForecastListPage';
+import { DemandPlanPilotPage } from '@/pages/DemandPlanPilotPage';
 import { SalesForecastVersionDetailPage } from '@/pages/SalesForecastVersionDetailPage';
 import { LayeredForecastListPage } from '@/pages/LayeredForecastListPage';
 import { LayeredForecastDetailPage } from '@/pages/LayeredForecastDetailPage';
@@ -35,6 +39,7 @@ import { AuditLogsPage } from '@/pages/AuditLogsPage';
 import { NewsIntelPage } from '@/pages/NewsIntelPage';
 import { CsReplyQualityPage } from '@/pages/CsReplyQualityPage';
 import { BulkStockRequestPage, ProcurementFollowUpPage } from '@/pages/ProcurementPages';
+import { ProductCostingToolPage } from '@/pages/ProductCostingToolPage';
 import { HomeRedirect } from '@/components/HomeRedirect';
 import { PlaceholderPage } from '@/pages/PlaceholderPage';
 import { SystemTasksPage } from '@/pages/SystemTasksPage';
@@ -49,6 +54,9 @@ export function AppRouter() {
           <Route path="dashboard" element={<DashboardPage />} />
           <Route path="inventory/overview" element={<InventoryOverviewPage />} />
           <Route path="inventory/query" element={<InventoryQueryPage />} />
+          <Route path="inventory/pools" element={<InventoryPoolsPage />} />
+          <Route path="inventory/data-issues" element={<InventoryDataIssuesPage />} />
+          <Route path="inventory/unallocated" element={<InventoryUnallocatedPage />} />
           <Route path="inventory/planning-dashboard" element={<PlanningDashboardPage />} />
           <Route path="inventory/planning" element={<SkuPlanningEntryPage />} />
           <Route path="inventory/planning/:skuId" element={<SkuInventoryPlanningPage />} />
@@ -61,12 +69,14 @@ export function AppRouter() {
           <Route path="pmc/shipments" element={<ShipmentsPage />} />
           <Route path="procurement/bulk-stock" element={<BulkStockRequestPage />} />
           <Route path="procurement/follow-up" element={<ProcurementFollowUpPage />} />
+          <Route path="procurement/costing" element={<ProductCostingToolPage />} />
           <Route path="pmc/drafts" element={<Navigate to="/pmc/tracking" replace />} />
           <Route path="pmc/:id" element={<PmcDetailPage />} />
           <Route path="data/products" element={<ProductMasterPage />} />
           <Route path="data/import" element={<ImportLegacyRedirect />} />
           <Route path="data/sales" element={<SalesHistoryPage />} />
           <Route path="data/forecast" element={<SalesForecastListPage />} />
+          <Route path="data/demand-plan" element={<DemandPlanPilotPage />} />
           <Route path="data/forecast/strategy" element={<Navigate to="/data/forecast?tab=strategy" replace />} />
           <Route path="data/forecast/:versionId" element={<SalesForecastVersionDetailPage />} />
           <Route path="data/layered-forecast" element={<LayeredForecastListPage />} />

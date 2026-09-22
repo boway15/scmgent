@@ -36,6 +36,36 @@ export function buildPlanningDashboardCards(
       highlight: dashboard.healthYellowCount > 0,
     },
     {
+      label: '7天缺货（确定线）',
+      value: String(dashboard.stockoutHorizon7 ?? 0),
+      href: '/inventory/alerts',
+      highlight: (dashboard.stockoutHorizon7 ?? 0) > 0,
+    },
+    {
+      label: '15天缺货（确定线）',
+      value: String(dashboard.stockoutHorizon15 ?? 0),
+      href: '/inventory/alerts',
+      highlight: (dashboard.stockoutHorizon15 ?? 0) > 0,
+    },
+    {
+      label: '30天缺货（确定线）',
+      value: String(dashboard.stockoutHorizon30 ?? 0),
+      href: '/inventory/alerts',
+      highlight: (dashboard.stockoutHorizon30 ?? 0) > 0,
+    },
+    {
+      label: '库存积压',
+      value: String(dashboard.overstockCount ?? 0),
+      href: '/inventory/alerts',
+      highlight: (dashboard.overstockCount ?? 0) > 0,
+    },
+    {
+      label: '新计划已来不及',
+      value: String(dashboard.uncoverableByNewPoCount ?? 0),
+      href: '/inventory/alerts',
+      highlight: (dashboard.uncoverableByNewPoCount ?? 0) > 0,
+    },
+    {
       label: '低于补货点',
       value: String(dashboard.belowRopCount),
       href: '/inventory/alerts',
@@ -46,6 +76,18 @@ export function buildPlanningDashboardCards(
       value: String(dashboard.pendingSuggestions),
       href: '/pmc/suggestions',
       highlight: dashboard.pendingSuggestions > 0,
+    },
+    {
+      label: '数据问题',
+      value: String(dashboard.openDataIssueCount ?? 0),
+      href: '/inventory/data-issues',
+      highlight: (dashboard.openDataIssueCount ?? 0) > 0,
+    },
+    {
+      label: '未定仓供应',
+      value: String(dashboard.openUnallocatedLotCount ?? 0),
+      href: '/inventory/unallocated',
+      highlight: (dashboard.openUnallocatedLotCount ?? 0) > 0,
     },
     {
       label: '延期采购跟单',
@@ -69,6 +111,9 @@ export function buildPlanningDashboardCards(
 }
 
 const WORKBENCH_LINKS = [
+  { label: '数据问题', description: '无期批次、未分仓、占比偏离工单', href: '/inventory/data-issues' },
+  { label: '未定仓供应', description: 'OVERSEAS 批次确认目的仓', href: '/inventory/unallocated' },
+  { label: '库存三池', description: '本地 / 在途 / 海外批次与可出货日', href: '/inventory/pools' },
   { label: '补货建议', description: '审核并采纳待处理建议', href: '/pmc/suggestions' },
   { label: '采购跟单', description: '处理预计可用日期延期', href: '/pmc/tracking' },
   { label: '发运管理', description: '检查延期发运与节点', href: '/pmc/shipments' },

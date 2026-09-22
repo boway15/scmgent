@@ -54,7 +54,7 @@ export function buildMonthlyTrendRowsFromSkuMonthly(
         a.saleYear !== b.saleYear ? a.saleYear - b.saleYear : a.month - b.month,
       );
       const monthlyQty = sorted.map((r) => r.qtySold);
-      const cleaned = cleanMonthlyQtyForTraining(monthlyQty).cleaned;
+      const cleaned = cleanMonthlyQtyForTraining(monthlyQty, { winsorizePromo: false }).cleaned;
       sorted.forEach((row, idx) => {
         cleanedRows.push({ ...row, qtySold: cleaned[idx] ?? row.qtySold });
       });

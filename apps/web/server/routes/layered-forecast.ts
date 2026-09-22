@@ -1,7 +1,8 @@
-import { and, count, desc, eq } from 'drizzle-orm';
+import { and, count, desc, eq, ilike, or, sql } from 'drizzle-orm';
 import { Hono } from 'hono';
 import { db, layeredForecastNodes, layeredForecastVersions } from '@scm/db';
 import { getCurrentUserOptional } from '../lib/auth-context.js';
+import { parseListPagination } from '../lib/list-pagination.js';
 import { requireMenu } from '../lib/rbac.js';
 import { generateLayeredForecastVersion } from '../lib/layered-forecast-generate.js';
 import {
@@ -86,12 +87,44 @@ layeredForecastRoutes.post('/layered-forecasts/generate', layeredForecastMenu, a
 });
 
 layeredForecastRoutes.get('/layered-forecasts/versions', layeredForecastMenu, async (c) => {
-  const items = await db
-    .select()
-    .from(layeredForecastVersions)
-    .orderBy(desc(layeredForecastVersions.createdAt))
-    .limit(50);
-  return c.json({ items });
+  const { page, pageSize, offset } = parseListPagination(
+    c.req.query('page')?.trim(),
+    c.req.query('pageSize')?.trim(),
+  );
+  const q = c.req.query('q')?.trim();
+  const conditions = [];
+  if (q) {
+    const pattern = `%${q}%`;
+    conditions.push(
+      or(
+        ilike(layeredForecastVersions.versionNo, pattern),
+        ilike(layeredForecastVersions.versionName, pattern),
+        ilike(layeredForecastVersions.startMonth, pattern),
+      )!,
+    );
+  }
+  const where = conditions.length ? and(...conditions) : undefined;
+
+  const [items, countRow] = await Promise.all([
+    db
+      .select()
+      .from(layeredForecastVersions)
+      .where(where)
+      .orderBy(desc(layeredForecastVersions.createdAt))
+      .limit(pageSize)
+      .offset(offset),
+    db
+      .select({ count: sql<number>`count(*)::int` })
+      .from(layeredForecastVersions)
+      .where(where),
+  ]);
+
+  return c.json({
+    items,
+    total: countRow[0]?.count ?? 0,
+    page,
+    pageSize,
+  });
 });
 
 layeredForecastRoutes.get('/layered-forecasts/versions/:id', layeredForecastMenu, async (c) => {

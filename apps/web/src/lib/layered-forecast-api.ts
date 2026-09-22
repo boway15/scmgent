@@ -66,8 +66,19 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const layeredForecastApi = {
-  listVersions: () =>
-    request<{ items: LayeredForecastVersion[] }>('/api/layered-forecasts/versions'),
+  listVersions: (params?: { page?: number; pageSize?: number; q?: string }) => {
+    const qs = new URLSearchParams();
+    if (params?.page) qs.set('page', String(params.page));
+    if (params?.pageSize) qs.set('pageSize', String(params.pageSize));
+    if (params?.q) qs.set('q', params.q);
+    const query = qs.toString();
+    return request<{
+      items: LayeredForecastVersion[];
+      total: number;
+      page: number;
+      pageSize: number;
+    }>(`/api/layered-forecasts/versions${query ? `?${query}` : ''}`);
+  },
   getVersion: (id: string) =>
     request<LayeredForecastVersion>(`/api/layered-forecasts/versions/${id}`),
   listNodes: (id: string, params: LayeredForecastNodesQuery = {}) => {

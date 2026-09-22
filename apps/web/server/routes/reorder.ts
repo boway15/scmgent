@@ -1,4 +1,4 @@
-import { eq, desc, and, isNull } from 'drizzle-orm';
+import { eq, desc, and, isNull, or, ilike } from 'drizzle-orm';
 import { Hono } from 'hono';
 import { db, reorderSuggestions, skus } from '@scm/db';
 import { getCurrentUser } from '../lib/auth-context.js';
@@ -6,13 +6,47 @@ import { mergeSuggestionToPlan } from '../lib/pmc-plan.js';
 import { requireMenu } from '../lib/rbac.js';
 import { writeAuditLog } from '../lib/audit-log.js';
 import { resolveStockAlertsForSkuWarehouse } from '../lib/inventory-health-store.js';
+import { parseListPagination } from '../lib/list-pagination.js';
+import {
+  compareSuggestionsByUrgency,
+  filterSuggestionQueue,
+} from '../lib/reorder-suggestion-sort.js';
 
 export const reorderRoutes = new Hono();
 
 reorderRoutes.get('/reorder/suggestions', requireMenu('pmc.suggestion'), async (c) => {
-  const status = c.req.query('status');
+  const { page, pageSize, offset } = parseListPagination(
+    c.req.query('page')?.trim(),
+    c.req.query('pageSize')?.trim(),
+  );
+  const status = c.req.query('status')?.trim();
+  const queue = c.req.query('queue') ?? 'auto';
+  const q = c.req.query('q')?.trim() || c.req.query('sku')?.trim();
+  const warehouse = c.req.query('warehouse')?.trim();
 
-  const baseQuery = db
+  const conditions = [isNull(reorderSuggestions.supersededAt)];
+  if (status) {
+    conditions.push(
+      eq(reorderSuggestions.status, status as 'pending' | 'accepted' | 'ignored'),
+    );
+  }
+  if (warehouse) {
+    conditions.push(eq(reorderSuggestions.warehouseCode, warehouse));
+  }
+  if (q) {
+    const pattern = `%${q}%`;
+    conditions.push(
+      or(
+        ilike(skus.code, pattern),
+        ilike(skus.name, pattern),
+        ilike(skus.merchantCode, pattern),
+        ilike(skus.merchantName, pattern),
+        ilike(reorderSuggestions.warehouseCode, pattern),
+      )!,
+    );
+  }
+
+  const rows = await db
     .select({
       id: reorderSuggestions.id,
       skuId: reorderSuggestions.skuId,
@@ -36,24 +70,19 @@ reorderRoutes.get('/reorder/suggestions', requireMenu('pmc.suggestion'), async (
     })
     .from(reorderSuggestions)
     .innerJoin(skus, eq(skus.id, reorderSuggestions.skuId))
-    .$dynamic();
+    .where(and(...conditions))
+    .orderBy(desc(reorderSuggestions.generatedAt))
+    .limit(2000);
 
-  const statusFilter = status
-    ? eq(reorderSuggestions.status, status as 'pending' | 'accepted' | 'ignored')
-    : undefined;
-  const notSuperseded = isNull(reorderSuggestions.supersededAt);
+  const filtered = filterSuggestionQueue(rows, queue);
+  filtered.sort(compareSuggestionsByUrgency);
 
-  const rows = statusFilter
-    ? await baseQuery
-        .where(and(statusFilter, notSuperseded))
-        .orderBy(desc(reorderSuggestions.generatedAt))
-        .limit(100)
-    : await baseQuery
-        .where(notSuperseded)
-        .orderBy(desc(reorderSuggestions.generatedAt))
-        .limit(100);
-
-  return c.json(rows);
+  return c.json({
+    items: filtered.slice(offset, offset + pageSize),
+    total: filtered.length,
+    page,
+    pageSize,
+  });
 });
 
 reorderRoutes.patch('/reorder/suggestions/:id', requireMenu('pmc.suggestion'), async (c) => {

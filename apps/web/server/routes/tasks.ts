@@ -4,6 +4,7 @@ import { runStockAlert } from '../tasks/stockAlert.js';
 import { runReplenishmentForecast } from '../tasks/replenishmentForecast.js';
 import { runPurchaseFollowUp } from '../tasks/purchaseFollowUp.js';
 import { runInventoryExceptionScan } from '../tasks/inventoryExceptionScan.js';
+import { runInventoryDataIssueScan } from '../tasks/inventoryDataIssueScan.js';
 import { runDailyInventoryPipeline } from '../tasks/dailyInventoryPipeline.js';
 import { runForecastAccuracy } from '../tasks/forecastAccuracy.js';
 import { runNewsIngestTask } from '../tasks/newsIngest.js';
@@ -43,8 +44,27 @@ function resolveTriggeredBy(c: Context): string {
 }
 
 taskRoutes.get('/tasks/runs', requireCronSecret, async (c) => {
-  const runs = await getLatestTaskRuns(20);
-  return c.json(runs);
+  const page = Math.max(1, Number(c.req.query('page') ?? 1));
+  const pageSize = Math.min(100, Math.max(1, Number(c.req.query('pageSize') ?? 20)));
+  const q = c.req.query('q')?.trim().toLowerCase();
+  const fetchLimit = q ? 500 : pageSize * page;
+  const runs = await getLatestTaskRuns(fetchLimit);
+  const filtered = q
+    ? runs.filter(
+        (run) =>
+          run.taskName.toLowerCase().includes(q) ||
+          (run.status ?? '').toLowerCase().includes(q) ||
+          (run.triggeredBy ?? '').toLowerCase().includes(q),
+      )
+    : runs;
+  const total = filtered.length;
+  const offset = (page - 1) * pageSize;
+  return c.json({
+    items: filtered.slice(offset, offset + pageSize),
+    total,
+    page,
+    pageSize,
+  });
 });
 
 taskRoutes.post('/tasks/stock-alert', requireCronSecret, async (c) => {
@@ -115,6 +135,23 @@ taskRoutes.post('/tasks/inventory-exception-scan', requireCronSecret, async (c) 
   }
 });
 
+taskRoutes.post('/tasks/inventory-data-issue-scan', requireCronSecret, async (c) => {
+  const triggeredBy = resolveTriggeredBy(c);
+  const run = await startTaskRun('inventory_data_issue_scan', triggeredBy);
+  try {
+    const result = await runInventoryDataIssueScan();
+    await finishTaskRun(run.id, {
+      success: true,
+      resultSummary: `detected=${result.detected}; inserted=${result.inserted}; autoResolved=${result.autoResolved}`,
+    });
+    return c.json({ ...result, taskRunId: run.id });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'data issue scan failed';
+    await finishTaskRun(run.id, { success: false, errorMessage: message });
+    return c.json({ message, taskRunId: run.id }, 500);
+  }
+});
+
 taskRoutes.post('/tasks/daily-inventory-pipeline', requireCronSecret, async (c) => {
   const triggeredBy = resolveTriggeredBy(c);
   const run = await startTaskRun('daily_inventory_pipeline', triggeredBy);
@@ -128,6 +165,24 @@ taskRoutes.post('/tasks/daily-inventory-pipeline', requireCronSecret, async (c) 
     return c.json({ ...result, taskRunId: run.id });
   } catch (err) {
     const message = err instanceof Error ? err.message : 'daily pipeline failed';
+    await finishTaskRun(run.id, { success: false, errorMessage: message });
+    return c.json({ message, taskRunId: run.id }, 500);
+  }
+});
+
+taskRoutes.post('/tasks/supply-lot-sync', requireCronSecret, async (c) => {
+  const triggeredBy = resolveTriggeredBy(c);
+  const run = await startTaskRun('supply_lot_sync', triggeredBy);
+  try {
+    const { syncInventorySupplyLots } = await import('../lib/inventory-supply-lot-sync.js');
+    const result = await syncInventorySupplyLots();
+    await finishTaskRun(run.id, {
+      success: true,
+      resultSummary: `lots=${result.lotCount}; eligible=${result.eligibleCount}`,
+    });
+    return c.json({ ...result, taskRunId: run.id });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'supply lot sync failed';
     await finishTaskRun(run.id, { success: false, errorMessage: message });
     return c.json({ message, taskRunId: run.id }, 500);
   }

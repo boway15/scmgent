@@ -107,7 +107,7 @@ import {
   parseMonthsQuery,
 } from '../lib/forecast-drawer-actual.js';
 import { loadMonthlySalesBySkuIds } from '../lib/sales-history-query.js';
-import { MAX_FORECAST_MONTH_COUNT } from '../lib/forecast-limits.js';
+import { FORECAST_HORIZON_MONTHS } from '../lib/forecast-limits.js';
 import { getVersionQtyTotals } from '../lib/forecast-qty-totals.js';
 
 export const salesForecastRoutes = new Hono();
@@ -118,8 +118,6 @@ const SEASONALITY_DIMENSION_TYPES = ['category', 'project_group'] as const;
 const FORECAST_VERSION_STATUSES = ['draft', 'published', 'archived'] as const;
 const CONFIDENCE_LEVELS = ['high', 'medium', 'low'] as const;
 
-const MIN_BASELINE_MONTH_COUNT = 1;
-const MAX_BASELINE_MONTH_COUNT = MAX_FORECAST_MONTH_COUNT;
 const MAX_BASELINE_FORECAST_ROWS = 50_000;
 
 function isOneOf<T extends readonly string[]>(value: string | undefined, values: T): value is T[number] {
@@ -326,18 +324,9 @@ salesForecastRoutes.post('/sales-forecasts/generate-baseline', requireMenu('data
     background?: boolean;
   }>();
 
-  const monthCount = body.monthCount ?? 12;
-  if (
-    !Number.isInteger(monthCount) ||
-    monthCount < MIN_BASELINE_MONTH_COUNT ||
-    monthCount > MAX_BASELINE_MONTH_COUNT
-  ) {
-    return c.json(
-      {
-        message: `monthCount must be an integer between ${MIN_BASELINE_MONTH_COUNT} and ${MAX_BASELINE_MONTH_COUNT}`,
-      },
-      400,
-    );
+  const monthCount = body.monthCount ?? FORECAST_HORIZON_MONTHS;
+  if (monthCount !== FORECAST_HORIZON_MONTHS) {
+    return c.json({ message: `monthCount 仅支持 ${FORECAST_HORIZON_MONTHS}` }, 400);
   }
   let startMonthResolved: ReturnType<typeof parseAndValidateForecastStartMonth>;
   try {

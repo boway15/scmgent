@@ -11,6 +11,7 @@ import {
 } from '@/lib/forecast-labels';
 import {
   DRAWER_HISTORY_MONTH_COUNT,
+  FORECAST_HORIZON_MONTHS,
   MAX_FORECAST_MONTH_COUNT,
   buildForwardMonthLabels,
   resolveHorizonPlatformScope,
@@ -108,7 +109,7 @@ type Props = {
   forecastMonthCount?: number;
 };
 
-const DEFAULT_MONTH_COUNT = MAX_FORECAST_MONTH_COUNT;
+const DEFAULT_MONTH_COUNT = FORECAST_HORIZON_MONTHS;
 
 const formatFactor = (value: number | null | undefined) =>
   value == null || !Number.isFinite(value) ? '-' : value.toFixed(2);

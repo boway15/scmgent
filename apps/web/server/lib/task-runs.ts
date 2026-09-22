@@ -15,7 +15,9 @@ export type TaskName =
   | 'procurement_bulk_stock_pull'
   | 'procurement_follow_up_pull'
   | 'inventory_turnover_pull'
-  | 'inventory_query_pull';
+  | 'inventory_query_pull'
+  | 'inventory_data_issue_scan'
+  | 'supply_lot_sync';
 
 export async function startTaskRun(taskName: TaskName, triggeredBy: string) {
   const [run] = await db

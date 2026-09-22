@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
@@ -6,34 +6,49 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { PageHeader } from '@/components/PageHeader';
+import { ListPagination } from '@/components/ListPagination';
+import { ListSearchBar } from '@/components/ListSearchBar';
 import { InventoryHealthBadge } from '@/components/InventoryHealthBadge';
 import {
-  compareSuggestionsByUrgency,
   deriveProjectedStockoutDate,
   formatSuggestionExplain,
   isSuggestedOrderOverdue,
 } from '@/lib/reorder-suggestion-explain';
 
-type ReorderSuggestionRow = Awaited<ReturnType<typeof api.getReorderSuggestions>>[number] & {
-  skuId?: string;
-};
+type ReorderSuggestionRow = Awaited<
+  ReturnType<typeof api.getReorderSuggestions>
+>['items'][number];
 
 export function ReorderSuggestionsPage() {
-  const [searchParams] = useSearchParams();
-  const skuFilter = searchParams.get('sku')?.trim().toLowerCase() ?? '';
+  const [searchParams, setSearchParams] = useSearchParams();
+  const skuFromUrl = searchParams.get('sku')?.trim() ?? '';
   const qc = useQueryClient();
-  const { data: allItems = [], isLoading } = useQuery({
-    queryKey: ['reorder-suggestions'],
-    queryFn: api.getReorderSuggestions,
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
+  const [keyword, setKeyword] = useState(skuFromUrl);
+  const [appliedKeyword, setAppliedKeyword] = useState(skuFromUrl);
+
+  const { data, isLoading } = useQuery({
+    queryKey: ['reorder-suggestions', page, pageSize, appliedKeyword],
+    queryFn: () =>
+      api.getReorderSuggestions({
+        q: appliedKeyword || undefined,
+        page,
+        pageSize,
+      }),
   });
-  const items = (skuFilter
-    ? allItems.filter((i) => i.skuCode.toLowerCase().includes(skuFilter))
-    : allItems
-  ).slice().sort(compareSuggestionsByUrgency);
+  const items = data?.items ?? [];
+
   const [expandedReason, setExpandedReason] = useState<Record<string, boolean>>({});
   const { data: merchants = [] } = useQuery({ queryKey: ['merchants'], queryFn: api.getMerchants });
 
   const [merchantOverride, setMerchantOverride] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    setKeyword(skuFromUrl);
+    setAppliedKeyword(skuFromUrl);
+    setPage(1);
+  }, [skuFromUrl]);
 
   const runForecast = useMutation({
     mutationFn: api.runReplenishmentForecast,
@@ -57,6 +72,12 @@ export function ReorderSuggestionsPage() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['reorder-suggestions'] }),
   });
 
+  const clearSkuFilter = () => {
+    const next = new URLSearchParams(searchParams);
+    next.delete('sku');
+    setSearchParams(next, { replace: true });
+  };
+
   if (isLoading) return <p className="text-text-sub">加载中...</p>;
 
   return (
@@ -67,13 +88,13 @@ export function ReorderSuggestionsPage() {
         </Button>
       </PageHeader>
 
-      {skuFilter && (
+      {skuFromUrl && (
         <p className="text-sm text-text-sub">
-          筛选 SKU：<span className="font-mono text-text-main">{searchParams.get('sku')}</span>
+          筛选 SKU：<span className="font-mono text-text-main">{skuFromUrl}</span>
           {' · '}
-          <Link to="/pmc/suggestions" className="text-primary hover:underline">
+          <button type="button" className="text-primary hover:underline" onClick={clearSkuFilter}>
             清除筛选
-          </Link>
+          </button>
         </p>
       )}
 
@@ -100,6 +121,16 @@ export function ReorderSuggestionsPage() {
           <CardTitle>待行动建议</CardTitle>
         </CardHeader>
         <CardContent>
+          <ListSearchBar
+            keyword={keyword}
+            onKeywordChange={setKeyword}
+            onSearch={() => {
+              setAppliedKeyword(keyword.trim());
+              setPage(1);
+              if (skuFromUrl) clearSkuFilter();
+            }}
+            placeholder="SKU / 商家 / 目标仓"
+          />
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-border text-left text-text-sub">
@@ -227,7 +258,7 @@ export function ReorderSuggestionsPage() {
               })}
               {!items.length && (
                 <tr>
-                  <td colSpan={11} className="p-4 text-center text-text-hint">
+                  <td colSpan={12} className="p-4 text-center text-text-hint">
                     暂无建议，点击上方「运行补货预测」生成
                   </td>
                 </tr>
@@ -239,6 +270,16 @@ export function ReorderSuggestionsPage() {
               <option key={m.merchantCode} value={m.merchantCode} />
             ))}
           </datalist>
+          <ListPagination
+            page={page}
+            pageSize={pageSize}
+            total={data?.total ?? 0}
+            onPageChange={setPage}
+            onPageSizeChange={(next) => {
+              setPageSize(next);
+              setPage(1);
+            }}
+          />
         </CardContent>
       </Card>
     </div>

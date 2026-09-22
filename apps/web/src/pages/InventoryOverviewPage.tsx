@@ -341,7 +341,7 @@ export function InventoryOverviewPage() {
 
   return (
     <div className="space-y-6">
-      <PageHeader title="库存总览">
+      <PageHeader title="库存周转">
         <div className="flex flex-wrap gap-2">
           <Button variant="outline" onClick={() => api.exportInventoryOverviewCsv(exportParams)}>
             导出当前视图

@@ -1,10 +1,10 @@
 app:
-  description: 从飞书多维表格读取大件备货申请，筛选推送日历超期（默认超 2 天、不计今天）且待供应商确认的记录，按供应商汇总条数（不展示 SKU）后以 Markdown 推送企业微信（超长拆条带续标）。
+  description: 【超2天】待供应商确认，采购跟进。筛选大前天及之前仍未确认的大件备货申请，按供应商汇总后推送飞书。
   icon: 📦
   icon_background: '#FFF7E6'
   icon_type: emoji
   mode: workflow
-  name: 大件备货申请·企业微信提醒
+  name: '[家具/创新]_大件备货·待供应商确认超2天'
   use_icon_as_answer_icon: false
 dependencies: []
 kind: app
@@ -44,13 +44,13 @@ workflow:
     - FEISHU_TABLE_ID
     value: tbl7H8F6rc2xeFGf
     value_type: string
-  - description: 企业微信群机器人 Webhook Key（URL 中 key= 后的 UUID）
+  - description: 飞书自定义机器人 Webhook 完整地址
     id: e5f6a7b8-c9d0-1234-ef01-345678901234
-    name: WECOM_HOOK_KEY
+    name: FEISHU_BOT_WEBHOOK_URL
     selector:
     - env
-    - WECOM_HOOK_KEY
-    value: 1bd8d81d-148f-409f-bf7e-b4511be3471f
+    - FEISHU_BOT_WEBHOOK_URL
+    value: https://open.feishu.cn/open-apis/bot/v2/hook/9f0406b7-fca7-429d-a5ad-03e81f911db7
     value_type: secret
   - description: 推送日历超期天数（不计今天），默认 2。例：今天 7/17 → 统计 7/14 及之前
     id: f6a7b8c9-d0e1-2345-f012-456789012345
@@ -213,7 +213,7 @@ workflow:
       id: edge-prepare-push
       source: prepare_supplier_messages
       sourceHandle: source
-      target: push_wecom_all
+      target: push_feishu_all
       targetHandle: target
       type: custom
       zIndex: 0
@@ -223,7 +223,7 @@ workflow:
         sourceType: code
         targetType: end
       id: edge-push-end
-      source: push_wecom_all
+      source: push_feishu_all
       sourceHandle: source
       target: end_success
       targetHandle: target
@@ -277,9 +277,9 @@ workflow:
       type: custom
       width: 242
     - data:
-        code: "from datetime import datetime, timedelta, time\nfrom zoneinfo import ZoneInfo\n\nTZ = ZoneInfo(\"Asia/Shanghai\")\n\n\ndef main(days_threshold: str = \"2\") -> dict:\n    \"\"\"日历超期：不计今天，超过 N 天。\n\n    例：今天 7/17、N=2 → 7/16、7/15 不算超期；统计 7/14 及之前。\n    cutoff_ms = 上海「今天 − N 天」00:00:00（不含），推送时间 < cutoff 即命中。\n    \"\"\"\n    try:\n        days = int(float((days_threshold or \"2\").strip()))\n    except Exception:\n        days = 2\n    if days < 0:\n        days = 2\n    now = datetime.now(TZ)\n    today = now.date()\n    cutoff_date = today - timedelta(days=days)  # 7/17, N=2 → 7/15\n    cutoff = datetime.combine(cutoff_date, time.min, tzinfo=TZ)\n    latest_overdue = cutoff_date - timedelta(days=1)  # 7/14\n    return {\n        \"days_threshold\": days,\n        \"cutoff_ms\": int(cutoff.timestamp() * 1000),\n        \"cutoff_date_text\": latest_overdue.isoformat(),\n        \"now_text\": now.strftime(\"%Y-%m-%d %H:%M:%S\"),\n    }\n"
+        code: "from datetime import datetime, timedelta, time\nfrom zoneinfo import ZoneInfo\n\nTZ = ZoneInfo(\"Asia/Shanghai\")\nFIXED_DAYS = 2\n\n\ndef main(days_threshold: str = \"2\") -> dict:\n    \"\"\"待供应商确认 · 超2天（大前天及之前），采购跟进。\n\n    例：今天 7/17、N=2 → 统计 7/14 及之前。前天（7/15）由超1天提醒覆盖。\n    \"\"\"\n    days = FIXED_DAYS\n    try:\n        parsed = int(float((days_threshold or \"\").strip()))\n        if parsed > days:\n            days = parsed\n    except Exception:\n        days = FIXED_DAYS\n    now = datetime.now(TZ)\n    today = now.date()\n    cutoff_date = today - timedelta(days=days)\n    cutoff = datetime.combine(cutoff_date, time.min, tzinfo=TZ)\n    latest_overdue = cutoff_date - timedelta(days=1)\n    return {\n        \"days_threshold\": days,\n        \"cutoff_ms\": int(cutoff.timestamp() * 1000),\n        \"cutoff_date_text\": latest_overdue.isoformat(),\n        \"now_text\": now.strftime(\"%Y-%m-%d %H:%M:%S\"),\n    }\n"
         code_language: python3
-        desc: 日历超期：不计今天，超过 N 天；cutoff=今天−N 日 00:00（不含）
+        desc: 待供应商确认超2天（大前天及之前）；前天由超1天提醒覆盖，采购跟进
         outputs:
           cutoff_date_text:
             children: null
@@ -548,9 +548,9 @@ workflow:
       type: custom
       width: 242
     - data:
-        code: "import json\nfrom collections import defaultdict\n\nMAX_CHARS = 1300\nBITABLE_URL = \"https://chinabestwo.feishu.cn/base/HPJzbHdPea7elSs92T8c31BTnxe?table=tbl7H8F6rc2xeFGf&view=vewLM617rt\"\nFOOTER = f\"\\n\\n[查看明细]({BITABLE_URL})\"\n\n\ndef build_supplier_block(supplier: str, count: int) -> str:\n    return f\"**{supplier}** {count}条\"\n\n\ndef make_header(\n    days_threshold: float,\n    matched_count: int,\n    supplier_count: int,\n    now_text: str,\n    part_index: int,\n) -> str:\n    title = f\"大件备货申请·待供应商确认超{int(days_threshold or 2)}天\"\n    if part_index > 1:\n        title = f\"{title} (续{part_index})\"\n    meta = f\"> 共 {matched_count} 条 / {supplier_count} 家供应商\"\n    if now_text:\n        meta += f\"，生成时间：{now_text.strip()}\"\n    return f\"**{title}**\\n{meta}\"\n\n\ndef split_messages(blocks: list, make_hdr, max_chars: int = MAX_CHARS):\n    if not blocks:\n        return []\n    body_limit = max_chars - len(FOOTER)\n    if body_limit < 200:\n        body_limit = max_chars\n\n    messages = []\n    part_index = 1\n    header = make_hdr(part_index)\n    current = header\n\n    def finalize():\n        nonlocal current, part_index, header\n        messages.append((current + FOOTER).strip())\n        part_index += 1\n        header = make_hdr(part_index)\n        current = header\n\n    for block in blocks:\n        candidate = f\"{current}\\n\\n{block}\"\n        if len(candidate) <= body_limit:\n            current = candidate\n            continue\n        if current != header:\n            finalize()\n        current = f\"{header}\\n\\n{block}\"\n    if current and current != header:\n        messages.append((current + FOOTER).strip())\n    return messages\n\n\ndef main(rows_json: str, days_threshold: float, now_text: str = \"\") -> dict:\n    rows = json.loads(rows_json or \"[]\")\n    groups = defaultdict(int)\n    order = []\n    for row in rows:\n        supplier = (row.get(\"供应商简称\") or \"未知供应商\").strip()\n        if supplier not in groups:\n            groups[supplier] = 0\n            order.append(supplier)\n        groups[supplier] += 1\n\n    blocks = [build_supplier_block(s, groups[s]) for s in order if groups[s]]\n    matched_count = len(rows)\n    supplier_count = len([s for s in order if groups[s]])\n\n    def make_hdr(part_index: int) -> str:\n        return make_header(\n            days_threshold, matched_count, supplier_count, now_text, part_index\n        )\n\n    messages = split_messages(blocks, make_hdr, MAX_CHARS)\n    push_meta = [{\"supplier\": s, \"count\": groups[s]} for s in order if groups[s]]\n\n    return {\n        \"push_messages_json\": json.dumps(messages, ensure_ascii=False),\n        \"push_meta\": json.dumps(push_meta, ensure_ascii=False),\n        \"supplier_count\": supplier_count,\n        \"message_count\": len(messages),\n        \"matched_count\": matched_count,\n    }"
+        code: "import json\nfrom collections import defaultdict\n\nMAX_CHARS = 4000\nBITABLE_URL = \"https://chinabestwo.feishu.cn/base/HPJzbHdPea7elSs92T8c31BTnxe?table=tbl7H8F6rc2xeFGf&view=vewLM617rt\"\nFOOTER = f\"\\n\\n[查看明细]({BITABLE_URL})\"\nTITLE_PREFIX = \"大件备货申请·待供应商确认\"\n\n\ndef build_supplier_block(supplier: str, count: int) -> str:\n    return f\"**{supplier}** {count}条\"\n\n\ndef make_header(\n    days_threshold: float,\n    matched_count: int,\n    supplier_count: int,\n    now_text: str,\n    part_index: int,\n) -> str:\n    days = int(days_threshold or 2)\n    title = f\"{TITLE_PREFIX}超{days}天\"\n    if part_index > 1:\n        title = f\"{title} (续{part_index})\"\n    meta = f\"采购跟进 · 共 {matched_count} 条 / {supplier_count} 家供应商\"\n    if now_text:\n        meta += f\"，生成时间：{now_text.strip()}\"\n    return f\"**{title}**\\n{meta}\"\n\n\ndef split_messages(blocks: list, make_hdr, max_chars: int = MAX_CHARS):\n    if not blocks:\n        return []\n    body_limit = max_chars - len(FOOTER)\n    if body_limit < 200:\n        body_limit = max_chars\n\n    messages = []\n    part_index = 1\n    header = make_hdr(part_index)\n    current = header\n\n    def finalize():\n        nonlocal current, part_index, header\n        messages.append((current + FOOTER).strip())\n        part_index += 1\n        header = make_hdr(part_index)\n        current = header\n\n    for block in blocks:\n        candidate = f\"{current}\\n\\n{block}\"\n        if len(candidate) <= body_limit:\n            current = candidate\n            continue\n        if current != header:\n            finalize()\n        current = f\"{header}\\n\\n{block}\"\n    if current and current != header:\n        messages.append((current + FOOTER).strip())\n    return messages\n\n\ndef main(rows_json: str, days_threshold: float, now_text: str = \"\") -> dict:\n    rows = json.loads(rows_json or \"[]\")\n    groups = defaultdict(int)\n    order = []\n    for row in rows:\n        supplier = (row.get(\"供应商简称\") or \"未知供应商\").strip()\n        if supplier not in groups:\n            groups[supplier] = 0\n            order.append(supplier)\n        groups[supplier] += 1\n\n    blocks = [build_supplier_block(s, groups[s]) for s in order if groups[s]]\n    matched_count = len(rows)\n    supplier_count = len([s for s in order if groups[s]])\n\n    def make_hdr(part_index: int) -> str:\n        return make_header(\n            days_threshold, matched_count, supplier_count, now_text, part_index\n        )\n\n    messages = split_messages(blocks, make_hdr, MAX_CHARS)\n    push_meta = [{\"supplier\": s, \"count\": groups[s]} for s in order if groups[s]]\n\n    return {\n        \"push_messages_json\": json.dumps(messages, ensure_ascii=False),\n        \"push_meta\": json.dumps(push_meta, ensure_ascii=False),\n        \"supplier_count\": supplier_count,\n        \"message_count\": len(messages),\n        \"matched_count\": matched_count,\n    }\n"
         code_language: python3
-        desc: Markdown 按供应商汇总条数（不展示 SKU）；拆条标题带(续N)；附明细链接
+        desc: 飞书卡片 Markdown 按供应商汇总条数（不展示 SKU）；拆条标题带(续N)；附明细链接
         outputs:
           matched_count:
             children: null
@@ -597,9 +597,9 @@ workflow:
       type: custom
       width: 242
     - data:
-        code: "import json\nimport ssl\nimport urllib.error\nimport urllib.request\n\nDEFAULT_HOOK_KEY = \"1bd8d81d-148f-409f-bf7e-b4511be3471f\"\nWECOM_MAX_CHARS = 1300\nSSL_CONTEXT = ssl.create_default_context()\nSSL_CONTEXT.check_hostname = False\nSSL_CONTEXT.verify_mode = ssl.CERT_NONE\n\n\ndef char_len(text):\n    return len(text or \"\")\n\n\ndef split_for_wecom(text: str, max_chars: int = WECOM_MAX_CHARS):\n    text = (text or \"\").strip()\n    if not text:\n        return []\n    if char_len(text) <= max_chars:\n        return [text]\n    parts = []\n    start = 0\n    while start < len(text):\n        end = min(start + max_chars, len(text))\n        parts.append(text[start:end])\n        start = end\n    return [p for p in parts if p.strip()]\n\n\ndef send_markdown(webhook_url: str, content: str) -> dict:\n    if char_len(content) > WECOM_MAX_CHARS:\n        raise Exception(\n            f\"单条消息 {char_len(content)} 字，超过企业微信 {WECOM_MAX_CHARS} 字上限\"\n        )\n    payload = json.dumps(\n        {\n            \"msgtype\": \"markdown\",\n            \"markdown\": {\"content\": content},\n        },\n        ensure_ascii=False,\n    ).encode(\"utf-8\")\n    req = urllib.request.Request(\n        webhook_url,\n        data=payload,\n        headers={\"Content-Type\": \"application/json; charset=utf-8\"},\n        method=\"POST\",\n    )\n    try:\n        with urllib.request.urlopen(req, timeout=30, context=SSL_CONTEXT) as resp:\n            raw = resp.read().decode(\"utf-8\")\n    except urllib.error.HTTPError as e:\n        raw = e.read().decode(\"utf-8\")\n        raise Exception(f\"HTTP {e.code}: {raw}\")\n    data = json.loads(raw or \"{}\")\n    if data.get(\"errcode\") != 0:\n        raise Exception(\n            f\"企业微信 errcode={data.get('errcode')} errmsg={data.get('errmsg')}\"\n        )\n    return data\n\n\ndef main(push_messages_json: str, hook_key: str = \"\") -> dict:\n    key = (hook_key or \"\").strip() or DEFAULT_HOOK_KEY\n    webhook_url = f\"https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key={key}\"\n    try:\n        messages = json.loads(push_messages_json or \"[]\")\n    except Exception as e:\n        raise Exception(f\"push_messages_json 解析失败: {e}\")\n    if not messages:\n        raise Exception(\"push_messages_json 为空，请检查「按供应商生成推送内容」\")\n\n    results = []\n    send_index = 0\n    for msg in messages:\n        text = (msg or \"\").strip()\n        if not text:\n            continue\n        for part in split_for_wecom(text):\n            send_index += 1\n            response = send_markdown(webhook_url, part)\n            results.append(\n                {\n                    \"index\": send_index,\n                    \"length\": char_len(part),\n                    \"errcode\": response.get(\"errcode\"),\n                    \"errmsg\": response.get(\"errmsg\", \"ok\"),\n                }\n            )\n\n    return {\n        \"push_count\": len(results),\n        \"push_results\": json.dumps(results, ensure_ascii=False),\n    }\n"
+        code: "import json\nimport ssl\nimport urllib.error\nimport urllib.request\n\nDEFAULT_WEBHOOK_URL = \"https://open.feishu.cn/open-apis/bot/v2/hook/9f0406b7-fca7-429d-a5ad-03e81f911db7\"\nFEISHU_MAX_CHARS = 4000\nHTTP_TIMEOUT_SEC = 8\nCARD_HEADER_TITLE = \"待供应商确认 · 超2天\"\nCARD_HEADER_TEMPLATE = \"red\"\nSSL_CONTEXT = ssl.create_default_context()\nSSL_CONTEXT.check_hostname = False\nSSL_CONTEXT.verify_mode = ssl.CERT_NONE\n\n\ndef char_len(text):\n    return len(text or \"\")\n\n\ndef parse_messages(push_messages_json):\n    raw = push_messages_json\n    if isinstance(raw, list):\n        return raw\n    if not isinstance(raw, str):\n        raw = json.dumps(raw, ensure_ascii=False) if raw is not None else \"[]\"\n    try:\n        data = json.loads(raw or \"[]\")\n    except Exception as e:\n        raise Exception(f\"push_messages_json 解析失败: {e}\")\n    if isinstance(data, str):\n        try:\n            data = json.loads(data)\n        except Exception:\n            data = [data]\n    if not isinstance(data, list):\n        raise Exception(\"push_messages_json 必须是消息字符串数组\")\n    return data\n\n\ndef split_for_feishu(text: str, max_chars: int = FEISHU_MAX_CHARS):\n    text = (text or \"\").strip()\n    if not text:\n        return []\n    if char_len(text) <= max_chars:\n        return [text]\n    parts = []\n    start = 0\n    while start < len(text):\n        end = min(start + max_chars, len(text))\n        parts.append(text[start:end])\n        start = end\n    return [p for p in parts if p.strip()]\n\n\ndef send_card(webhook_url: str, content: str, part_index: int) -> dict:\n    if char_len(content) > FEISHU_MAX_CHARS:\n        raise Exception(\n            f\"单条消息 {char_len(content)} 字，超过飞书卡片 {FEISHU_MAX_CHARS} 字上限\"\n        )\n    header_title = CARD_HEADER_TITLE\n    if part_index > 1:\n        header_title = f\"{CARD_HEADER_TITLE} (续{part_index})\"\n    payload = json.dumps(\n        {\n            \"msg_type\": \"interactive\",\n            \"card\": {\n                \"config\": {\"wide_screen_mode\": True},\n                \"header\": {\n                    \"title\": {\"tag\": \"plain_text\", \"content\": header_title},\n                    \"template\": CARD_HEADER_TEMPLATE,\n                },\n                \"elements\": [\n                    {\n                        \"tag\": \"div\",\n                        \"text\": {\n                            \"tag\": \"lark_md\",\n                            \"content\": content,\n                        },\n                    }\n                ],\n            },\n        },\n        ensure_ascii=False,\n    ).encode(\"utf-8\")\n    req = urllib.request.Request(\n        webhook_url,\n        data=payload,\n        headers={\"Content-Type\": \"application/json; charset=utf-8\"},\n        method=\"POST\",\n    )\n    try:\n        with urllib.request.urlopen(req, timeout=HTTP_TIMEOUT_SEC, context=SSL_CONTEXT) as resp:\n            raw = resp.read().decode(\"utf-8\")\n    except urllib.error.HTTPError as e:\n        raw = e.read().decode(\"utf-8\")\n        raise Exception(f\"HTTP {e.code}: {raw}\")\n    data = json.loads(raw or \"{}\")\n    code = data.get(\"code\", data.get(\"StatusCode\"))\n    if code != 0:\n        raise Exception(\n            f\"飞书 webhook code={code} msg={data.get('msg') or data.get('StatusMessage')}\"\n        )\n    return data\n\n\ndef main(push_messages_json: str, webhook_url: str = \"\") -> dict:\n    url = (webhook_url or \"\").strip() or DEFAULT_WEBHOOK_URL\n    messages = parse_messages(push_messages_json)\n    if not messages:\n        raise Exception(\"push_messages_json 为空，请检查「按供应商生成推送内容」\")\n\n    results = []\n    send_index = 0\n    seen = set()\n    skipped_duplicate = 0\n    for msg in messages:\n        text = (msg or \"\").strip() if isinstance(msg, str) else str(msg or \"\").strip()\n        if not text:\n            continue\n        for part in split_for_feishu(text):\n            if part in seen:\n                skipped_duplicate += 1\n                continue\n            seen.add(part)\n            send_index += 1\n            response = send_card(url, part, send_index)\n            results.append(\n                {\n                    \"index\": send_index,\n                    \"length\": char_len(part),\n                    \"code\": response.get(\"code\", response.get(\"StatusCode\")),\n                    \"msg\": response.get(\"msg\") or response.get(\"StatusMessage\") or \"ok\",\n                }\n            )\n\n    return {\n        \"push_count\": len(results),\n        \"push_results\": json.dumps(\n            {\n                \"sent\": results,\n                \"skipped_duplicate\": skipped_duplicate,\n            },\n            ensure_ascii=False,\n        ),\n    }\n"
         code_language: python3
-        desc: 逐条推送企业微信 markdown 消息（单条≤1300字）
+        desc: 逐条推送飞书消息卡片（lark_md，单条≤4000字；同文去重）
         outputs:
           push_count:
             children: null
@@ -608,7 +608,7 @@ workflow:
             children: null
             type: string
         selected: false
-        title: 推送企业微信
+        title: 推送飞书
         type: code
         variables:
         - value_selector:
@@ -617,10 +617,10 @@ workflow:
           variable: push_messages_json
         - value_selector:
           - env
-          - WECOM_HOOK_KEY
-          variable: hook_key
+          - FEISHU_BOT_WEBHOOK_URL
+          variable: webhook_url
       height: 96
-      id: push_wecom_all
+      id: push_feishu_all
       position:
         x: 3098
         y: 93
@@ -666,12 +666,12 @@ workflow:
           value_type: string
           variable: push_meta
         - value_selector:
-          - push_wecom_all
+          - push_feishu_all
           - push_count
           value_type: number
           variable: push_count
         - value_selector:
-          - push_wecom_all
+          - push_feishu_all
           - push_results
           value_type: string
           variable: push_results

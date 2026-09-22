@@ -1,15 +1,29 @@
-import { eq, desc } from 'drizzle-orm';
+import { eq, desc, and, or, ilike, sql } from 'drizzle-orm';
 import { Hono } from 'hono';
 import { db, users, roles } from '@scm/db';
 import { requireSuperAdmin } from '../middleware/auth.js';
 import { hashPassword } from '../lib/password.js';
 import { writeAuditLog } from '../lib/audit-log.js';
 import { clearMenuCache } from '../lib/rbac.js';
+import { parseListPagination } from '../lib/list-pagination.js';
 
 export const userRoutes = new Hono();
 
 userRoutes.get('/users', requireSuperAdmin, async (c) => {
-  const rows = await db
+  const { page, pageSize, offset } = parseListPagination(
+    c.req.query('page')?.trim(),
+    c.req.query('pageSize')?.trim(),
+  );
+  const q = c.req.query('q')?.trim();
+  const where = q
+    ? or(
+        ilike(users.name, `%${q}%`),
+        ilike(users.email, `%${q}%`),
+        ilike(users.feishuUserId, `%${q}%`),
+      )
+    : undefined;
+
+  const base = db
     .select({
       id: users.id,
       name: users.name,
@@ -24,14 +38,26 @@ userRoutes.get('/users', requireSuperAdmin, async (c) => {
     })
     .from(users)
     .innerJoin(roles, eq(users.roleId, roles.id))
-    .orderBy(desc(users.createdAt));
+    .$dynamic();
 
-  return c.json(
-    rows.map(({ passwordHash, ...row }) => ({
+  const [rows, countRow] = await Promise.all([
+    (where ? base.where(where) : base).orderBy(desc(users.createdAt)).limit(pageSize).offset(offset),
+    db
+      .select({ count: sql<number>`count(*)::int` })
+      .from(users)
+      .innerJoin(roles, eq(users.roleId, roles.id))
+      .where(where),
+  ]);
+
+  return c.json({
+    items: rows.map(({ passwordHash, ...row }) => ({
       ...row,
       hasPassword: Boolean(passwordHash),
     })),
-  );
+    total: countRow[0]?.count ?? 0,
+    page,
+    pageSize,
+  });
 });
 
 userRoutes.patch('/users/:id', requireSuperAdmin, async (c) => {

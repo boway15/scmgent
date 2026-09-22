@@ -28,8 +28,32 @@ describe('aggregatePlanningDashboard', () => {
       delayedShipments: 0,
       delayedDraftsEtaAvailable: 0,
       stockoutRateApprox: 0.5,
+      stockoutHorizon7: 0,
+      stockoutHorizon15: 0,
+      stockoutHorizon30: 0,
+      overstockCount: 0,
+      uncoverableByNewPoCount: 0,
+      pendingShipOut: 0,
+      pendingTransfer: 0,
       calculatedAt: today.toISOString(),
     });
+  });
+
+  it('passes through uncoverableByNewPoCount from the source', () => {
+    const dashboard = aggregatePlanningDashboard(
+      {
+        skuActiveCount: 0,
+        healthRedCount: 0,
+        healthYellowCount: 0,
+        belowRopCount: 0,
+        pendingSuggestions: 0,
+        shipments: [],
+        purchaseDrafts: [],
+        uncoverableByNewPoCount: 3,
+      },
+      today,
+    );
+    assert.equal(dashboard.uncoverableByNewPoCount, 3);
   });
 
   it('counts shipments delayed by ETA or an open milestone once each', () => {

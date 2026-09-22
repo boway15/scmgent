@@ -55,6 +55,10 @@ services:
       NODE_OPTIONS: "--max-old-space-size=4096"
       # DIFY_BASE_URL / DIFY_API_KEY_* 由 .env 注入；容器内 127.0.0.1 会在代码中改写为 host.docker.internal
       RUNNING_IN_DOCKER: "true"
+      COSTING_DATA_DIR: /data/costing
+      COSTING_PREPROCESS_MODE: ${COSTING_PREPROCESS_MODE:-auto}
+      DIFY_WORKFLOW_TIMEOUT_MS: ${DIFY_WORKFLOW_TIMEOUT_MS:-300000}
+      COSTING_EXTRACT_BATCH_SIZE: ${COSTING_EXTRACT_BATCH_SIZE:-1}
       # 导入与 HTTP 同进程；生产默认 max=1 会卡死页面
       DB_POOL_MAX: "10"
       # 日表 + 月表双轨（见 apps/web/server/lib/sales-history-config.ts）
@@ -64,6 +68,8 @@ services:
       # SALES_HISTORY_DAILY_RETENTION_DAYS: "365"
       # 补货/健康读取日表回溯天数，默认 90
       # REPLENISHMENT_SALES_LOOKBACK_DAYS: "90"
+    volumes:
+      - costingdata:/data/costing
     depends_on:
       postgres:
         condition: service_healthy
@@ -99,3 +105,4 @@ services:
 
 volumes:
   pgdata:
+  costingdata:

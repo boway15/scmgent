@@ -10,6 +10,8 @@ import {
 } from '@scm/db';
 import { and, eq, inArray, isNotNull, isNull, notInArray, sql } from 'drizzle-orm';
 import { calcMilestoneDelayDays } from './shipment-delay.js';
+import { countOpenDataIssues } from './inventory-data-issue-store.js';
+import { countOpenUnallocatedLots } from './inventory-dest-allocation-store.js';
 
 export type PlanningDashboard = {
   skuActiveCount: number;
@@ -20,6 +22,13 @@ export type PlanningDashboard = {
   delayedShipments: number;
   delayedDraftsEtaAvailable: number;
   stockoutRateApprox: number;
+  stockoutHorizon7: number;
+  stockoutHorizon15: number;
+  stockoutHorizon30: number;
+  overstockCount: number;
+  uncoverableByNewPoCount: number;
+  pendingShipOut: number;
+  pendingTransfer: number;
   calculatedAt: string;
 };
 
@@ -45,6 +54,11 @@ export type PlanningDashboardSource = {
   pendingSuggestions: number;
   shipments: ShipmentForDashboard[];
   purchaseDrafts: PurchaseDraftForDashboard[];
+  stockoutHorizon7?: number;
+  stockoutHorizon15?: number;
+  stockoutHorizon30?: number;
+  overstockCount?: number;
+  uncoverableByNewPoCount?: number;
 };
 
 const TERMINAL_SHIPMENT_STATUSES = ['available', 'cancelled'];
@@ -89,6 +103,13 @@ export function aggregatePlanningDashboard(
     delayedDraftsEtaAvailable,
     stockoutRateApprox:
       source.skuActiveCount > 0 ? source.healthRedCount / source.skuActiveCount : 0,
+    stockoutHorizon7: source.stockoutHorizon7 ?? 0,
+    stockoutHorizon15: source.stockoutHorizon15 ?? 0,
+    stockoutHorizon30: source.stockoutHorizon30 ?? 0,
+    overstockCount: source.overstockCount ?? 0,
+    uncoverableByNewPoCount: source.uncoverableByNewPoCount ?? 0,
+    pendingShipOut: 0,
+    pendingTransfer: 0,
     calculatedAt: today.toISOString(),
   };
 }
@@ -110,6 +131,11 @@ export async function getPlanningDashboard(today: Date = new Date()): Promise<Pl
     pendingSuggestionRows,
     shipmentRows,
     draftRows,
+    horizon7Rows,
+    horizon15Rows,
+    horizon30Rows,
+    overstockRows,
+    uncoverableByNewPoRows,
   ] = await Promise.all([
     db
       .select({ count: sql<number>`count(*)::int` })
@@ -159,6 +185,46 @@ export async function getPlanningDashboard(today: Date = new Date()): Promise<Pl
           notInArray(purchaseDrafts.status, ['received', 'cancelled']),
         ),
       ),
+    db
+      .select({ count: sql<number>`count(DISTINCT sku_id)::int` })
+      .from(stockAlerts)
+      .where(
+        and(
+          eq(stockAlerts.alertType, 'stockout_horizon'),
+          eq(stockAlerts.horizonDays, 7),
+          eq(stockAlerts.isResolved, false),
+        ),
+      ),
+    db
+      .select({ count: sql<number>`count(DISTINCT sku_id)::int` })
+      .from(stockAlerts)
+      .where(
+        and(
+          eq(stockAlerts.alertType, 'stockout_horizon'),
+          eq(stockAlerts.horizonDays, 15),
+          eq(stockAlerts.isResolved, false),
+        ),
+      ),
+    db
+      .select({ count: sql<number>`count(DISTINCT sku_id)::int` })
+      .from(stockAlerts)
+      .where(
+        and(
+          eq(stockAlerts.alertType, 'stockout_horizon'),
+          eq(stockAlerts.horizonDays, 30),
+          eq(stockAlerts.isResolved, false),
+        ),
+      ),
+    db
+      .select({ count: sql<number>`count(DISTINCT sku_id)::int` })
+      .from(stockAlerts)
+      .where(and(eq(stockAlerts.alertType, 'overstock'), eq(stockAlerts.isResolved, false))),
+    db
+      .select({ count: sql<number>`count(DISTINCT sku_id)::int` })
+      .from(stockAlerts)
+      .where(
+        and(eq(stockAlerts.alertType, 'uncoverable_by_new_po'), eq(stockAlerts.isResolved, false)),
+      ),
   ]);
 
   const milestones =
@@ -186,7 +252,7 @@ export async function getPlanningDashboard(today: Date = new Date()): Promise<Pl
 
   const healthRows = Array.from(healthResult as unknown as HealthCountRow[]);
   const health = healthRows[0];
-  return aggregatePlanningDashboard(
+  const dashboard = aggregatePlanningDashboard(
     {
       skuActiveCount: firstCount(activeSkuRows),
       healthRedCount: Number(health?.healthRedCount ?? 0),
@@ -199,7 +265,17 @@ export async function getPlanningDashboard(today: Date = new Date()): Promise<Pl
         milestones: milestonesByShipment.get(shipment.id) ?? [],
       })),
       purchaseDrafts: draftRows,
+      stockoutHorizon7: firstCount(horizon7Rows),
+      stockoutHorizon15: firstCount(horizon15Rows),
+      stockoutHorizon30: firstCount(horizon30Rows),
+      overstockCount: firstCount(overstockRows),
+      uncoverableByNewPoCount: firstCount(uncoverableByNewPoRows),
     },
     today,
   );
+  return {
+    ...dashboard,
+    openDataIssueCount: await countOpenDataIssues(),
+    openUnallocatedLotCount: await countOpenUnallocatedLots(),
+  };
 }

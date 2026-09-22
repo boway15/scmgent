@@ -17,7 +17,15 @@ import { skus } from './inventory';
 import { pmcPlans } from './pmc';
 
 export const reorderStatusEnum = pgEnum('reorder_status', ['pending', 'accepted', 'ignored']);
-export const alertTypeEnum = pgEnum('alert_type', ['below_safety', 'below_rop', 'stockout']);
+export const alertTypeEnum = pgEnum('alert_type', [
+  'below_safety',
+  'below_rop',
+  'stockout',
+  'stockout_horizon',
+  'coverage_short',
+  'overstock',
+  'uncoverable_by_new_po',
+]);
 /** 库存健康灯：红=必须补货，黄=有风险，绿=健康，蓝=超多，灰=滞销/停售 */
 export const inventoryHealthEnum = pgEnum('inventory_health', [
   'red',
@@ -57,6 +65,10 @@ export const stockAlerts = pgTable('stock_alerts', {
   alertType: alertTypeEnum('alert_type').notNull(),
   currentQty: integer('current_qty').notNull(),
   safetyQty: integer('safety_qty').notNull(),
+  /** 未来缺口预警窗口（天）；即时预警为 null */
+  horizonDays: integer('horizon_days'),
+  projectedQty: integer('projected_qty'),
+  projectedStockoutDate: date('projected_stockout_date'),
   notifiedAt: timestamp('notified_at', { withTimezone: true }).notNull().defaultNow(),
   isResolved: boolean('is_resolved').notNull().default(false),
   resolvedAt: timestamp('resolved_at', { withTimezone: true }),

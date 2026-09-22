@@ -10,6 +10,8 @@ import {
 } from '@/lib/api';
 import { apiFetch, apiUrl } from '@/lib/base-path';
 import { PageHeader } from '@/components/PageHeader';
+import { ListPagination } from '@/components/ListPagination';
+import { ListSearchBar } from '@/components/ListSearchBar';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -118,21 +120,31 @@ export function ShipmentsPage() {
   const [selected, setSelected] = useState<Shipment | null>(null);
   const [milestoneDraft, setMilestoneDraft] = useState<MilestoneDraft | null>(null);
   const [createDraft, setCreateDraft] = useState<ShipmentCreatePrefill | null>(null);
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
+  const [keyword, setKeyword] = useState('');
+  const [appliedKeyword, setAppliedKeyword] = useState('');
 
   const shipments = useQuery({
-    queryKey: ['shipments', tab],
-    queryFn: () => api.getShipments(shipmentListParamsForTab(tab)),
+    queryKey: ['shipments', tab, draftIdFromQuery, page, pageSize, appliedKeyword],
+    queryFn: () =>
+      api.getShipments({
+        ...shipmentListParamsForTab(tab),
+        ...(draftIdFromQuery
+          ? { pageSize: 500 }
+          : { page, pageSize, q: appliedKeyword || undefined }),
+      }),
   });
 
   const trackingDrafts = useQuery({
     queryKey: ['purchase-tracking', 'shipment-prefill', draftIdFromQuery],
-    queryFn: () => api.getPurchaseTracking(),
+    queryFn: () => api.getPurchaseTracking({ pageSize: 500 }),
     enabled: Boolean(draftIdFromQuery),
   });
 
   const linkedDraft = useMemo(() => {
     if (!draftIdFromQuery) return undefined;
-    return (trackingDrafts.data as TrackingDraft[] | undefined)?.find((d) => d.id === draftIdFromQuery);
+    return trackingDrafts.data?.items?.find((d) => d.id === draftIdFromQuery);
   }, [draftIdFromQuery, trackingDrafts.data]);
 
   const items = shipments.data?.items ?? [];
@@ -154,6 +166,10 @@ export function ShipmentsPage() {
     }
     setCreateDraft(buildShipmentCreatePrefill(linkedDraft));
   }, [draftIdFromQuery, linkedDraft, linkedShipments.length]);
+
+  useEffect(() => {
+    setPage(1);
+  }, [tab]);
 
   const createShipment = useMutation({
     mutationFn: async (values: ShipmentCreatePrefill) => {
@@ -337,7 +353,7 @@ export function ShipmentsPage() {
                     ? 'border-primary font-medium text-primary'
                     : 'border-transparent text-text-sub hover:text-text-main'
                 }`}
-                onClick={() => setTab(value)}
+                onClick={() => setTab(value as ShipmentTab)}
               >
                 {label}
               </button>
@@ -345,6 +361,17 @@ export function ShipmentsPage() {
           </div>
         </CardHeader>
         <CardContent>
+          {!draftIdFromQuery && (
+            <ListSearchBar
+              keyword={keyword}
+              onKeywordChange={setKeyword}
+              onSearch={() => {
+                setAppliedKeyword(keyword.trim());
+                setPage(1);
+              }}
+              placeholder="发运单号 / 柜号 / 运单号"
+            />
+          )}
           {shipments.isLoading ? (
             <p className="text-sm text-text-sub">加载中...</p>
           ) : shipments.isError ? (
@@ -424,6 +451,18 @@ export function ShipmentsPage() {
                 </tbody>
               </table>
             </div>
+          )}
+          {!draftIdFromQuery && !shipments.isLoading && !shipments.isError && (
+            <ListPagination
+              page={page}
+              pageSize={pageSize}
+              total={shipments.data?.total ?? 0}
+              onPageChange={setPage}
+              onPageSizeChange={(next) => {
+                setPageSize(next);
+                setPage(1);
+              }}
+            />
           )}
         </CardContent>
       </Card>

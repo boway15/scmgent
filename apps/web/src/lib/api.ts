@@ -13,6 +13,13 @@ export type MenuNode = {
   children?: MenuNode[];
 };
 
+export type PaginatedResult<T> = {
+  items: T[];
+  total: number;
+  page: number;
+  pageSize: number;
+};
+
 export type User = {
   id: string;
   name: string;
@@ -84,11 +91,298 @@ export type ProcurementListRow = {
   createdAt: string;
 };
 
+export type CostingProvenanceTag =
+  | '设计明示'
+  | '规则开料'
+  | '模板补全'
+  | '库价'
+  | '本单补价'
+  | '人工修改';
+
+export type CostingExtractSnapshot = {
+  materialName: string;
+  spec: string | null;
+  qtyNet: number;
+  origin: string;
+  sourceRef: string | null;
+};
+
+export type CostingReviewIssue = {
+  lineId?: string;
+  materialName: string;
+  code:
+    | 'missing_price'
+    | 'missing_qty'
+    | 'missing_thickness'
+    | 'unmatched'
+    | 'template_pending'
+    | 'low_confidence'
+    | 'inferred_cut'
+    | 'front_rail_qty_conflict';
+  severity: 'block' | 'warn';
+  message: string;
+};
+
+export type CostingPriceBookItem = {
+  id: string;
+  category: string;
+  materialName: string;
+  spec: string;
+  standard: string;
+  unit: string;
+  unitPrice: string;
+  notes: string | null;
+  regionId: string | null;
+  factoryId: string | null;
+  effectiveFrom: string | null;
+  effectiveTo: string | null;
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type CostingProjectListItem = {
+  id: string;
+  projectNo: string;
+  name: string;
+  category: string | null;
+  regionName: string | null;
+  factoryName: string | null;
+  status: string;
+  updatedAt: string;
+};
+
+export type CostingMatchScope = 'factory' | 'region' | 'global';
+
+export type CostingBomLineInput = {
+  category: string;
+  materialName: string;
+  spec?: string | null;
+  unit: string;
+  qtyNet: number;
+  lossRate?: number;
+  sourceRef?: string | null;
+  confidence?: 'high' | 'medium' | 'low';
+  notes?: string | null;
+  unitPriceOverride?: number | null;
+  processOverrides?: Record<string, number | null>;
+  substrate?: string | null;
+  isManual?: boolean;
+};
+
+export type CostingBomLine = {
+  id: string;
+  lineNo: number;
+  category: string;
+  materialName: string;
+  spec: string | null;
+  unit: string;
+  qtyNet: string;
+  lossRate: string;
+  qtyGross: string;
+  sourceRef: string | null;
+  confidence: 'high' | 'medium' | 'low';
+  notes: string | null;
+  isManual: boolean;
+  origin: string;
+  substrate?: string | null;
+  priceBookId: string | null;
+  unitPriceOverride: string | null;
+  processOverrides?: Record<string, number | null>;
+  matchStatus: 'exact' | 'name_only' | 'unmatched';
+  matchScope?: CostingMatchScope | null;
+  effectiveUnitPrice: number | null;
+  lineAmount: number;
+  provenanceTags?: CostingProvenanceTag[];
+  extractSnapshot?: CostingExtractSnapshot | null;
+  extractDiff?: string | null;
+};
+
+export type CostingFeeItem = {
+  name: string;
+  rate: number;
+  amount: number;
+  scope: CostingMatchScope;
+};
+
+export type CostingBoardSheetRow = {
+  lineId?: string;
+  materialName: string;
+  substrate: string;
+  thicknessMm: number | null;
+  lengthMm: number;
+  widthMm: number;
+  usableWidthMm: number;
+  usableLengthMm: number;
+  qty: number;
+  sheetPrice: number;
+  piecesPerSheet: number;
+  boardCost: number;
+  cutMeters: number;
+  cutRate: number;
+  cutAmount: number;
+  bandMeters: number;
+  bandRate: number;
+  bandAmount: number;
+  drillCount: number;
+  drillRate: number;
+  drillAmount: number;
+  grooveMeters: number;
+  grooveRate: number;
+  grooveAmount: number;
+  paintAreaM2: number;
+  paintRate: number;
+  paintAmount: number;
+  subtotal: number;
+  pricingMode: 'sheet' | 'area';
+};
+
+export type CostingSummary = {
+  materialAmount: number;
+  processAmount: number;
+  feeAmount: number;
+  totalAmount: number;
+  byCategory: Array<{ category: string; amount: number; share: number }>;
+  feeItems: CostingFeeItem[];
+  missingPriceCount: number;
+  missingQtyCount: number;
+  lines: Array<{ qtyGross: number; effectiveUnitPrice: number | null; lineAmount: number }>;
+  boardSheet?: CostingBoardSheetRow[];
+};
+
+export type CostingHardwareFact = { name: string; spec: string; qty: number };
+
+export type CostingComputeBlocker = {
+  lineId?: string;
+  materialName: string;
+  reason: 'missing_price' | 'missing_qty' | 'missing_thickness';
+};
+
+export type CostingProjectDetail = {
+  id: string;
+  projectNo: string;
+  name: string;
+  category: string | null;
+  constructionType: string | null;
+  drawerCount: number | null;
+  defaultSubstrate: string | null;
+  carcassThicknessMm: number | null;
+  drawerBottomThicknessMm: number | null;
+  sideThicknessMm: number | null;
+  backThicknessMm: number | null;
+  bottomThicknessMm: number | null;
+  structureSummary: string | null;
+  designPrinciples: string | null;
+  hardwareFacts: CostingHardwareFact[];
+  otherHardwarePct: number | null;
+  regionId: string | null;
+  factoryId: string | null;
+  status: string;
+  extractError: string | null;
+  lines: CostingBomLine[];
+  summary: CostingSummary;
+  costComputedAt: string | null;
+  costStale: boolean;
+  applyFactsStale?: boolean;
+  computeBlockers: CostingComputeBlocker[];
+  reviewIssues: CostingReviewIssue[];
+  priceAsOf: string;
+  hasSourceAttachment: boolean;
+  pageCount: number;
+  structureBrief: {
+    title: string;
+    summary: string;
+    items: string[];
+    slots: string[];
+  };
+  latestExtractRun: Pick<
+    CostingExtractRun,
+    'id' | 'status' | 'errorMessage' | 'rawResponse'
+  > | null;
+};
+
+export type CostingExtractRun = {
+  id: string;
+  status: 'pending' | 'running' | 'succeeded' | 'failed';
+  pageFrom: number | null;
+  pageTo: number | null;
+  errorMessage: string | null;
+  rawResponse: unknown;
+  batchCurrent: number;
+  batchTotal: number;
+  startedAt: string | null;
+  finishedAt: string | null;
+};
+
+export type CostingRegion = {
+  id: string;
+  code: string;
+  name: string;
+  sortOrder: number;
+  isActive: boolean;
+};
+
+export type CostingFactory = {
+  id: string;
+  code: string;
+  name: string;
+  regionId: string | null;
+  sortOrder: number;
+  isActive: boolean;
+  packProfile?: {
+    cornerAllowanceMm?: number;
+    foamThicknessMm?: number;
+    foamYuanPerM3?: number;
+    cartonYuanPerM2?: number;
+    cornerYuanEach?: number;
+  } | null;
+};
+
+export type CostingPackProfileInput = {
+  cornerAllowanceMm?: number;
+  foamThicknessMm?: number;
+  foamYuanPerM3?: number;
+  cartonYuanPerM2?: number;
+  cornerYuanEach?: number;
+};
+
+export type CostingFeeRate = {
+  id: string;
+  name: string;
+  rate: string;
+  regionId: string;
+  factoryId: string;
+  isActive: boolean;
+  sortOrder: number;
+};
+
 export type ReplenishLight = 'red' | 'yellow' | 'green';
 
 export type InventoryHealth = 'red' | 'yellow' | 'green' | 'blue' | 'gray';
 
 export type SafetyStockMethod = 'coverage_days' | 'z_demand' | 'z_demand_leadtime';
+
+export type SafetyStockSuggestionView = {
+  skuId: string;
+  skuCode: string;
+  warehouseCode: string;
+  configured: {
+    safetyStockDays: number | null;
+    safetyStockQty: number;
+    reorderPoint: number;
+    safetyStockMethod: SafetyStockMethod;
+  };
+  suggested: {
+    safetyStockQty: number | null;
+    safetyStockDays: number | null;
+    reorderPoint: number | null;
+    confidence: 'high' | 'medium' | 'low';
+    flags: string[];
+  };
+  deltaDays: number | null;
+  deltaQty: number | null;
+  deltaPctDays: number | null;
+};
 
 export type Spu = {
   id: string;
@@ -239,8 +533,99 @@ export type SkuPlanningView = {
   suggestedQty: number;
   suggestedDate: string;
   healthStatus: InventoryHealth;
+  /** 覆盖天数影子灯 */
+  coverageHealthStatus?: InventoryHealth | string;
   etaAvailableNearest?: string | null;
   stockoutDateEstimate?: string | null;
+  timeline?: {
+    today: string;
+    windowDays: number;
+    totalLeadDays: number;
+    stockoutDateConfirmed: string | null;
+    stockoutDateExpected: string | null;
+    safetyBreachDateConfirmed: string | null;
+    reorderDate: string | null;
+    tooLateForNewPo: boolean;
+    uncoverableByNewPo: boolean;
+    suggestedQty: number;
+    suggestedQtyGross?: number;
+    points: Array<{
+      horizonDays: number;
+      asOf: string;
+      confirmedEnding: number;
+      expectedEnding: number;
+      plannedInbound: number;
+      cumulativeDemand: number;
+      supplyEvents: Array<{ pool: string; qty: number; availableAt: string; supplyClass: string }>;
+    }>;
+  };
+  allocation?: {
+    method: 'sales_share' | 'native_warehouse' | 'unallocated';
+    snapshotDate: string | null;
+    overseasTotal: number;
+    allocatedQty: number;
+    undatedTransitQty: number;
+    shareSumWarning: boolean;
+  };
+  unallocatedNetworkQty?: number;
+  planningDemandSource?: 'demand_plan' | 'forecast';
+  planningDemandFlags?: string[];
+  championStockoutDateConfirmed?: string | null;
+  championSuggestedQty?: number | null;
+  inStockDayRatio?: number | null;
+  confirmedCoverageDays?: number | null;
+  needsManualConfirm?: boolean;
+  demandGateFlags?: string[];
+  demandUnconstrainedDaily?: number | null;
+  demandStockoutDays?: number | null;
+  demandCapped?: boolean;
+  suggestedQtyGross?: number | null;
+  latePoActions?: Array<{
+    kind: 'transfer' | 'fast_ship' | 'accept_stockout';
+    label: string;
+    detail: string;
+    qty?: number;
+    days?: number;
+  }>;
+};
+
+export type DemandPlanVersionListItem = {
+  id: string;
+  versionNo: string;
+  versionName: string;
+  status: string;
+  projectGroup: string;
+  warehouseCode: string;
+};
+
+export type DemandPlanMonthRow = {
+  id: string;
+  skuCode?: string;
+  period: string;
+  systemDailyAvg: string;
+  manualDailyAvg: string | null;
+  championForecastDaily: string | null;
+  source: string;
+  adjustReason?: string | null;
+};
+
+export type DemandPlanWeekRow = DemandPlanMonthRow;
+
+export type DemandPlanAdoption = {
+  id: string;
+  projectGroup: string;
+  warehouseCode: string;
+  source: 'forecast' | 'demand_plan' | string;
+  demandPlanVersionId: string | null;
+  adoptedAt?: string;
+  adoptedBy?: string | null;
+};
+
+export type DemandPlanDetail = {
+  version: DemandPlanVersionListItem;
+  months: DemandPlanMonthRow[];
+  weeks?: DemandPlanWeekRow[];
+  adoption?: DemandPlanAdoption | null;
 };
 
 export type PlanningDashboard = {
@@ -252,7 +637,60 @@ export type PlanningDashboard = {
   delayedShipments: number;
   delayedDraftsEtaAvailable: number;
   stockoutRateApprox: number;
+  stockoutHorizon7: number;
+  stockoutHorizon15: number;
+  stockoutHorizon30: number;
+  overstockCount: number;
+  uncoverableByNewPoCount?: number;
+  pendingShipOut: number;
+  pendingTransfer: number;
   calculatedAt: string;
+  openDataIssueCount?: number;
+  openUnallocatedLotCount?: number;
+};
+
+export type InventoryDataIssueRow = {
+  id: string;
+  fingerprint: string;
+  skuId: string;
+  skuCode: string;
+  skuName: string;
+  warehouseCode: string;
+  issueType: 'missing_available_at' | 'unallocated_warehouse' | 'share_sum_mismatch';
+  impactModule: string;
+  example: string;
+  qty: number;
+  status: 'open' | 'in_progress' | 'resolved' | 'dismissed';
+  ownerId: string | null;
+  resolutionNote: string | null;
+  lastSeenAt: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type SupplyLotRow = {
+  id: string;
+  skuId: string;
+  skuCode: string;
+  skuName: string;
+  warehouseCode: string;
+  pool: 'overseas' | 'in_transit' | 'local';
+  qty: number;
+  factoryCode: string | null;
+  productionStatus: 'in_production' | 'qc_pending' | 'completed' | null;
+  shipReadyAt: string | null;
+  latestShipDate: string | null;
+  availableAt: string | null;
+  source: string;
+  sourceId: string | null;
+  status: string;
+  etaEstimated: boolean;
+  dateUnknown: boolean;
+  updatedAt: string;
+};
+
+export type UnallocatedSupplyRow = SupplyLotRow & {
+  suggestedDestinations: Array<{ warehouseCode: string; qty: number }>;
 };
 
 export type SkuOverview = {
@@ -727,9 +1165,14 @@ export const api = {
   getMe: () => request<User>('/api/me'),
   getMyMenus: () => request<MenuNode[]>('/api/me/menus'),
   getMenus: () => request<MenuNode[]>('/api/menus'),
-  getUsers: () =>
-    request<
-      Array<{
+  getUsers: (params?: { page?: number; pageSize?: number; q?: string }) => {
+    const qs = new URLSearchParams();
+    if (params?.page) qs.set('page', String(params.page));
+    if (params?.pageSize) qs.set('pageSize', String(params.pageSize));
+    if (params?.q?.trim()) qs.set('q', params.q.trim());
+    const query = qs.toString();
+    return request<
+      PaginatedResult<{
         id: string;
         name: string;
         email: string;
@@ -740,7 +1183,8 @@ export const api = {
         roleCode: string;
         hasPassword: boolean;
       }>
-    >('/api/users'),
+    >(`/api/users${query ? `?${query}` : ''}`);
+  },
   updateUser: (id: string, data: { roleId?: string; isActive?: boolean; name?: string }) =>
     request(`/api/users/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
   resetUserPassword: (id: string, password: string) =>
@@ -748,12 +1192,19 @@ export const api = {
       method: 'PATCH',
       body: JSON.stringify({ password }),
     }),
-  getAuditLogs: (params?: { page?: number; pageSize?: number; action?: string; userId?: string }) => {
+  getAuditLogs: (params?: {
+    page?: number;
+    pageSize?: number;
+    action?: string;
+    userId?: string;
+    q?: string;
+  }) => {
     const q = new URLSearchParams();
     if (params?.page) q.set('page', String(params.page));
     if (params?.pageSize) q.set('pageSize', String(params.pageSize));
     if (params?.action) q.set('action', params.action);
     if (params?.userId) q.set('userId', params.userId);
+    if (params?.q) q.set('q', params.q);
     const qs = q.toString();
     return request<{
       items: Array<{
@@ -773,7 +1224,14 @@ export const api = {
       pageSize: number;
     }>(`/api/audit-logs${qs ? `?${qs}` : ''}`);
   },
-  getTaskRuns: () => request<TaskRunSummary[]>('/api/tasks/runs'),
+  getTaskRuns: (params?: { page?: number; pageSize?: number; q?: string }) => {
+    const qs = new URLSearchParams();
+    if (params?.page) qs.set('page', String(params.page));
+    if (params?.pageSize) qs.set('pageSize', String(params.pageSize));
+    if (params?.q?.trim()) qs.set('q', params.q.trim());
+    const query = qs.toString();
+    return request<PaginatedResult<TaskRunSummary>>(`/api/tasks/runs${query ? `?${query}` : ''}`);
+  },
   runScheduledTask: (path: string) =>
     request<Record<string, unknown> & { skipped?: boolean; message?: string }>(path, {
       method: 'POST',
@@ -1602,8 +2060,117 @@ export const api = {
       : '';
     return request<SkuPlanningView>(`/api/inventory/planning/${skuId}${query}`);
   },
+  getSupplyLots: (params?: {
+    pool?: 'overseas' | 'in_transit' | 'local';
+    warehouse?: string;
+    skuId?: string;
+    page?: number;
+    pageSize?: number;
+    q?: string;
+  }) => {
+    const qs = new URLSearchParams();
+    if (params?.pool) qs.set('pool', params.pool);
+    if (params?.warehouse) qs.set('warehouse', params.warehouse);
+    if (params?.skuId) qs.set('skuId', params.skuId);
+    if (params?.page) qs.set('page', String(params.page));
+    if (params?.pageSize) qs.set('pageSize', String(params.pageSize));
+    if (params?.q) qs.set('q', params.q);
+    const query = qs.toString();
+    return request<PaginatedResult<SupplyLotRow> & { dateUnknownCount?: number }>(
+      `/api/inventory/pools${query ? `?${query}` : ''}`,
+    );
+  },
+  syncSupplyLots: () =>
+    request<{ lotCount: number; eligibleCount: number }>('/api/inventory/pools/sync', {
+      method: 'POST',
+    }),
+  updateSupplyLot: (
+    id: string,
+    data: {
+      productionStatus?: 'in_production' | 'qc_pending' | 'completed';
+      shipReadyAt?: string | null;
+      latestShipDate?: string | null;
+      remainingLogisticsDays?: number;
+    },
+  ) =>
+    request(`/api/inventory/pools/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(data),
+    }),
   getPlanningDashboard: () =>
     request<PlanningDashboard>('/api/planning/dashboard'),
+  getInventoryDataIssues: (params?: {
+    status?: string;
+    type?: string;
+    page?: number;
+    pageSize?: number;
+    q?: string;
+  }) => {
+    const qs = new URLSearchParams();
+    if (params?.status) qs.set('status', params.status);
+    if (params?.type) qs.set('type', params.type);
+    if (params?.page) qs.set('page', String(params.page));
+    if (params?.pageSize) qs.set('pageSize', String(params.pageSize));
+    if (params?.q) qs.set('q', params.q);
+    const query = qs.toString();
+    return request<
+      PaginatedResult<InventoryDataIssueRow> & {
+        count: number;
+        openByType: Record<string, number>;
+      }
+    >(`/api/inventory/data-issues${query ? `?${query}` : ''}`);
+  },
+  updateInventoryDataIssue: (
+    id: string,
+    data: {
+      status?: InventoryDataIssueRow['status'];
+      ownerId?: string | null;
+      resolutionNote?: string;
+    },
+  ) =>
+    request(`/api/inventory/data-issues/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(data),
+    }),
+  scanInventoryDataIssues: () =>
+    request<{
+      scannedLots: number;
+      scannedSkus: number;
+      detected: number;
+      inserted: number;
+      refreshed: number;
+      autoResolved: number;
+    }>('/api/tasks/inventory-data-issue-scan', { method: 'POST' }),
+  getUnallocatedSupply: (params?: {
+    skuId?: string;
+    pool?: string;
+    page?: number;
+    pageSize?: number;
+    q?: string;
+  }) => {
+    const qs = new URLSearchParams();
+    if (params?.skuId) qs.set('skuId', params.skuId);
+    if (params?.pool) qs.set('pool', params.pool);
+    if (params?.page) qs.set('page', String(params.page));
+    if (params?.pageSize) qs.set('pageSize', String(params.pageSize));
+    if (params?.q) qs.set('q', params.q);
+    const query = qs.toString();
+    return request<
+      PaginatedResult<UnallocatedSupplyRow> & {
+        count: number;
+        openCount: number;
+        openQty: number;
+      }
+    >(`/api/inventory/unallocated${query ? `?${query}` : ''}`);
+  },
+  assignUnallocatedLot: (
+    id: string,
+    data: { assignments: Array<{ warehouseCode: string; qty: number }> },
+  ) =>
+    request<{ items: Array<{ warehouseCode: string; qty: number }> }>(
+      `/api/inventory/unallocated/${id}/assign`,
+      { method: 'POST', body: JSON.stringify(data) },
+    ),
   exportInventoryOverviewCsv: async (params?: {
     q?: string;
     category?: string;
@@ -1672,12 +2239,21 @@ export const api = {
         allowCrossFulfill: boolean;
       }>
     >('/api/warehouses'),
-  getLeadTimeProfiles: (params?: { warehouse?: string; merchant?: string }) => {
+  getLeadTimeProfiles: (params?: {
+    warehouse?: string;
+    merchant?: string;
+    q?: string;
+    page?: number;
+    pageSize?: number;
+  }) => {
     const qs = new URLSearchParams();
     if (params?.warehouse) qs.set('warehouse', params.warehouse);
     if (params?.merchant) qs.set('merchant', params.merchant);
+    if (params?.q?.trim()) qs.set('q', params.q.trim());
+    if (params?.page) qs.set('page', String(params.page));
+    if (params?.pageSize) qs.set('pageSize', String(params.pageSize));
     const query = qs.toString();
-    return request<{ items: LeadTimeProfile[] }>(
+    return request<PaginatedResult<LeadTimeProfile>>(
       `/api/lead-time-profiles${query ? `?${query}` : ''}`,
     );
   },
@@ -1688,8 +2264,20 @@ export const api = {
     }),
   deleteLeadTimeProfile: (id: string) =>
     request<{ ok: true }>(`/api/lead-time-profiles/${id}`, { method: 'DELETE' }),
-  getShipments: (params?: { delayed?: boolean }) =>
-    request<{ items: Shipment[] }>(`/api/shipments${params?.delayed ? '?delayed=1' : ''}`),
+  getShipments: (params?: {
+    delayed?: boolean;
+    page?: number;
+    pageSize?: number;
+    q?: string;
+  }) => {
+    const qs = new URLSearchParams();
+    if (params?.delayed) qs.set('delayed', '1');
+    if (params?.page) qs.set('page', String(params.page));
+    if (params?.pageSize) qs.set('pageSize', String(params.pageSize));
+    if (params?.q?.trim()) qs.set('q', params.q.trim());
+    const query = qs.toString();
+    return request<PaginatedResult<Shipment>>(`/api/shipments${query ? `?${query}` : ''}`);
+  },
   upsertShipmentMilestone: (shipmentId: string, data: ShipmentMilestoneInput) =>
     request<ShipmentMilestone>(`/api/shipments/${encodeURIComponent(shipmentId)}/milestones`, {
       method: 'POST',
@@ -1704,9 +2292,15 @@ export const api = {
         lastMileCostIndex: string;
       }>
     >('/api/channel-warehouse-prefs'),
-  getSafetyStock: () =>
-    request<
-      Array<{
+  getSafetyStock: (params?: { page?: number; pageSize?: number; q?: string; warehouse?: string }) => {
+    const qs = new URLSearchParams();
+    if (params?.page) qs.set('page', String(params.page));
+    if (params?.pageSize) qs.set('pageSize', String(params.pageSize));
+    if (params?.q?.trim()) qs.set('q', params.q.trim());
+    if (params?.warehouse?.trim()) qs.set('warehouse', params.warehouse.trim());
+    const query = qs.toString();
+    return request<
+      PaginatedResult<{
         id: string | null;
         skuId: string;
         skuCode: string;
@@ -1715,19 +2309,41 @@ export const api = {
         safetyStockQty: number | null;
         reorderPoint: number | null;
         reorderQty: number | null;
+        safetyStockDays: number | null;
         safetyStockMethod: SafetyStockMethod;
         serviceLevel: string | null;
         demandStdDev: string | null;
         leadTimeStdDev: string | null;
         calcMethod: string | null;
+        lastCalcAt?: string | null;
       }>
-    >('/api/safety-stock'),
+    >(`/api/safety-stock${query ? `?${query}` : ''}`);
+  },
+  getSafetyStockSuggestions: (params?: {
+    warehouse?: string;
+    serviceLevel?: number;
+    sort?: string;
+    limit?: number;
+    offset?: number;
+  }) => {
+    const qs = new URLSearchParams();
+    if (params?.warehouse) qs.set('warehouse', params.warehouse);
+    if (params?.serviceLevel != null) qs.set('serviceLevel', String(params.serviceLevel));
+    if (params?.sort) qs.set('sort', params.sort);
+    if (params?.limit != null) qs.set('limit', String(params.limit));
+    if (params?.offset != null) qs.set('offset', String(params.offset));
+    const query = qs.toString();
+    return request<{ items: SafetyStockSuggestionView[]; total: number; limit: number; offset: number }>(
+      `/api/safety-stock/suggestions${query ? `?${query}` : ''}`,
+    );
+  },
   updateSafetyStock: (
     skuId: string,
     data: {
       safetyStockQty: number;
       reorderPoint: number;
       reorderQty: number;
+      safetyStockDays?: number | null;
       safetyStockMethod: SafetyStockMethod;
       serviceLevel: number | null;
     },
@@ -1747,8 +2363,23 @@ export const api = {
       body: JSON.stringify(data),
     });
   },
-  getAlerts: () =>
-    request<{
+  getAlerts: (params?: {
+    page?: number;
+    pageSize?: number;
+    q?: string;
+    horizonDays?: string;
+    alertType?: string;
+    resolved?: 'open' | 'done';
+  }) => {
+    const qs = new URLSearchParams();
+    if (params?.page) qs.set('page', String(params.page));
+    if (params?.pageSize) qs.set('pageSize', String(params.pageSize));
+    if (params?.q?.trim()) qs.set('q', params.q.trim());
+    if (params?.horizonDays) qs.set('horizonDays', params.horizonDays);
+    if (params?.alertType) qs.set('alertType', params.alertType);
+    if (params?.resolved) qs.set('resolved', params.resolved);
+    const query = qs.toString();
+    return request<{
       items: Array<{
         id: string;
         skuId: string;
@@ -1758,16 +2389,41 @@ export const api = {
         alertType: string;
         currentQty: number;
         safetyQty: number;
+        horizonDays?: number | null;
+        projectedQty?: number | null;
+        projectedStockoutDate?: string | null;
         isResolved: boolean;
       }>;
+      total: number;
+      page: number;
+      pageSize: number;
       summary: string;
       openCount: number;
-    }>('/api/alerts'),
+    }>(`/api/alerts${query ? `?${query}` : ''}`);
+  },
   resolveAlert: (id: string) => request(`/api/alerts/${id}/resolve`, { method: 'PATCH' }),
-  getReorderSuggestions: () =>
-    request<
-      Array<{
+  getReorderSuggestions: (params?: {
+    q?: string;
+    sku?: string;
+    warehouse?: string;
+    status?: 'pending' | 'accepted' | 'ignored';
+    queue?: 'auto' | 'manual' | 'all';
+    page?: number;
+    pageSize?: number;
+  }) => {
+    const qs = new URLSearchParams();
+    if (params?.q?.trim()) qs.set('q', params.q.trim());
+    if (params?.sku?.trim()) qs.set('sku', params.sku.trim());
+    if (params?.warehouse?.trim()) qs.set('warehouse', params.warehouse.trim());
+    if (params?.status) qs.set('status', params.status);
+    if (params?.queue) qs.set('queue', params.queue);
+    if (params?.page) qs.set('page', String(params.page));
+    if (params?.pageSize) qs.set('pageSize', String(params.pageSize));
+    const query = qs.toString();
+    return request<
+      PaginatedResult<{
         id: string;
+        skuId: string;
         skuCode: string;
         skuName: string;
         merchantCode?: string | null;
@@ -1784,12 +2440,24 @@ export const api = {
         status: string;
         planId?: string | null;
       }>
-    >('/api/reorder/suggestions'),
+    >(`/api/reorder/suggestions${query ? `?${query}` : ''}`);
+  },
   updateReorderSuggestion: (id: string, data: { status: 'accepted' | 'ignored'; merchantCode?: string }) =>
     request(`/api/reorder/suggestions/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
-  getPurchaseTracking: (status?: PurchaseDraftStatus) =>
-    request<
-      Array<{
+  getPurchaseTracking: (params?: {
+    status?: PurchaseDraftStatus;
+    page?: number;
+    pageSize?: number;
+    q?: string;
+  }) => {
+    const qs = new URLSearchParams();
+    if (params?.status) qs.set('status', params.status);
+    if (params?.page) qs.set('page', String(params.page));
+    if (params?.pageSize) qs.set('pageSize', String(params.pageSize));
+    if (params?.q?.trim()) qs.set('q', params.q.trim());
+    const query = qs.toString();
+    return request<
+      PaginatedResult<{
         id: string;
         draftNo: string;
         skuCode: string;
@@ -1821,7 +2489,8 @@ export const api = {
         exceptionReason?: string | null;
         remark?: string | null;
       }>
-    >(`/api/purchase-drafts${status ? `?status=${status}` : ''}`),
+    >(`/api/purchase-drafts${query ? `?${query}` : ''}`);
+  },
   updatePurchaseTracking: (
     id: string,
     data: {
@@ -1989,11 +2658,264 @@ export const api = {
       source: 'upload';
     };
   },
+  listCostingPriceBook: (params?: {
+    q?: string;
+    category?: string;
+    regionId?: string;
+    factoryId?: string;
+    activeOnly?: boolean;
+  }) => {
+    const qs = new URLSearchParams();
+    if (params?.q) qs.set('q', params.q);
+    if (params?.category) qs.set('category', params.category);
+    if (params?.regionId) qs.set('regionId', params.regionId);
+    if (params?.factoryId) qs.set('factoryId', params.factoryId);
+    if (params?.activeOnly) qs.set('activeOnly', 'true');
+    const query = qs.toString();
+    return request<{ items: CostingPriceBookItem[] }>(
+      `/api/procurement/costing/price-book${query ? `?${query}` : ''}`,
+    );
+  },
+  createCostingPriceBookItem: (
+    data: Omit<CostingBomLineInput, 'qtyNet' | 'lossRate' | 'sourceRef' | 'confidence' | 'unitPriceOverride' | 'isManual'> & {
+      unitPrice: number;
+      standard?: string;
+      regionId?: string | null;
+      factoryId?: string | null;
+      effectiveFrom?: string | null;
+      effectiveTo?: string | null;
+    },
+  ) =>
+    request<CostingPriceBookItem>('/api/procurement/costing/price-book', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+  updateCostingPriceBookItem: (
+    id: string,
+    data: Partial<{
+      category: string;
+      materialName: string;
+      spec: string;
+      standard: string;
+      unit: string;
+      unitPrice: number;
+      notes: string;
+      regionId: string | null;
+      factoryId: string | null;
+      effectiveFrom: string | null;
+      effectiveTo: string | null;
+    }>,
+  ) =>
+    request<CostingPriceBookItem>(`/api/procurement/costing/price-book/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(data),
+    }),
+  disableCostingPriceBookItem: (id: string) =>
+    request<{ ok: boolean }>(`/api/procurement/costing/price-book/${id}/disable`, {
+      method: 'POST',
+    }),
+  importCostingPriceBook: async (file: File) => {
+    const form = new FormData();
+    form.append('file', file);
+    const res = await apiFetch(apiUrl('/api/procurement/costing/price-book/import'), {
+      method: 'POST',
+      body: form,
+    });
+    const payload = await res.json().catch(() => ({ message: res.statusText }));
+    if (!res.ok) throw new Error(payload.message ?? '导入失败');
+    return payload as { imported: number; errors: number };
+  },
+  listCostingProjects: (params?: { page?: number; pageSize?: number; q?: string }) => {
+    const qs = new URLSearchParams();
+    if (params?.page) qs.set('page', String(params.page));
+    if (params?.pageSize) qs.set('pageSize', String(params.pageSize));
+    if (params?.q) qs.set('q', params.q);
+    const query = qs.toString();
+    return request<PaginatedResult<CostingProjectListItem>>(
+      `/api/procurement/costing/projects${query ? `?${query}` : ''}`,
+    );
+  },
+  createCostingProject: (data: { name?: string } = {}) =>
+    request<{ id: string; projectNo: string; name: string; status: string }>(
+      '/api/procurement/costing/projects',
+      { method: 'POST', body: JSON.stringify(data) },
+    ),
+  getCostingProject: (id: string) =>
+    request<CostingProjectDetail>(`/api/procurement/costing/projects/${id}`),
+  downloadCostingProject: async (id: string) => {
+    const res = await apiFetch(apiUrl(`/api/procurement/costing/projects/${id}/export`));
+    if (!res.ok) {
+      const payload = await res.json().catch(() => ({ message: res.statusText }));
+      throw new Error(payload.message ?? '导出失败');
+    }
+    const blob = await res.blob();
+    const disposition = res.headers.get('Content-Disposition') ?? '';
+    const filename = disposition.match(/filename="([^"]+)"/i)?.[1] ?? `costing-${id}.xlsx`;
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = filename;
+    anchor.click();
+    URL.revokeObjectURL(url);
+  },
+  patchCostingProject: (
+    id: string,
+    data: {
+      name?: string;
+      category?: string | null;
+      constructionType?: string | null;
+      drawerCount?: number | null;
+      defaultSubstrate?: string | null;
+      carcassThicknessMm?: number | null;
+      drawerBottomThicknessMm?: number | null;
+      sideThicknessMm?: number | null;
+      backThicknessMm?: number | null;
+      bottomThicknessMm?: number | null;
+      structureSummary?: string | null;
+      designPrinciples?: string | null;
+      hardwareFacts?: CostingHardwareFact[];
+      otherHardwarePct?: number | null;
+      regionId?: string | null;
+      factoryId?: string | null;
+      priceAsOf?: string | null;
+    },
+  ) =>
+    request<CostingProjectDetail>(`/api/procurement/costing/projects/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(data),
+    }),
+  deleteCostingProject: (id: string) =>
+    request<{ ok: boolean }>(`/api/procurement/costing/projects/${id}`, {
+      method: 'DELETE',
+    }),
+  uploadCostingAttachment: async (id: string, file: File) => {
+    const form = new FormData();
+    form.append('file', file);
+    const res = await apiFetch(apiUrl(`/api/procurement/costing/projects/${id}/attachments`), {
+      method: 'POST',
+      body: form,
+    });
+    const payload = await res.json().catch(() => ({ message: res.statusText }));
+    if (!res.ok) throw new Error(payload.message ?? '上传失败');
+    return payload as { ok: boolean };
+  },
+  analyzeCostingFacts: (id: string) =>
+    request<{ started: true }>(`/api/procurement/costing/projects/${id}/analyze-facts`, {
+      method: 'POST',
+    }),
+  confirmCostingDesignForApply: (id: string) =>
+    request<CostingProjectDetail>(`/api/procurement/costing/projects/${id}/confirm-design`, {
+      method: 'POST',
+    }),
+  startCostingExtract: (id: string, range?: { pageFrom?: number; pageTo?: number }) =>
+    request<{ runId: string }>(`/api/procurement/costing/projects/${id}/extract`, {
+      method: 'POST',
+      body: JSON.stringify(range ?? {}),
+    }),
+  applyCostingFacts: (id: string) =>
+    request<CostingProjectDetail>(`/api/procurement/costing/projects/${id}/apply-facts`, {
+      method: 'POST',
+    }),
+  computeCostingProject: (id: string) =>
+    request<CostingProjectDetail>(`/api/procurement/costing/projects/${id}/compute`, {
+      method: 'POST',
+    }),
+  getCostingExtractRun: (id: string, runId: string) =>
+    request<CostingExtractRun>(
+      `/api/procurement/costing/projects/${id}/extract/runs/${runId}`,
+    ),
+  saveCostingBomLines: (id: string, lines: CostingBomLineInput[]) =>
+    request<{ items: CostingBomLine[] }>(`/api/procurement/costing/projects/${id}/bom-lines`, {
+      method: 'PUT',
+      body: JSON.stringify({ lines }),
+    }),
+  createCostingBomLine: (id: string, line: CostingBomLineInput) =>
+    request<CostingBomLine>(`/api/procurement/costing/projects/${id}/bom-lines`, {
+      method: 'POST',
+      body: JSON.stringify(line),
+    }),
+  patchCostingBomLine: (id: string, lineId: string, patch: Partial<CostingBomLineInput>) =>
+    request<CostingBomLine>(`/api/procurement/costing/projects/${id}/bom-lines/${lineId}`, {
+      method: 'PATCH',
+      body: JSON.stringify(patch),
+    }),
+  bindCostingBomLinePriceBook: (id: string, lineId: string, priceBookId: string) =>
+    request<CostingBomLine>(
+      `/api/procurement/costing/projects/${id}/bom-lines/${lineId}/bind-price-book`,
+      {
+        method: 'POST',
+        body: JSON.stringify({ priceBookId }),
+      },
+    ),
+  deleteCostingBomLine: (id: string, lineId: string) =>
+    request<{ ok: boolean }>(`/api/procurement/costing/projects/${id}/bom-lines/${lineId}`, {
+      method: 'DELETE',
+    }),
+  getCostingStatus: () =>
+    request<{
+      difyEnabled: boolean;
+      preprocessMode: string;
+      productCategories: string[];
+      categoryFamilies: Array<{ category: string; familyId: string }>;
+      bomLineCategories?: string[];
+    }>('/api/procurement/costing/status'),
+  listCostingRegions: (activeOnly = false) =>
+    request<{ items: CostingRegion[] }>(
+      `/api/procurement/costing/regions${activeOnly ? '?activeOnly=true' : ''}`,
+    ),
+  createCostingRegion: (data: { name: string; code?: string }) =>
+    request<CostingRegion>('/api/procurement/costing/regions', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+  listCostingFactories: (activeOnly = false) =>
+    request<{ items: CostingFactory[] }>(
+      `/api/procurement/costing/factories${activeOnly ? '?activeOnly=true' : ''}`,
+    ),
+  createCostingFactory: (data: { name: string; code?: string; regionId?: string | null }) =>
+    request<CostingFactory>('/api/procurement/costing/factories', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+  patchCostingFactoryPackProfile: (id: string, packProfile: CostingPackProfileInput | null) =>
+    request<CostingFactory>(`/api/procurement/costing/factories/${id}/pack-profile`, {
+      method: 'PATCH',
+      body: JSON.stringify({ packProfile }),
+    }),
+  listCostingFeeRates: (params?: { regionId?: string; factoryId?: string }) => {
+    const qs = new URLSearchParams();
+    if (params?.regionId) qs.set('regionId', params.regionId);
+    if (params?.factoryId) qs.set('factoryId', params.factoryId);
+    const query = qs.toString();
+    return request<{ items: CostingFeeRate[] }>(
+      `/api/procurement/costing/fee-rates${query ? `?${query}` : ''}`,
+    );
+  },
+  upsertCostingFeeRate: (data: {
+    name: string;
+    regionId: string;
+    factoryId: string;
+    rate: number;
+  }) =>
+    request<CostingFeeRate>('/api/procurement/costing/fee-rates', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+  disableCostingFeeRate: (id: string) =>
+    request<{ ok: boolean }>(`/api/procurement/costing/fee-rates/${id}/disable`, {
+      method: 'POST',
+    }),
   clearProcurementList: (type: ProcurementListType) =>
     request<{ deleted: number }>(`/api/procurement/lists/${type}/clear`, { method: 'POST' }),
-  getPmcPlans: () =>
-    request<
-      Array<{
+  getPmcPlans: (params?: { page?: number; pageSize?: number; q?: string; status?: string }) => {
+    const qs = new URLSearchParams();
+    if (params?.page) qs.set('page', String(params.page));
+    if (params?.pageSize) qs.set('pageSize', String(params.pageSize));
+    if (params?.q?.trim()) qs.set('q', params.q.trim());
+    if (params?.status) qs.set('status', params.status);
+    const query = qs.toString();
+    return request<
+      PaginatedResult<{
         id: string;
         planNo: string;
         name: string;
@@ -2004,7 +2926,8 @@ export const api = {
         deliveryDate: string;
         status: string;
       }>
-    >('/api/pmc/plans'),
+    >(`/api/pmc/plans${query ? `?${query}` : ''}`);
+  },
   getPmcPlan: (id: string) =>
     request<{
       id: string;
@@ -2270,9 +3193,14 @@ export const api = {
     }),
   toggleFobServiceProvider: (id: string) =>
     request(`/api/logistics/fob-service-providers/${id}/toggle`, { method: 'PATCH' }),
-  getFobSettlements: () =>
-    request<
-      Array<{
+  getFobSettlements: (params?: { page?: number; pageSize?: number; q?: string }) => {
+    const qs = new URLSearchParams();
+    if (params?.page) qs.set('page', String(params.page));
+    if (params?.pageSize) qs.set('pageSize', String(params.pageSize));
+    if (params?.q?.trim()) qs.set('q', params.q.trim());
+    const query = qs.toString();
+    return request<
+      PaginatedResult<{
         id: string;
         batchNo: string;
         name: string;
@@ -2291,7 +3219,8 @@ export const api = {
           providerType: 'trucking' | 'freight';
         } | null;
       }>
-    >('/api/logistics/fob-settlements'),
+    >(`/api/logistics/fob-settlements${query ? `?${query}` : ''}`);
+  },
   getFobSettlement: (id: string) =>
     request<{
       id: string;
@@ -3734,6 +4663,65 @@ export const api = {
     }>('/api/sales-forecasts/accuracy/walkforward', {
       method: 'POST',
       body: JSON.stringify(body ?? {}),
+    }),
+  listDemandPlanVersions: (params?: { page?: number; pageSize?: number; q?: string }) => {
+    const qs = new URLSearchParams();
+    if (params?.page) qs.set('page', String(params.page));
+    if (params?.pageSize) qs.set('pageSize', String(params.pageSize));
+    if (params?.q) qs.set('q', params.q);
+    const query = qs.toString();
+    return request<
+      PaginatedResult<{
+        id: string;
+        versionNo: string;
+        versionName: string;
+        status: string;
+        projectGroup: string;
+        warehouseCode: string;
+        startMonth?: string;
+        publishedAt?: string | null;
+        createdAt?: string;
+      }>
+    >(`/api/demand-plans${query ? `?${query}` : ''}`);
+  },
+  getDemandPlan: (id: string) =>
+    request<DemandPlanDetail>(`/api/demand-plans/${id}`),
+  generateDemandPlan: (body: { projectGroup: string; warehouseCode: string; versionName?: string }) =>
+    request<{
+      version: DemandPlanVersionListItem;
+      skipped: Array<{ skuId: string; skuCode: string; reason: string }>;
+    }>('/api/demand-plans/generate', { method: 'POST', body: JSON.stringify(body) }),
+  publishDemandPlan: (id: string, body?: { adopt?: boolean }) =>
+    request<{ version: DemandPlanVersionListItem; adoption: DemandPlanAdoption | null }>(
+      `/api/demand-plans/${id}/publish`,
+      { method: 'POST', body: JSON.stringify(body ?? {}) },
+    ),
+  adoptDemandPlan: (id: string) =>
+    request<DemandPlanAdoption>(`/api/demand-plans/${id}/adopt`, { method: 'POST' }),
+  adoptForecast: (body: { projectGroup: string; warehouseCode: string }) =>
+    request<DemandPlanAdoption>('/api/demand-plans/adopt-forecast', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+  archiveDemandPlan: (id: string) =>
+    request<DemandPlanVersionListItem>(`/api/demand-plans/${id}/archive`, { method: 'POST' }),
+  updateDemandPlanWeek: (
+    versionId: string,
+    weekId: string,
+    body: { manualDailyAvg: number | null; adjustReason: string },
+  ) =>
+    request(`/api/demand-plans/${versionId}/weeks/${weekId}`, {
+      method: 'PATCH',
+      body: JSON.stringify(body),
+    }),
+  updateDemandPlanMonth: (
+    versionId: string,
+    monthId: string,
+    body: { manualDailyAvg: number | null; adjustReason: string },
+  ) =>
+    request(`/api/demand-plans/${versionId}/months/${monthId}`, {
+      method: 'PATCH',
+      body: JSON.stringify(body),
     }),
 };
 

@@ -2,6 +2,8 @@ import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, type LeadTimeProfile, type LeadTimeProfileInput, type TransportMode } from '@/lib/api';
 import { PageHeader } from '@/components/PageHeader';
+import { ListPagination } from '@/components/ListPagination';
+import { ListSearchBar } from '@/components/ListSearchBar';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -97,16 +99,19 @@ function formToInput(form: ProfileForm): LeadTimeProfileInput {
 export function LeadTimeProfilesPage() {
   const queryClient = useQueryClient();
   const [form, setForm] = useState<ProfileForm>(EMPTY_FORM);
-  const [filters, setFilters] = useState({ warehouse: '', merchant: '' });
-  const [appliedFilters, setAppliedFilters] = useState(filters);
+  const [keyword, setKeyword] = useState('');
+  const [appliedKeyword, setAppliedKeyword] = useState('');
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
   const [error, setError] = useState('');
 
   const profiles = useQuery({
-    queryKey: ['lead-time-profiles', appliedFilters],
+    queryKey: ['lead-time-profiles', appliedKeyword, page, pageSize],
     queryFn: () =>
       api.getLeadTimeProfiles({
-        warehouse: appliedFilters.warehouse || undefined,
-        merchant: appliedFilters.merchant || undefined,
+        q: appliedKeyword || undefined,
+        page,
+        pageSize,
       }),
   });
 
@@ -130,6 +135,7 @@ export function LeadTimeProfilesPage() {
   });
 
   const items = profiles.data?.items ?? [];
+  const total = profiles.data?.total ?? 0;
 
   return (
     <div className="space-y-6">
@@ -227,23 +233,15 @@ export function LeadTimeProfilesPage() {
           <CardTitle>Profile 列表</CardTitle>
         </CardHeader>
         <CardContent>
-          <div className="mb-4 flex flex-wrap gap-3">
-            <Input
-              className="w-52"
-              placeholder="按仓库编码筛选"
-              value={filters.warehouse}
-              onChange={(event) => setFilters({ ...filters, warehouse: event.target.value })}
-            />
-            <Input
-              className="w-52"
-              placeholder="按商家编码筛选"
-              value={filters.merchant}
-              onChange={(event) => setFilters({ ...filters, merchant: event.target.value })}
-            />
-            <Button variant="outline" onClick={() => setAppliedFilters(filters)}>
-              查询
-            </Button>
-          </div>
+          <ListSearchBar
+            keyword={keyword}
+            onKeywordChange={setKeyword}
+            onSearch={() => {
+              setAppliedKeyword(keyword.trim());
+              setPage(1);
+            }}
+            placeholder="仓库 / 商家 / 起运地"
+          />
 
           {profiles.isLoading ? (
             <p className="text-sm text-text-sub">加载中...</p>
@@ -306,6 +304,18 @@ export function LeadTimeProfilesPage() {
                 </tbody>
               </table>
             </div>
+          )}
+          {!profiles.isLoading && (
+            <ListPagination
+              page={page}
+              pageSize={pageSize}
+              total={total}
+              onPageChange={setPage}
+              onPageSizeChange={(next) => {
+                setPageSize(next);
+                setPage(1);
+              }}
+            />
           )}
         </CardContent>
       </Card>

@@ -1,0 +1,404 @@
+# 产品成本核算 · AI 识别产品结构与设计标准（多模态）
+# 导入: Dify 控制台 → 工作室 → 导入 DSL
+# 对接: scm-agent POST /api/procurement/costing/:id/analyze-facts
+# 环境变量: DIFY_API_KEY_COSTING_FACTS=app-xxxx（未配则尝试 DIFY_API_KEY_COSTING_BOM）
+# 约定: docs/dify/workflows/product-costing-facts-extract.md
+#
+# 说明:
+# - 输入 pages_json：封面/尺寸/设计说明/CMF，至多 1 页爆炸图（理解结构，不拆 BOM）
+# - 输出 product_facts：JSON 对象字符串
+# - 页图以 data URL 写入 Prompt；导入后请换多模态模型
+
+kind: app
+version: 0.6.0
+app:
+  mode: workflow
+  name: 产品成本核算-识别结构与设计标准
+  description: 根据设计方案封面/尺寸/说明页判断品类、大致结构与后续拆料原则，供 scm-agent 第一步确认
+  icon: 🪑
+  icon_background: '#FFF7E6'
+dependencies:
+  - type: marketplace
+    value:
+      marketplace_plugin_unique_identifier: langgenius/deepseek:0.0.15@bc5b794a1b0b4f7e9c2d8a1e3f5b7c9d
+workflow:
+  environment_variables: []
+  conversation_variables: []
+  features:
+    file_upload:
+      enabled: false
+    opening_statement: ''
+    retriever_resource:
+      enabled: false
+    sensitive_word_avoidance:
+      enabled: false
+    speech_to_text:
+      enabled: false
+    suggested_questions: []
+    suggested_questions_after_answer:
+      enabled: false
+    text_to_speech:
+      enabled: false
+  graph:
+    edges:
+      - id: edge-start-prepare
+        source: start
+        target: prepare_pages
+        sourceHandle: source
+        targetHandle: target
+        type: custom
+        data:
+          sourceType: start
+          targetType: code
+          isInIteration: false
+          isInLoop: false
+      - id: edge-prepare-llm
+        source: prepare_pages
+        target: extract_facts
+        sourceHandle: source
+        targetHandle: target
+        type: custom
+        data:
+          sourceType: code
+          targetType: llm
+          isInIteration: false
+          isInLoop: false
+      - id: edge-llm-parse
+        source: extract_facts
+        target: parse_facts
+        sourceHandle: source
+        targetHandle: target
+        type: custom
+        data:
+          sourceType: llm
+          targetType: code
+          isInIteration: false
+          isInLoop: false
+      - id: edge-parse-end
+        source: parse_facts
+        target: end
+        sourceHandle: source
+        targetHandle: target
+        type: custom
+        data:
+          sourceType: code
+          targetType: end
+          isInIteration: false
+          isInLoop: false
+    nodes:
+      - id: start
+        type: custom
+        width: 242
+        height: 140
+        position:
+          x: 80
+          y: 280
+        positionAbsolute:
+          x: 80
+          y: 280
+        sourcePosition: right
+        targetPosition: left
+        selected: false
+        data:
+          type: start
+          title: 开始
+          desc: ''
+          variables:
+            - variable: category
+              label: 品类提示
+              type: text-input
+              required: false
+              max_length: 200
+              options: []
+            - variable: extract_hints
+              label: 拆单提示
+              type: paragraph
+              required: false
+              max_length: 8000
+              options: []
+            - variable: pages_json
+              label: 分页图文JSON
+              type: paragraph
+              required: true
+              max_length: 500000
+              options: []
+
+      - id: prepare_pages
+        type: custom
+        width: 242
+        height: 90
+        position:
+          x: 380
+          y: 280
+        positionAbsolute:
+          x: 380
+          y: 280
+        sourcePosition: right
+        targetPosition: left
+        selected: false
+        data:
+          type: code
+          title: 解析分页输入
+          desc: ''
+          code_language: python3
+          error_strategy: fail-branch
+          code: |
+            import json
+
+            # 400 KiB JPEG 编码后约 546k base64 字符，预留 data/换行余量。
+            MAX_B64 = 80000
+            MAX_IMAGES = 1
+
+            def main(category: str, pages_json: str, extract_hints: str) -> dict:
+                cat = (category or "家具").strip() or "家具"
+                hints = (extract_hints or "").strip()[:8000]
+                try:
+                    pages = json.loads(pages_json or "[]")
+                except Exception:
+                    pages = []
+                if not isinstance(pages, list):
+                    pages = []
+
+                text_parts = []
+                img_parts = []
+                for p in pages:
+                    if not isinstance(p, dict):
+                        continue
+                    page = p.get("page") if p.get("page") is not None else p.get("pageNo")
+                    page = page if page is not None else "?"
+                    page_type = str(p.get("page_type") or p.get("pageType") or "unknown").strip()
+                    text = (p.get("text") or "").strip()
+                    text_parts.append(
+                        f"===== 第 {page} 页（page_type={page_type}）文本 =====\n"
+                        f"{text if text else '(无文本，请看图)'}"
+                    )
+
+                    b64 = p.get("image_base64") or ""
+                    if not isinstance(b64, str) or not b64:
+                        continue
+                    if b64.startswith("data:") and "," in b64[:100]:
+                        b64 = b64.split(",", 1)[1]
+                    mime = str(p.get("image_mime_type") or "image/png").strip() or "image/png"
+                    if mime not in ("image/png", "image/jpeg", "image/jpg"):
+                        mime = "image/png"
+                    if mime == "image/jpg":
+                        mime = "image/jpeg"
+                    if len(img_parts) >= MAX_IMAGES:
+                        continue
+                    if len(b64) > MAX_B64:
+                        text_parts.append(f"（第 {page} 页图片过大已省略，仅依赖文本）")
+                        continue
+                    img_parts.append(
+                        f"第{page}页图片:\n![page_{page}](data:{mime};base64,{b64})"
+                    )
+
+                pages_context = "\n\n".join(text_parts)
+                if len(pages_context) > 8000:
+                    pages_context = pages_context[:8000] + "\n…(文本截断)"
+
+                images_markdown = "\n\n".join(img_parts)
+                return {
+                    "category": cat,
+                    "extract_hints": hints,
+                    "page_count": float(len(pages)),
+                    "pages_context": pages_context,
+                    "images_markdown": images_markdown or "(本批无可用页图)",
+                }
+          outputs:
+            category:
+              type: string
+              children: null
+            extract_hints:
+              type: string
+              children: null
+            page_count:
+              type: number
+              children: null
+            pages_context:
+              type: string
+              children: null
+            images_markdown:
+              type: string
+              children: null
+          variables:
+            - variable: category
+              value_selector:
+                - start
+                - category
+            - variable: pages_json
+              value_selector:
+                - start
+                - pages_json
+            - variable: extract_hints
+              value_selector:
+                - start
+                - extract_hints
+
+      - id: extract_facts
+        type: custom
+        width: 242
+        height: 98
+        position:
+          x: 680
+          y: 280
+        positionAbsolute:
+          x: 680
+          y: 280
+        sourcePosition: right
+        targetPosition: left
+        selected: false
+        data:
+          type: llm
+          title: 判断产品结构与设计标准
+          desc: ''
+          context:
+            enabled: false
+            variable_selector: []
+          vision:
+            enabled: false
+          model:
+            mode: chat
+            provider: langgenius/deepseek/deepseek
+            name: deepseek-chat
+            completion_params:
+              temperature: 0.2
+              max_tokens: 4000
+          prompt_template:
+            - id: sys-prompt-costing-facts-001
+              role: system
+              text: |
+                你是家具结构设计专家。任务：根据设计方案判断「是什么商品、大概什么结构、后续拆物料应遵循哪些设计原则」。
+                本步禁止输出物料清单（不要 lines、不要板件数量表）。
+
+                【多模态要求】
+                - 同时阅读分页文本与分页图片；尺寸、抽屉数、品类若只在图中出现也必须读取。
+                - 文字与图片冲突时以图片标注为准。
+
+                只输出一个 JSON 对象，不要 markdown 代码块，字段：
+                - product_name：产品名称，未知则空字符串
+                - category：仅允许 斗柜 / 床头柜 / 书桌 / 桌子 / 梳妆台 / 床 / 椅子 / 其他
+                - construction_type：板式 / 实木 / 混合，未知则空字符串
+                - drawer_count：整数 0-30，未知则 null
+                - default_substrate：颗粒板 / 密度板 / 多层实木板 / 实木 / 其他，未知则空字符串
+                - carcass_thickness_mm：箱体默认厚度整数（侧板/底板未单独标明时可作默认），未知则 null
+                - side_thickness_mm：侧板默认厚度整数，未知则 null
+                - back_thickness_mm：背板默认厚度整数（常见 3），未知则 null
+                - bottom_thickness_mm：柜体底板默认厚度整数（不是抽底），未知则 null
+                - drawer_bottom_thickness_mm：抽底默认厚度整数，未知则 null
+                - structure_summary：用中文说明大致结构（如顶板是否盖板、侧板是否落地、有无整块底板、抽屉布局）。不确定就写不确定，不要编造。
+                - design_principles：后续根据爆炸图/尺寸图拆物料时应遵守的设计原则（如抽侧长=柜深-50mm）。没有依据则写「以尺寸图与爆炸图明示为准，不要臆造五金」。
+
+                输出示例：
+                {"product_name":"六抽菱形斗柜","category":"斗柜","construction_type":"板式","drawer_count":6,"default_substrate":"颗粒板","carcass_thickness_mm":18,"side_thickness_mm":18,"back_thickness_mm":3,"bottom_thickness_mm":null,"drawer_bottom_thickness_mm":9,"structure_summary":"顶板为盖板，侧板落地，无整块底板。","design_principles":"抽侧长=柜深-50mm；抽侧宽=抽面高-60mm；未在图上出现的五金不要编造。"}
+            - id: user-prompt-costing-facts-001
+              role: user
+              text: |
+                【品类提示】{{#prepare_pages.category#}}
+                【本批页数】{{#prepare_pages.page_count#}}
+
+                【识别提示】
+                {{#prepare_pages.extract_hints#}}
+
+                【分页文本】
+                {{#prepare_pages.pages_context#}}
+
+                【分页图片 — 必须结合上文文本一起阅读】
+                {{#prepare_pages.images_markdown#}}
+
+                请输出 product_facts JSON 对象，不要物料清单。
+
+      - id: parse_facts
+        type: custom
+        width: 242
+        height: 90
+        position:
+          x: 980
+          y: 280
+        positionAbsolute:
+          x: 980
+          y: 280
+        sourcePosition: right
+        targetPosition: left
+        selected: false
+        data:
+          type: code
+          title: 规范化product_facts
+          desc: ''
+          code_language: python3
+          error_strategy: fail-branch
+          code: |
+            import json
+            import re
+
+            def _extract_obj(text: str):
+                if not text:
+                    return {}
+                text = text.strip()
+                m = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", text)
+                if m:
+                    text = m.group(1).strip()
+                start = text.find("{")
+                end = text.rfind("}")
+                if start < 0 or end <= start:
+                    return {}
+                data = json.loads(text[start : end + 1])
+                return data if isinstance(data, dict) else {}
+
+            def main(text: str) -> dict:
+                try:
+                    raw = _extract_obj(text or "")
+                except Exception as e:
+                    return {
+                        "product_facts": "{}",
+                        "parse_ok": False,
+                        "error_message": f"parse failed: {e}",
+                    }
+                if "lines" in raw and isinstance(raw.get("lines"), list):
+                    raw = {k: v for k, v in raw.items() if k != "lines"}
+                return {
+                    "product_facts": json.dumps(raw, ensure_ascii=False),
+                    "parse_ok": True,
+                    "error_message": "",
+                }
+          outputs:
+            product_facts:
+              type: string
+              children: null
+            parse_ok:
+              type: boolean
+              children: null
+            error_message:
+              type: string
+              children: null
+          variables:
+            - variable: text
+              value_selector:
+                - extract_facts
+                - text
+
+      - id: end
+        type: custom
+        width: 242
+        height: 116
+        position:
+          x: 1280
+          y: 280
+        positionAbsolute:
+          x: 1280
+          y: 280
+        sourcePosition: right
+        targetPosition: left
+        selected: false
+        data:
+          type: end
+          title: 结束
+          desc: ''
+          outputs:
+            - variable: product_facts
+              value_selector:
+                - parse_facts
+                - product_facts
+            - variable: parse_ok
+              value_selector:
+                - parse_facts
+                - parse_ok

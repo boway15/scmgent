@@ -17,16 +17,18 @@ export type HorizonBand = 'precision' | 'flex' | 'strategic';
 export const HORIZON_BAND_LABELS: Record<HorizonBand, string> = {
   precision: '1–3 月（精准备货）',
   flex: '3–6 月（生产柔性）',
-  strategic: '6–12 月（战略库容）',
+  strategic: '6 月地平线',
 };
 
-/** 销量预测向前地平线：最多 12 个自然月 */
-export const MAX_FORECAST_MONTH_COUNT = 12;
+export const FORECAST_HORIZON_MONTHS = 6;
+
+/** 销量预测向前地平线：固定 6 个自然月 */
+export const MAX_FORECAST_MONTH_COUNT = 6;
 
 /** SKU 抽屉固定展示的历史销量月数（与预测月数无关） */
 export const DRAWER_HISTORY_MONTH_COUNT = 24;
 
-export const FORECAST_GENERATION_MONTH_OPTIONS = [3, 6, 12] as const;
+export const FORECAST_GENERATION_MONTH_OPTIONS = [6] as const;
 
 /** 生成预测可选开始月：当月 + 往前 N 个月（与后端 FORECAST_START_MONTH_LOOKBACK 对齐） */
 export const FORECAST_START_MONTH_LOOKBACK = 6;
@@ -52,7 +54,7 @@ export function buildForecastStartMonthOptions(
   return options;
 }
 
-export const FORECAST_HORIZON_FUTURE_MONTH_OPTIONS = [3, 6, 12] as const;
+export const FORECAST_HORIZON_FUTURE_MONTH_OPTIONS = [3, 6] as const;
 
 export const FORECAST_HORIZON_HISTORY_MONTH_OPTIONS = [6, 12, 18, 24] as const;
 

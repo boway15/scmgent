@@ -1,4 +1,5 @@
-import { eq, desc, and, inArray, like } from 'drizzle-orm';
+import { eq, desc, and, inArray, or, ilike, sql } from 'drizzle-orm';
+import { parseListPagination } from '../lib/list-pagination.js';
 import { Hono } from 'hono';
 import { db, purchaseDrafts, skus, pmcPlans, users } from '@scm/db';
 import { requireMenu } from '../lib/rbac.js';
@@ -111,7 +112,12 @@ function mapDraftRow(row: {
 }
 
 procurementRoutes.get('/purchase-drafts', async (c) => {
-  const status = c.req.query('status');
+  const { page, pageSize, offset } = parseListPagination(
+    c.req.query('page')?.trim(),
+    c.req.query('pageSize')?.trim(),
+  );
+  const status = c.req.query('status')?.trim();
+  const q = c.req.query('q')?.trim();
   const baseQuery = db
     .select({
       id: purchaseDrafts.id,
@@ -163,13 +169,38 @@ procurementRoutes.get('/purchase-drafts', async (c) => {
       conditions.push(eq(purchaseDrafts.status, status as PurchaseDraftStatus));
     }
   }
+  if (q) {
+    const pattern = `%${q}%`;
+    conditions.push(
+      or(
+        ilike(purchaseDrafts.draftNo, pattern),
+        ilike(skus.code, pattern),
+        ilike(skus.name, pattern),
+        ilike(pmcPlans.planNo, pattern),
+        ilike(pmcPlans.merchantCode, pattern),
+        ilike(pmcPlans.merchantName, pattern),
+      )!,
+    );
+  }
 
-  const rows = await baseQuery
-    .where(and(...conditions))
-    .orderBy(desc(purchaseDrafts.createdAt))
-    .limit(200);
+  const where = and(...conditions);
 
-  return c.json(rows.map(mapDraftRow));
+  const [rows, countRow] = await Promise.all([
+    baseQuery.where(where).orderBy(desc(purchaseDrafts.createdAt)).limit(pageSize).offset(offset),
+    db
+      .select({ count: sql<number>`count(*)::int` })
+      .from(purchaseDrafts)
+      .innerJoin(skus, eq(skus.id, purchaseDrafts.skuId))
+      .leftJoin(pmcPlans, eq(pmcPlans.id, purchaseDrafts.sourceRefId))
+      .where(where),
+  ]);
+
+  return c.json({
+    items: rows.map(mapDraftRow),
+    total: countRow[0]?.count ?? 0,
+    page,
+    pageSize,
+  });
 });
 
 procurementRoutes.post('/purchase-drafts', async (c) => {

@@ -2,9 +2,11 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
   assertManualAdjust,
+  canAdoptWeeklyCounts,
   championCoversHorizon,
   nextDemandPlanVersionNo,
   shouldArchivePrevious,
+  shouldWriteAdoptionOnPublish,
 } from './demand-plan-service.js';
 
 describe('nextDemandPlanVersionNo', () => {
@@ -45,6 +47,23 @@ describe('shouldArchivePrevious', () => {
     assert.equal(shouldArchivePrevious({ existingStatus: 'pilot_published' }), true);
     assert.equal(shouldArchivePrevious({ existingStatus: 'draft' }), false);
     assert.equal(shouldArchivePrevious({ existingStatus: 'archived' }), false);
+  });
+});
+
+describe('canAdoptWeeklyCounts', () => {
+  it('accepts complete 26-week SKUs and rejects partial or empty', () => {
+    assert.equal(canAdoptWeeklyCounts([26, 26]), true);
+    assert.equal(canAdoptWeeklyCounts([26, 13]), false);
+    assert.equal(canAdoptWeeklyCounts([]), false);
+    assert.equal(canAdoptWeeklyCounts([26]), true);
+  });
+});
+
+describe('shouldWriteAdoptionOnPublish', () => {
+  it('is false unless adopt is explicitly true', () => {
+    assert.equal(shouldWriteAdoptionOnPublish(undefined), false);
+    assert.equal(shouldWriteAdoptionOnPublish(false), false);
+    assert.equal(shouldWriteAdoptionOnPublish(true), true);
   });
 });
 

@@ -586,9 +586,23 @@ export type DemandPlanMonthRow = {
   adjustReason?: string | null;
 };
 
+export type DemandPlanWeekRow = DemandPlanMonthRow;
+
+export type DemandPlanAdoption = {
+  id: string;
+  projectGroup: string;
+  warehouseCode: string;
+  source: 'forecast' | 'demand_plan' | string;
+  demandPlanVersionId: string | null;
+  adoptedAt?: string;
+  adoptedBy?: string | null;
+};
+
 export type DemandPlanDetail = {
   version: DemandPlanVersionListItem;
   months: DemandPlanMonthRow[];
+  weeks?: DemandPlanWeekRow[];
+  adoption?: DemandPlanAdoption | null;
 };
 
 export type PlanningDashboard = {
@@ -4495,35 +4509,35 @@ export const api = {
       }>
     >('/api/demand-plans'),
   getDemandPlan: (id: string) =>
-    request<{
-      version: {
-        id: string;
-        versionNo: string;
-        versionName: string;
-        status: string;
-        projectGroup: string;
-        warehouseCode: string;
-      };
-      months: Array<{
-        id: string;
-        skuCode?: string;
-        period: string;
-        systemDailyAvg: string;
-        manualDailyAvg: string | null;
-        championForecastDaily: string | null;
-        source: string;
-        adjustReason?: string | null;
-      }>;
-    }>(`/api/demand-plans/${id}`),
+    request<DemandPlanDetail>(`/api/demand-plans/${id}`),
   generateDemandPlan: (body: { projectGroup: string; warehouseCode: string; versionName?: string }) =>
     request<{
       version: DemandPlanVersionListItem;
       skipped: Array<{ skuId: string; skuCode: string; reason: string }>;
     }>('/api/demand-plans/generate', { method: 'POST', body: JSON.stringify(body) }),
-  publishDemandPlan: (id: string) =>
-    request<DemandPlanVersionListItem>(`/api/demand-plans/${id}/publish`, { method: 'POST' }),
+  publishDemandPlan: (id: string, body?: { adopt?: boolean }) =>
+    request<{ version: DemandPlanVersionListItem; adoption: DemandPlanAdoption | null }>(
+      `/api/demand-plans/${id}/publish`,
+      { method: 'POST', body: JSON.stringify(body ?? {}) },
+    ),
+  adoptDemandPlan: (id: string) =>
+    request<DemandPlanAdoption>(`/api/demand-plans/${id}/adopt`, { method: 'POST' }),
+  adoptForecast: (body: { projectGroup: string; warehouseCode: string }) =>
+    request<DemandPlanAdoption>('/api/demand-plans/adopt-forecast', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
   archiveDemandPlan: (id: string) =>
     request<DemandPlanVersionListItem>(`/api/demand-plans/${id}/archive`, { method: 'POST' }),
+  updateDemandPlanWeek: (
+    versionId: string,
+    weekId: string,
+    body: { manualDailyAvg: number | null; adjustReason: string },
+  ) =>
+    request(`/api/demand-plans/${versionId}/weeks/${weekId}`, {
+      method: 'PATCH',
+      body: JSON.stringify(body),
+    }),
   updateDemandPlanMonth: (
     versionId: string,
     monthId: string,

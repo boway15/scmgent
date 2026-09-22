@@ -5,6 +5,7 @@ import {
   calcSuggestedOrderDate,
   type CoverageReplenishmentResult,
 } from './replenishment-coverage.js';
+import { isIsoWeekPeriod, isoWeekKeyFromUtcDate } from './planning-calendar.js';
 
 export function resolveEffectiveForecastDailyAvg(
   forecastDailyAvg: number,
@@ -342,6 +343,13 @@ export function getForecastDailyForDate(
   date: Date,
   fallbackDaily = 0,
 ): number {
+  const firstKey = forecasts.keys().next().value as string | undefined;
+  if (firstKey && isIsoWeekPeriod(firstKey)) {
+    const value = forecasts.get(isoWeekKeyFromUtcDate(date));
+    if (value != null && value > 0) return value;
+    return fallbackDaily;
+  }
+
   const key = forecastMonthKey(date.getFullYear(), date.getMonth() + 1);
   const value = forecasts.get(key);
   if (value != null && value > 0) return value;

@@ -5,7 +5,9 @@ import {
   classifyReconstructSource,
   clipDemandShape,
   systemDailyAvgForMonth,
+  systemDailyAvgForWeek,
   warehouseShareWeight,
+  weekWeightedForecastDaily,
 } from './demand-plan-reconstruct.js';
 
 describe('demand-plan-reconstruct', () => {
@@ -44,5 +46,27 @@ describe('demand-plan-reconstruct', () => {
       classifyReconstructSource({ hasAvailabilitySeries: true, inStockDays: 8 }),
       'reconstructed_shape',
     );
+  });
+
+  it('weights a split week by calendar days', () => {
+    const monthly = new Map([['2026-01', 10], ['2026-02', 20]]);
+    const daily = weekWeightedForecastDaily('2026-W05', monthly);
+    assert.equal(daily, Math.round(((10 * 6 + 20 * 1) / 7) * 10000) / 10000);
+  });
+
+  it('treats missing month as 0 and does not fill from F_ref', () => {
+    const monthly = new Map([['2026-01', 10]]);
+    const daily = weekWeightedForecastDaily('2026-W05', monthly);
+    assert.equal(daily, Math.round(((10 * 6 + 0 * 1) / 7) * 10000) / 10000);
+  });
+
+  it('delegates systemDailyAvgForWeek to month helper', () => {
+    const daily = systemDailyAvgForWeek({
+      unconstrainedRecentDaily: 10,
+      share: 0.5,
+      weekForecastDaily: 20,
+      championRefDaily: 10,
+    });
+    assert.equal(daily, 10);
   });
 });

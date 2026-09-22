@@ -4,6 +4,7 @@ import {
   addIsoWeeks,
   buildIsoWeekHorizon,
   isoWeekKeyFromUtcDate,
+  isoWeekMondayUtc,
   planningRecentWindowEnd,
 } from './planning-calendar.js';
 import { getForecastDailyForDate } from './forecast-demand.js';
@@ -21,6 +22,11 @@ describe('planning-calendar', () => {
   it('planning window ends yesterday in Asia/Shanghai', () => {
     const end = planningRecentWindowEnd(new Date('2026-01-15T02:00:00.000Z'));
     assert.equal(end.toISOString().slice(0, 10), '2026-01-14');
+  });
+
+  it('resolves ISO week key to Monday UTC', () => {
+    const monday = isoWeekMondayUtc('2026-W05');
+    assert.equal(monday.toISOString().slice(0, 10), '2026-01-26');
   });
 });
 

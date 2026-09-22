@@ -15,6 +15,20 @@ export function isoWeekKeyFromUtcDate(date: Date): string {
   return `${utc.getUTCFullYear()}-W${String(week).padStart(2, '0')}`;
 }
 
+export function isoWeekMondayUtc(weekKey: string): Date {
+  const match = ISO_WEEK_PERIOD.exec(weekKey);
+  if (!match) {
+    throw new Error(`Invalid ISO week key: ${weekKey}`);
+  }
+  const year = parseInt(weekKey.slice(0, 4), 10);
+  const week = parseInt(weekKey.slice(6, 8), 10);
+  const jan4 = new Date(Date.UTC(year, 0, 4));
+  const dow = jan4.getUTCDay() || 7;
+  const monday = new Date(jan4);
+  monday.setUTCDate(jan4.getUTCDate() - dow + 1 + (week - 1) * 7);
+  return monday;
+}
+
 export function addIsoWeeks(startWeek: string, offset: number): string {
   const match = ISO_WEEK_PERIOD.exec(startWeek);
   if (!match) {

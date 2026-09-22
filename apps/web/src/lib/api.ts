@@ -13,6 +13,13 @@ export type MenuNode = {
   children?: MenuNode[];
 };
 
+export type PaginatedResult<T> = {
+  items: T[];
+  total: number;
+  page: number;
+  pageSize: number;
+};
+
 export type User = {
   id: string;
   name: string;
@@ -526,6 +533,8 @@ export type SkuPlanningView = {
   suggestedQty: number;
   suggestedDate: string;
   healthStatus: InventoryHealth;
+  /** 覆盖天数影子灯 */
+  coverageHealthStatus?: InventoryHealth | string;
   etaAvailableNearest?: string | null;
   stockoutDateEstimate?: string | null;
   timeline?: {
@@ -539,6 +548,7 @@ export type SkuPlanningView = {
     tooLateForNewPo: boolean;
     uncoverableByNewPo: boolean;
     suggestedQty: number;
+    suggestedQtyGross?: number;
     points: Array<{
       horizonDays: number;
       asOf: string;
@@ -563,7 +573,20 @@ export type SkuPlanningView = {
   championStockoutDateConfirmed?: string | null;
   championSuggestedQty?: number | null;
   inStockDayRatio?: number | null;
-  healthDemandNote?: string;
+  confirmedCoverageDays?: number | null;
+  needsManualConfirm?: boolean;
+  demandGateFlags?: string[];
+  demandUnconstrainedDaily?: number | null;
+  demandStockoutDays?: number | null;
+  demandCapped?: boolean;
+  suggestedQtyGross?: number | null;
+  latePoActions?: Array<{
+    kind: 'transfer' | 'fast_ship' | 'accept_stockout';
+    label: string;
+    detail: string;
+    qty?: number;
+    days?: number;
+  }>;
 };
 
 export type DemandPlanVersionListItem = {
@@ -1142,9 +1165,14 @@ export const api = {
   getMe: () => request<User>('/api/me'),
   getMyMenus: () => request<MenuNode[]>('/api/me/menus'),
   getMenus: () => request<MenuNode[]>('/api/menus'),
-  getUsers: () =>
-    request<
-      Array<{
+  getUsers: (params?: { page?: number; pageSize?: number; q?: string }) => {
+    const qs = new URLSearchParams();
+    if (params?.page) qs.set('page', String(params.page));
+    if (params?.pageSize) qs.set('pageSize', String(params.pageSize));
+    if (params?.q?.trim()) qs.set('q', params.q.trim());
+    const query = qs.toString();
+    return request<
+      PaginatedResult<{
         id: string;
         name: string;
         email: string;
@@ -1155,7 +1183,8 @@ export const api = {
         roleCode: string;
         hasPassword: boolean;
       }>
-    >('/api/users'),
+    >(`/api/users${query ? `?${query}` : ''}`);
+  },
   updateUser: (id: string, data: { roleId?: string; isActive?: boolean; name?: string }) =>
     request(`/api/users/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
   resetUserPassword: (id: string, password: string) =>
@@ -1163,12 +1192,19 @@ export const api = {
       method: 'PATCH',
       body: JSON.stringify({ password }),
     }),
-  getAuditLogs: (params?: { page?: number; pageSize?: number; action?: string; userId?: string }) => {
+  getAuditLogs: (params?: {
+    page?: number;
+    pageSize?: number;
+    action?: string;
+    userId?: string;
+    q?: string;
+  }) => {
     const q = new URLSearchParams();
     if (params?.page) q.set('page', String(params.page));
     if (params?.pageSize) q.set('pageSize', String(params.pageSize));
     if (params?.action) q.set('action', params.action);
     if (params?.userId) q.set('userId', params.userId);
+    if (params?.q) q.set('q', params.q);
     const qs = q.toString();
     return request<{
       items: Array<{
@@ -1188,7 +1224,14 @@ export const api = {
       pageSize: number;
     }>(`/api/audit-logs${qs ? `?${qs}` : ''}`);
   },
-  getTaskRuns: () => request<TaskRunSummary[]>('/api/tasks/runs'),
+  getTaskRuns: (params?: { page?: number; pageSize?: number; q?: string }) => {
+    const qs = new URLSearchParams();
+    if (params?.page) qs.set('page', String(params.page));
+    if (params?.pageSize) qs.set('pageSize', String(params.pageSize));
+    if (params?.q?.trim()) qs.set('q', params.q.trim());
+    const query = qs.toString();
+    return request<PaginatedResult<TaskRunSummary>>(`/api/tasks/runs${query ? `?${query}` : ''}`);
+  },
   runScheduledTask: (path: string) =>
     request<Record<string, unknown> & { skipped?: boolean; message?: string }>(path, {
       method: 'POST',
@@ -2021,15 +2064,19 @@ export const api = {
     pool?: 'overseas' | 'in_transit' | 'local';
     warehouse?: string;
     skuId?: string;
-    limit?: number;
+    page?: number;
+    pageSize?: number;
+    q?: string;
   }) => {
     const qs = new URLSearchParams();
     if (params?.pool) qs.set('pool', params.pool);
     if (params?.warehouse) qs.set('warehouse', params.warehouse);
     if (params?.skuId) qs.set('skuId', params.skuId);
-    if (params?.limit) qs.set('limit', String(params.limit));
+    if (params?.page) qs.set('page', String(params.page));
+    if (params?.pageSize) qs.set('pageSize', String(params.pageSize));
+    if (params?.q) qs.set('q', params.q);
     const query = qs.toString();
-    return request<{ items: SupplyLotRow[] }>(
+    return request<PaginatedResult<SupplyLotRow> & { dateUnknownCount?: number }>(
       `/api/inventory/pools${query ? `?${query}` : ''}`,
     );
   },
@@ -2052,16 +2099,26 @@ export const api = {
     }),
   getPlanningDashboard: () =>
     request<PlanningDashboard>('/api/planning/dashboard'),
-  getInventoryDataIssues: (params?: { status?: string; type?: string }) => {
+  getInventoryDataIssues: (params?: {
+    status?: string;
+    type?: string;
+    page?: number;
+    pageSize?: number;
+    q?: string;
+  }) => {
     const qs = new URLSearchParams();
     if (params?.status) qs.set('status', params.status);
     if (params?.type) qs.set('type', params.type);
+    if (params?.page) qs.set('page', String(params.page));
+    if (params?.pageSize) qs.set('pageSize', String(params.pageSize));
+    if (params?.q) qs.set('q', params.q);
     const query = qs.toString();
-    return request<{
-      items: InventoryDataIssueRow[];
-      count: number;
-      openByType: Record<string, number>;
-    }>(`/api/inventory/data-issues${query ? `?${query}` : ''}`);
+    return request<
+      PaginatedResult<InventoryDataIssueRow> & {
+        count: number;
+        openByType: Record<string, number>;
+      }
+    >(`/api/inventory/data-issues${query ? `?${query}` : ''}`);
   },
   updateInventoryDataIssue: (
     id: string,
@@ -2084,17 +2141,27 @@ export const api = {
       refreshed: number;
       autoResolved: number;
     }>('/api/tasks/inventory-data-issue-scan', { method: 'POST' }),
-  getUnallocatedSupply: (params?: { skuId?: string; pool?: string }) => {
+  getUnallocatedSupply: (params?: {
+    skuId?: string;
+    pool?: string;
+    page?: number;
+    pageSize?: number;
+    q?: string;
+  }) => {
     const qs = new URLSearchParams();
     if (params?.skuId) qs.set('skuId', params.skuId);
     if (params?.pool) qs.set('pool', params.pool);
+    if (params?.page) qs.set('page', String(params.page));
+    if (params?.pageSize) qs.set('pageSize', String(params.pageSize));
+    if (params?.q) qs.set('q', params.q);
     const query = qs.toString();
-    return request<{
-      items: UnallocatedSupplyRow[];
-      count: number;
-      openCount: number;
-      openQty: number;
-    }>(`/api/inventory/unallocated${query ? `?${query}` : ''}`);
+    return request<
+      PaginatedResult<UnallocatedSupplyRow> & {
+        count: number;
+        openCount: number;
+        openQty: number;
+      }
+    >(`/api/inventory/unallocated${query ? `?${query}` : ''}`);
   },
   assignUnallocatedLot: (
     id: string,
@@ -2172,12 +2239,21 @@ export const api = {
         allowCrossFulfill: boolean;
       }>
     >('/api/warehouses'),
-  getLeadTimeProfiles: (params?: { warehouse?: string; merchant?: string }) => {
+  getLeadTimeProfiles: (params?: {
+    warehouse?: string;
+    merchant?: string;
+    q?: string;
+    page?: number;
+    pageSize?: number;
+  }) => {
     const qs = new URLSearchParams();
     if (params?.warehouse) qs.set('warehouse', params.warehouse);
     if (params?.merchant) qs.set('merchant', params.merchant);
+    if (params?.q?.trim()) qs.set('q', params.q.trim());
+    if (params?.page) qs.set('page', String(params.page));
+    if (params?.pageSize) qs.set('pageSize', String(params.pageSize));
     const query = qs.toString();
-    return request<{ items: LeadTimeProfile[] }>(
+    return request<PaginatedResult<LeadTimeProfile>>(
       `/api/lead-time-profiles${query ? `?${query}` : ''}`,
     );
   },
@@ -2188,8 +2264,20 @@ export const api = {
     }),
   deleteLeadTimeProfile: (id: string) =>
     request<{ ok: true }>(`/api/lead-time-profiles/${id}`, { method: 'DELETE' }),
-  getShipments: (params?: { delayed?: boolean }) =>
-    request<{ items: Shipment[] }>(`/api/shipments${params?.delayed ? '?delayed=1' : ''}`),
+  getShipments: (params?: {
+    delayed?: boolean;
+    page?: number;
+    pageSize?: number;
+    q?: string;
+  }) => {
+    const qs = new URLSearchParams();
+    if (params?.delayed) qs.set('delayed', '1');
+    if (params?.page) qs.set('page', String(params.page));
+    if (params?.pageSize) qs.set('pageSize', String(params.pageSize));
+    if (params?.q?.trim()) qs.set('q', params.q.trim());
+    const query = qs.toString();
+    return request<PaginatedResult<Shipment>>(`/api/shipments${query ? `?${query}` : ''}`);
+  },
   upsertShipmentMilestone: (shipmentId: string, data: ShipmentMilestoneInput) =>
     request<ShipmentMilestone>(`/api/shipments/${encodeURIComponent(shipmentId)}/milestones`, {
       method: 'POST',
@@ -2204,9 +2292,15 @@ export const api = {
         lastMileCostIndex: string;
       }>
     >('/api/channel-warehouse-prefs'),
-  getSafetyStock: () =>
-    request<
-      Array<{
+  getSafetyStock: (params?: { page?: number; pageSize?: number; q?: string; warehouse?: string }) => {
+    const qs = new URLSearchParams();
+    if (params?.page) qs.set('page', String(params.page));
+    if (params?.pageSize) qs.set('pageSize', String(params.pageSize));
+    if (params?.q?.trim()) qs.set('q', params.q.trim());
+    if (params?.warehouse?.trim()) qs.set('warehouse', params.warehouse.trim());
+    const query = qs.toString();
+    return request<
+      PaginatedResult<{
         id: string | null;
         skuId: string;
         skuCode: string;
@@ -2221,8 +2315,10 @@ export const api = {
         demandStdDev: string | null;
         leadTimeStdDev: string | null;
         calcMethod: string | null;
+        lastCalcAt?: string | null;
       }>
-    >('/api/safety-stock'),
+    >(`/api/safety-stock${query ? `?${query}` : ''}`);
+  },
   getSafetyStockSuggestions: (params?: {
     warehouse?: string;
     serviceLevel?: number;
@@ -2267,8 +2363,23 @@ export const api = {
       body: JSON.stringify(data),
     });
   },
-  getAlerts: () =>
-    request<{
+  getAlerts: (params?: {
+    page?: number;
+    pageSize?: number;
+    q?: string;
+    horizonDays?: string;
+    alertType?: string;
+    resolved?: 'open' | 'done';
+  }) => {
+    const qs = new URLSearchParams();
+    if (params?.page) qs.set('page', String(params.page));
+    if (params?.pageSize) qs.set('pageSize', String(params.pageSize));
+    if (params?.q?.trim()) qs.set('q', params.q.trim());
+    if (params?.horizonDays) qs.set('horizonDays', params.horizonDays);
+    if (params?.alertType) qs.set('alertType', params.alertType);
+    if (params?.resolved) qs.set('resolved', params.resolved);
+    const query = qs.toString();
+    return request<{
       items: Array<{
         id: string;
         skuId: string;
@@ -2283,14 +2394,36 @@ export const api = {
         projectedStockoutDate?: string | null;
         isResolved: boolean;
       }>;
+      total: number;
+      page: number;
+      pageSize: number;
       summary: string;
       openCount: number;
-    }>('/api/alerts'),
+    }>(`/api/alerts${query ? `?${query}` : ''}`);
+  },
   resolveAlert: (id: string) => request(`/api/alerts/${id}/resolve`, { method: 'PATCH' }),
-  getReorderSuggestions: () =>
-    request<
-      Array<{
+  getReorderSuggestions: (params?: {
+    q?: string;
+    sku?: string;
+    warehouse?: string;
+    status?: 'pending' | 'accepted' | 'ignored';
+    queue?: 'auto' | 'manual' | 'all';
+    page?: number;
+    pageSize?: number;
+  }) => {
+    const qs = new URLSearchParams();
+    if (params?.q?.trim()) qs.set('q', params.q.trim());
+    if (params?.sku?.trim()) qs.set('sku', params.sku.trim());
+    if (params?.warehouse?.trim()) qs.set('warehouse', params.warehouse.trim());
+    if (params?.status) qs.set('status', params.status);
+    if (params?.queue) qs.set('queue', params.queue);
+    if (params?.page) qs.set('page', String(params.page));
+    if (params?.pageSize) qs.set('pageSize', String(params.pageSize));
+    const query = qs.toString();
+    return request<
+      PaginatedResult<{
         id: string;
+        skuId: string;
         skuCode: string;
         skuName: string;
         merchantCode?: string | null;
@@ -2307,12 +2440,24 @@ export const api = {
         status: string;
         planId?: string | null;
       }>
-    >('/api/reorder/suggestions'),
+    >(`/api/reorder/suggestions${query ? `?${query}` : ''}`);
+  },
   updateReorderSuggestion: (id: string, data: { status: 'accepted' | 'ignored'; merchantCode?: string }) =>
     request(`/api/reorder/suggestions/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
-  getPurchaseTracking: (status?: PurchaseDraftStatus) =>
-    request<
-      Array<{
+  getPurchaseTracking: (params?: {
+    status?: PurchaseDraftStatus;
+    page?: number;
+    pageSize?: number;
+    q?: string;
+  }) => {
+    const qs = new URLSearchParams();
+    if (params?.status) qs.set('status', params.status);
+    if (params?.page) qs.set('page', String(params.page));
+    if (params?.pageSize) qs.set('pageSize', String(params.pageSize));
+    if (params?.q?.trim()) qs.set('q', params.q.trim());
+    const query = qs.toString();
+    return request<
+      PaginatedResult<{
         id: string;
         draftNo: string;
         skuCode: string;
@@ -2344,7 +2489,8 @@ export const api = {
         exceptionReason?: string | null;
         remark?: string | null;
       }>
-    >(`/api/purchase-drafts${status ? `?status=${status}` : ''}`),
+    >(`/api/purchase-drafts${query ? `?${query}` : ''}`);
+  },
   updatePurchaseTracking: (
     id: string,
     data: {
@@ -2579,8 +2725,16 @@ export const api = {
     if (!res.ok) throw new Error(payload.message ?? '导入失败');
     return payload as { imported: number; errors: number };
   },
-  listCostingProjects: () =>
-    request<{ items: CostingProjectListItem[] }>('/api/procurement/costing/projects'),
+  listCostingProjects: (params?: { page?: number; pageSize?: number; q?: string }) => {
+    const qs = new URLSearchParams();
+    if (params?.page) qs.set('page', String(params.page));
+    if (params?.pageSize) qs.set('pageSize', String(params.pageSize));
+    if (params?.q) qs.set('q', params.q);
+    const query = qs.toString();
+    return request<PaginatedResult<CostingProjectListItem>>(
+      `/api/procurement/costing/projects${query ? `?${query}` : ''}`,
+    );
+  },
   createCostingProject: (data: { name?: string } = {}) =>
     request<{ id: string; projectNo: string; name: string; status: string }>(
       '/api/procurement/costing/projects',
@@ -2753,9 +2907,15 @@ export const api = {
     }),
   clearProcurementList: (type: ProcurementListType) =>
     request<{ deleted: number }>(`/api/procurement/lists/${type}/clear`, { method: 'POST' }),
-  getPmcPlans: () =>
-    request<
-      Array<{
+  getPmcPlans: (params?: { page?: number; pageSize?: number; q?: string; status?: string }) => {
+    const qs = new URLSearchParams();
+    if (params?.page) qs.set('page', String(params.page));
+    if (params?.pageSize) qs.set('pageSize', String(params.pageSize));
+    if (params?.q?.trim()) qs.set('q', params.q.trim());
+    if (params?.status) qs.set('status', params.status);
+    const query = qs.toString();
+    return request<
+      PaginatedResult<{
         id: string;
         planNo: string;
         name: string;
@@ -2766,7 +2926,8 @@ export const api = {
         deliveryDate: string;
         status: string;
       }>
-    >('/api/pmc/plans'),
+    >(`/api/pmc/plans${query ? `?${query}` : ''}`);
+  },
   getPmcPlan: (id: string) =>
     request<{
       id: string;
@@ -3032,9 +3193,14 @@ export const api = {
     }),
   toggleFobServiceProvider: (id: string) =>
     request(`/api/logistics/fob-service-providers/${id}/toggle`, { method: 'PATCH' }),
-  getFobSettlements: () =>
-    request<
-      Array<{
+  getFobSettlements: (params?: { page?: number; pageSize?: number; q?: string }) => {
+    const qs = new URLSearchParams();
+    if (params?.page) qs.set('page', String(params.page));
+    if (params?.pageSize) qs.set('pageSize', String(params.pageSize));
+    if (params?.q?.trim()) qs.set('q', params.q.trim());
+    const query = qs.toString();
+    return request<
+      PaginatedResult<{
         id: string;
         batchNo: string;
         name: string;
@@ -3053,7 +3219,8 @@ export const api = {
           providerType: 'trucking' | 'freight';
         } | null;
       }>
-    >('/api/logistics/fob-settlements'),
+    >(`/api/logistics/fob-settlements${query ? `?${query}` : ''}`);
+  },
   getFobSettlement: (id: string) =>
     request<{
       id: string;
@@ -4497,17 +4664,26 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(body ?? {}),
     }),
-  listDemandPlanVersions: () =>
-    request<
-      Array<{
+  listDemandPlanVersions: (params?: { page?: number; pageSize?: number; q?: string }) => {
+    const qs = new URLSearchParams();
+    if (params?.page) qs.set('page', String(params.page));
+    if (params?.pageSize) qs.set('pageSize', String(params.pageSize));
+    if (params?.q) qs.set('q', params.q);
+    const query = qs.toString();
+    return request<
+      PaginatedResult<{
         id: string;
         versionNo: string;
         versionName: string;
         status: string;
         projectGroup: string;
         warehouseCode: string;
+        startMonth?: string;
+        publishedAt?: string | null;
+        createdAt?: string;
       }>
-    >('/api/demand-plans'),
+    >(`/api/demand-plans${query ? `?${query}` : ''}`);
+  },
   getDemandPlan: (id: string) =>
     request<DemandPlanDetail>(`/api/demand-plans/${id}`),
   generateDemandPlan: (body: { projectGroup: string; warehouseCode: string; versionName?: string }) =>

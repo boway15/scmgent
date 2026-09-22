@@ -1,14 +1,18 @@
 import { db } from '@scm/db';
 import { sql } from 'drizzle-orm';
+import { listCostingFactories, listCostingRegions, loadGenericSliceIds } from './costing-catalog.js';
 import { parseUnitPrice } from './parse-unit-price.js';
 
 export type PriceBookImportRow = {
   category: string;
   materialName: string;
   spec: string;
+  standard: string;
   unit: string;
   unitPrice: number;
   notes: string;
+  regionName: string;
+  factoryName: string;
 };
 
 type ParsedPriceBookSheet = {
@@ -20,9 +24,12 @@ const HEADER_ALIASES = {
   category: ['大类', 'category'],
   materialName: ['材料名称', 'material_name'],
   spec: ['规格', 'spec'],
+  standard: ['标准', 'standard'],
   unit: ['单位', 'unit'],
   unitPrice: ['单价', 'unit_price'],
   notes: ['备注', 'notes'],
+  regionName: ['地域', '区域', 'region'],
+  factoryName: ['工厂', 'factory'],
 } as const;
 
 function cellText(value: unknown): string {
@@ -37,9 +44,12 @@ function headerIndex(header: unknown[], aliases: readonly string[]): number {
 export function parsePriceBookSheetDetailed(aoa: unknown[][]): ParsedPriceBookSheet {
   const header = aoa[0] ?? [];
   const indexes = {
+    regionName: headerIndex(header, HEADER_ALIASES.regionName),
+    factoryName: headerIndex(header, HEADER_ALIASES.factoryName),
     category: headerIndex(header, HEADER_ALIASES.category),
     materialName: headerIndex(header, HEADER_ALIASES.materialName),
     spec: headerIndex(header, HEADER_ALIASES.spec),
+    standard: headerIndex(header, HEADER_ALIASES.standard),
     unit: headerIndex(header, HEADER_ALIASES.unit),
     unitPrice: headerIndex(header, HEADER_ALIASES.unitPrice),
     notes: headerIndex(header, HEADER_ALIASES.notes),
@@ -69,9 +79,12 @@ export function parsePriceBookSheetDetailed(aoa: unknown[][]): ParsedPriceBookSh
       category,
       materialName,
       spec: indexes.spec < 0 ? '' : cellText(line[indexes.spec]),
+      standard: indexes.standard < 0 ? '' : cellText(line[indexes.standard]),
       unit,
       unitPrice,
       notes: indexes.notes < 0 ? '' : cellText(line[indexes.notes]),
+      regionName: indexes.regionName < 0 ? '' : cellText(line[indexes.regionName]),
+      factoryName: indexes.factoryName < 0 ? '' : cellText(line[indexes.factoryName]),
     });
   }
 
@@ -84,18 +97,26 @@ export function parsePriceBookSheet(aoa: unknown[][]): PriceBookImportRow[] {
 
 export async function upsertPriceBookItems(rows: PriceBookImportRow[]): Promise<number> {
   if (!rows.length) return 0;
+  const generic = await loadGenericSliceIds();
+  const [regions, factories] = await Promise.all([listCostingRegions(), listCostingFactories()]);
+  const regionByName = new Map(regions.map((item) => [item.name, item.id]));
+  const factoryByName = new Map(factories.map((item) => [item.name, item.id]));
 
   await db.transaction(async (tx) => {
     for (const row of rows) {
+      const regionId = regionByName.get(row.regionName || '通用') ?? generic.genericRegionId;
+      const factoryId = factoryByName.get(row.factoryName || '通用') ?? generic.genericFactoryId;
       await tx.execute(sql`
         INSERT INTO material_price_book (
-          category, material_name, spec, unit, unit_price, notes, is_active, updated_at
+          region_id, factory_id, category, material_name, spec, standard, unit,
+          unit_price, notes, is_active, updated_at
         )
         VALUES (
-          ${row.category}, ${row.materialName}, ${row.spec}, ${row.unit},
-          ${String(row.unitPrice)}, ${row.notes || null}, true, now()
+          ${regionId}, ${factoryId}, ${row.category}, ${row.materialName}, ${row.spec},
+          ${row.standard}, ${row.unit}, ${String(row.unitPrice)}, ${row.notes || null},
+          true, now()
         )
-        ON CONFLICT (lower(material_name), lower(spec), lower(unit))
+        ON CONFLICT (region_id, factory_id, lower(material_name), lower(spec), lower(unit), lower(standard))
         DO UPDATE SET
           category = EXCLUDED.category,
           unit_price = EXCLUDED.unit_price,

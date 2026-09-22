@@ -208,7 +208,10 @@ describe('assertCostingSourceAttachment', () => {
   it('accepts pptx/pdf up to 80MB and rejects other files or oversize uploads', () => {
     assert.doesNotThrow(() => assertCostingSourceAttachment('design.pptx', 80 * 1024 * 1024));
     assert.doesNotThrow(() => assertCostingSourceAttachment('design.PDF', 1));
-    assert.throws(() => assertCostingSourceAttachment('design.xlsx', 1), /pptx.*pdf/i);
+    assert.throws(() => assertCostingSourceAttachment('design.xlsx', 1), /pptx.*pdf|jpg|png|webp/i);
+    assert.doesNotThrow(() => assertCostingSourceAttachment('photo.jpg', 1024));
+    assert.doesNotThrow(() => assertCostingSourceAttachment('photo.PNG', 1024));
+    assert.doesNotThrow(() => assertCostingSourceAttachment('photo.webp', 1024));
     assert.throws(
       () => assertCostingSourceAttachment('design.pdf', 80 * 1024 * 1024 + 1),
       /80MB/,

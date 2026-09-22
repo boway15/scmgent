@@ -1,7 +1,9 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { PageHeader } from '@/components/PageHeader';
+import { ListPagination } from '@/components/ListPagination';
+import { ListSearchBar } from '@/components/ListSearchBar';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { api, type SupplyLotRow } from '@/lib/api';
@@ -20,7 +22,7 @@ const PROD_LABEL: Record<string, string> = {
 
 function shareSourceLabel(sourceId: string | null): string | null {
   if (!sourceId) return null;
-  if (sourceId.includes('avail-share') || sourceId.includes('transit-share')) {
+  if (sourceId.includes('avail-share') || sourceId.includes('transit-share') || sourceId.includes('prod-share')) {
     return '占比拆仓';
   }
   if (sourceId.endsWith('#share')) return '仓由占比推定';
@@ -29,11 +31,25 @@ function shareSourceLabel(sourceId: string | null): string | null {
 
 export function InventoryPoolsPage() {
   const [pool, setPool] = useState<'local' | 'in_transit' | 'overseas'>('local');
+  const [page, setPage] = useState(1);
+  const [pageSize] = useState(20);
+  const [keyword, setKeyword] = useState('');
+  const [appliedKeyword, setAppliedKeyword] = useState('');
   const qc = useQueryClient();
 
+  useEffect(() => {
+    setPage(1);
+  }, [pool, appliedKeyword]);
+
   const lots = useQuery({
-    queryKey: ['inventory-pools', pool],
-    queryFn: () => api.getSupplyLots({ pool }),
+    queryKey: ['inventory-pools', pool, page, pageSize, appliedKeyword],
+    queryFn: () =>
+      api.getSupplyLots({
+        pool,
+        page,
+        pageSize,
+        q: appliedKeyword || undefined,
+      }),
   });
 
   const sync = useMutation({
@@ -52,28 +68,35 @@ export function InventoryPoolsPage() {
   });
 
   const items = lots.data?.items ?? [];
-  const dateUnknownCount = useMemo(
-    () => items.filter((row) => row.dateUnknown || !row.availableAt).length,
-    [items],
-  );
+  const total = lots.data?.total ?? 0;
+  const dateUnknownCount = lots.data?.dateUnknownCount ?? 0;
 
   return (
     <div className="space-y-6">
       <PageHeader
         title="库存三池"
-        description="无可用日不进时间轴；估期在途进计划线、不进确定线"
+        description="本地来自跟单与飞书供应商订单；无可用日不进时间轴"
       >
         <Button onClick={() => sync.mutate()} disabled={sync.isPending}>
           {sync.isPending ? '同步中...' : '从快照/跟单同步'}
         </Button>
       </PageHeader>
 
+      {sync.isSuccess && sync.data && (
+        <p className="text-sm text-text-sub">
+          已同步 {sync.data.lotCount} 条批次（其中 {sync.data.eligibleCount} 条可进时间轴）。本地无跟单时会投影飞书「供应商订单」。
+        </p>
+      )}
+
       <div className="flex flex-wrap gap-2">
         {POOL_TABS.map((tab) => (
           <Button
             key={tab.id}
             variant={pool === tab.id ? 'default' : 'outline'}
-            onClick={() => setPool(tab.id)}
+            onClick={() => {
+              setPool(tab.id);
+              setPage(1);
+            }}
           >
             {tab.label}
           </Button>
@@ -84,6 +107,19 @@ export function InventoryPoolsPage() {
         <Card className="border-amber-200 bg-amber-50">
           <CardContent className="pt-4 text-sm text-amber-900">
             当前池有 {dateUnknownCount} 条批次缺少可用日（available_at），已高亮，不会进入时间轴。
+            <Link className="ml-2 text-primary underline" to="/inventory/data-issues">
+              去数据问题队列
+            </Link>
+          </CardContent>
+        </Card>
+      )}
+      {items.some((row) => row.warehouseCode === 'OVERSEAS') && (
+        <Card className="border-amber-200 bg-amber-50">
+          <CardContent className="pt-4 text-sm text-amber-900">
+            当前池有停在 OVERSEAS 的批次，未确认目的仓前不计入某仓确定线。
+            <Link className="ml-2 text-primary underline" to="/inventory/unallocated">
+              去未定仓供应
+            </Link>
           </CardContent>
         </Card>
       )}
@@ -91,10 +127,19 @@ export function InventoryPoolsPage() {
       <Card>
         <CardHeader>
           <CardTitle>
-            {POOL_TABS.find((t) => t.id === pool)?.label}（{items.length}）
+            {POOL_TABS.find((t) => t.id === pool)?.label}（{total}）
           </CardTitle>
         </CardHeader>
         <CardContent className="overflow-x-auto">
+          <ListSearchBar
+            keyword={keyword}
+            onKeywordChange={setKeyword}
+            onSearch={() => {
+              setAppliedKeyword(keyword.trim());
+              setPage(1);
+            }}
+            placeholder="SKU / 名称 / 仓库 / 工厂"
+          />
           {lots.isLoading ? (
             <p className="text-text-sub">加载中...</p>
           ) : (
@@ -124,13 +169,23 @@ export function InventoryPoolsPage() {
                 {!items.length && (
                   <tr>
                     <td colSpan={8} className="py-6 text-text-sub">
-                      暂无批次。可点击「从快照/跟单同步」生成。
+                      {pool === 'local'
+                        ? '暂无本地批次：当前没有开放跟单，且没有飞书供应商订单（在产）可投影。在途/海外请切换上方标签。'
+                        : '暂无批次。可点击「从快照/跟单同步」生成。'}
                     </td>
                   </tr>
                 )}
               </tbody>
             </table>
           )}
+          {!lots.isLoading && total > 0 ? (
+            <ListPagination
+              page={page}
+              pageSize={pageSize}
+              total={total}
+              onPageChange={setPage}
+            />
+          ) : null}
         </CardContent>
       </Card>
     </div>

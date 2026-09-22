@@ -1,8 +1,9 @@
 import { db, shipmentMilestones, shipments } from '@scm/db';
-import { desc, eq, inArray } from 'drizzle-orm';
+import { desc, eq, inArray, and, or, ilike, sql } from 'drizzle-orm';
 import { Hono } from 'hono';
 import { calcMilestoneDelayDays } from '../lib/shipment-delay.js';
 import { requireMenu } from '../lib/rbac.js';
+import { parseListPagination } from '../lib/list-pagination.js';
 
 const SHIPMENT_STATUSES = [
   'booked',
@@ -129,14 +130,7 @@ function parsePatchInput(body: ShipmentInput) {
   return { ok: true as const, value: patch };
 }
 
-async function listShipments() {
-  const shipmentRows = await db.select().from(shipments).orderBy(desc(shipments.createdAt));
-  if (shipmentRows.length === 0) return [];
-
-  const milestoneRows = await db
-    .select()
-    .from(shipmentMilestones)
-    .where(inArray(shipmentMilestones.shipmentId, shipmentRows.map((row) => row.id)));
+function enrichShipments(shipmentRows: (typeof shipments.$inferSelect)[], milestoneRows: (typeof shipmentMilestones.$inferSelect)[]) {
   const today = new Date();
   const byShipment = new Map<string, typeof milestoneRows>();
   for (const milestone of milestoneRows) {
@@ -166,18 +160,111 @@ async function listShipments() {
   });
 }
 
+async function listShipments(options?: {
+  page?: number;
+  pageSize?: number;
+  offset?: number;
+  q?: string;
+  delayed?: boolean;
+}) {
+  const page = options?.page ?? 1;
+  const pageSize = options?.pageSize ?? 500;
+  const offset = options?.offset ?? (page - 1) * pageSize;
+  const q = options?.q?.trim();
+
+  const conditions = [];
+  if (q) {
+    const pattern = `%${q}%`;
+    conditions.push(
+      or(
+        ilike(shipments.shipmentNo, pattern),
+        ilike(shipments.containerNo, pattern),
+        ilike(shipments.trackingNo, pattern),
+        ilike(shipments.bookingRef, pattern),
+      )!,
+    );
+  }
+  const where = conditions.length ? and(...conditions) : undefined;
+
+  if (options?.delayed) {
+    const allRows = await (where
+      ? db.select().from(shipments).where(where).orderBy(desc(shipments.createdAt))
+      : db.select().from(shipments).orderBy(desc(shipments.createdAt)));
+    if (allRows.length === 0) return { items: [], total: 0, page, pageSize };
+
+    const milestoneRows = await db
+      .select()
+      .from(shipmentMilestones)
+      .where(inArray(shipmentMilestones.shipmentId, allRows.map((row) => row.id)));
+    const enriched = enrichShipments(allRows, milestoneRows).filter((item) => item.delayDays > 0);
+    return {
+      items: enriched.slice(offset, offset + pageSize),
+      total: enriched.length,
+      page,
+      pageSize,
+    };
+  }
+
+  const [shipmentRows, countRow] = await Promise.all([
+    (where
+      ? db.select().from(shipments).where(where).orderBy(desc(shipments.createdAt))
+      : db.select().from(shipments).orderBy(desc(shipments.createdAt)))
+      .limit(pageSize)
+      .offset(offset),
+    db
+      .select({ count: sql<number>`count(*)::int` })
+      .from(shipments)
+      .where(where),
+  ]);
+
+  if (shipmentRows.length === 0) {
+    return { items: [], total: countRow[0]?.count ?? 0, page, pageSize };
+  }
+
+  const milestoneRows = await db
+    .select()
+    .from(shipmentMilestones)
+    .where(inArray(shipmentMilestones.shipmentId, shipmentRows.map((row) => row.id)));
+
+  return {
+    items: enrichShipments(shipmentRows, milestoneRows),
+    total: countRow[0]?.count ?? 0,
+    page,
+    pageSize,
+  };
+}
+
 export const shipmentRoutes = new Hono();
 
 shipmentRoutes.get('/shipments', shipmentMenu, async (c) => {
-  const items = await listShipments();
-  return c.json({
-    items: c.req.query('delayed') === '1' ? items.filter((item) => item.delayDays > 0) : items,
+  const { page, pageSize, offset } = parseListPagination(
+    c.req.query('page')?.trim(),
+    c.req.query('pageSize')?.trim(),
+    c.req.query('page') ? 20 : 500,
+  );
+  const result = await listShipments({
+    page,
+    pageSize,
+    offset,
+    q: c.req.query('q')?.trim(),
+    delayed: c.req.query('delayed') === '1',
   });
+  return c.json(result);
 });
 
 shipmentRoutes.get('/shipments/delays', shipmentMenu, async (c) => {
-  const items = (await listShipments()).filter((item) => item.delayDays > 0);
-  return c.json({ items, total: items.length });
+  const { page, pageSize, offset } = parseListPagination(
+    c.req.query('page')?.trim(),
+    c.req.query('pageSize')?.trim(),
+  );
+  const result = await listShipments({
+    page,
+    pageSize,
+    offset,
+    q: c.req.query('q')?.trim(),
+    delayed: true,
+  });
+  return c.json(result);
 });
 
 shipmentRoutes.post('/shipments', shipmentMenu, async (c) => {

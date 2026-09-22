@@ -1,4 +1,4 @@
-import { eq, and } from 'drizzle-orm';
+import { eq, and, desc, inArray } from 'drizzle-orm';
 import {
   db,
   skus,
@@ -6,6 +6,7 @@ import {
   safetyStockConfig,
   warehouses,
   spus,
+  forecastAccuracyMonthly,
 } from '@scm/db';
 import { applyMoq, calcReplenishment, resolveEffectiveMoq } from '../lib/replenishment.js';
 import { formatCoverageReason, type InventoryHealth } from '../lib/replenishment-coverage.js';
@@ -38,6 +39,14 @@ import { syncReplenishLightFromHealth } from '../lib/replenish-light-sync.js';
 import { loadDailySalesBySkuIds } from '../lib/sales-history-query.js';
 import { buildSkuWarehouseTimeline } from '../lib/inventory-timeline-service.js';
 import { syncInventorySupplyLots } from '../lib/inventory-supply-lot-sync.js';
+import {
+  calcConfirmedCoverageDays,
+  calcTimelineDecisionHealth,
+  needsReplenishmentByHealth,
+} from '../lib/inventory-light.js';
+import { DEFAULT_OVERSTOCK_THRESHOLD_DAYS } from '../lib/replenishment-coverage.js';
+import { evaluateDemandGate } from '../lib/planning-demand-gate.js';
+import { buildLatePoActions } from '../lib/planning-late-po-actions.js';
 
 async function upsertSafetyStock(
   skuId: string,
@@ -126,6 +135,29 @@ export async function runReplenishmentForecast() {
 
   const salesBySkuId = await loadDailySalesBySkuIds(activeSkus.map((sku) => sku.id));
 
+  const accuracyBySku = new Map<string, number>();
+  const skuIds = activeSkus.map((s) => s.id);
+  if (skuIds.length > 0) {
+    const accuracyRows = await db
+      .select({
+        skuId: forecastAccuracyMonthly.skuId,
+        mape: forecastAccuracyMonthly.mape,
+        forecastYear: forecastAccuracyMonthly.forecastYear,
+        month: forecastAccuracyMonthly.month,
+      })
+      .from(forecastAccuracyMonthly)
+      .where(inArray(forecastAccuracyMonthly.skuId, skuIds))
+      .orderBy(
+        desc(forecastAccuracyMonthly.forecastYear),
+        desc(forecastAccuracyMonthly.month),
+      );
+    for (const row of accuracyRows) {
+      if (accuracyBySku.has(row.skuId)) continue;
+      const mape = row.mape != null ? Number(row.mape) : NaN;
+      if (Number.isFinite(mape)) accuracyBySku.set(row.skuId, mape);
+    }
+  }
+
   let count = 0;
   const healthRows: SkuHealthRow[] = [];
   const results: Array<{
@@ -208,7 +240,14 @@ export async function runReplenishmentForecast() {
         (h) => h.skuId === sku.id && h.warehouseCode === wh.code,
       )!;
       const coverage = coverageByWh[wh.code];
-      if (!coverage.needsReplenishment) continue;
+      const coverageHealthStatus = health.healthStatus;
+      health.metrics.coverageHealthStatus = coverageHealthStatus;
+      health.metrics.coverageDaysShadow = health.coverageDays;
+
+      // 灰灯不进建议；覆盖天数灯降为影子，不再决定是否出建议
+      if (coverageHealthStatus === 'gray') {
+        continue;
+      }
 
       const position = await resolveInventoryPosition({
         skuId: sku.id,
@@ -217,17 +256,25 @@ export async function runReplenishmentForecast() {
       });
       const eoqRop = (health.metrics.reorderPoint as number) ?? 0;
 
+      let suggestedQty = coverage.suggestedQty;
+      let suggestedDate = coverage.suggestedDate;
+      let decisionHealth = coverageHealthStatus;
+      let confirmedCoverageDays = health.coverageDays;
+      let deferUs = false;
       if (wh.regionGroup === 'US') {
-        const defer = shouldDeferReplenishment({
+        deferUs = shouldDeferReplenishment({
           warehouseEffective: position.effectiveQty,
           warehouseRop: eoqRop,
           networkEffective: usPool.effectiveQty,
           networkRop: usNetworkRop,
         });
-        if (defer && usNetworkCoverage >= coverage.targetCoverageDays) continue;
+        if (deferUs && usNetworkCoverage >= coverage.targetCoverageDays) {
+          health.metrics.usNetworkDeferred = true;
+        } else {
+          deferUs = false;
+        }
       }
 
-      let suggestedQty = coverage.suggestedQty;
       try {
         const safetyStockQty = (health.metrics.safetyStockQty as number) ?? 0;
         const timelineResult = await buildSkuWarehouseTimeline({
@@ -240,21 +287,62 @@ export async function runReplenishmentForecast() {
           moq: effectiveMoq || undefined,
         });
         suggestedQty = timelineResult.suggestedQty;
+        suggestedDate =
+          timelineResult.timeline.reorderDate ?? timelineResult.timeline.today;
+        const day0 = timelineResult.timeline.points.find((p) => p.horizonDays === 0);
+        confirmedCoverageDays = calcConfirmedCoverageDays({
+          today: timelineResult.timeline.today,
+          stockoutDateConfirmed: timelineResult.timeline.stockoutDateConfirmed,
+          confirmedEndingToday: day0?.confirmedEnding ?? 0,
+          avgDaily: health.avgDaily,
+        });
+        decisionHealth = calcTimelineDecisionHealth({
+          today: timelineResult.timeline.today,
+          totalLeadDays: health.totalLeadDays,
+          safetyStockDays: health.coverage.safetyStockDays,
+          overstockThresholdDays:
+            health.coverage.overstockThresholdDays ?? DEFAULT_OVERSTOCK_THRESHOLD_DAYS,
+          suggestedQty: timelineResult.suggestedQty,
+          uncoverableByNewPo: timelineResult.timeline.uncoverableByNewPo,
+          stockoutDateConfirmed: timelineResult.timeline.stockoutDateConfirmed,
+          safetyBreachDateConfirmed: timelineResult.timeline.safetyBreachDateConfirmed,
+          confirmedCoverageDays,
+          lifecycle: health.lifecycle,
+          effectiveQty: position.effectiveQty,
+          avgDaily: health.avgDaily,
+        });
         health.metrics.timelineSuggestedQty = timelineResult.suggestedQty;
+        health.metrics.timelineSuggestedQtyGross = timelineResult.timeline.suggestedQtyGross;
         health.metrics.timelineStockoutDate = timelineResult.timeline.stockoutDateConfirmed;
         health.metrics.timelineReorderDate = timelineResult.timeline.reorderDate;
+        health.metrics.confirmedCoverageDays = confirmedCoverageDays;
+        health.metrics.timelineToday = timelineResult.timeline.today;
         health.metrics.timelinePoints = timelineResult.timeline.points.map((p) => ({
           horizonDays: p.horizonDays,
           confirmedEnding: p.confirmedEnding,
           expectedEnding: p.expectedEnding,
           cumulativeDemand: p.cumulativeDemand,
         }));
+        if (timelineResult.timeline.uncoverableByNewPo) {
+          health.metrics.uncoverableByNewPo = true;
+        }
       } catch (err) {
         console.warn(
           `[replenishmentForecast] timeline qty skipped ${sku.code}/${wh.code}:`,
           err,
         );
       }
+
+      health.healthStatus = decisionHealth;
+      health.needsReplenishment = needsReplenishmentByHealth(decisionHealth);
+      health.suggestedQty = suggestedQty;
+      health.suggestedDate = suggestedDate;
+      health.coverageDays = Number.isFinite(confirmedCoverageDays)
+        ? confirmedCoverageDays
+        : health.coverageDays;
+
+      if (deferUs) continue;
+      if (!needsReplenishmentByHealth(decisionHealth)) continue;
 
       if (wh.regionGroup === 'US' && usPool.effectiveQty < usNetworkRop) {
         const networkQty = suggestedQty;
@@ -277,14 +365,50 @@ export async function runReplenishmentForecast() {
         warehouseCode: wh.code,
         effectiveQty: position.effectiveQty,
         avgDaily: dailyByWh[wh.code] ?? 0,
-        result: coverage,
+        result: {
+          ...coverage,
+          healthStatus: decisionHealth,
+          needsReplenishment: true,
+          suggestedQty,
+          suggestedDate,
+          coverageDays: confirmedCoverageDays,
+        },
         poolNote,
         moqNote,
       });
-      const reason =
+      const stockoutNote = health.metrics.timelineStockoutDate
+        ? `，确定缺货日 ${health.metrics.timelineStockoutDate}`
+        : '';
+      const demandGate = evaluateDemandGate({
+        recentWmape: accuracyBySku.get(sku.id) ?? null,
+        reconstructCapHit: false,
+      });
+      let reason =
         health.demandSource === 'forecast'
-          ? `${reasonBase}，需求口径：月度预测日均`
-          : reasonBase;
+          ? `${reasonBase}，需求口径：月度预测日均${stockoutNote}`
+          : `${reasonBase}${stockoutNote}`;
+      if (demandGate.needsManualConfirm) {
+        reason = `${reason}，需人工确认（${demandGate.flags.join(',')}）`;
+      }
+
+      const lateActions =
+        health.metrics.uncoverableByNewPo === true
+          ? buildLatePoActions({
+              today:
+                typeof health.metrics.timelineToday === 'string'
+                  ? health.metrics.timelineToday
+                  : new Date().toISOString().slice(0, 10),
+              warehouseCode: wh.code,
+              regionGroup: wh.regionGroup,
+              uncoverableByNewPo: true,
+              stockoutDateConfirmed:
+                typeof health.metrics.timelineStockoutDate === 'string'
+                  ? health.metrics.timelineStockoutDate
+                  : null,
+              avgDaily: dailyByWh[wh.code] ?? 0,
+              totalLeadDays: coverage.leadTime.totalLeadDays,
+            })
+          : [];
 
       pending.push({
         skuId: sku.id,
@@ -293,15 +417,21 @@ export async function runReplenishmentForecast() {
         replenishLight,
         warehouseCode: wh.code,
         suggestedQty,
-        suggestedDate: coverage.suggestedDate,
+        suggestedDate,
         reason,
-        healthStatus: coverage.healthStatus,
-        coverageDays: coverage.coverageDays,
+        healthStatus: decisionHealth,
+        coverageDays: confirmedCoverageDays,
         totalLeadDays: coverage.leadTime.totalLeadDays,
         latestOrderDays: coverage.latestOrderDays,
         metrics: {
           ...health.metrics,
           demandSource: health.demandSource,
+          coverageHealthStatus,
+          decisionHealthStatus: decisionHealth,
+          needsManualConfirm: demandGate.needsManualConfirm,
+          demandGateFlags: demandGate.flags,
+          suggestedQtyGross: health.metrics.timelineSuggestedQtyGross,
+          latePoActions: lateActions,
         },
       });
     }

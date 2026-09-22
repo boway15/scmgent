@@ -10,7 +10,7 @@ import {
 } from './inventory-share-allocation.js';
 import { addDaysIso, subtractDaysIso } from './inventory-iso-date.js';
 
-export { addDaysIso, subtractDaysIso } from './inventory-iso-date.js';
+export { addDaysIso, subtractDaysIso, diffDaysIso } from './inventory-iso-date.js';
 
 export type SupplyLotPool = 'overseas' | 'in_transit' | 'local';
 export type ProductionStatus = 'in_production' | 'qc_pending' | 'completed';
@@ -75,6 +75,12 @@ export type SkuAllocationContext = {
   share: ShareParseResult;
   transitBuckets: { d5: number; d15: number; d25: number };
   earliestAvailableAt: string | null;
+  earliestPoAvailableAt?: string | null;
+};
+
+export type SupplyLotInProductionInput = {
+  skuId: string;
+  qty: number;
 };
 
 const LOCAL_STATUSES = new Set([
@@ -164,6 +170,7 @@ export function buildLotsFromInputs(params: {
   today: string;
   defaultTransitLeadDaysByWarehouse: Record<string, number>;
   allocationBySku?: Map<string, SkuAllocationContext>;
+  inProduction?: SupplyLotInProductionInput[];
 }): { lots: BuiltSupplyLot[]; eligibleLots: BuiltSupplyLot[] } {
   const lots: BuiltSupplyLot[] = [];
   const shipmentQtyBySkuWh = new Map<string, number>();
@@ -391,6 +398,46 @@ export function buildLotsFromInputs(params: {
           dateUnknown: !draft.etaAvailable,
         });
       }
+    }
+  }
+
+  const docLocalQty = new Map<string, number>();
+  for (const draft of params.drafts) {
+    if (draft.openQty <= 0) continue;
+    if (mapDraftToLotPool(draft.status) !== 'local') continue;
+    docLocalQty.set(draft.skuId, (docLocalQty.get(draft.skuId) ?? 0) + draft.openQty);
+  }
+
+  const inProductionDone = new Set<string>();
+  for (const row of params.inProduction ?? []) {
+    if (inProductionDone.has(row.skuId)) continue;
+    inProductionDone.add(row.skuId);
+    const residual = Math.max(0, row.qty - (docLocalQty.get(row.skuId) ?? 0));
+    if (residual <= 0) continue;
+    const ctx = params.allocationBySku?.get(row.skuId);
+    const availableAt = ctx?.earliestPoAvailableAt ?? null;
+    const destinations =
+      ctx?.share.method === 'sales_share'
+        ? Array.from(allocateByShare(residual, ctx.share).entries())
+        : ([['OVERSEAS', residual]] as Array<[string, number]>);
+    for (const [warehouseCode, qty] of destinations) {
+      if (qty <= 0) continue;
+      lots.push({
+        skuId: row.skuId,
+        warehouseCode,
+        pool: 'local',
+        qty,
+        productionStatus: 'in_production',
+        availableAt,
+        source: 'snapshot',
+        sourceId:
+          ctx?.share.method === 'sales_share'
+            ? `prod-share:${row.skuId}:${warehouseCode}`
+            : `prod:${row.skuId}:OVERSEAS`,
+        status: 'open',
+        etaEstimated: availableAt != null,
+        dateUnknown: availableAt == null,
+      });
     }
   }
 

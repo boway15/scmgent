@@ -36,5 +36,9 @@ describe('PlanningDashboardPage helpers', () => {
     assert.equal(byLabel['库存积压']?.value, '7');
     assert.equal(byLabel['红灯风险']?.value, '8');
     assert.equal(byLabel['待处理补货建议']?.href, '/pmc/suggestions');
+    assert.equal(byLabel['数据问题']?.href, '/inventory/data-issues');
+    assert.equal(byLabel['数据问题']?.value, '0');
+    assert.equal(byLabel['未定仓供应']?.href, '/inventory/unallocated');
+    assert.equal(byLabel['未定仓供应']?.value, '0');
   });
 });

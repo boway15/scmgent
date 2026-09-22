@@ -136,14 +136,23 @@ export function SkuInventoryPlanningPage() {
             ))}
           </select>
           <InventoryHealthBadge health={item.healthStatus} />
-          {item.healthDemandNote ? (
-            <span className="text-xs text-text-hint">{item.healthDemandNote}</span>
+          {item.coverageHealthStatus && item.coverageHealthStatus !== item.healthStatus ? (
+            <span className="text-xs text-text-hint">
+              覆盖天数灯（影子）：{item.coverageHealthStatus}
+            </span>
+          ) : null}
+          {item.needsManualConfirm ? (
+            <span className="rounded-md border border-amber-200 bg-amber-50 px-2 py-1 text-xs text-amber-900">
+              需人工确认
+              {item.demandGateFlags?.length ? `（${item.demandGateFlags.join(', ')}）` : ''}
+            </span>
           ) : null}
           <span className="text-sm text-text-sub">
             需求口径：{item.demandSource === 'forecast' ? '已发布销售预测' : '历史销量回退'}
             {item.planningDemandSource ? (
               <span className="ml-2">
-                需求决策：{item.planningDemandSource === 'demand_plan' ? '已采用周需求计划' : '已发布月预测'}
+                时间轴需求：
+                {item.planningDemandSource === 'demand_plan' ? '需求计划' : '销售预测'}
               </span>
             ) : null}
             {showStockoutAdjustedNote && (
@@ -192,9 +201,53 @@ export function SkuInventoryPlanningPage() {
           hint="飞书快照合计在总览；本页确定线按目的仓批次。"
         />
         <MetricCard label="日均需求" value={item.avgDaily.toFixed(2)} hint="件 / 天" />
-        <MetricCard label="覆盖天数" value={coverageLabel} hint={`安全库存 ${item.safetyStockDays} 天`} />
-        <MetricCard label="建议补货量" value={item.suggestedQty} hint={`建议下单 ${item.suggestedDate}`} />
+        <MetricCard
+          label="覆盖天数"
+          value={coverageLabel}
+          hint={
+            item.confirmedCoverageDays != null
+              ? `确定线 ${
+                  Number.isFinite(item.confirmedCoverageDays)
+                    ? `${Number(item.confirmedCoverageDays).toFixed(1)} 天`
+                    : '∞'
+                } · 安全库存 ${item.safetyStockDays} 天`
+              : `安全库存 ${item.safetyStockDays} 天`
+          }
+        />
+        <MetricCard
+          label="建议补货量"
+          value={item.suggestedQty}
+          hint={
+            item.suggestedQtyGross != null && item.suggestedQtyGross !== item.suggestedQty
+              ? `净缺口（含计划）· 毛缺口 ${item.suggestedQtyGross} · 建议下单 ${item.suggestedDate}`
+              : `建议下单 ${item.suggestedDate}`
+          }
+        />
       </div>
+
+      {item.demandUnconstrainedDaily != null ? (
+        <p className="text-sm text-text-hint">
+          还原近窗日均 {item.demandUnconstrainedDaily.toFixed(2)}
+          {item.demandStockoutDays != null ? ` · 疑似缺货约 ${item.demandStockoutDays} 天` : ''}
+          {item.demandCapped ? ' · 已打 1.5 倍封顶' : ''}
+        </p>
+      ) : null}
+
+      {item.latePoActions && item.latePoActions.length > 0 ? (
+        <Card className="shadow-card">
+          <CardHeader>
+            <CardTitle>新单来不及时的可选动作（只读）</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-2 text-sm">
+            {item.latePoActions.map((action) => (
+              <div key={`${action.kind}-${action.label}`} className="rounded-md border border-border p-3">
+                <p className="font-medium text-text-main">{action.label}</p>
+                <p className="mt-1 text-text-sub">{action.detail}</p>
+              </div>
+            ))}
+          </CardContent>
+        </Card>
+      ) : null}
 
       {item.timeline?.points?.length ? (
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">

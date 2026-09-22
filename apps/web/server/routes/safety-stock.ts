@@ -1,9 +1,14 @@
-import { eq, and } from 'drizzle-orm';
+import { eq, and, or, ilike, sql } from 'drizzle-orm';
 import { Hono } from 'hono';
 import { db, safetyStockConfig, skus } from '@scm/db';
+import { parseListPagination } from '../lib/list-pagination.js';
 import { calcReorderPoint, calcReplenishment, type SalesDataPoint } from '../lib/replenishment.js';
 import { requireMenu } from '../lib/rbac.js';
 import { loadDailySalesForSku } from '../lib/sales-history-query.js';
+import {
+  resolveSuggestionInputs,
+  sortSuggestionRows,
+} from '../lib/safety-stock-suggestion-service.js';
 import {
   calcSafetyStockQty,
   type SafetyStockMethod,
@@ -57,30 +62,147 @@ export function calculateSafetyStockValues(params: SafetyStockCalculationInput) 
 }
 
 safetyStockRoutes.get('/safety-stock', async (c) => {
+  const { page, pageSize, offset } = parseListPagination(
+    c.req.query('page')?.trim(),
+    c.req.query('pageSize')?.trim(),
+  );
+  const q = c.req.query('q')?.trim();
+  const warehouse = c.req.query('warehouse')?.trim();
+
+  const conditions = [eq(skus.isActive, true)];
+  if (q) {
+    const pattern = `%${q}%`;
+    conditions.push(or(ilike(skus.code, pattern), ilike(skus.name, pattern))!);
+  }
+  if (warehouse) {
+    conditions.push(eq(safetyStockConfig.warehouseCode, warehouse));
+  }
+
+  const where = and(...conditions);
+  const selectFields = {
+    id: safetyStockConfig.id,
+    skuId: skus.id,
+    skuCode: skus.code,
+    skuName: skus.name,
+    warehouseCode: safetyStockConfig.warehouseCode,
+    safetyStockQty: safetyStockConfig.safetyStockQty,
+    reorderPoint: safetyStockConfig.reorderPoint,
+    reorderQty: safetyStockConfig.reorderQty,
+    safetyStockDays: safetyStockConfig.safetyStockDays,
+    safetyStockMethod: safetyStockConfig.safetyStockMethod,
+    serviceLevel: safetyStockConfig.serviceLevel,
+    demandStdDev: safetyStockConfig.demandStdDev,
+    leadTimeStdDev: safetyStockConfig.leadTimeStdDev,
+    calcMethod: safetyStockConfig.calcMethod,
+    lastCalcAt: safetyStockConfig.lastCalcAt,
+  };
+
+  const base = db
+    .select(selectFields)
+    .from(safetyStockConfig)
+    .innerJoin(skus, eq(safetyStockConfig.skuId, skus.id))
+    .where(where)
+    .$dynamic();
+
+  const [rows, countRow] = await Promise.all([
+    base.orderBy(skus.code, safetyStockConfig.warehouseCode).limit(pageSize).offset(offset),
+    db
+      .select({ count: sql<number>`count(*)::int` })
+      .from(safetyStockConfig)
+      .innerJoin(skus, eq(safetyStockConfig.skuId, skus.id))
+      .where(where),
+  ]);
+
+  return c.json({
+    items: rows,
+    total: countRow[0]?.count ?? 0,
+    page,
+    pageSize,
+  });
+});
+
+safetyStockRoutes.get('/safety-stock/suggestions', async (c) => {
+  const warehouse = c.req.query('warehouse')?.trim();
+  const limit = Math.min(Math.max(Number(c.req.query('limit') ?? 50), 1), 200);
+  const offset = Math.max(Number(c.req.query('offset') ?? 0), 0);
+  const serviceLevel = Number(c.req.query('serviceLevel') ?? 0.95);
+  const sortParam = c.req.query('sort') ?? 'deltaDays_desc';
+  const sort =
+    sortParam === 'deltaDays_asc' || sortParam === 'skuCode'
+      ? sortParam
+      : 'deltaDays_desc';
+
+  const conditions = [eq(skus.isActive, true)];
+  if (warehouse) {
+    conditions.push(eq(safetyStockConfig.warehouseCode, warehouse));
+  }
+
   const rows = await db
     .select({
-      id: safetyStockConfig.id,
       skuId: skus.id,
       skuCode: skus.code,
-      skuName: skus.name,
+      merchantCode: skus.merchantCode,
+      leadTimeDays: skus.leadTimeDays,
       warehouseCode: safetyStockConfig.warehouseCode,
+      safetyStockDays: safetyStockConfig.safetyStockDays,
       safetyStockQty: safetyStockConfig.safetyStockQty,
       reorderPoint: safetyStockConfig.reorderPoint,
-      reorderQty: safetyStockConfig.reorderQty,
-      safetyStockDays: safetyStockConfig.safetyStockDays,
       safetyStockMethod: safetyStockConfig.safetyStockMethod,
-      serviceLevel: safetyStockConfig.serviceLevel,
-      demandStdDev: safetyStockConfig.demandStdDev,
-      leadTimeStdDev: safetyStockConfig.leadTimeStdDev,
-      calcMethod: safetyStockConfig.calcMethod,
-      lastCalcAt: safetyStockConfig.lastCalcAt,
     })
     .from(safetyStockConfig)
     .innerJoin(skus, eq(safetyStockConfig.skuId, skus.id))
-    .where(eq(skus.isActive, true))
+    .where(and(...conditions))
     .orderBy(skus.code, safetyStockConfig.warehouseCode);
 
-  return c.json(rows);
+  const suggestions = await Promise.all(
+    rows.map((row) =>
+      resolveSuggestionInputs({
+        sku: {
+          id: row.skuId,
+          code: row.skuCode,
+          merchantCode: row.merchantCode,
+          leadTimeDays: row.leadTimeDays,
+        },
+        warehouseCode: row.warehouseCode,
+        serviceLevel: Number.isFinite(serviceLevel) ? serviceLevel : 0.95,
+        policy: row,
+      }),
+    ),
+  );
+
+  const sorted = sortSuggestionRows(suggestions, sort);
+  return c.json({ items: sorted.slice(offset, offset + limit), limit, offset, total: sorted.length });
+});
+
+safetyStockRoutes.get('/safety-stock/:skuId/suggestion', async (c) => {
+  const skuId = c.req.param('skuId')!;
+  const warehouseCode = resolveWarehouse(c);
+  const serviceLevel = Number(c.req.query('serviceLevel') ?? 0.95);
+
+  const [sku] = await db.select().from(skus).where(eq(skus.id, skuId)).limit(1);
+  if (!sku) return c.json({ message: 'SKU not found' }, 404);
+
+  const [policy] = await db
+    .select()
+    .from(safetyStockConfig)
+    .where(
+      and(eq(safetyStockConfig.skuId, skuId), eq(safetyStockConfig.warehouseCode, warehouseCode)),
+    )
+    .limit(1);
+
+  const row = await resolveSuggestionInputs({
+    sku: {
+      id: sku.id,
+      code: sku.code,
+      merchantCode: sku.merchantCode,
+      leadTimeDays: sku.leadTimeDays,
+    },
+    warehouseCode,
+    serviceLevel: Number.isFinite(serviceLevel) ? serviceLevel : 0.95,
+    policy: policy ?? null,
+  });
+
+  return c.json(row);
 });
 
 safetyStockRoutes.put('/safety-stock/:skuId', requireMenu('inventory.safety'), async (c) => {
@@ -90,6 +212,7 @@ safetyStockRoutes.put('/safety-stock/:skuId', requireMenu('inventory.safety'), a
     safetyStockQty: number;
     reorderPoint: number;
     reorderQty: number;
+    safetyStockDays?: number | null;
     safetyStockMethod?: SafetyStockMethod;
     serviceLevel?: number | null;
   }>();
@@ -98,6 +221,7 @@ safetyStockRoutes.put('/safety-stock/:skuId', requireMenu('inventory.safety'), a
     safetyStockQty: body.safetyStockQty,
     reorderPoint: body.reorderPoint,
     reorderQty: body.reorderQty,
+    ...(body.safetyStockDays != null ? { safetyStockDays: body.safetyStockDays } : {}),
     safetyStockMethod: method,
     serviceLevel:
       method === 'coverage_days' || body.serviceLevel == null ? null : String(body.serviceLevel),

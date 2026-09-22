@@ -70,6 +70,7 @@ describe('inventory planning view', () => {
       suggestedQty: 450,
       suggestedDate: '2026-07-20',
       healthStatus: 'yellow',
+      coverageHealthStatus: 'yellow',
       etaAvailableNearest: '2026-08-15',
       stockoutDateEstimate: '2026-08-29',
     });
@@ -87,6 +88,7 @@ describe('inventory planning view', () => {
       tooLateForNewPo: true,
       uncoverableByNewPo: true,
       suggestedQty: 900,
+      suggestedQtyGross: 900,
       points: [
         {
           horizonDays: 0,
@@ -110,9 +112,9 @@ describe('inventory planning view', () => {
         coverageDays: 31,
         suggestedQty: 450,
         suggestedDate: '2026-07-20',
-        healthStatus: 'yellow',
+        healthStatus: 'green',
         metrics: { reorderPoint: 220 },
-        coverage: { safetyStockDays: 14 },
+        coverage: { safetyStockDays: 14, overstockThresholdDays: 180 },
         position,
         leadTime,
       },
@@ -124,10 +126,36 @@ describe('inventory planning view', () => {
     assert.equal(view.suggestedQty, 900);
     assert.equal(view.suggestedDate, timeline.reorderDate);
     assert.equal(view.stockoutDateEstimate, timeline.stockoutDateConfirmed);
+    assert.equal(view.healthStatus, 'red');
+    assert.equal(view.coverageHealthStatus, 'green');
     assert.deepEqual(view.timeline?.points, timeline.points);
   });
 
-  it('uses timelineSuggestedQty zero instead of health suggestedQty', () => {
+  it('uses timeline decision green when coverage health is yellow but timeline suggests zero', () => {
+    const timeline = {
+      today: '2026-07-29',
+      windowDays: 101,
+      totalLeadDays: 87,
+      stockoutDateConfirmed: '2027-01-01',
+      stockoutDateExpected: null,
+      safetyBreachDateConfirmed: null,
+      reorderDate: null,
+      tooLateForNewPo: false,
+      uncoverableByNewPo: false,
+      suggestedQty: 0,
+      suggestedQtyGross: 0,
+      points: [
+        {
+          horizonDays: 0,
+          asOf: '2026-07-29',
+          confirmedEnding: 600,
+          expectedEnding: 600,
+          plannedInbound: 0,
+          cumulativeDemand: 5,
+          supplyEvents: [],
+        },
+      ],
+    };
     const view = buildSkuPlanningView({
       health: {
         skuId: 'sku-1',
@@ -135,18 +163,20 @@ describe('inventory planning view', () => {
         warehouseCode: 'US-WEST',
         avgDaily: 5,
         demandSource: 'forecast',
-        coverageDays: 31,
+        coverageDays: 80,
         suggestedQty: 450,
         suggestedDate: '2026-07-20',
         healthStatus: 'yellow',
         metrics: { reorderPoint: 220 },
-        coverage: { safetyStockDays: 14 },
+        coverage: { safetyStockDays: 14, overstockThresholdDays: 180 },
         position,
         leadTime,
       },
+      timeline,
       timelineSuggestedQty: 0,
     });
-
+    assert.equal(view.healthStatus, 'green');
+    assert.equal(view.coverageHealthStatus, 'yellow');
     assert.equal(view.suggestedQty, 0);
   });
 
@@ -238,10 +268,29 @@ describe('inventory planning view', () => {
     assert.equal(view.championStockoutDateConfirmed, '2026-08-20');
     assert.equal(view.championSuggestedQty, 600);
     assert.equal(view.inStockDayRatio, 0.85);
-    assert.equal(
-      view.healthDemandNote,
-      '健康灯仍按现网预测/历史，缺货日与建议量以时间轴为准',
-    );
+    assert.equal('healthDemandNote' in view, false);
+  });
+
+  it('exposes unallocatedNetworkQty only when positive', () => {
+    const health = {
+      skuId: 'sku-1',
+      skuCode: 'SKU-001',
+      warehouseCode: 'US-WEST',
+      avgDaily: 5,
+      demandSource: 'forecast' as const,
+      coverageDays: 31,
+      suggestedQty: 450,
+      suggestedDate: '2026-07-20',
+      healthStatus: 'yellow',
+      metrics: { reorderPoint: 220 },
+      coverage: { safetyStockDays: 14 },
+      position,
+      leadTime,
+    };
+    const withQty = buildSkuPlanningView({ health, unallocatedNetworkQty: 373 });
+    assert.equal(withQty.unallocatedNetworkQty, 373);
+    const without = buildSkuPlanningView({ health, unallocatedNetworkQty: 0 });
+    assert.equal('unallocatedNetworkQty' in without, false);
   });
 
   it('selects the nearest future ETA for the requested warehouse', () => {

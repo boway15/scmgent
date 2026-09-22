@@ -89,7 +89,10 @@ export type DailyInventoryResult = {
   reorderDate: string | null;
   tooLateForNewPo: boolean;
   uncoverableByNewPo: boolean;
+  /** 净缺口：确定 + 预计 + 有上架日的计划 */
   suggestedQty: number;
+  /** 毛缺口：仅确定 + 预计（不含计划线） */
+  suggestedQtyGross: number;
   points: DailyTimelinePoint[];
 };
 
@@ -126,6 +129,7 @@ export function projectDailyInventory(params: {
   let allDemandZero = true;
   let demandCumAtTarget = 0;
   let supplyExpectedAtTarget = 0;
+  let supplyPipelineAtTarget = 0;
   let stockoutDateConfirmed: string | null = null;
   let stockoutDateExpected: string | null = null;
   let safetyBreachDateConfirmed: string | null = null;
@@ -157,12 +161,14 @@ export function projectDailyInventory(params: {
 
     const supplyConfirmed = Math.max(0, confirmedQty - reserved);
     const supplyExpected = supplyConfirmed + expectedQty;
+    const supplyPipeline = supplyExpected + plannedQty;
     const confirmedEnding = supplyConfirmed - demandCum;
     const expectedEnding = supplyExpected - demandCum;
 
     if (k === kT) {
       demandCumAtTarget = demandCum;
       supplyExpectedAtTarget = supplyExpected;
+      supplyPipelineAtTarget = supplyPipeline;
     }
 
     if (stockoutDateConfirmed == null && confirmedEnding <= 0) {
@@ -190,6 +196,7 @@ export function projectDailyInventory(params: {
   }
 
   let suggestedQty = 0;
+  let suggestedQtyGross = 0;
   let reorderDate: string | null = null;
   let tooLateForNewPo = false;
   let uncoverableByNewPo = false;
@@ -199,8 +206,14 @@ export function projectDailyInventory(params: {
     stockoutDateExpected = null;
     safetyBreachDateConfirmed = null;
   } else {
-    suggestedQty = calcSuggestedQtyFromTimeline({
+    suggestedQtyGross = calcSuggestedQtyFromTimeline({
       projectedOverseasAtTarget: supplyExpectedAtTarget,
+      cumulativeDemandAtTarget: demandCumAtTarget,
+      safetyStockQty: params.safetyStockQty,
+      moq: params.moq,
+    });
+    suggestedQty = calcSuggestedQtyFromTimeline({
+      projectedOverseasAtTarget: supplyPipelineAtTarget,
       cumulativeDemandAtTarget: demandCumAtTarget,
       safetyStockQty: params.safetyStockQty,
       moq: params.moq,
@@ -230,6 +243,7 @@ export function projectDailyInventory(params: {
     tooLateForNewPo,
     uncoverableByNewPo,
     suggestedQty,
+    suggestedQtyGross,
     points,
   };
 }
@@ -290,7 +304,8 @@ export function calcProjectedBalance(params: {
 }
 
 /**
- * 建议补货量 = max(0, ceil(目标期末累计需求 + 安全库存 − 该时点 projectedOverseas))，再抬升 MOQ
+ * 建议补货量 = max(0, ceil(目标期末累计需求 + 安全库存 − 该时点 projectedOverseas))，再抬升 MOQ。
+ * projectedOverseas 在净缺口口径下应含有上架日的计划批次。
  */
 export function calcSuggestedQtyFromTimeline(params: {
   projectedOverseasAtTarget: number;
@@ -309,4 +324,28 @@ export function calcSuggestedQtyFromTimeline(params: {
   if (raw <= 0) return 0;
   const moq = params.moq ?? 0;
   return moq > 0 ? Math.max(raw, moq) : raw;
+}
+
+/** 毛缺口（不含计划）与净缺口（含有上架日的计划）并列。 */
+export function calcNetAndGrossSuggestedQty(params: {
+  supplyExpectedAtTarget: number;
+  supplyPipelineAtTarget: number;
+  cumulativeDemandAtTarget: number;
+  safetyStockQty: number;
+  moq?: number;
+}): { suggestedQty: number; suggestedQtyGross: number } {
+  return {
+    suggestedQty: calcSuggestedQtyFromTimeline({
+      projectedOverseasAtTarget: params.supplyPipelineAtTarget,
+      cumulativeDemandAtTarget: params.cumulativeDemandAtTarget,
+      safetyStockQty: params.safetyStockQty,
+      moq: params.moq,
+    }),
+    suggestedQtyGross: calcSuggestedQtyFromTimeline({
+      projectedOverseasAtTarget: params.supplyExpectedAtTarget,
+      cumulativeDemandAtTarget: params.cumulativeDemandAtTarget,
+      safetyStockQty: params.safetyStockQty,
+      moq: params.moq,
+    }),
+  };
 }

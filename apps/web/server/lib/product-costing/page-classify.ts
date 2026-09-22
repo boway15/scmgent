@@ -44,6 +44,26 @@ export function classifyPage(pageNo: number, text: string): PageKind {
   return 'render';
 }
 
+const EXTRACT_ORDER: Record<PageKind, number> = {
+  size: 0,
+  cmf: 1,
+  notes: 2,
+  bom_list: 3,
+  explosion: 4,
+  unknown: 5,
+  render: 6,
+  cover: 7,
+};
+
+/** Size/CMF/notes first so later explosion pages can use overall size and prior lines. */
+export function sortPagesForExtract<T extends { pageType: PageKind; pageNo: number }>(pages: T[]): T[] {
+  return [...pages].sort((left, right) => {
+    const order = (EXTRACT_ORDER[left.pageType] ?? 9) - (EXTRACT_ORDER[right.pageType] ?? 9);
+    if (order !== 0) return order;
+    return left.pageNo - right.pageNo;
+  });
+}
+
 export function shouldSendPageToDify(
   kind: PageKind,
   text: string,
@@ -52,4 +72,45 @@ export function shouldSendPageToDify(
   if (kind === 'unknown') return options?.hasRealImage === true;
   if (kind !== 'cover' && kind !== 'render') return true;
   return hasMaterialKeyword(text);
+}
+
+const FACTS_PAGE_ORDER: Record<PageKind, number> = {
+  size: 0,
+  notes: 1,
+  cmf: 2,
+  cover: 3,
+  explosion: 4,
+  bom_list: 5,
+  unknown: 6,
+  render: 7,
+};
+
+/** Size/notes/CMF first; fall back to cover text when the deck has no design pages. */
+export function selectPagesForFactsJudge<T extends { pageType: PageKind; pageNo: number }>(
+  pages: T[],
+  limit = 2,
+): T[] {
+  const ranked = [...pages]
+    .filter(
+      (page) => page.pageType === 'notes' || page.pageType === 'size' || page.pageType === 'cmf',
+    )
+    .sort((left, right) => {
+      const order =
+        (FACTS_PAGE_ORDER[left.pageType] ?? 9) - (FACTS_PAGE_ORDER[right.pageType] ?? 9);
+      if (order !== 0) return order;
+      return left.pageNo - right.pageNo;
+    });
+  if (ranked.length) return ranked.slice(0, limit);
+  return pages.filter((page) => page.pageType === 'cover').slice(0, 1);
+}
+
+/** Step 2 BOM: explosion + size first; CMF/notes/bom_list still help specs. */
+export function shouldSendPageToBomExtract(kind: PageKind): boolean {
+  return (
+    kind === 'size' ||
+    kind === 'explosion' ||
+    kind === 'cmf' ||
+    kind === 'notes' ||
+    kind === 'bom_list'
+  );
 }

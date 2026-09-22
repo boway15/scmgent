@@ -1,7 +1,8 @@
-import { and, desc, eq } from 'drizzle-orm';
+import { and, desc, eq, or, ilike, sql } from 'drizzle-orm';
 import { Hono } from 'hono';
 import { db, leadTimeProfiles } from '@scm/db';
 import { requireMenu } from '../lib/rbac.js';
+import { parseListPagination } from '../lib/list-pagination.js';
 
 const TRANSPORT_MODES = ['fcl', 'lcl', 'air', 'express', 'rail', 'truck_air', 'direct'] as const;
 type TransportMode = (typeof TRANSPORT_MODES)[number];
@@ -109,18 +110,51 @@ export const leadTimeProfileRoutes = new Hono();
 const leadTimeMenu = requireMenu('inventory.lead_time');
 
 leadTimeProfileRoutes.get('/lead-time-profiles', leadTimeMenu, async (c) => {
+  const { page, pageSize, offset } = parseListPagination(
+    c.req.query('page')?.trim(),
+    c.req.query('pageSize')?.trim(),
+  );
   const warehouse = c.req.query('warehouse')?.trim();
   const merchant = c.req.query('merchant')?.trim();
-  const conditions = [];
-  if (warehouse) conditions.push(eq(leadTimeProfiles.destinationWarehouseCode, warehouse));
-  if (merchant) conditions.push(eq(leadTimeProfiles.merchantCode, merchant));
+  const q = c.req.query('q')?.trim();
 
-  const items = await db
-    .select()
-    .from(leadTimeProfiles)
-    .where(conditions.length ? and(...conditions) : undefined)
-    .orderBy(desc(leadTimeProfiles.updatedAt), leadTimeProfiles.destinationWarehouseCode);
-  return c.json({ items });
+  const conditions = [];
+  if (q) {
+    const pattern = `%${q}%`;
+    conditions.push(
+      or(
+        ilike(leadTimeProfiles.destinationWarehouseCode, pattern),
+        ilike(leadTimeProfiles.merchantCode, pattern),
+        ilike(leadTimeProfiles.originLocation, pattern),
+      )!,
+    );
+  } else {
+    if (warehouse) conditions.push(eq(leadTimeProfiles.destinationWarehouseCode, warehouse));
+    if (merchant) conditions.push(eq(leadTimeProfiles.merchantCode, merchant));
+  }
+
+  const where = conditions.length ? and(...conditions) : undefined;
+
+  const [items, countRow] = await Promise.all([
+    db
+      .select()
+      .from(leadTimeProfiles)
+      .where(where)
+      .orderBy(desc(leadTimeProfiles.updatedAt), leadTimeProfiles.destinationWarehouseCode)
+      .limit(pageSize)
+      .offset(offset),
+    db
+      .select({ count: sql<number>`count(*)::int` })
+      .from(leadTimeProfiles)
+      .where(where),
+  ]);
+
+  return c.json({
+    items,
+    total: countRow[0]?.count ?? 0,
+    page,
+    pageSize,
+  });
 });
 
 leadTimeProfileRoutes.post('/lead-time-profiles', leadTimeMenu, async (c) => {

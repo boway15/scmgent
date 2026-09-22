@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, notInArray, sql } from 'drizzle-orm';
+import { and, desc, eq, ilike, inArray, notInArray, or, sql } from 'drizzle-orm';
 import {
   db,
   inventoryRecords,
@@ -17,9 +17,12 @@ import {
 } from './inventory-share-allocation.js';
 import {
   buildLotsFromInputs,
+  isLotEligibleForTimeline,
   type BuiltSupplyLot,
   type SkuAllocationContext,
 } from './inventory-supply-lots.js';
+import { applyConfirmedDestinationsToLots } from './inventory-dest-allocation.js';
+import { loadConfirmedDestAllocations } from './inventory-dest-allocation-store.js';
 import { readTurnoverSnapshot } from './inventory-turnover-snapshot.js';
 import { openDraftQty } from './inventory-position.js';
 import {
@@ -64,6 +67,19 @@ async function loadLatestPhysicalSnapshots(): Promise<
   }>);
 }
 
+async function loadLatestInProduction(): Promise<Array<{ skuId: string; qty: number }>> {
+  const rows = await db.execute(sql`
+    SELECT DISTINCT ON (sku_id)
+      sku_id AS "skuId",
+      COALESCE(qty_in_production, 0)::int AS "qty"
+    FROM ${inventoryRecords}
+    WHERE warehouse = ${IN_PRODUCTION_WAREHOUSE}
+      AND COALESCE(qty_in_production, 0) > 0
+    ORDER BY sku_id, recorded_date DESC, created_at DESC
+  `);
+  return Array.from(rows as unknown as Array<{ skuId: string; qty: number }>);
+}
+
 export function buildAllocationBySku(
   rows: Array<{ skuId: string; encodingMeta: unknown }>,
 ): Map<string, SkuAllocationContext> {
@@ -75,6 +91,7 @@ export function buildAllocationBySku(
       share: parseSharesFromSnapshot(snapshot),
       transitBuckets: parseTransitBuckets(snapshot),
       earliestAvailableAt: earliest,
+      earliestPoAvailableAt: snapshot['采购单最早上架时间']?.trim() || null,
     });
   }
   return allocationBySku;
@@ -121,6 +138,7 @@ export async function syncInventorySupplyLots(params?: {
 }): Promise<{ lotCount: number; eligibleCount: number }> {
   const today = params?.today ?? todayIso();
   const snapshots = await loadLatestPhysicalSnapshots();
+  const inProduction = await loadLatestInProduction();
 
   const openDrafts = await db
     .select({
@@ -177,6 +195,7 @@ export async function syncInventorySupplyLots(params?: {
   const allocationBySku = await loadAllocationBySkuIds([
     ...new Set([
       ...snapshots.map((row) => row.skuId),
+      ...inProduction.map((row) => row.skuId),
       ...openDrafts.map((row) => row.skuId),
     ]),
   ]);
@@ -235,7 +254,7 @@ export async function syncInventorySupplyLots(params?: {
     defaultTransit[wh.code] = ship + inbound;
   }
 
-  const { lots, eligibleLots } = buildLotsFromInputs({
+  const { lots } = buildLotsFromInputs({
     snapshots: snapshots.map((s) => ({
       skuId: s.skuId,
       warehouseCode: s.warehouseCode,
@@ -249,10 +268,23 @@ export async function syncInventorySupplyLots(params?: {
     today,
     defaultTransitLeadDaysByWarehouse: defaultTransit,
     allocationBySku,
+    inProduction,
   });
 
-  await persistBuiltLots(lots);
-  return { lotCount: lots.length, eligibleCount: eligibleLots.length };
+  const allocations = await loadConfirmedDestAllocations();
+  const allocatedLots = applyConfirmedDestinationsToLots(lots, allocations);
+  const eligibleLots = allocatedLots.filter((lot) =>
+    isLotEligibleForTimeline({
+      pool: lot.pool,
+      availableAt: lot.availableAt,
+      productionStatus: lot.productionStatus,
+      shipReadyAt: lot.shipReadyAt,
+      today,
+    }),
+  );
+
+  await persistBuiltLots(allocatedLots);
+  return { lotCount: allocatedLots.length, eligibleCount: eligibleLots.length };
 }
 
 async function persistBuiltLots(lots: BuiltSupplyLot[]) {
@@ -317,14 +349,14 @@ async function persistBuiltLots(lots: BuiltSupplyLot[]) {
   }
 }
 
-export async function listSupplyLots(params: {
+function buildSupplyLotConditions(params: {
   pool?: 'overseas' | 'in_transit' | 'local';
   warehouseCode?: string;
   skuId?: string;
   includeCancelled?: boolean;
-  limit?: number;
+  q?: string;
+  dateUnknown?: boolean;
 }) {
-  const limit = params.limit ?? 500;
   const conditions = [];
   if (!params.includeCancelled) {
     conditions.push(eq(inventorySupplyLots.status, 'open'));
@@ -334,6 +366,55 @@ export async function listSupplyLots(params: {
     conditions.push(eq(inventorySupplyLots.warehouseCode, params.warehouseCode));
   }
   if (params.skuId) conditions.push(eq(inventorySupplyLots.skuId, params.skuId));
+  if (params.dateUnknown) {
+    conditions.push(
+      sql`(${inventorySupplyLots.dateUnknown} = true OR ${inventorySupplyLots.availableAt} IS NULL)`,
+    );
+  }
+  const q = params.q?.trim();
+  if (q) {
+    const pattern = `%${q}%`;
+    conditions.push(
+      or(
+        ilike(skus.code, pattern),
+        ilike(skus.name, pattern),
+        ilike(inventorySupplyLots.warehouseCode, pattern),
+        ilike(inventorySupplyLots.factoryCode, pattern),
+      )!,
+    );
+  }
+  return conditions.length ? and(...conditions) : undefined;
+}
+
+export async function countSupplyLots(params: {
+  pool?: 'overseas' | 'in_transit' | 'local';
+  warehouseCode?: string;
+  skuId?: string;
+  includeCancelled?: boolean;
+  q?: string;
+  dateUnknown?: boolean;
+}) {
+  const where = buildSupplyLotConditions(params);
+  const [row] = await db
+    .select({ count: sql<number>`count(*)::int` })
+    .from(inventorySupplyLots)
+    .innerJoin(skus, eq(inventorySupplyLots.skuId, skus.id))
+    .where(where);
+  return Number(row?.count ?? 0);
+}
+
+export async function listSupplyLots(params: {
+  pool?: 'overseas' | 'in_transit' | 'local';
+  warehouseCode?: string;
+  skuId?: string;
+  includeCancelled?: boolean;
+  limit?: number;
+  offset?: number;
+  q?: string;
+}) {
+  const limit = params.limit ?? 500;
+  const offset = params.offset ?? 0;
+  const where = buildSupplyLotConditions(params);
 
   return db
     .select({
@@ -358,9 +439,10 @@ export async function listSupplyLots(params: {
     })
     .from(inventorySupplyLots)
     .innerJoin(skus, eq(inventorySupplyLots.skuId, skus.id))
-    .where(conditions.length ? and(...conditions) : undefined)
+    .where(where)
     .orderBy(desc(inventorySupplyLots.updatedAt))
-    .limit(limit);
+    .limit(limit)
+    .offset(offset);
 }
 
 export async function updateLocalLotDates(params: {

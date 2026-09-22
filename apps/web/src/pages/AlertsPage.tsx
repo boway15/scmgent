@@ -1,10 +1,12 @@
 import { Link } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { api } from '@/lib/api';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { PageHeader } from '@/components/PageHeader';
+import { ListPagination } from '@/components/ListPagination';
+import { ListSearchBar } from '@/components/ListSearchBar';
 
 const TYPE_LABEL: Record<string, string> = {
   stockout: '缺货',
@@ -19,9 +21,21 @@ const TYPE_LABEL: Record<string, string> = {
 export function AlertsPage() {
   const qc = useQueryClient();
   const [horizonFilter, setHorizonFilter] = useState<string>('all');
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
+  const [keyword, setKeyword] = useState('');
+  const [appliedKeyword, setAppliedKeyword] = useState('');
+
   const { data, isLoading } = useQuery({
-    queryKey: ['alerts'],
-    queryFn: api.getAlerts,
+    queryKey: ['alerts', page, pageSize, appliedKeyword, horizonFilter],
+    queryFn: () =>
+      api.getAlerts({
+        page,
+        pageSize,
+        q: appliedKeyword || undefined,
+        horizonDays: horizonFilter,
+        resolved: 'open',
+      }),
   });
 
   const runAlert = useMutation({
@@ -34,13 +48,13 @@ export function AlertsPage() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['alerts'] }),
   });
 
+  useEffect(() => {
+    setPage(1);
+  }, [horizonFilter]);
+
   if (isLoading || !data) return <p className="text-text-sub">加载中...</p>;
 
-  const alerts = data.items.filter((a) => {
-    if (horizonFilter === 'all') return true;
-    if (horizonFilter === 'immediate') return a.horizonDays == null;
-    return String(a.horizonDays) === horizonFilter;
-  });
+  const alerts = data.items;
 
   return (
     <div className="space-y-6">
@@ -79,6 +93,15 @@ export function AlertsPage() {
           <CardTitle>预警列表</CardTitle>
         </CardHeader>
         <CardContent>
+          <ListSearchBar
+            keyword={keyword}
+            onKeywordChange={setKeyword}
+            onSearch={() => {
+              setAppliedKeyword(keyword.trim());
+              setPage(1);
+            }}
+            placeholder="SKU 编码 / 名称"
+          />
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-border text-left text-text-sub">
@@ -111,13 +134,13 @@ export function AlertsPage() {
                       <>
                         <Link
                           to={`/inventory/planning/${a.skuId}${a.warehouseCode ? `?warehouse=${encodeURIComponent(a.warehouseCode)}` : ''}`}
-                          className="text-primary hover:underline text-xs"
+                          className="text-xs text-primary hover:underline"
                         >
                           时间轴
                         </Link>
                         <Link
                           to={`/pmc/suggestions?sku=${encodeURIComponent(a.skuCode)}`}
-                          className="text-primary hover:underline text-xs"
+                          className="text-xs text-primary hover:underline"
                         >
                           补货建议
                         </Link>
@@ -138,9 +161,18 @@ export function AlertsPage() {
               )}
             </tbody>
           </table>
+          <ListPagination
+            page={page}
+            pageSize={pageSize}
+            total={data.total}
+            onPageChange={setPage}
+            onPageSizeChange={(next) => {
+              setPageSize(next);
+              setPage(1);
+            }}
+          />
         </CardContent>
       </Card>
     </div>
   );
 }
-

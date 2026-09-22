@@ -7,6 +7,8 @@ import {
   type DemandPlanWeekRow,
 } from '@/lib/api';
 import { PageHeader } from '@/components/PageHeader';
+import { ListPagination } from '@/components/ListPagination';
+import { ListSearchBar } from '@/components/ListSearchBar';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -48,11 +50,21 @@ export function DemandPlanPilotPage() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [skuFilter, setSkuFilter] = useState('');
   const [edits, setEdits] = useState<Record<string, { manual: string; reason: string }>>({});
+  const [page, setPage] = useState(1);
+  const [pageSize] = useState(20);
+  const [keyword, setKeyword] = useState('');
+  const [appliedKeyword, setAppliedKeyword] = useState('');
 
   const versionsQuery = useQuery({
-    queryKey: ['demand-plan-versions'],
-    queryFn: api.listDemandPlanVersions,
+    queryKey: ['demand-plan-versions', page, pageSize, appliedKeyword],
+    queryFn: () =>
+      api.listDemandPlanVersions({
+        page,
+        pageSize,
+        q: appliedKeyword || undefined,
+      }),
   });
+  const versionTotal = versionsQuery.data?.total ?? 0;
 
   const detailQuery = useQuery({
     queryKey: ['demand-plan', selectedId],
@@ -129,7 +141,7 @@ export function DemandPlanPilotPage() {
     },
   });
 
-  const versions = versionsQuery.data ?? [];
+  const versions = versionsQuery.data?.items ?? [];
   const selected = versions.find((row) => row.id === selectedId) ?? detailQuery.data?.version;
   const isDraft = selected?.status === 'draft';
   const weeks = detailQuery.data?.weeks;
@@ -233,6 +245,15 @@ export function DemandPlanPilotPage() {
           ) : null}
         </CardHeader>
         <CardContent>
+          <ListSearchBar
+            keyword={keyword}
+            onKeywordChange={setKeyword}
+            onSearch={() => {
+              setAppliedKeyword(keyword.trim());
+              setPage(1);
+            }}
+            placeholder="版本号 / 名称 / 项目组 / 仓库"
+          />
           {versionsQuery.isLoading ? (
             <p className="text-sm text-text-sub">加载中…</p>
           ) : versionsQuery.isError ? (
@@ -285,6 +306,12 @@ export function DemandPlanPilotPage() {
                   ))}
                 </tbody>
               </table>
+              <ListPagination
+                page={page}
+                pageSize={pageSize}
+                total={versionTotal}
+                onPageChange={setPage}
+              />
             </div>
           )}
           {(publish.isError || archive.isError || adoptWeekly.isError || adoptMonthly.isError) && (

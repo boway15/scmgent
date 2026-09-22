@@ -1,4 +1,4 @@
-import { eq, desc, and } from 'drizzle-orm';
+import { eq, desc, and, or, ilike, sql } from 'drizzle-orm';
 import { Hono } from 'hono';
 import { db, pmcPlans, pmcPlanItems, skus, purchaseDrafts } from '@scm/db';
 import { getCurrentUser } from '../lib/auth-context.js';
@@ -7,6 +7,7 @@ import { generatePurchaseDraftsFromPlan } from '../lib/pmc-plan.js';
 import { buildPmcPlanCsv, buildPmcPlanXlsx } from '../lib/pmc-export.js';
 import { receivePmcPlanItem } from '../lib/pmc-receipt.js';
 import { requireMenu } from '../lib/rbac.js';
+import { parseListPagination } from '../lib/list-pagination.js';
 
 const VALID_TRANSITIONS: Record<string, string[]> = {
   draft: ['confirmed', 'cancelled'],
@@ -17,12 +18,51 @@ const VALID_TRANSITIONS: Record<string, string[]> = {
 export const pmcRoutes = new Hono();
 
 pmcRoutes.get('/pmc/plans', async (c) => {
-  const status = c.req.query('status');
+  const { page, pageSize, offset } = parseListPagination(
+    c.req.query('page')?.trim(),
+    c.req.query('pageSize')?.trim(),
+  );
+  const status = c.req.query('status')?.trim();
+  const q = c.req.query('q')?.trim();
+
+  const conditions = [];
+  if (status) {
+    conditions.push(
+      eq(pmcPlans.status, status as 'draft' | 'confirmed' | 'in_progress' | 'completed' | 'cancelled'),
+    );
+  }
+  if (q) {
+    const pattern = `%${q}%`;
+    conditions.push(
+      or(
+        ilike(pmcPlans.name, pattern),
+        ilike(pmcPlans.planNo, pattern),
+        ilike(pmcPlans.merchantCode, pattern),
+        ilike(pmcPlans.merchantName, pattern),
+      )!,
+    );
+  }
+
+  const where = conditions.length ? and(...conditions) : undefined;
   const base = db.select().from(pmcPlans).$dynamic();
-  const rows = status
-    ? await base.where(eq(pmcPlans.status, status as 'draft' | 'confirmed' | 'in_progress' | 'completed' | 'cancelled')).orderBy(desc(pmcPlans.planDate))
-    : await base.orderBy(desc(pmcPlans.planDate)).limit(200);
-  return c.json(rows);
+
+  const [rows, countRow] = await Promise.all([
+    (where ? base.where(where) : base)
+      .orderBy(desc(pmcPlans.planDate))
+      .limit(pageSize)
+      .offset(offset),
+    db
+      .select({ count: sql<number>`count(*)::int` })
+      .from(pmcPlans)
+      .where(where),
+  ]);
+
+  return c.json({
+    items: rows,
+    total: countRow[0]?.count ?? 0,
+    page,
+    pageSize,
+  });
 });
 
 pmcRoutes.get('/pmc/plans/:id', async (c) => {

@@ -45,4 +45,18 @@ describe('bom-math', () => {
     });
     assert.equal(line?.category, '其他');
   });
+
+  it('normalizeAiLine puts 正面拉条 under 板材 even if the model said 其他部件', () => {
+    const line = normalizeAiLine({
+      category: '其他部件',
+      material_name: '正面拉条',
+      spec: '40mm',
+      unit: '个',
+      qty_net: 8,
+      confidence: 'medium',
+      source_ref: 'p5',
+    });
+    assert.equal(line?.category, '板材');
+    assert.equal(line?.materialName, '正面拉条');
+  });
 });

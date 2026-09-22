@@ -1,6 +1,9 @@
-import { and, eq } from 'drizzle-orm';
+import { and, desc, eq } from 'drizzle-orm';
 import {
   db,
+  demandPlanMonthly,
+  demandPlanVersions,
+  forecastAccuracyMonthly,
   pmcPlanItems,
   pmcPlans,
   purchaseDrafts,
@@ -27,10 +30,18 @@ import {
 } from './inventory-share-allocation.js';
 import { getLatestInventorySnapshot } from './inventory-snapshot.js';
 import { loadOpenLotsForTimeline } from './inventory-supply-lot-sync.js';
+import { sumOpenUnallocatedQty } from './inventory-dest-allocation-store.js';
 import {
   readTurnoverSnapshot,
   readTurnoverSnapshotAt,
 } from './inventory-turnover-snapshot.js';
+import {
+  calcConfirmedCoverageDays,
+  calcTimelineDecisionHealth,
+} from './inventory-light.js';
+import { DEFAULT_OVERSTOCK_THRESHOLD_DAYS } from './replenishment-coverage.js';
+import { evaluateDemandGate } from './planning-demand-gate.js';
+import { buildLatePoActions, type LatePoAction } from './planning-late-po-actions.js';
 
 export type SkuPlanningView = {
   skuId: string;
@@ -47,20 +58,27 @@ export type SkuPlanningView = {
   suggestedQty: number;
   suggestedDate: string;
   healthStatus: string;
+  /** 覆盖天数影子灯，不驱动下单 */
+  coverageHealthStatus?: string;
   etaAvailableNearest?: string | null;
   stockoutDateEstimate?: string | null;
   timeline?: DailyInventoryResult;
   allocation?: PlanningAllocation;
+  unallocatedNetworkQty?: number;
   planningDemandSource?: 'demand_plan' | 'forecast';
   planningDemandFlags?: string[];
   championStockoutDateConfirmed?: string | null;
   championSuggestedQty?: number | null;
   inStockDayRatio?: number | null;
-  healthDemandNote?: string;
+  confirmedCoverageDays?: number | null;
+  needsManualConfirm?: boolean;
+  demandGateFlags?: string[];
+  demandUnconstrainedDaily?: number | null;
+  demandStockoutDays?: number | null;
+  demandCapped?: boolean;
+  suggestedQtyGross?: number | null;
+  latePoActions?: LatePoAction[];
 };
-
-const HEALTH_DEMAND_NOTE =
-  '健康灯仍按现网预测/历史，缺货日与建议量以时间轴为准';
 
 type PlanningHealth = Pick<
   SkuHealthRow,
@@ -76,8 +94,13 @@ type PlanningHealth = Pick<
   | 'metrics'
   | 'position'
   | 'leadTime'
+  | 'lifecycle'
+  | 'totalLeadDays'
 > & {
-  coverage: Pick<SkuHealthRow['coverage'], 'safetyStockDays'>;
+  coverage: Pick<
+    SkuHealthRow['coverage'],
+    'safetyStockDays' | 'overstockThresholdDays'
+  >;
 };
 
 const OPEN_ETA_STATUSES = new Set([
@@ -134,14 +157,49 @@ export function buildSkuPlanningView(input: {
   timeline?: DailyInventoryResult | null;
   timelineSuggestedQty?: number;
   allocation?: PlanningAllocation;
+  unallocatedNetworkQty?: number;
   planningDemandSource?: 'demand_plan' | 'forecast';
   planningDemandFlags?: string[];
   championStockoutDateConfirmed?: string | null;
   championSuggestedQty?: number | null;
   inStockDayRatio?: number | null;
+  demandGate?: ReturnType<typeof evaluateDemandGate>;
+  latePoActions?: LatePoAction[];
 }): SkuPlanningView {
   const reorderPoint = Number(input.health.metrics.reorderPoint);
   const stockoutFromTimeline = input.timeline?.stockoutDateConfirmed ?? null;
+  const coverageHealthStatus = input.health.healthStatus;
+  let healthStatus = coverageHealthStatus;
+  let confirmedCoverageDays: number | null = null;
+
+  if (input.timeline) {
+    const day0 = input.timeline.points.find((p) => p.horizonDays === 0);
+    confirmedCoverageDays = calcConfirmedCoverageDays({
+      today: input.timeline.today,
+      stockoutDateConfirmed: input.timeline.stockoutDateConfirmed,
+      confirmedEndingToday: day0?.confirmedEnding ?? 0,
+      avgDaily: input.health.avgDaily,
+    });
+    healthStatus = calcTimelineDecisionHealth({
+      today: input.timeline.today,
+      totalLeadDays: input.timeline.totalLeadDays,
+      safetyStockDays: input.health.coverage.safetyStockDays,
+      overstockThresholdDays:
+        input.health.coverage.overstockThresholdDays ?? DEFAULT_OVERSTOCK_THRESHOLD_DAYS,
+      suggestedQty:
+        input.timelineSuggestedQty != null
+          ? input.timelineSuggestedQty
+          : input.timeline.suggestedQty,
+      uncoverableByNewPo: input.timeline.uncoverableByNewPo,
+      stockoutDateConfirmed: input.timeline.stockoutDateConfirmed,
+      safetyBreachDateConfirmed: input.timeline.safetyBreachDateConfirmed,
+      confirmedCoverageDays,
+      lifecycle: input.health.lifecycle,
+      effectiveQty: input.health.position.effectiveQty,
+      avgDaily: input.health.avgDaily,
+    });
+  }
+
   return {
     skuId: input.health.skuId,
     skuCode: input.health.skuCode,
@@ -161,7 +219,8 @@ export function buildSkuPlanningView(input: {
         ? input.timelineSuggestedQty
         : input.health.suggestedQty,
     suggestedDate: input.timeline?.reorderDate ?? input.health.suggestedDate,
-    healthStatus: input.health.healthStatus,
+    healthStatus,
+    coverageHealthStatus,
     etaAvailableNearest: input.etaAvailableNearest ?? null,
     stockoutDateEstimate:
       stockoutFromTimeline ??
@@ -172,11 +231,11 @@ export function buildSkuPlanningView(input: {
       ),
     ...(input.timeline ? { timeline: input.timeline } : {}),
     ...(input.allocation ? { allocation: input.allocation } : {}),
+    ...(input.unallocatedNetworkQty != null && input.unallocatedNetworkQty > 0
+      ? { unallocatedNetworkQty: input.unallocatedNetworkQty }
+      : {}),
     ...(input.planningDemandSource
-      ? {
-          planningDemandSource: input.planningDemandSource,
-          healthDemandNote: HEALTH_DEMAND_NOTE,
-        }
+      ? { planningDemandSource: input.planningDemandSource }
       : {}),
     ...(input.planningDemandFlags != null && input.planningDemandFlags.length > 0
       ? { planningDemandFlags: input.planningDemandFlags }
@@ -189,6 +248,22 @@ export function buildSkuPlanningView(input: {
       : {}),
     ...(input.inStockDayRatio !== undefined
       ? { inStockDayRatio: input.inStockDayRatio }
+      : {}),
+    ...(confirmedCoverageDays != null ? { confirmedCoverageDays } : {}),
+    ...(input.timeline?.suggestedQtyGross != null
+      ? { suggestedQtyGross: input.timeline.suggestedQtyGross }
+      : {}),
+    ...(input.demandGate
+      ? {
+          needsManualConfirm: input.demandGate.needsManualConfirm,
+          demandGateFlags: input.demandGate.flags,
+          demandUnconstrainedDaily: input.demandGate.demandUnconstrainedDaily,
+          demandStockoutDays: input.demandGate.demandStockoutDays,
+          demandCapped: input.demandGate.demandCapped,
+        }
+      : {}),
+    ...(input.latePoActions && input.latePoActions.length > 0
+      ? { latePoActions: input.latePoActions }
       : {}),
   };
 }
@@ -312,10 +387,11 @@ export async function getSkuPlanningView(params: {
     console.warn('[getSkuPlanningView] timeline skipped:', err);
   }
   const snapshotDate = readTurnoverSnapshotAt(sku.encodingMeta)?.slice(0, 10) ?? null;
-  const [nativeSnap, overseasSnap, openLots] = await Promise.all([
+  const [nativeSnap, overseasSnap, openLots, unallocatedNetworkQty] = await Promise.all([
     getLatestInventorySnapshot(sku.id, warehouse.code),
     getLatestInventorySnapshot(sku.id, 'OVERSEAS'),
     loadOpenLotsForTimeline({ skuId: sku.id, warehouseCode: warehouse.code }),
+    sumOpenUnallocatedQty(sku.id),
   ]);
   const overseasLots = openLots.filter((lot) => lot.pool === 'overseas');
   const allocatedQty =
@@ -335,15 +411,101 @@ export async function getSkuPlanningView(params: {
     snapshotDate,
   });
 
+  const [accuracyRow] = await db
+    .select({
+      mape: forecastAccuracyMonthly.mape,
+    })
+    .from(forecastAccuracyMonthly)
+    .where(eq(forecastAccuracyMonthly.skuId, sku.id))
+    .orderBy(
+      desc(forecastAccuracyMonthly.forecastYear),
+      desc(forecastAccuracyMonthly.month),
+    )
+    .limit(1);
+
+  const [demandAudit] = await db
+    .select({
+      unconstrainedRecentDaily: demandPlanMonthly.unconstrainedRecentDaily,
+      inStockDayRatio: demandPlanMonthly.inStockDayRatio,
+      source: demandPlanMonthly.source,
+    })
+    .from(demandPlanMonthly)
+    .innerJoin(demandPlanVersions, eq(demandPlanMonthly.versionId, demandPlanVersions.id))
+    .where(
+      and(
+        eq(demandPlanMonthly.skuId, sku.id),
+        eq(demandPlanMonthly.warehouseCode, warehouse.code),
+        eq(demandPlanVersions.status, 'pilot_published'),
+      ),
+    )
+    .orderBy(desc(demandPlanMonthly.updatedAt))
+    .limit(1);
+
+  const recentWmape =
+    accuracyRow?.mape != null && accuracyRow.mape !== ''
+      ? Number(accuracyRow.mape)
+      : null;
+  const unconstrained =
+    demandAudit?.unconstrainedRecentDaily != null
+      ? Number(demandAudit.unconstrainedRecentDaily)
+      : null;
+  const demandGate = evaluateDemandGate({
+    reconstructCapHit: demandAudit?.source === 'reconstructed_shape' && unconstrained != null
+      ? unconstrained > health.avgDaily * 1.49
+      : false,
+    unconstrainedDaily: unconstrained,
+    stockoutDays:
+      demandAudit?.inStockDayRatio != null
+        ? Math.round((1 - Number(demandAudit.inStockDayRatio)) * 90)
+        : null,
+    recentWmape: Number.isFinite(recentWmape as number) ? recentWmape : null,
+  });
+
+  let latePoActions: LatePoAction[] | undefined;
+  if (timeline?.uncoverableByNewPo) {
+    const peerWh = await db
+      .select({
+        code: warehouses.code,
+        regionGroup: warehouses.regionGroup,
+      })
+      .from(warehouses)
+      .where(and(eq(warehouses.isActive, true), eq(warehouses.regionGroup, warehouse.regionGroup)));
+    const peerWarehouses = [];
+    for (const peer of peerWh) {
+      if (peer.code === warehouse.code) continue;
+      const snap = await getLatestInventorySnapshot(sku.id, peer.code);
+      peerWarehouses.push({
+        warehouseCode: peer.code,
+        regionGroup: peer.regionGroup,
+        confirmedAvailableQty: snap.qtyAvailable,
+      });
+    }
+    latePoActions = buildLatePoActions({
+      today: timeline.today,
+      warehouseCode: warehouse.code,
+      regionGroup: warehouse.regionGroup,
+      uncoverableByNewPo: true,
+      stockoutDateConfirmed: timeline.stockoutDateConfirmed,
+      avgDaily: health.avgDaily,
+      totalLeadDays: health.totalLeadDays,
+      peerWarehouses,
+    });
+  }
+
   return buildSkuPlanningView({
     health,
     etaAvailableNearest,
     timeline,
     timelineSuggestedQty,
     allocation,
+    unallocatedNetworkQty,
     planningDemandSource,
     planningDemandFlags,
     championStockoutDateConfirmed,
     championSuggestedQty,
+    inStockDayRatio:
+      demandAudit?.inStockDayRatio != null ? Number(demandAudit.inStockDayRatio) : undefined,
+    demandGate,
+    latePoActions,
   });
 }

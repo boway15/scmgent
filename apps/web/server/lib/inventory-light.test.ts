@@ -1,7 +1,9 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  calcConfirmedCoverageDays,
   calcInventoryHealth,
+  calcTimelineDecisionHealth,
   estimateInventoryHealthQuick,
   isGrayLifecycle,
   isSlowMovingStock,
@@ -48,5 +50,74 @@ describe('inventory-light', () => {
     assert.equal(estimateInventoryHealthQuick({ effectiveQty: 50, reorderPoint: 100 }), 'red');
     assert.equal(estimateInventoryHealthQuick({ effectiveQty: 110, reorderPoint: 100 }), 'yellow');
     assert.equal(estimateInventoryHealthQuick({ effectiveQty: 200, reorderPoint: 100 }), 'green');
+  });
+
+  it('calcConfirmedCoverageDays prefers stockout date span', () => {
+    assert.equal(
+      calcConfirmedCoverageDays({
+        today: '2026-09-01',
+        stockoutDateConfirmed: '2026-09-21',
+        confirmedEndingToday: 999,
+        avgDaily: 10,
+      }),
+      20,
+    );
+  });
+
+  it('timeline decision red when uncoverable even if coverage health would be green', () => {
+    assert.equal(
+      calcTimelineDecisionHealth({
+        today: '2026-09-01',
+        totalLeadDays: 90,
+        safetyStockDays: 14,
+        overstockThresholdDays: 180,
+        suggestedQty: 500,
+        uncoverableByNewPo: true,
+        stockoutDateConfirmed: '2026-09-20',
+        safetyBreachDateConfirmed: '2026-09-10',
+        confirmedCoverageDays: 200,
+        avgDaily: 5,
+        effectiveQty: 1000,
+      }),
+      'red',
+    );
+  });
+
+  it('timeline decision green when suggestedQty is 0 despite coverage yellow inputs', () => {
+    assert.equal(
+      calcTimelineDecisionHealth({
+        today: '2026-09-01',
+        totalLeadDays: 90,
+        safetyStockDays: 14,
+        overstockThresholdDays: 180,
+        suggestedQty: 0,
+        uncoverableByNewPo: false,
+        stockoutDateConfirmed: '2027-03-01',
+        safetyBreachDateConfirmed: null,
+        confirmedCoverageDays: 120,
+        avgDaily: 5,
+        effectiveQty: 600,
+      }),
+      'green',
+    );
+  });
+
+  it('timeline decision yellow when suggestedQty > 0 without near stockout', () => {
+    assert.equal(
+      calcTimelineDecisionHealth({
+        today: '2026-09-01',
+        totalLeadDays: 90,
+        safetyStockDays: 14,
+        overstockThresholdDays: 180,
+        suggestedQty: 200,
+        uncoverableByNewPo: false,
+        stockoutDateConfirmed: '2027-01-01',
+        safetyBreachDateConfirmed: null,
+        confirmedCoverageDays: 120,
+        avgDaily: 5,
+        effectiveQty: 600,
+      }),
+      'yellow',
+    );
   });
 });

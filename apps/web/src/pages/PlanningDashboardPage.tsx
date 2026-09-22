@@ -78,6 +78,18 @@ export function buildPlanningDashboardCards(
       highlight: dashboard.pendingSuggestions > 0,
     },
     {
+      label: '数据问题',
+      value: String(dashboard.openDataIssueCount ?? 0),
+      href: '/inventory/data-issues',
+      highlight: (dashboard.openDataIssueCount ?? 0) > 0,
+    },
+    {
+      label: '未定仓供应',
+      value: String(dashboard.openUnallocatedLotCount ?? 0),
+      href: '/inventory/unallocated',
+      highlight: (dashboard.openUnallocatedLotCount ?? 0) > 0,
+    },
+    {
       label: '延期采购跟单',
       value: String(dashboard.delayedDraftsEtaAvailable),
       href: '/pmc/tracking',
@@ -99,6 +111,8 @@ export function buildPlanningDashboardCards(
 }
 
 const WORKBENCH_LINKS = [
+  { label: '数据问题', description: '无期批次、未分仓、占比偏离工单', href: '/inventory/data-issues' },
+  { label: '未定仓供应', description: 'OVERSEAS 批次确认目的仓', href: '/inventory/unallocated' },
   { label: '库存三池', description: '本地 / 在途 / 海外批次与可出货日', href: '/inventory/pools' },
   { label: '补货建议', description: '审核并采纳待处理建议', href: '/pmc/suggestions' },
   { label: '采购跟单', description: '处理预计可用日期延期', href: '/pmc/tracking' },

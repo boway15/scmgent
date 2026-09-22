@@ -1,0 +1,11 @@
+-- 库存运营子菜单统一排序：监控 → 规划 → 查询 → 异常 → 配置
+UPDATE menus SET sort_order = 10 WHERE code = 'inventory.planning_dashboard';
+UPDATE menus SET sort_order = 20 WHERE code = 'inventory.alert';
+UPDATE menus SET sort_order = 30 WHERE code = 'inventory.overview';
+UPDATE menus SET sort_order = 40 WHERE code = 'inventory.planning';
+UPDATE menus SET sort_order = 50 WHERE code = 'inventory.pools';
+UPDATE menus SET sort_order = 60 WHERE code = 'inventory.query';
+UPDATE menus SET sort_order = 70 WHERE code = 'inventory.data_issues';
+UPDATE menus SET sort_order = 80 WHERE code = 'inventory.unallocated';
+UPDATE menus SET sort_order = 90 WHERE code = 'inventory.safety';
+UPDATE menus SET sort_order = 100 WHERE code = 'inventory.lead_time';

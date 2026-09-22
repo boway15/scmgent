@@ -16,6 +16,7 @@ describe('buildAllocationBySku', () => {
             美西: '0.6',
             预计10天上架_合计: '10',
             最早在途上架时间: '2026-10-01',
+            采购单最早上架时间: '2026-12-01',
           },
         },
       },
@@ -27,6 +28,7 @@ describe('buildAllocationBySku', () => {
     assert.equal(ctx.transitBuckets.d5, 10);
     assert.ok(ctx.earliestAvailableAt);
     assert.equal(ctx.earliestAvailableAt, '2026-10-01');
+    assert.equal(ctx.earliestPoAvailableAt, '2026-12-01');
   });
 });
 

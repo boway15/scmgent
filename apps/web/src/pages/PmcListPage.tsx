@@ -6,6 +6,8 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { PageHeader } from '@/components/PageHeader';
+import { ListPagination } from '@/components/ListPagination';
+import { ListSearchBar } from '@/components/ListSearchBar';
 import { ImportDrawer } from '@/components/import/ImportDrawer';
 import { useImportDrawer } from '@/hooks/use-import-drawer';
 
@@ -20,10 +22,16 @@ const STATUS_LABEL: Record<string, string> = {
 export function PmcListPage() {
   const qc = useQueryClient();
   const { open: importOpen, openDrawer: openImportDrawer, closeDrawer: closeImportDrawer } = useImportDrawer();
-  const { data: plans = [], isLoading } = useQuery({
-    queryKey: ['pmc-plans'],
-    queryFn: api.getPmcPlans,
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
+  const [keyword, setKeyword] = useState('');
+  const [appliedKeyword, setAppliedKeyword] = useState('');
+
+  const { data, isLoading } = useQuery({
+    queryKey: ['pmc-plans', page, pageSize, appliedKeyword],
+    queryFn: () => api.getPmcPlans({ page, pageSize, q: appliedKeyword || undefined }),
   });
+  const plans = data?.items ?? [];
   const { data: skus = [] } = useQuery({ queryKey: ['skus'], queryFn: api.getSkus });
   const { data: merchants = [] } = useQuery({ queryKey: ['merchants'], queryFn: api.getMerchants });
   const { data: warehouses = [] } = useQuery({ queryKey: ['warehouses'], queryFn: api.getWarehouses });
@@ -139,6 +147,15 @@ export function PmcListPage() {
           </p>
         </CardHeader>
         <CardContent>
+          <ListSearchBar
+            keyword={keyword}
+            onKeywordChange={setKeyword}
+            onSearch={() => {
+              setAppliedKeyword(keyword.trim());
+              setPage(1);
+            }}
+            placeholder="计划编号 / 名称 / 商家"
+          />
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-border text-left text-text-sub">
@@ -197,6 +214,16 @@ export function PmcListPage() {
               )}
             </tbody>
           </table>
+          <ListPagination
+            page={page}
+            pageSize={pageSize}
+            total={data?.total ?? 0}
+            onPageChange={setPage}
+            onPageSizeChange={(next) => {
+              setPageSize(next);
+              setPage(1);
+            }}
+          />
         </CardContent>
       </Card>
 

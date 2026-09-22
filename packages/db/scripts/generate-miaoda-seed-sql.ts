@@ -31,7 +31,7 @@ const MENU_SEEDS: MenuSeed[] = [
   {
     code: 'inventory', name: '库存管理', icon: 'Package', sortOrder: 1, isLeaf: false,
     children: [
-      { code: 'inventory.overview', name: '库存总览', path: '/inventory/overview', sortOrder: 1, isLeaf: true },
+      { code: 'inventory.overview', name: '库存周转', path: '/inventory/overview', sortOrder: 1, isLeaf: true },
       { code: 'inventory.safety', name: '安全库存设置', path: '/inventory/safety', sortOrder: 2, isLeaf: true },
       { code: 'inventory.alert', name: '缺货预警', path: '/inventory/alerts', sortOrder: 3, isLeaf: true },
     ],

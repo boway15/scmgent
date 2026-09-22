@@ -51,6 +51,7 @@ function allocationMap(
         share,
         transitBuckets: extras?.transitBuckets ?? { d5: 0, d15: 0, d25: 0 },
         earliestAvailableAt: extras?.earliestAvailableAt ?? null,
+        earliestPoAvailableAt: extras?.earliestPoAvailableAt ?? null,
       },
     ],
   ]);
@@ -575,5 +576,62 @@ describe('inventory-supply-lots pure', () => {
     assert.equal(localUnshared[0]!.warehouseCode, 'OVERSEAS');
     assert.equal(localUnshared[0]!.qty, 100);
     assert.equal(localUnshared[0]!.sourceId, 'd-none');
+  });
+
+  it('projects IN-PRODUCTION snapshot into local pool after deducting local drafts', () => {
+    const { lots, eligibleLots } = buildLotsFromInputs({
+      snapshots: [],
+      drafts: [
+        {
+          draftId: 'd-local',
+          skuId: 'sku-1',
+          warehouseCode: 'US-WEST',
+          status: 'in_production',
+          openQty: 30,
+          remainingLogisticsDays: 52,
+        },
+      ],
+      shipments: [],
+      today: '2026-09-17',
+      defaultTransitLeadDaysByWarehouse: {},
+      allocationBySku: allocationMap('sku-1', WEST_EAST_SHARE, {
+        earliestPoAvailableAt: '2026-11-01',
+      }),
+      inProduction: [{ skuId: 'sku-1', qty: 130 }],
+    });
+
+    const snapshotLocal = lots.filter(
+      (l) => l.pool === 'local' && l.source === 'snapshot',
+    );
+    assert.equal(snapshotLocal.reduce((s, l) => s + l.qty, 0), 100);
+    assert.equal(snapshotLocal.find((l) => l.warehouseCode === 'US-WEST')?.qty, 60);
+    assert.equal(snapshotLocal.find((l) => l.warehouseCode === 'US-EAST')?.qty, 40);
+    assert.equal(
+      snapshotLocal.find((l) => l.warehouseCode === 'US-WEST')?.sourceId,
+      'prod-share:sku-1:US-WEST',
+    );
+    assert.ok(snapshotLocal.every((l) => l.availableAt === '2026-11-01'));
+    assert.equal(
+      eligibleLots.filter((l) => l.source === 'snapshot' && l.pool === 'local').length,
+      0,
+      'in-production without ship-ready stays off the timeline',
+    );
+  });
+
+  it('keeps unallocated in-production on OVERSEAS local pool with no available_at', () => {
+    const { lots } = buildLotsFromInputs({
+      snapshots: [],
+      drafts: [],
+      shipments: [],
+      today: '2026-09-17',
+      defaultTransitLeadDaysByWarehouse: {},
+      inProduction: [{ skuId: 'sku-2', qty: 80 }],
+    });
+    assert.equal(lots.length, 1);
+    assert.equal(lots[0]!.pool, 'local');
+    assert.equal(lots[0]!.warehouseCode, 'OVERSEAS');
+    assert.equal(lots[0]!.qty, 80);
+    assert.equal(lots[0]!.availableAt, null);
+    assert.equal(lots[0]!.sourceId, 'prod:sku-2:OVERSEAS');
   });
 });

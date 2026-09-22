@@ -6,7 +6,9 @@ export type {
 export {
   INVENTORY_HEALTH_LABEL,
   INVENTORY_HEALTH_MECHANISM,
+  calcConfirmedCoverageDays,
   calcInventoryHealth,
+  calcTimelineDecisionHealth,
   isGrayLifecycle,
   isSlowMovingStock,
   needsReplenishmentByHealth,

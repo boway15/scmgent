@@ -1,4 +1,4 @@
-import { and, desc, eq } from 'drizzle-orm';
+import { and, desc, eq, ilike, or, sql } from 'drizzle-orm';
 import { Hono } from 'hono';
 import {
   db,
@@ -18,6 +18,7 @@ import {
   updateDemandPlanMonth,
   updateDemandPlanWeek,
 } from '../lib/demand-plan-service.js';
+import { parseListPagination } from '../lib/list-pagination.js';
 import { requireMenu, requireWrite } from '../lib/rbac.js';
 
 export function parseGenerateBody(body: unknown): {
@@ -78,21 +79,55 @@ export const demandPlanRoutes = new Hono();
 const menuGuard = requireMenu('data.demand_plan');
 
 demandPlanRoutes.get('/demand-plans', menuGuard, async (c) => {
-  const rows = await db
-    .select({
-      id: demandPlanVersions.id,
-      versionNo: demandPlanVersions.versionNo,
-      versionName: demandPlanVersions.versionName,
-      status: demandPlanVersions.status,
-      projectGroup: demandPlanVersions.projectGroup,
-      warehouseCode: demandPlanVersions.warehouseCode,
-      startMonth: demandPlanVersions.startMonth,
-      publishedAt: demandPlanVersions.publishedAt,
-      createdAt: demandPlanVersions.createdAt,
-    })
-    .from(demandPlanVersions)
-    .orderBy(desc(demandPlanVersions.createdAt));
-  return c.json(rows);
+  const { page, pageSize, offset } = parseListPagination(
+    c.req.query('page')?.trim(),
+    c.req.query('pageSize')?.trim(),
+  );
+  const q = c.req.query('q')?.trim();
+  const conditions = [];
+  if (q) {
+    const pattern = `%${q}%`;
+    conditions.push(
+      or(
+        ilike(demandPlanVersions.versionNo, pattern),
+        ilike(demandPlanVersions.versionName, pattern),
+        ilike(demandPlanVersions.projectGroup, pattern),
+        ilike(demandPlanVersions.warehouseCode, pattern),
+      )!,
+    );
+  }
+  const where = conditions.length ? and(...conditions) : undefined;
+
+  const [rows, countRow] = await Promise.all([
+    db
+      .select({
+        id: demandPlanVersions.id,
+        versionNo: demandPlanVersions.versionNo,
+        versionName: demandPlanVersions.versionName,
+        status: demandPlanVersions.status,
+        projectGroup: demandPlanVersions.projectGroup,
+        warehouseCode: demandPlanVersions.warehouseCode,
+        startMonth: demandPlanVersions.startMonth,
+        publishedAt: demandPlanVersions.publishedAt,
+        createdAt: demandPlanVersions.createdAt,
+      })
+      .from(demandPlanVersions)
+      .where(where)
+      .orderBy(desc(demandPlanVersions.createdAt))
+      .limit(pageSize)
+      .offset(offset),
+    db
+      .select({ count: sql<number>`count(*)::int` })
+      .from(demandPlanVersions)
+      .where(where),
+  ]);
+
+  return c.json({
+    items: rows,
+    total: countRow[0]?.count ?? 0,
+    page,
+    pageSize,
+  });
 });
 
 demandPlanRoutes.get('/demand-plans/:id', menuGuard, async (c) => {

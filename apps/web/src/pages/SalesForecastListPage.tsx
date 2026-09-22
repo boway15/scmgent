@@ -6,6 +6,8 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { PageHeader } from '@/components/PageHeader';
+import { ListPagination } from '@/components/ListPagination';
+import { ListSearchBar } from '@/components/ListSearchBar';
 import { ForecastStrategySection } from '@/components/ForecastStrategySection';
 import { ForecastVersionStatusBadge } from '@/components/ForecastVersionStatusBadge';
 import { ProjectGroupSearchSelect } from '@/components/ProjectGroupSearchSelect';
@@ -35,6 +37,10 @@ export function SalesForecastListPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const listTab: ListTab = searchParams.get('tab') === 'strategy' ? 'strategy' : 'versions';
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
+  const [versionKeyword, setVersionKeyword] = useState('');
+  const [appliedVersionKeyword, setAppliedVersionKeyword] = useState('');
+  const [versionPage, setVersionPage] = useState(1);
+  const [versionPageSize, setVersionPageSize] = useState(20);
   const [generationProjectGroup, setGenerationProjectGroup] = useState('');
   const [generationSkuCode, setGenerationSkuCode] = useState('');
   const [generationStartMonth, setGenerationStartMonth] = useState(() => formatForecastStartMonth());
@@ -49,11 +55,11 @@ export function SalesForecastListPage() {
   });
 
   const demandPlansQuery = useQuery({
-    queryKey: ['demand-plan-versions'],
-    queryFn: api.listDemandPlanVersions,
+    queryKey: ['demand-plan-versions', 'pilot-check'],
+    queryFn: () => api.listDemandPlanVersions({ pageSize: 100 }),
     retry: false,
   });
-  const hasPublishedDemandPlanPilot = (demandPlansQuery.data ?? []).some(
+  const hasPublishedDemandPlanPilot = (demandPlansQuery.data?.items ?? []).some(
     (row) => row.status === 'pilot_published',
   );
 
@@ -74,6 +80,26 @@ export function SalesForecastListPage() {
     if (statusFilter === 'all') return versions;
     return versions.filter((v) => v.status === statusFilter);
   }, [versions, statusFilter]);
+
+  const searchedVersions = useMemo(() => {
+    const q = appliedVersionKeyword.trim().toLowerCase();
+    if (!q) return filteredVersions;
+    return filteredVersions.filter(
+      (v) =>
+        v.versionName?.toLowerCase().includes(q) ||
+        v.versionNo?.toLowerCase().includes(q) ||
+        v.station?.toLowerCase().includes(q),
+    );
+  }, [filteredVersions, appliedVersionKeyword]);
+
+  const pagedVersions = useMemo(() => {
+    const start = (versionPage - 1) * versionPageSize;
+    return searchedVersions.slice(start, start + versionPageSize);
+  }, [searchedVersions, versionPage, versionPageSize]);
+
+  useEffect(() => {
+    setVersionPage(1);
+  }, [statusFilter, appliedVersionKeyword]);
 
   useEffect(() => {
     const legacyTab = searchParams.get('tab');
@@ -408,6 +434,15 @@ export function SalesForecastListPage() {
               </div>
             </CardHeader>
             <CardContent>
+              <ListSearchBar
+                keyword={versionKeyword}
+                onKeywordChange={setVersionKeyword}
+                onSearch={() => {
+                  setAppliedVersionKeyword(versionKeyword.trim());
+                  setVersionPage(1);
+                }}
+                placeholder="版本号 / 名称 / 站点"
+              />
               {deleteDraftVersion.isError && (
                 <p className="mb-3 text-sm text-destructive">
                   {mutationErrorMessage(deleteDraftVersion.error)}
@@ -415,7 +450,7 @@ export function SalesForecastListPage() {
               )}
               {isLoading ? (
                 <p className="text-sm text-text-sub">加载中…</p>
-              ) : filteredVersions.length === 0 ? (
+              ) : searchedVersions.length === 0 ? (
                 <p className="text-sm text-text-sub">暂无预测版本，请先生成草稿。</p>
               ) : (
                 <div className="overflow-auto">
@@ -431,7 +466,7 @@ export function SalesForecastListPage() {
                       </tr>
                     </thead>
                     <tbody>
-                      {filteredVersions.map((version) => (
+                      {pagedVersions.map((version) => (
                         <VersionRow
                           key={version.id}
                           version={version}
@@ -452,6 +487,18 @@ export function SalesForecastListPage() {
                     </tbody>
                   </table>
                 </div>
+              )}
+              {!isLoading && searchedVersions.length > 0 && (
+                <ListPagination
+                  page={versionPage}
+                  pageSize={versionPageSize}
+                  total={searchedVersions.length}
+                  onPageChange={setVersionPage}
+                  onPageSizeChange={(next) => {
+                    setVersionPageSize(next);
+                    setVersionPage(1);
+                  }}
+                />
               )}
             </CardContent>
           </Card>

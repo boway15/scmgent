@@ -1,20 +1,37 @@
-import { and, desc, eq, sql } from 'drizzle-orm';
+import { and, desc, eq, ilike, or, sql } from 'drizzle-orm';
 import { Hono } from 'hono';
 import { db, auditLogs } from '@scm/db';
+import { parseListPagination } from '../lib/list-pagination.js';
 import { requireSuperAdmin } from '../middleware/auth.js';
 
 export const auditLogRoutes = new Hono();
 
 auditLogRoutes.get('/audit-logs', requireSuperAdmin, async (c) => {
-  const page = Math.max(1, Number(c.req.query('page') ?? 1));
-  const pageSize = Math.min(100, Math.max(1, Number(c.req.query('pageSize') ?? 50)));
+  const { page, pageSize, offset } = parseListPagination(
+    c.req.query('page')?.trim(),
+    c.req.query('pageSize')?.trim(),
+    50,
+  );
   const action = c.req.query('action')?.trim();
   const userId = c.req.query('userId')?.trim();
-  const offset = (page - 1) * pageSize;
+  const q = c.req.query('q')?.trim();
 
   const conditions = [];
   if (action) conditions.push(eq(auditLogs.action, action));
   if (userId) conditions.push(eq(auditLogs.userId, userId));
+  if (q) {
+    const pattern = `%${q}%`;
+    conditions.push(
+      or(
+        ilike(auditLogs.action, pattern),
+        ilike(auditLogs.userName, pattern),
+        ilike(auditLogs.userEmail, pattern),
+        ilike(auditLogs.detail, pattern),
+        ilike(auditLogs.resourceType, pattern),
+        ilike(auditLogs.resourceId, pattern),
+      )!,
+    );
+  }
 
   const where = conditions.length ? and(...conditions) : undefined;
 

@@ -14,9 +14,12 @@ describe('parsePriceBookSheet', () => {
         category: '板材',
         materialName: '多层板',
         spec: '',
+        standard: '',
         unit: '张',
         unitPrice: 88.5,
         notes: '常用',
+        regionName: '',
+        factoryName: '',
       },
     ]);
   });

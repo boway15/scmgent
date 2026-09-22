@@ -5,6 +5,16 @@ const MAX_IMAGE_EDGE = 1280;
 /** Dify workflow input `pages_json` max_length is 500000; leave room for JSON wrapper + text. */
 export const MAX_DIFY_IMAGE_BASE64_CHARS = 350_000;
 export const MAX_DIFY_PAGES_JSON_CHARS = 480_000;
+/** Facts judge: keep one small image so data-URL prompts stay under 128k context. */
+export const FACTS_IMAGE_MAX_EDGE = 800;
+export const FACTS_IMAGE_MAX_BYTES = 80 * 1024;
+export const FACTS_IMAGE_MAX_BASE64_CHARS = 80_000;
+
+export type PreparePageImageOptions = {
+  maxEdge?: number;
+  maxBytes?: number;
+  maxBase64Chars?: number;
+};
 
 export type PageImageMimeType = 'image/png' | 'image/jpeg';
 
@@ -57,15 +67,21 @@ function loadSharp(): SharpFactory | null {
   }
 }
 
-function fitsDifyBase64Limit(base64: string): boolean {
-  return base64.length <= MAX_DIFY_IMAGE_BASE64_CHARS;
+function fitsDifyBase64Limit(base64: string, maxChars = MAX_DIFY_IMAGE_BASE64_CHARS): boolean {
+  return base64.length <= maxChars;
 }
 
-async function compressWithSharp(buffer: Buffer): Promise<PreparedPageImage | null> {
+async function compressWithSharp(
+  buffer: Buffer,
+  options?: PreparePageImageOptions,
+): Promise<PreparedPageImage | null> {
   const sharp = loadSharp();
   if (!sharp) return null;
 
-  const edges = [MAX_IMAGE_EDGE, 1024, 800, 640];
+  const maxEdge = options?.maxEdge ?? MAX_IMAGE_EDGE;
+  const maxBytes = options?.maxBytes ?? MAX_IMAGE_BYTES;
+  const maxBase64 = options?.maxBase64Chars ?? MAX_DIFY_IMAGE_BASE64_CHARS;
+  const edges = [...new Set([maxEdge, 1024, 800, 640, 512].filter((edge) => edge <= maxEdge))];
   const qualities = [78, 65, 50, 38, 28, 22, 18];
 
   for (const edge of edges) {
@@ -81,9 +97,9 @@ async function compressWithSharp(buffer: Buffer): Promise<PreparedPageImage | nu
           })
           .jpeg({ quality })
           .toBuffer();
-        if (output.byteLength > MAX_IMAGE_BYTES) continue;
+        if (output.byteLength > maxBytes) continue;
         const base64 = output.toString('base64');
-        if (fitsDifyBase64Limit(base64)) {
+        if (fitsDifyBase64Limit(base64, maxBase64)) {
           return { base64, mimeType: 'image/jpeg' };
         }
       } catch {
@@ -98,21 +114,31 @@ async function compressWithSharp(buffer: Buffer): Promise<PreparedPageImage | nu
  * Tiny placeholders are omitted. Prefer JPEG via sharp; without it, send PNG only when
  * the base64 fits Dify's pages_json limit, otherwise fall back to text-only for the page.
  */
-export async function preparePageImage(buffer: Buffer): Promise<PreparedPageImage> {
+export async function preparePageImage(
+  buffer: Buffer,
+  options?: PreparePageImageOptions,
+): Promise<PreparedPageImage> {
+  const maxBase64 = options?.maxBase64Chars ?? MAX_DIFY_IMAGE_BASE64_CHARS;
   if (isPlaceholderImage(buffer)) {
     return { base64: '', mimeType: 'image/png' };
   }
 
-  const compressed = await compressWithSharp(buffer);
+  const compressed = await compressWithSharp(buffer, options);
   if (compressed) return compressed;
 
   const rawBase64 = buffer.toString('base64');
-  if (fitsDifyBase64Limit(rawBase64)) {
+  if (fitsDifyBase64Limit(rawBase64, maxBase64)) {
     return { base64: rawBase64, mimeType: 'image/png' };
   }
 
   return { base64: '', mimeType: 'image/png' };
 }
+
+export const FACTS_PAGE_IMAGE_OPTIONS: PreparePageImageOptions = {
+  maxEdge: FACTS_IMAGE_MAX_EDGE,
+  maxBytes: FACTS_IMAGE_MAX_BYTES,
+  maxBase64Chars: FACTS_IMAGE_MAX_BASE64_CHARS,
+};
 
 export type DifyPagePayload = {
   page: number;

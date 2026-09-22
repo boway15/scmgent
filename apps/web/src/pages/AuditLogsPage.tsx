@@ -4,6 +4,7 @@ import { api } from '@/lib/api';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { PageHeader } from '@/components/PageHeader';
 import { ListPagination } from '@/components/ListPagination';
+import { ListSearchBar } from '@/components/ListSearchBar';
 import { formatDateTimeCst } from '@/lib/utils';
 
 const ACTION_LABELS: Record<string, string> = {
@@ -38,10 +39,17 @@ function formatTime(value: string): string {
 export function AuditLogsPage() {
   const [page, setPage] = useState(1);
   const pageSize = 50;
+  const [keyword, setKeyword] = useState('');
+  const [appliedKeyword, setAppliedKeyword] = useState('');
 
   const { data, isLoading } = useQuery({
-    queryKey: ['audit-logs', page],
-    queryFn: () => api.getAuditLogs({ page, pageSize }),
+    queryKey: ['audit-logs', page, appliedKeyword],
+    queryFn: () =>
+      api.getAuditLogs({
+        page,
+        pageSize,
+        q: appliedKeyword || undefined,
+      }),
   });
 
   const items = data?.items ?? [];
@@ -56,6 +64,15 @@ export function AuditLogsPage() {
           <span className="text-sm text-text-sub">共 {total} 条</span>
         </CardHeader>
         <CardContent>
+          <ListSearchBar
+            keyword={keyword}
+            onKeywordChange={setKeyword}
+            onSearch={() => {
+              setAppliedKeyword(keyword.trim());
+              setPage(1);
+            }}
+            placeholder="操作 / 操作人 / 邮箱 / 详情"
+          />
           {isLoading ? (
             <p className="text-text-sub">加载中...</p>
           ) : (

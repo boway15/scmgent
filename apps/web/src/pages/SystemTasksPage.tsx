@@ -4,6 +4,8 @@ import { api } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { PageHeader } from '@/components/PageHeader';
+import { ListPagination } from '@/components/ListPagination';
+import { ListSearchBar } from '@/components/ListSearchBar';
 import { SCHEDULED_TASKS, TASK_NAME_LABELS } from '@/lib/scheduled-tasks';
 import { cn, formatDateTimeCst } from '@/lib/utils';
 
@@ -32,15 +34,20 @@ export function SystemTasksPage() {
   const [tab, setTab] = useState<TabKey>('runs');
   const [message, setMessage] = useState<string | null>(null);
   const [runningPath, setRunningPath] = useState<string | null>(null);
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
+  const [keyword, setKeyword] = useState('');
+  const [appliedKeyword, setAppliedKeyword] = useState('');
 
-  const { data: runs = [], isLoading, isFetching, refetch } = useQuery({
-    queryKey: ['task-runs'],
-    queryFn: () => api.getTaskRuns(),
+  const { data, isLoading, isFetching, refetch } = useQuery({
+    queryKey: ['task-runs', page, pageSize, appliedKeyword],
+    queryFn: () => api.getTaskRuns({ page, pageSize, q: appliedKeyword || undefined }),
     refetchInterval: (query) => {
-      const list = query.state.data ?? [];
+      const list = query.state.data?.items ?? [];
       return list.some((r) => r.status === 'running') ? 5000 : false;
     },
   });
+  const runs = data?.items ?? [];
 
   const trigger = useMutation({
     mutationFn: (path: string) => api.runScheduledTask(path),
@@ -102,7 +109,7 @@ export function SystemTasksPage() {
             <CardTitle>最近运行记录</CardTitle>
             <div className="flex items-center gap-2">
               <span className="text-sm text-text-sub">
-                {isFetching ? '刷新中…' : `共 ${runs.length} 条`}
+                {isFetching ? '刷新中…' : `共 ${data?.total ?? 0} 条`}
               </span>
               <Button size="sm" variant="outline" onClick={() => void refetch()} disabled={isFetching}>
                 刷新
@@ -110,6 +117,15 @@ export function SystemTasksPage() {
             </div>
           </CardHeader>
           <CardContent>
+            <ListSearchBar
+              keyword={keyword}
+              onKeywordChange={setKeyword}
+              onSearch={() => {
+                setAppliedKeyword(keyword.trim());
+                setPage(1);
+              }}
+              placeholder="任务名 / 状态 / 触发方式"
+            />
             {isLoading ? (
               <p className="text-text-sub">加载中...</p>
             ) : (
@@ -148,6 +164,18 @@ export function SystemTasksPage() {
                   )}
                 </tbody>
               </table>
+            )}
+            {!isLoading && (
+              <ListPagination
+                page={page}
+                pageSize={pageSize}
+                total={data?.total ?? 0}
+                onPageChange={setPage}
+                onPageSizeChange={(next) => {
+                  setPageSize(next);
+                  setPage(1);
+                }}
+              />
             )}
           </CardContent>
         </Card>

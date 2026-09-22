@@ -204,7 +204,7 @@ describe('projectDailyInventory', () => {
     assert.equal(p45.expectedEnding, -300);
   });
 
-  it('projects long-lead confirmed/expected balances and ignores planned in suggestedQty', () => {
+  it('projects long-lead balances; net suggestedQty deducts dated planned, gross does not', () => {
     const lots: DailyLot[] = [
       { supplyClass: 'confirmed', pool: 'overseas', qty: 1000, availableAt: today },
       { supplyClass: 'confirmed', pool: 'in_transit', qty: 500, availableAt: '2026-09-24' },
@@ -228,7 +228,8 @@ describe('projectDailyInventory', () => {
     const p30 = r.points.find((p) => p.horizonDays === 30)!;
     assert.equal(p30.confirmedEnding, 260);
     assert.equal(p30.expectedEnding, 260);
-    assert.equal(r.suggestedQty, 2820);
+    assert.equal(r.suggestedQtyGross, 2820);
+    assert.equal(r.suggestedQty, 2020);
     assert.equal(r.uncoverableByNewPo, true);
     assert.ok(r.safetyBreachDateConfirmed);
     assert.ok(r.stockoutDateConfirmed);
@@ -255,6 +256,7 @@ describe('projectDailyInventory', () => {
     assert.equal(r.stockoutDateExpected, null);
     assert.equal(r.safetyBreachDateConfirmed, null);
     assert.equal(r.suggestedQty, 0);
+    assert.equal(r.suggestedQtyGross, 0);
     assert.equal(r.tooLateForNewPo, false);
     assert.equal(r.uncoverableByNewPo, false);
   });

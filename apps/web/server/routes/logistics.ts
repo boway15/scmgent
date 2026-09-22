@@ -1,4 +1,5 @@
-import { eq, desc, asc, and } from 'drizzle-orm';
+import { eq, desc, asc, and, or, ilike, sql } from 'drizzle-orm';
+import { parseListPagination } from '../lib/list-pagination.js';
 import { Hono } from 'hono';
 import {
   db,
@@ -354,7 +355,20 @@ async function mergeMerchantPaymentSummary<T extends { merchantCode: string }>(
 }
 
 logisticsRoutes.get('/logistics/fob-settlements', async (c) => {
-  const rows = await db
+  const { page, pageSize, offset } = parseListPagination(
+    c.req.query('page')?.trim(),
+    c.req.query('pageSize')?.trim(),
+  );
+  const q = c.req.query('q')?.trim();
+  const where = q
+    ? or(
+        ilike(fobSettlementBatches.batchNo, `%${q}%`),
+        ilike(fobSettlementBatches.name, `%${q}%`),
+        ilike(fobSettlementBatches.settlementPeriod, `%${q}%`),
+      )
+    : undefined;
+
+  const base = db
     .select(fobBatchSelect)
     .from(fobSettlementBatches)
     .leftJoin(users, eq(fobSettlementBatches.createdBy, users.id))
@@ -362,9 +376,25 @@ logisticsRoutes.get('/logistics/fob-settlements', async (c) => {
       fobServiceProviders,
       eq(fobSettlementBatches.serviceProviderId, fobServiceProviders.id),
     )
-    .orderBy(desc(fobSettlementBatches.createdAt))
-    .limit(200);
-  return c.json(rows.map((row) => mapFobBatchRow(row)));
+    .$dynamic();
+
+  const [rows, countRow] = await Promise.all([
+    (where ? base.where(where) : base)
+      .orderBy(desc(fobSettlementBatches.createdAt))
+      .limit(pageSize)
+      .offset(offset),
+    db
+      .select({ count: sql<number>`count(*)::int` })
+      .from(fobSettlementBatches)
+      .where(where),
+  ]);
+
+  return c.json({
+    items: rows.map((row) => mapFobBatchRow(row)),
+    total: countRow[0]?.count ?? 0,
+    page,
+    pageSize,
+  });
 });
 
 logisticsRoutes.get('/logistics/fob-settlements/:id', async (c) => {

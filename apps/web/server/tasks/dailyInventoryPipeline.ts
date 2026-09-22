@@ -2,9 +2,11 @@ import { runReplenishmentForecast } from './replenishmentForecast.js';
 import { runStockAlert } from './stockAlert.js';
 import { runPurchaseFollowUp } from './purchaseFollowUp.js';
 import { runInventoryExceptionScan } from './inventoryExceptionScan.js';
+import { runInventoryDataIssueScan } from './inventoryDataIssueScan.js';
 import { sendFeishuGroupMessage } from '../integrations/feishu.js';
-import { db, reorderSuggestions, stockAlerts, inventoryExceptions } from '@scm/db';
+import { db, reorderSuggestions, stockAlerts, inventoryExceptions, inventoryDataIssues } from '@scm/db';
 import { eq, and, sql } from 'drizzle-orm';
+import { syncInventorySupplyLots } from '../lib/inventory-supply-lot-sync.js';
 
 export type DailyPipelineStep = {
   name: string;
@@ -15,6 +17,36 @@ export type DailyPipelineStep = {
 
 export async function runDailyInventoryPipeline() {
   const steps: DailyPipelineStep[] = [];
+
+  try {
+    const sync = await syncInventorySupplyLots();
+    steps.push({
+      name: 'supply_lot_sync',
+      success: true,
+      summary: `lots=${sync.lotCount}; eligible=${sync.eligibleCount}`,
+    });
+  } catch (err) {
+    steps.push({
+      name: 'supply_lot_sync',
+      success: false,
+      error: err instanceof Error ? err.message : 'failed',
+    });
+  }
+
+  try {
+    const dataIssues = await runInventoryDataIssueScan();
+    steps.push({
+      name: 'inventory_data_issue_scan',
+      success: true,
+      summary: `detected=${dataIssues.detected}; inserted=${dataIssues.inserted}; autoResolved=${dataIssues.autoResolved}`,
+    });
+  } catch (err) {
+    steps.push({
+      name: 'inventory_data_issue_scan',
+      success: false,
+      error: err instanceof Error ? err.message : 'failed',
+    });
+  }
 
   try {
     const forecast = await runReplenishmentForecast();
@@ -93,11 +125,17 @@ export async function runDailyInventoryPipeline() {
     .from(inventoryExceptions)
     .where(sql`${inventoryExceptions.status} IN ('open', 'in_progress')`);
 
+  const [openDataIssues] = await db
+    .select({ count: sql<number>`count(*)::int` })
+    .from(inventoryDataIssues)
+    .where(sql`${inventoryDataIssues.status} IN ('open', 'in_progress')`);
+
   const digest = [
     '【供应链日 digest】',
     `待采纳补货建议：${pendingSuggestions?.count ?? 0}`,
     `未处理缺货预警：${openAlerts?.count ?? 0}`,
     `待处理库存异常：${openExceptions?.count ?? 0}`,
+    `待处理数据问题：${openDataIssues?.count ?? 0}`,
     '',
     '任务执行：',
     ...steps.map((s) => `- ${s.name}: ${s.success ? s.summary : `失败 ${s.error}`}`),

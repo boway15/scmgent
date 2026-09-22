@@ -5,17 +5,24 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { PageHeader } from '@/components/PageHeader';
+import { ListPagination } from '@/components/ListPagination';
+import { ListSearchBar } from '@/components/ListSearchBar';
 
 export function UsersPage() {
   const qc = useQueryClient();
   const [resetUserId, setResetUserId] = useState<string | null>(null);
   const [newPassword, setNewPassword] = useState('');
   const [resetError, setResetError] = useState<string | null>(null);
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
+  const [keyword, setKeyword] = useState('');
+  const [appliedKeyword, setAppliedKeyword] = useState('');
 
-  const { data: users = [], isLoading } = useQuery({
-    queryKey: ['users'],
-    queryFn: api.getUsers,
+  const { data, isLoading } = useQuery({
+    queryKey: ['users', page, pageSize, appliedKeyword],
+    queryFn: () => api.getUsers({ page, pageSize, q: appliedKeyword || undefined }),
   });
+  const users = data?.items ?? [];
   const { data: roles = [] } = useQuery({ queryKey: ['roles'], queryFn: api.getRoles });
 
   const updateUser = useMutation({
@@ -55,6 +62,15 @@ export function UsersPage() {
           <CardTitle>系统用户</CardTitle>
         </CardHeader>
         <CardContent>
+          <ListSearchBar
+            keyword={keyword}
+            onKeywordChange={setKeyword}
+            onSearch={() => {
+              setAppliedKeyword(keyword.trim());
+              setPage(1);
+            }}
+            placeholder="姓名 / 邮箱 / 飞书 ID"
+          />
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-border text-left text-text-sub">
@@ -149,6 +165,16 @@ export function UsersPage() {
               )}
             </tbody>
           </table>
+          <ListPagination
+            page={page}
+            pageSize={pageSize}
+            total={data?.total ?? 0}
+            onPageChange={setPage}
+            onPageSizeChange={(next) => {
+              setPageSize(next);
+              setPage(1);
+            }}
+          />
         </CardContent>
       </Card>
     </div>

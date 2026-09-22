@@ -5,7 +5,8 @@
 # 约定: docs/dify/workflows/product-costing-bom-extract.md
 #
 # 说明:
-# - 输入 pages_json 含 page/page_type/text/image_base64（scm-agent 分批，每批最多约 4 页）
+# - 输入 pages_json 含 page/page_type/text/image_base64（scm-agent 分批，每批 1 页）
+# - 输入 extract_hints：品类规则、外形尺寸、抽屉数、价目标准名、本页任务
 # - 输出 lines：JSON 数组字符串（scm-agent parseWorkflowLines 兼容）
 # - 页图以 data URL 写入 Prompt（非 LLM vision 变量）；导入后请换多模态模型
 
@@ -110,6 +111,12 @@ workflow:
               required: false
               max_length: 200
               options: []
+            - variable: extract_hints
+              label: 拆单提示
+              type: paragraph
+              required: false
+              max_length: 8000
+              options: []
             - variable: pages_json
               label: 分页图文JSON
               type: paragraph
@@ -143,8 +150,9 @@ workflow:
             MAX_B64 = 560000
             MAX_IMAGES = 4
 
-            def main(category: str, pages_json: str) -> dict:
+            def main(category: str, pages_json: str, extract_hints: str) -> dict:
                 cat = (category or "家具").strip() or "家具"
+                hints = (extract_hints or "").strip()[:8000]
                 try:
                     pages = json.loads(pages_json or "[]")
                 except Exception:
@@ -154,12 +162,14 @@ workflow:
 
                 text_parts = []
                 img_parts = []
+                page_types = []
                 for p in pages:
                     if not isinstance(p, dict):
                         continue
                     page = p.get("page") if p.get("page") is not None else p.get("pageNo")
                     page = page if page is not None else "?"
                     page_type = str(p.get("page_type") or p.get("pageType") or "unknown").strip()
+                    page_types.append(f"p{page}:{page_type}")
                     text = (p.get("text") or "").strip()
                     text_parts.append(
                         f"===== 第 {page} 页（page_type={page_type}）文本 =====\n"
@@ -190,9 +200,12 @@ workflow:
                     pages_context = pages_context[:100000] + "\n…(文本截断)"
 
                 images_markdown = "\n\n".join(img_parts)
+                page_types_line = ", ".join(page_types) if page_types else "(未知)"
                 return {
                     "category": cat,
+                    "extract_hints": hints,
                     "page_count": float(len(pages)),
+                    "page_types_line": page_types_line,
                     "pages_context": pages_context,
                     "images_markdown": images_markdown or "(本批无可用页图)",
                 }
@@ -200,8 +213,14 @@ workflow:
             category:
               type: string
               children: null
+            extract_hints:
+              type: string
+              children: null
             page_count:
               type: number
+              children: null
+            page_types_line:
+              type: string
               children: null
             pages_context:
               type: string
@@ -218,6 +237,10 @@ workflow:
               value_selector:
                 - start
                 - pages_json
+            - variable: extract_hints
+              value_selector:
+                - start
+                - extract_hints
 
       - id: extract_bom
         type: custom
@@ -276,14 +299,36 @@ workflow:
                 12. 严禁编造图或文字中未出现的五金件；可漏不可乱
                 13. origin 仅允许 explicit / template
                 14. 只处理 BOM 相关 page_type；render/cover 等效果图页即使传入也不要据此补造结构或五金
+                15. 按本批 page_type 限定抽取范围，不要每页都拆一整张 BOM：
+                    - size：抽取整柜 W×D×H（写入 notes，禁止「产品尺寸/外形尺寸」BOM 行）；尺寸图必须识别抽面开料并输出 material_name=「抽面」（origin=explicit）；spec 必须含图上宽×高（如 521×210 或 521.0×210.0），禁止用柜宽÷列数推算；不要把抽面写成颗粒板/密度板；不要输出抽侧/抽后/抽底
+                    - explosion：只拆物料清单（名称与图上数量/局部尺寸）；前拉条/正面拉条/背拉条/侧板有标注件数则 origin=explicit；抽面若图上有尺寸可列；不要拆抽侧/抽后/抽底开料；滑轨按一抽一套（qty_net=抽屉数，单位套，名称用「抽屉滑轨」）；不要把本页小板开料当成整柜外形；「高度/盖住」不是物料
+                    - cmf：只记录饰面、封边色/厚度；不要补结构件数量；**禁止**输出 material_name 仅为密度板/颗粒板/多层实木板且无 spec、qty_net=0 的行
+                    - bom_list：配件/五金名称与数量；名称对齐价目（抽屉滑轨、防倾倒配件）
+                    - notes：设计规则与默认标准（箱体板厚、抽底板厚、饰面厚度、滑轨、螺丝/喷漆/斜切）；信息写 notes，qty_net=0；**禁止**输出「设计标准-xxx」「设计规则-xxx」假物料行；**禁止**输出纯基材占位行；**禁止**输出带板尺寸/qty>0 的工艺说明行
+                    - render/cover：除非文本含材料关键词，否则不要输出结构或五金
+                16. 用户消息【拆单提示】含第一步已确认的品类/结构/抽屉数/基材/拆料原则。默认基材已在拆单提示中给出，**不要**再输出「密度板/颗粒板」纯占位 BOM 行；必须按已确认原则拆料，不得改品类或另造结构；材料名优先用价目标准名，同义词归一（中纤板=密度板、刨花板=颗粒板、金属防倾倒装置=防倾倒配件、滚珠滑轨=抽屉滑轨）；同一 synonym 只输出一行
+                17. 同一材料跨页不要重复造行。侧板/顶底板/背板/抽侧/抽后/抽底/拉条等结构开料由下游规则计算；你只负责图文明确的部分（抽面尺寸、爆炸图件数、五金数量、表面工艺）
+                18. 板件单位用张/块，不要用米；踢脚/拉条仅在图上有长度时才给 qty；qty_net 不得填小于 0.01 的臆造微量
+                19. 五金「套/个」视为同一计数单位，防倾倒只输出一行
+                20. 工艺说明不得拆成独立板材行：名称含开槽/拉槽/斜切/倒角/铣型且不是标准槽位名（抽面/抽底/抽侧/抽后）时，不要输出 BOM 项；抽面开料只能在 size 页且 material_name 必须是「抽面」
+                21. **本批页型最低产出（有图可读时不得空输出）**：
+                    - 含 size：至少 1 行「抽面」+ 图上宽×高（origin=explicit）；读不清则 confidence=low 并在 notes 说明
+                    - 含 explosion：图上有滑轨/防倾倒/拉手则必须输出；有标注件数的拉条/侧板等必须输出
+                    - 含 bom_list：每个清单项至少 1 行
+                    - 含 notes/cmf：可 0 行 BOM（规则信息已在 notes 页文本中），但**禁止**用纯基材行凑数
+                22. 胡桃/浮雕/木皮/色板是饰面记录，不要输出为可计价板材行（qty_net=0 且无开料尺寸时不要输出）
 
-                输出示例：
-                [{"category":"板材","material_name":"多层实木板","spec":"18mm 1200x600","unit":"张","qty_net":2,"loss_rate":0.08,"source_ref":"p3","confidence":"medium","origin":"explicit","notes":""}]
+                输出示例（size 页 + 爆炸图页各 1 行）：
+                [{"category":"板材","material_name":"抽面","spec":"12mm 521×210","unit":"块","qty_net":9,"loss_rate":0.08,"source_ref":"p4","confidence":"high","origin":"explicit","notes":""},{"category":"五金","material_name":"抽屉滑轨","spec":"2节12寸","unit":"套","qty_net":9,"loss_rate":0.08,"source_ref":"p5","confidence":"high","origin":"explicit","notes":""}]
             - id: user-prompt-costing-bom-001
               role: user
               text: |
                 【品类】{{#prepare_pages.category#}}
                 【本批页数】{{#prepare_pages.page_count#}}
+                【本批页型】{{#prepare_pages.page_types_line#}}
+
+                【拆单提示】
+                {{#prepare_pages.extract_hints#}}
 
                 【分页文本】
                 {{#prepare_pages.pages_context#}}
@@ -292,6 +337,8 @@ workflow:
                 {{#prepare_pages.images_markdown#}}
 
                 请结合文本与图片输出 lines JSON 数组，且每项必须包含 origin。
+                若本批含 size 页，必须输出至少 1 行「抽面」及图上宽×高；若含 explosion/bom_list 页，必须输出图上可见的五金与有标注件数的零件。
+                禁止输出纯基材占位行（密度板/颗粒板且无 spec、qty=0）及「设计标准/设计规则-xxx」假物料行。
 
       - id: parse_lines
         type: custom
@@ -318,6 +365,40 @@ workflow:
 
             ALLOWED = {"high", "medium", "low"}
             ALLOWED_ORIGINS = {"explicit", "template"}
+            PROCESS_MISNAME = re.compile(r"(开槽|拉槽|铣槽|斜切|倒角|铣型)")
+            CANONICAL_PART = re.compile(r"^(抽面|抽侧|抽后|抽底)$")
+            SUBSTRATE_ONLY = re.compile(r"^(密度板|颗粒板|多层实木板|中纤板|mdf)$", re.I)
+            DESIGN_META = re.compile(
+                r"^(设计(?:标准|规则)[-—])|(?:规格标准|结构标准|厚度标准|板厚标准)$",
+                re.I,
+            )
+            SIZE_ROW = re.compile(r"产品尺寸|外形尺寸|整体尺寸")
+            DECOR_FINISH = re.compile(r"胡桃|浮雕|木皮|饰面|色板")
+
+            def _is_process_misnamed_row(name: str) -> bool:
+                text = (name or "").strip()
+                if not text:
+                    return False
+                if CANONICAL_PART.match(text):
+                    return False
+                return bool(PROCESS_MISNAME.search(text))
+
+            def _should_drop_row(name: str, spec: str, qty: float) -> bool:
+                text = (name or "").strip()
+                spec_text = (spec or "").strip()
+                if not text:
+                    return True
+                if SIZE_ROW.search(text):
+                    return True
+                if DESIGN_META.search(text):
+                    return True
+                if SUBSTRATE_ONLY.match(text) and not spec_text and qty <= 0:
+                    return True
+                if DECOR_FINISH.search(text) and qty <= 0 and not re.search(
+                    r"\d+\s*[x×]\s*\d+", spec_text, re.I
+                ):
+                    return True
+                return False
 
             def _extract_array(text: str):
                 if not text:
@@ -358,6 +439,8 @@ workflow:
                     unit = str(item.get("unit") or "").strip()
                     if not name or not unit:
                         continue
+                    if _is_process_misnamed_row(name):
+                        continue
                     conf = str(item.get("confidence") or "medium").strip().lower()
                     if conf not in ALLOWED:
                         conf = "low"
@@ -369,6 +452,9 @@ workflow:
                         qty = 0.0
                     if qty < 0:
                         continue
+                    spec = str(item.get("spec") or "").strip()
+                    if _should_drop_row(name, spec, qty):
+                        continue
                     loss = _num(item.get("loss_rate", item.get("lossRate")), 0.08)
                     if loss < 0:
                         loss = 0.0
@@ -378,7 +464,7 @@ workflow:
                         {
                             "category": str(item.get("category") or "未分类").strip() or "未分类",
                             "material_name": name,
-                            "spec": str(item.get("spec") or "").strip(),
+                            "spec": spec,
                             "unit": unit,
                             "qty_net": qty,
                             "loss_rate": loss,

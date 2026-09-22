@@ -31,7 +31,7 @@ const SECTIONS: HelpSection[] = [
     body: (
       <ol className="list-decimal space-y-2 pl-5">
         <li>
-          <Link to="/inventory/overview?import=1" className="text-primary hover:underline">库存总览</Link>
+          <Link to="/inventory/overview?import=1" className="text-primary hover:underline">库存周转</Link>
           导入库存周转 xlsx，再在{' '}
           <Link to="/data/sales?import=1" className="text-primary hover:underline">销量历史</Link>
           导入日销量宽表 CSV；样例见 <code className="rounded bg-muted px-1">docs/samples/import-fob/</code> 与{' '}
@@ -42,7 +42,7 @@ const SECTIONS: HelpSection[] = [
           ：核对 SPU/SKU、商家与补货亮灯。
         </li>
         <li>
-          <Link to="/inventory/overview" className="text-primary hover:underline">库存总览</Link>
+          <Link to="/inventory/overview" className="text-primary hover:underline">库存周转</Link>
           ：查看各仓有效库存、ROP 与亮灯状态。
         </li>
         <li>
@@ -153,7 +153,7 @@ const SECTIONS: HelpSection[] = [
           </tbody>
         </table>
         <p className="mt-3 text-text-sub">
-          在 <Link to="/inventory/overview" className="text-primary hover:underline">库存总览</Link> 可查看「可补 / 不补」；在商品主数据 SKU 列表可修改亮灯。
+          在 <Link to="/inventory/overview" className="text-primary hover:underline">库存周转</Link> 可查看「可补 / 不补」；在商品主数据 SKU 列表可修改亮灯。
         </p>
       </>
     ),
@@ -208,7 +208,7 @@ const SECTIONS: HelpSection[] = [
             ：SKU / 供应商批量导入
           </li>
           <li>
-            <Link to="/inventory/overview?import=1" className="text-primary hover:underline">库存总览</Link>
+            <Link to="/inventory/overview?import=1" className="text-primary hover:underline">库存周转</Link>
             ：库存周转 xlsx（大表后台导入）
           </li>
           <li>
@@ -248,7 +248,7 @@ const SECTIONS: HelpSection[] = [
     body: (
       <p>
         未配置 Dify 时使用<strong>本地 FAQ</strong>，可解答安全库存、ROP、亮灯机制、PMC 流程等。
-        在库存总览点击「问 AI」可携带 SKU 上下文。
+        在库存周转点击「问 AI」可携带 SKU 上下文。
         配置 <code className="rounded bg-muted px-1">DIFY_API_KEY_KNOWLEDGE</code> 后切换 Dify RAG；
         补货/预警任务可分别配置 <code className="rounded bg-muted px-1">DIFY_API_KEY_REPLENISHMENT</code>、
         <code className="rounded bg-muted px-1">DIFY_API_KEY_ALERT</code> 增强文案。详见帮助文档或{' '}

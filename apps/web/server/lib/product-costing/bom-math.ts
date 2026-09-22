@@ -1,6 +1,6 @@
 import type { BomConfidence, BomOrigin, CostingBomLineDraft } from './types.js';
+import { inferBomLineCategory } from './category-rules.js';
 
-const CATEGORIES = new Set(['板材', '五金', '表面工艺', '包装', '其他']);
 const CONFIDENCES = new Set<BomConfidence>(['high', 'medium', 'low']);
 const ORIGINS = new Set<BomOrigin>(['explicit', 'template']);
 
@@ -27,10 +27,10 @@ export function normalizeAiLine(raw: unknown): CostingBomLineDraft | null {
     : 'low';
 
   return {
-    category:
-      typeof input.category === 'string' && CATEGORIES.has(input.category)
-        ? input.category
-        : '其他',
+    category: inferBomLineCategory(
+      typeof input.material_name === 'string' ? input.material_name : '',
+      typeof input.category === 'string' ? input.category : '',
+    ),
     materialName: typeof input.material_name === 'string' ? input.material_name : '',
     spec: typeof input.spec === 'string' ? input.spec : '',
     unit: typeof input.unit === 'string' ? input.unit : '',

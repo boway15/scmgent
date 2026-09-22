@@ -85,6 +85,16 @@ export function isCostingBomWorkflowEnabled(): boolean {
   return isDifyKeyConfigured('DIFY_API_KEY_COSTING_BOM');
 }
 
+export function costingFactsWorkflowKey(): 'DIFY_API_KEY_COSTING_FACTS' | 'DIFY_API_KEY_COSTING_BOM' | null {
+  if (isDifyKeyConfigured('DIFY_API_KEY_COSTING_FACTS')) return 'DIFY_API_KEY_COSTING_FACTS';
+  if (isDifyKeyConfigured('DIFY_API_KEY_COSTING_BOM')) return 'DIFY_API_KEY_COSTING_BOM';
+  return null;
+}
+
+export function isCostingFactsWorkflowEnabled(): boolean {
+  return costingFactsWorkflowKey() !== null;
+}
+
 export function getDifyConfigSummary() {
   return {
     mode: isDifyEnabled() ? ('dify' as const) : ('local' as const),

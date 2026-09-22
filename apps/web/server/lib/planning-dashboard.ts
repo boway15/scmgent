@@ -10,6 +10,8 @@ import {
 } from '@scm/db';
 import { and, eq, inArray, isNotNull, isNull, notInArray, sql } from 'drizzle-orm';
 import { calcMilestoneDelayDays } from './shipment-delay.js';
+import { countOpenDataIssues } from './inventory-data-issue-store.js';
+import { countOpenUnallocatedLots } from './inventory-dest-allocation-store.js';
 
 export type PlanningDashboard = {
   skuActiveCount: number;
@@ -250,7 +252,7 @@ export async function getPlanningDashboard(today: Date = new Date()): Promise<Pl
 
   const healthRows = Array.from(healthResult as unknown as HealthCountRow[]);
   const health = healthRows[0];
-  return aggregatePlanningDashboard(
+  const dashboard = aggregatePlanningDashboard(
     {
       skuActiveCount: firstCount(activeSkuRows),
       healthRedCount: Number(health?.healthRedCount ?? 0),
@@ -271,4 +273,9 @@ export async function getPlanningDashboard(today: Date = new Date()): Promise<Pl
     },
     today,
   );
+  return {
+    ...dashboard,
+    openDataIssueCount: await countOpenDataIssues(),
+    openUnallocatedLotCount: await countOpenUnallocatedLots(),
+  };
 }

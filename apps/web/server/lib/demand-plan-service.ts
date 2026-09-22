@@ -38,6 +38,7 @@ import {
   planningRecentWindowEnd,
 } from './planning-calendar.js';
 import { DEFAULT_SAFETY_STOCK_DAYS } from './replenishment-coverage.js';
+import { freezeHorizonMonths, isDemandPeriodFrozen } from './demand-plan-freeze.js';
 import { loadDailySalesBySkuIdsInRange } from './sales-history-query.js';
 
 export type DemandPlanVersionStatus = 'draft' | 'pilot_published' | 'archived';
@@ -655,15 +656,43 @@ export async function updateDemandPlanMonth(params: {
   monthId: string;
   manualDailyAvg: number | null;
   adjustReason: string | null;
+  totalLeadDays?: number;
 }) {
   assertManualAdjust(params.manualDailyAvg, params.adjustReason);
   const [version] = await db
-    .select({ status: demandPlanVersions.status })
+    .select({
+      status: demandPlanVersions.status,
+      startMonth: demandPlanVersions.startMonth,
+      horizonMonths: demandPlanVersions.horizonMonths,
+    })
     .from(demandPlanVersions)
     .where(eq(demandPlanVersions.id, params.versionId))
     .limit(1);
   if (!version) httpError('需求计划版本不存在', 404);
   if (version.status !== 'draft') httpError('仅草稿版本可修改月度需求', 400);
+
+  const [monthRow] = await db
+    .select({ period: demandPlanMonthly.period })
+    .from(demandPlanMonthly)
+    .where(
+      and(eq(demandPlanMonthly.id, params.monthId), eq(demandPlanMonthly.versionId, params.versionId)),
+    )
+    .limit(1);
+  if (!monthRow) httpError('需求计划月度行不存在', 404);
+
+  const freezeMonths = freezeHorizonMonths(
+    params.totalLeadDays ?? 90,
+    version.horizonMonths ?? 12,
+  );
+  if (
+    isDemandPeriodFrozen({
+      period: monthRow.period,
+      startMonth: version.startMonth,
+      freezeMonths,
+    })
+  ) {
+    httpError(`提前期内月份 ${monthRow.period} 已冻结，不可修改`, 400);
+  }
 
   const patch: Partial<typeof demandPlanMonthly.$inferInsert> & { updatedAt: Date } = {
     manualDailyAvg: toNumeric(params.manualDailyAvg),

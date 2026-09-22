@@ -25,6 +25,11 @@ import {
   type ShareParseResult,
 } from '../lib/inventory-share-allocation.js';
 import { readTurnoverSnapshot } from '../lib/inventory-turnover-snapshot.js';
+import {
+  calcConfirmedCoverageDays,
+  calcTimelineDecisionHealth,
+  needsReplenishmentByHealth,
+} from '../lib/inventory-light.js';
 
 export async function runStockAlert() {
   try {
@@ -34,8 +39,6 @@ export async function runStockAlert() {
   }
 
   const healthRows = await computeAllInventoryHealth();
-  await saveHealthSnapshots(healthRows);
-  await syncReplenishLightFromHealth(healthRows);
 
   const skuIds = [...new Set(healthRows.map((row) => row.skuId))];
   const encodingMetaBySku = new Map<string, unknown>();
@@ -58,6 +61,72 @@ export async function runStockAlert() {
   const nativeQtyByKey = new Map<string, number>();
   const usPoolCache = new Map<string, Awaited<ReturnType<typeof getRegionPoolSnapshot>>>();
   const usRopCache = new Map<string, number>();
+  const timelineByKey = new Map<
+    string,
+    Awaited<ReturnType<typeof buildSkuWarehouseTimeline>>['timeline']
+  >();
+  const confirmedCoverageByKey = new Map<string, number>();
+
+  for (const row of healthRows) {
+    const coverageHealthStatus = row.healthStatus;
+    row.metrics.coverageHealthStatus = coverageHealthStatus;
+    if (coverageHealthStatus === 'gray') continue;
+
+    try {
+      const safetyStockQty = (row.metrics.safetyStockQty as number) ?? 0;
+      const share = shareBySku.get(row.skuId) ?? parseSharesFromSnapshot({});
+      const built = await buildSkuWarehouseTimeline({
+        skuId: row.skuId,
+        warehouseCode: row.warehouseCode,
+        avgDaily: row.avgDaily,
+        totalLeadDays: row.totalLeadDays,
+        safetyStockDays: row.coverage.safetyStockDays,
+        safetyStockQty,
+        share,
+      });
+      const day0 = built.timeline.points.find((p) => p.horizonDays === 0);
+      const confirmedCoverageDays = calcConfirmedCoverageDays({
+        today: built.timeline.today,
+        stockoutDateConfirmed: built.timeline.stockoutDateConfirmed,
+        confirmedEndingToday: day0?.confirmedEnding ?? 0,
+        avgDaily: row.avgDaily,
+      });
+      const decisionHealth = calcTimelineDecisionHealth({
+        today: built.timeline.today,
+        totalLeadDays: row.totalLeadDays,
+        safetyStockDays: row.coverage.safetyStockDays,
+        overstockThresholdDays:
+          row.coverage.overstockThresholdDays ?? DEFAULT_OVERSTOCK_THRESHOLD_DAYS,
+        suggestedQty: built.suggestedQty,
+        uncoverableByNewPo: built.timeline.uncoverableByNewPo,
+        stockoutDateConfirmed: built.timeline.stockoutDateConfirmed,
+        safetyBreachDateConfirmed: built.timeline.safetyBreachDateConfirmed,
+        confirmedCoverageDays,
+        lifecycle: row.lifecycle,
+        effectiveQty: row.effectiveQty,
+        avgDaily: row.avgDaily,
+      });
+      row.healthStatus = decisionHealth;
+      row.needsReplenishment = needsReplenishmentByHealth(decisionHealth);
+      row.suggestedQty = built.suggestedQty;
+      row.coverageDays = Number.isFinite(confirmedCoverageDays)
+        ? confirmedCoverageDays
+        : row.coverageDays;
+      row.metrics.confirmedCoverageDays = confirmedCoverageDays;
+      row.metrics.timelineStockoutDate = built.timeline.stockoutDateConfirmed;
+      const key = `${row.skuId}::${row.warehouseCode}`;
+      timelineByKey.set(key, built.timeline);
+      confirmedCoverageByKey.set(key, confirmedCoverageDays);
+    } catch (err) {
+      console.warn(
+        `[stockAlert] timeline decision skipped ${row.skuCode}/${row.warehouseCode}:`,
+        err,
+      );
+    }
+  }
+
+  await saveHealthSnapshots(healthRows);
+  await syncReplenishLightFromHealth(healthRows);
 
   const alerts: Array<{ skuCode: string; type: string; currentQty: number; threshold: number }> =
     [];
@@ -140,25 +209,40 @@ export async function runStockAlert() {
       }
     }
 
-    // 时间轴 horizon 预警
+    // 时间轴 horizon 预警（覆盖不足/超储用确定线折算天数）
     try {
-      const safetyStockQty = (row.metrics.safetyStockQty as number) ?? 0;
-      const share = shareBySku.get(row.skuId) ?? parseSharesFromSnapshot({});
-      const { timeline } = await buildSkuWarehouseTimeline({
-        skuId: row.skuId,
-        warehouseCode: row.warehouseCode,
-        avgDaily: row.avgDaily,
-        totalLeadDays: row.totalLeadDays,
-        safetyStockDays: row.coverage.safetyStockDays,
-        safetyStockQty,
-        share,
-      });
+      const key = `${row.skuId}::${row.warehouseCode}`;
+      let timeline = timelineByKey.get(key);
+      if (!timeline) {
+        const safetyStockQty = (row.metrics.safetyStockQty as number) ?? 0;
+        const share = shareBySku.get(row.skuId) ?? parseSharesFromSnapshot({});
+        const built = await buildSkuWarehouseTimeline({
+          skuId: row.skuId,
+          warehouseCode: row.warehouseCode,
+          avgDaily: row.avgDaily,
+          totalLeadDays: row.totalLeadDays,
+          safetyStockDays: row.coverage.safetyStockDays,
+          safetyStockQty,
+          share,
+        });
+        timeline = built.timeline;
+        timelineByKey.set(key, timeline);
+      }
+      const coverageDays =
+        confirmedCoverageByKey.get(key) ??
+        calcConfirmedCoverageDays({
+          today: timeline.today,
+          stockoutDateConfirmed: timeline.stockoutDateConfirmed,
+          confirmedEndingToday:
+            timeline.points.find((p) => p.horizonDays === 0)?.confirmedEnding ?? 0,
+          avgDaily: row.avgDaily,
+        });
       const derived = deriveHorizonAlerts({
         points: timeline.points.map((p) => ({
           horizonDays: p.horizonDays,
           projectedBalance: p.confirmedEnding,
         })),
-        coverageDays: row.coverageDays,
+        coverageDays,
         totalLeadDays: row.totalLeadDays,
         overstockThresholdDays:
           row.coverage.overstockThresholdDays ?? DEFAULT_OVERSTOCK_THRESHOLD_DAYS,
@@ -174,6 +258,7 @@ export async function runStockAlert() {
         const nativeSnap = await getLatestInventorySnapshot(row.skuId, row.warehouseCode);
         nativeQtyByKey.set(nativeKey, nativeSnap.qtyAvailable);
       }
+      const share = shareBySku.get(row.skuId) ?? parseSharesFromSnapshot({});
       const skipConfirmed = buildHorizonSkipAllocation({
         share,
         planningWarehouse: row.warehouseCode,
@@ -221,7 +306,7 @@ export async function runStockAlert() {
       }
     } catch (err) {
       console.warn(
-        `[stockAlert] horizon skipped for ${row.skuCode}/${row.warehouseCode}:`,
+        `[stockAlert] horizon skipped ${row.skuCode}/${row.warehouseCode}:`,
         err,
       );
     }

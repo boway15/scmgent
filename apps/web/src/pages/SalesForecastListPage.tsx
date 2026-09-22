@@ -11,7 +11,7 @@ import { ForecastVersionStatusBadge } from '@/components/ForecastVersionStatusBa
 import { ProjectGroupSearchSelect } from '@/components/ProjectGroupSearchSelect';
 import {
   buildForecastStartMonthOptions,
-  FORECAST_GENERATION_MONTH_OPTIONS,
+  FORECAST_HORIZON_MONTHS,
   formatForecastStartMonth,
 } from '@/lib/forecast-horizon-meta';
 import {
@@ -37,7 +37,6 @@ export function SalesForecastListPage() {
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
   const [generationProjectGroup, setGenerationProjectGroup] = useState('');
   const [generationSkuCode, setGenerationSkuCode] = useState('');
-  const [generationMonthCount, setGenerationMonthCount] = useState(6);
   const [generationStartMonth, setGenerationStartMonth] = useState(() => formatForecastStartMonth());
   const startMonthOptions = useMemo(() => buildForecastStartMonthOptions(), []);
   const [baselineProgress, setBaselineProgress] = useState<string | null>(null);
@@ -108,7 +107,7 @@ export function SalesForecastListPage() {
       const initial = await api.generateSalesForecastBaseline({
         projectGroup: generationProjectGroup.trim() || undefined,
         skuCode: generationSkuCode.trim() || undefined,
-        monthCount: generationMonthCount,
+        monthCount: FORECAST_HORIZON_MONTHS,
         startMonth: generationStartMonth,
       });
 
@@ -362,23 +361,7 @@ export function SalesForecastListPage() {
                     ))}
                   </select>
                 </label>
-                <label className="space-y-1 text-sm">
-                  <span className="text-text-sub">预测月数</span>
-                  <select
-                    className="flex h-9 rounded-md border border-border bg-card px-2 text-sm"
-                    value={generationMonthCount}
-                    onChange={(e) => {
-                      setGenerationMonthCount(Number(e.target.value));
-                      generateBaseline.reset();
-                    }}
-                  >
-                    {[...FORECAST_GENERATION_MONTH_OPTIONS].map((count) => (
-                      <option key={count} value={count}>
-                        {count} 个月
-                      </option>
-                    ))}
-                  </select>
-                </label>
+                <span className="text-sm text-text-sub">预测周期：固定 6 个月</span>
                 <Button
                   disabled={generateBaseline.isPending}
                   onClick={() => {
@@ -518,7 +501,11 @@ function VersionRow({
       </td>
       <td className="p-2 font-numeric">
         <span>{version.startMonth ?? '—'}</span>
-        <span className="text-text-sub"> · {version.stats.monthCount || '-'} 月</span>
+        <span className="text-text-sub">
+          {' · '}
+          {version.stats.monthCount || '-'} 月
+          {version.stats.monthCount && version.stats.monthCount !== 6 ? '（历史周期）' : ''}
+        </span>
       </td>
       <td className="p-2 font-numeric">
         {version.stats.skuCount.toLocaleString()} / {version.stats.forecastRowCount.toLocaleString()}

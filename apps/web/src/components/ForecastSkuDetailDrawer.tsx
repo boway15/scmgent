@@ -11,7 +11,7 @@ import {
 } from '@/lib/forecast-labels';
 import {
   DRAWER_HISTORY_MONTH_COUNT,
-  MAX_FORECAST_MONTH_COUNT,
+  FORECAST_HORIZON_MONTHS,
   buildForwardMonthLabels,
   resolveHorizonPlatformScope,
 } from '@/lib/forecast-horizon-meta';
@@ -108,7 +108,7 @@ type Props = {
   forecastMonthCount?: number;
 };
 
-const DEFAULT_MONTH_COUNT = MAX_FORECAST_MONTH_COUNT;
+const DEFAULT_MONTH_COUNT = FORECAST_HORIZON_MONTHS;
 
 const formatFactor = (value: number | null | undefined) =>
   value == null || !Number.isFinite(value) ? '-' : value.toFixed(2);
@@ -374,7 +374,7 @@ export function ForecastSkuDetailDrawer({
   );
 
   const horizonMonthCount = Math.min(
-    MAX_FORECAST_MONTH_COUNT,
+    FORECAST_HORIZON_MONTHS,
     forecastMonthCount ??
       detail?.versionSummary?.monthCount ??
       row?.months.length ??

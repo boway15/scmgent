@@ -12,6 +12,7 @@ import {
 import {
   DRAWER_HISTORY_MONTH_COUNT,
   FORECAST_HORIZON_MONTHS,
+  MAX_FORECAST_MONTH_COUNT,
   buildForwardMonthLabels,
   resolveHorizonPlatformScope,
 } from '@/lib/forecast-horizon-meta';
@@ -374,7 +375,7 @@ export function ForecastSkuDetailDrawer({
   );
 
   const horizonMonthCount = Math.min(
-    FORECAST_HORIZON_MONTHS,
+    MAX_FORECAST_MONTH_COUNT,
     forecastMonthCount ??
       detail?.versionSummary?.monthCount ??
       row?.months.length ??

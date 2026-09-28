@@ -54,7 +54,7 @@ export function PmcDetailPage() {
 
   if (isLoading || !plan) return <p className="text-text-sub">加载中...</p>;
 
-  const canReceive = plan.status === 'confirmed' || plan.status === 'in_progress';
+  const canReceive = false;
 
   const handleExport = async () => {
     setExporting(true);
@@ -86,11 +86,6 @@ export function PmcDetailPage() {
           >
             导出 XLSX
           </Button>
-          {plan.status === 'draft' && (
-            <Button onClick={() => updateStatus.mutate('confirmed')} disabled={updateStatus.isPending}>
-              确认计划并生成采购跟单
-            </Button>
-          )}
         </div>
       </PageHeader>
       <Card>
@@ -103,7 +98,7 @@ export function PmcDetailPage() {
             {STATUS_LABEL[plan.status] ?? plan.status}
           </p>
           <p className="text-sm text-text-sub">
-            确认前可先导出 CSV 发给商家；确认后使用「确认到货」回写库存，不再手工改已完成数量。
+            历史计划只读。下单与到货请在迅捷操作；进度见飞书采购跟单镜像。
           </p>
         </CardHeader>
         <CardContent>
@@ -171,15 +166,6 @@ export function PmcDetailPage() {
               })}
             </tbody>
           </table>
-          {plan.status === 'draft' && (
-            <p className="mt-4 text-sm text-text-sub">
-              确认后将按各行数量生成采购跟单，可在{' '}
-              <Link to="/pmc/tracking" className="text-primary hover:underline">
-                采购跟单
-              </Link>{' '}
-              中查看内部履约记录。
-            </p>
-          )}
           {receiveItem.isError && (
             <p className="mt-4 text-sm text-destructive">{(receiveItem.error as Error).message}</p>
           )}

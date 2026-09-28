@@ -3,8 +3,7 @@ import {
   db,
   inventoryRecords,
   inventorySupplyLots,
-  purchaseDrafts,
-  shipments,
+  procurementListRows,
   skus,
   warehouses,
 } from '@scm/db';
@@ -19,16 +18,18 @@ import {
   type BuiltSupplyLot,
   type SkuAllocationContext,
 } from './inventory-supply-lots.js';
-import { applyConfirmedDestinationsToLots } from './inventory-dest-allocation.js';
-import { loadConfirmedDestAllocations } from './inventory-dest-allocation-store.js';
 import { readTurnoverSnapshot } from './inventory-turnover-snapshot.js';
-import { openDraftQty } from './inventory-position.js';
 import { buildCsv } from './csv-export.js';
+import {
+  buildDestWarehouseByRequestNo,
+  createWarehouseLabelResolver,
+  extractSkuCodeFromMirrorRow,
+  feishuFollowUpRowsToDraftInputs,
+} from './procurement-feishu-supply.js';
 import {
   DEFAULT_INBOUND_BUFFER_DAYS,
   DEFAULT_SHIPPING_LEAD_BY_WAREHOUSE,
 } from './replenishment-coverage.js';
-import { resolveLeadTimeForSkuWarehouse } from './lead-time-resolver.js';
 
 function todayIso(): string {
   return new Date().toISOString().slice(0, 10);
@@ -54,6 +55,7 @@ async function loadLatestPhysicalSnapshots(): Promise<
       recorded_date::text AS "recordedDate"
     FROM ${inventoryRecords}
     WHERE warehouse <> ${IN_PRODUCTION_WAREHOUSE}
+      AND source = 'import'
     ORDER BY sku_id, warehouse, recorded_date DESC, created_at DESC
   `);
   return Array.from(rows as unknown as Array<{
@@ -74,6 +76,7 @@ async function loadLatestInProduction(): Promise<Array<{ skuId: string; qty: num
     FROM ${inventoryRecords}
     WHERE warehouse = ${IN_PRODUCTION_WAREHOUSE}
       AND COALESCE(qty_in_production, 0) > 0
+      AND source = 'import'
     ORDER BY sku_id, recorded_date DESC, created_at DESC
   `);
   return Array.from(rows as unknown as Array<{ skuId: string; qty: number }>);
@@ -122,9 +125,67 @@ export function resolveDraftLeadWarehouse(
   return draftWarehouseCode ?? null;
 }
 
+async function loadFeishuMirrorDraftInputs(): Promise<
+  ReturnType<typeof feishuFollowUpRowsToDraftInputs>
+> {
+  const [bulkRows, followUpRows, whRows] = await Promise.all([
+    db
+      .select({ rowData: procurementListRows.rowData })
+      .from(procurementListRows)
+      .where(eq(procurementListRows.listType, 'bulk_stock_request')),
+    db
+      .select({
+        rowIndex: procurementListRows.rowIndex,
+        bitableRecordId: procurementListRows.bitableRecordId,
+        rowData: procurementListRows.rowData,
+      })
+      .from(procurementListRows)
+      .where(eq(procurementListRows.listType, 'purchase_follow_up')),
+    db
+      .select({ code: warehouses.code, name: warehouses.name })
+      .from(warehouses)
+      .where(eq(warehouses.isActive, true)),
+  ]);
+
+  const warehouseNames: Record<string, string> = {};
+  for (const wh of whRows) {
+    if (wh.name) warehouseNames[wh.code] = wh.name;
+  }
+  const resolveWarehouse = createWarehouseLabelResolver({
+    warehouseCodes: whRows.map((wh) => wh.code),
+    warehouseNames,
+  });
+  const destByRequestNo = buildDestWarehouseByRequestNo(bulkRows, resolveWarehouse);
+
+  const skuCodes = new Set<string>();
+  for (const row of followUpRows) {
+    const code = extractSkuCodeFromMirrorRow(row.rowData ?? {});
+    if (code) skuCodes.add(code);
+  }
+  if (skuCodes.size === 0) return [];
+
+  const skuRows = await db
+    .select({ id: skus.id, code: skus.code })
+    .from(skus)
+    .where(inArray(skus.code, [...skuCodes]));
+
+  const skuCodeToId = new Map(skuRows.map((row) => [row.code, row.id]));
+
+  return feishuFollowUpRowsToDraftInputs({
+    rows: followUpRows.map((row) => ({
+      rowIndex: row.rowIndex,
+      bitableRecordId: row.bitableRecordId,
+      rowData: row.rowData ?? {},
+    })),
+    skuCodeToId,
+    destByRequestNo,
+    resolveWarehouse,
+  });
+}
+
 /**
  * 全量重建 open 批次（保留 manual 行）。
- * 飞书拉取后应调用；未知日期批次仍落库但不进时间轴。
+ * 在途/在产单据来自飞书采购镜像；不再读取本系统 purchase_drafts / shipments。
  */
 export async function syncInventorySupplyLots(params?: {
   today?: string;
@@ -132,90 +193,24 @@ export async function syncInventorySupplyLots(params?: {
   const today = params?.today ?? todayIso();
   const snapshots = await loadLatestPhysicalSnapshots();
   const inProduction = await loadLatestInProduction();
-
-  const openDrafts = await db
-    .select({
-      draftId: purchaseDrafts.id,
-      skuId: purchaseDrafts.skuId,
-      status: purchaseDrafts.status,
-      qty: purchaseDrafts.qty,
-      receivedQty: purchaseDrafts.receivedQty,
-      shipReadyAt: purchaseDrafts.plannedPickupDate,
-      plannedProductionDoneDate: purchaseDrafts.plannedProductionDoneDate,
-      etaAvailable: purchaseDrafts.etaAvailable,
-      merchantCode: skus.merchantCode,
-      skuLeadTimeDays: skus.leadTimeDays,
-    })
-    .from(purchaseDrafts)
-    .innerJoin(skus, eq(purchaseDrafts.skuId, skus.id))
-    .where(notInArray(purchaseDrafts.status, ['received', 'cancelled']));
-
-  const shipmentRows = await db
-    .select({
-      shipmentId: shipments.id,
-      skuId: shipments.skuId,
-      qty: shipments.qty,
-      etaAvailable: shipments.etaAvailable,
-      status: shipments.status,
-      destinationWarehouseCode: shipments.destinationWarehouseCode,
-    })
-    .from(shipments)
-    .where(notInArray(shipments.status, ['available', 'cancelled']));
-
-  const remainingBySkuWh = new Map<string, number>();
-  async function remainingLogistics(skuId: string, warehouseCode: string, merchantCode?: string | null, skuLead?: number | null) {
-    const key = `${skuId}::${warehouseCode}`;
-    if (remainingBySkuWh.has(key)) return remainingBySkuWh.get(key)!;
-    const lead = await resolveLeadTimeForSkuWarehouse({
-      skuId,
-      warehouseCode,
-      merchantCode,
-      skuLeadTimeDays: skuLead,
-    });
-    const days =
-      lead.bookingDays + lead.transitDays + lead.customsDays + lead.inboundDays;
-    remainingBySkuWh.set(key, days);
-    return days;
-  }
+  const draftInputs = await loadFeishuMirrorDraftInputs();
 
   const allocationBySku = await loadAllocationBySkuIds([
     ...new Set([
       ...snapshots.map((row) => row.skuId),
       ...inProduction.map((row) => row.skuId),
-      ...openDrafts.map((row) => row.skuId),
+      ...draftInputs.map((row) => row.skuId),
     ]),
   ]);
 
-  const draftInputs = [];
-  for (const d of openDrafts) {
-    const openQty = openDraftQty(d.qty, d.receivedQty);
-    if (openQty <= 0) continue;
-    const remaining = 0;
-    draftInputs.push({
-      draftId: d.draftId,
-      skuId: d.skuId,
-      warehouseCode: null,
-      status: d.status,
-      openQty,
-      shipReadyAt: d.shipReadyAt,
-      plannedProductionDoneDate: d.plannedProductionDoneDate,
-      etaAvailable: d.etaAvailable,
-      remainingLogisticsDays: remaining,
-    });
-  }
-
-  const shipmentInputs = shipmentRows
-    .map((s) => ({
-      shipmentId: s.shipmentId,
-      skuId: s.skuId,
-      warehouseCode: s.destinationWarehouseCode ?? null,
-      qty: s.qty,
-      etaAvailable: s.etaAvailable,
-      status: s.status,
-    }))
-    .filter((s) => s.warehouseCode);
-
-  // 无目的仓的发运跳过批次同步，待补全 destination_warehouse_code
+  const shipmentInputs: Array<{
+    shipmentId: string;
+    skuId: string;
+    warehouseCode: string | null;
+    qty: number;
+    etaAvailable: string | null;
+    status: string;
+  }> = [];
   const defaultTransit: Record<string, number> = { ...DEFAULT_SHIPPING_LEAD_BY_WAREHOUSE };
   const whRows = await db
     .select({
@@ -248,9 +243,7 @@ export async function syncInventorySupplyLots(params?: {
     inProduction,
   });
 
-  const allocations = await loadConfirmedDestAllocations();
-  const allocatedLots = applyConfirmedDestinationsToLots(lots, allocations);
-  const eligibleLots = allocatedLots.filter((lot) =>
+  const eligibleLots = lots.filter((lot) =>
     isLotEligibleForTimeline({
       pool: lot.pool,
       availableAt: lot.availableAt,
@@ -260,8 +253,8 @@ export async function syncInventorySupplyLots(params?: {
     }),
   );
 
-  await persistBuiltLots(allocatedLots);
-  return { lotCount: allocatedLots.length, eligibleCount: eligibleLots.length };
+  await persistBuiltLots(lots);
+  return { lotCount: lots.length, eligibleCount: eligibleLots.length };
 }
 
 async function persistBuiltLots(lots: BuiltSupplyLot[]) {

@@ -162,7 +162,7 @@ export function buildPlanningDashboardCards(
 
 const WORKBENCH_LINKS = [
   { label: '数据问题', description: '无期批次、未分仓、占比偏离工单', href: '/inventory/data-issues' },
-  { label: '未定仓供应', description: 'OVERSEAS 批次确认目的仓', href: '/inventory/unallocated' },
+  { label: '未定仓供应', description: 'OVERSEAS 批次只读清单', href: '/inventory/unallocated' },
   { label: '库存三池', description: '本地 / 在途 / 海外批次与可出货日', href: '/inventory/pools' },
   { label: '补货建议', description: '审核并采纳待处理建议', href: '/pmc/suggestions' },
   { label: '采购跟单', description: '处理预计可用日期延期', href: '/pmc/tracking' },

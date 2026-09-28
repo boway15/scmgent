@@ -2,6 +2,7 @@ import { eq, desc, and, inArray } from 'drizzle-orm';
 import { Hono } from 'hono';
 import { db, inventoryRecords, skus, safetyStockConfig, warehouses, channelWarehousePrefs, merchants, salesForecastMonthly } from '@scm/db';
 import { getCurrentUser } from '../lib/auth-context.js';
+import { analysisOnlyResponse } from '../lib/analysis-only.js';
 import { requireMenu } from '../lib/rbac.js';
 import { buildCsv, csvAttachment } from '../lib/csv-export.js';
 import { IN_PRODUCTION_WAREHOUSE } from '../lib/inventory-constants.js';
@@ -263,54 +264,9 @@ inventoryRoutes.get('/inventory/records', async (c) => {
   return c.json(rows);
 });
 
-inventoryRoutes.post('/inventory/records', requireMenu('inventory.overview'), async (c) => {
-  const user = await getCurrentUser(c);
-  const body = await c.req.json<{
-    skuId: string;
-    warehouse: string;
-    qtyAvailable?: number;
-    qtyInTransit?: number;
-    qtyInProduction?: number;
-    recordedDate: string;
-  }>();
-
-  if (!body.skuId || !body.warehouse || !body.recordedDate) {
-    return c.json({ message: 'skuId, warehouse, recordedDate required' }, 400);
-  }
-
-  const isProductionPool = body.warehouse === IN_PRODUCTION_WAREHOUSE;
-  if (isProductionPool) {
-    if (body.qtyInProduction == null) {
-      return c.json({ message: 'qtyInProduction required for IN-PRODUCTION pool' }, 400);
-    }
-  } else if (body.qtyAvailable == null) {
-    return c.json({ message: 'qtyAvailable required for physical warehouse' }, 400);
-  }
-
-  const [row] = await db
-    .insert(inventoryRecords)
-    .values({
-      skuId: body.skuId,
-      warehouse: body.warehouse,
-      qtyAvailable: isProductionPool ? 0 : (body.qtyAvailable ?? 0),
-      qtyInTransit: isProductionPool ? 0 : (body.qtyInTransit ?? 0),
-      qtyInProduction: isProductionPool ? body.qtyInProduction! : 0,
-      recordedDate: body.recordedDate,
-      source: 'manual',
-      createdBy: user.id,
-    })
-    .returning();
-
-  await writeAuditLog(c, {
-    action: 'inventory_record.create',
-    resourceType: 'inventory_record',
-    resourceId: row.id,
-    detail: body,
-    user,
-  });
-
-  return c.json(row, 201);
-});
+inventoryRoutes.post('/inventory/records', requireMenu('inventory.overview'), async (c) =>
+  analysisOnlyResponse(c),
+);
 
 inventoryRoutes.get('/merchants', async (c) => {
   const masterRows = await db

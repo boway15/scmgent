@@ -104,14 +104,10 @@ export function ReorderSuggestionsPage() {
             <strong className="text-text-main">补货预测</strong>：基于销量、飞书库存快照（可售+在途+在产−已分配，不含跟单）与供应链提前期计算覆盖天数与健康灯；同一 SKU 多仓缺口合并为一条<strong className="text-text-main">网络</strong>采购建议，避免重复下单。
           </p>
           <p className="mt-1">
-            <strong className="text-text-main">补货建议</strong>：预测产出的待办清单，默认按建议下单日排序（逾期优先）；采纳后合并到同商家草稿计划，在
-            {' '}
-            <Link to="/pmc/list" className="text-primary hover:underline">计划列表</Link>
-            {' '}
-            确认计划后才会生成采购跟单。
+            <strong className="text-text-main">补货建议</strong>：预测产出的只读待办清单，默认按建议下单日排序（逾期优先）。实际下单、改量请在迅捷 ERP 操作；进度以飞书采购镜像为准。
           </p>
           <p className="mt-1 text-text-hint">
-            采纳不会立刻改变库存位置；需确认 PMC 计划、维护跟单里程碑或等待下次快照/预测运行后，有效供给才会更新。
+            本页不能采纳或忽略建议。导出数量与口径供 PMC 在迅捷下单时参考。
           </p>
         </CardContent>
       </Card>
@@ -239,28 +235,7 @@ export function ReorderSuggestionsPage() {
                       </>
                     )}
                   </td>
-                  <td className="space-x-1 p-2">
-                    {item.status === 'pending' && (
-                      <>
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() =>
-                            acceptSuggestion.mutate({
-                              id: item.id,
-                              merchantCode: item.merchantCode ?? merchantOverride[item.id],
-                            })
-                          }
-                          disabled={acceptSuggestion.isPending || (!item.merchantCode && !merchantOverride[item.id])}
-                        >
-                          采纳并加入计划
-                        </Button>
-                        <Button size="sm" variant="ghost" onClick={() => ignoreSuggestion.mutate(item.id)}>
-                          忽略
-                        </Button>
-                      </>
-                    )}
-                  </td>
+                  <td className="p-2 text-xs text-text-sub">—</td>
                 </tr>
               );
               })}

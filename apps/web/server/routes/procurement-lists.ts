@@ -1,5 +1,6 @@
 import type { Context } from 'hono';
 import { Hono } from 'hono';
+import { analysisOnlyResponse } from '../lib/analysis-only.js';
 import { getCurrentUser } from '../lib/auth-context.js';
 import { parseListPagination } from '../lib/list-pagination.js';
 import { isRbacEnforced, resolveRequestUser, userHasMenu } from '../lib/rbac.js';
@@ -156,65 +157,11 @@ procurementListRoutes.post('/procurement/lists/:type/sync', async (c) => {
   }
 });
 
-procurementListRoutes.post('/procurement/lists/:type/push/preview', async (c) => {
-  const access = await assertProcurementListAccess(c, c.req.param('type'), { write: true });
-  if ('response' in access) return access.response;
+procurementListRoutes.post('/procurement/lists/:type/push/preview', async (c) =>
+  analysisOnlyResponse(c),
+);
 
-  const config = getProcurementListConfig()[access.type];
-  if (!config.configured) {
-    return c.json(
-      {
-        message: '飞书多维表格未配置。请设置 FEISHU_BITABLE_APP_TOKEN 与对应 TABLE 环境变量。',
-      },
-      400,
-    );
-  }
-
-  try {
-    const preview = await previewProcurementFeishuPush(access.type);
-    return c.json(preview);
-  } catch (err) {
-    const message = err instanceof Error ? err.message : 'Feishu push preview failed';
-    return c.json({ message }, 400);
-  }
-});
-
-procurementListRoutes.post('/procurement/lists/:type/push', async (c) => {
-  const access = await assertProcurementListAccess(c, c.req.param('type'), { write: true });
-  if ('response' in access) return access.response;
-
-  const user = await getCurrentUser(c);
-  const config = getProcurementListConfig()[access.type];
-  if (!config.configured) {
-    return c.json(
-      {
-        message: '飞书多维表格未配置。请设置 FEISHU_BITABLE_APP_TOKEN 与对应 TABLE 环境变量。',
-      },
-      400,
-    );
-  }
-
-  try {
-    // Full-replace push can take minutes for large tables; run in background to avoid gateway 524.
-    await assertNoRunningProcurementPush(access.type);
-    const run = await startTaskRun(procurementPushTaskName(access.type), user.id);
-    void runProcurementFeishuPushTask(run.id, access.type, user.id).catch((err) => {
-      console.error(`[procurement-push] background ${access.type} error:`, err);
-    });
-    return c.json(
-      {
-        async: true as const,
-        taskRunId: run.id,
-        status: 'running' as const,
-        listType: access.type,
-      },
-      202,
-    );
-  } catch (err) {
-    const message = err instanceof Error ? err.message : 'Feishu push failed';
-    return c.json({ message }, 400);
-  }
-});
+procurementListRoutes.post('/procurement/lists/:type/push', async (c) => analysisOnlyResponse(c));
 
 procurementListRoutes.get('/procurement/lists/:type/push/tasks/:taskRunId', async (c) => {
   const access = await assertProcurementListAccess(c, c.req.param('type'), { write: true });
@@ -243,67 +190,10 @@ procurementListRoutes.get('/procurement/lists/:type/push/tasks/:taskRunId', asyn
   });
 });
 
-procurementListRoutes.post('/procurement/lists/:type/import/preview', async (c) => {
-  const access = await assertProcurementListAccess(c, c.req.param('type'), { write: true });
-  if ('response' in access) return access.response;
+procurementListRoutes.post('/procurement/lists/:type/import/preview', async (c) =>
+  analysisOnlyResponse(c),
+);
 
-  const form = await c.req.formData();
-  const file = form.get('file');
-  if (!(file instanceof File)) {
-    return c.json({ message: '请上传 csv 或 xlsx 文件' }, 400);
-  }
+procurementListRoutes.post('/procurement/lists/:type/import', async (c) => analysisOnlyResponse(c));
 
-  assertUploadFile(file, `procurement-${access.type}`);
-
-  try {
-    const buffer = await file.arrayBuffer();
-    const preview = await previewProcurementUpload(access.type, buffer, file.name);
-    return c.json(preview);
-  } catch (err) {
-    const message = err instanceof Error ? err.message : 'Import preview failed';
-    return c.json({ message }, 400);
-  }
-});
-
-procurementListRoutes.post('/procurement/lists/:type/import', async (c) => {
-  const access = await assertProcurementListAccess(c, c.req.param('type'), { write: true });
-  if ('response' in access) return access.response;
-
-  const user = await getCurrentUser(c);
-  const form = await c.req.formData();
-  const file = form.get('file');
-  if (!(file instanceof File)) {
-    return c.json({ message: '请上传 csv 或 xlsx 文件' }, 400);
-  }
-
-  assertUploadFile(file, `procurement-${access.type}`);
-
-  try {
-    const buffer = await file.arrayBuffer();
-    const result = await executeProcurementUpload({
-      listType: access.type,
-      buffer,
-      fileName: file.name,
-      userId: user.id,
-    });
-    return c.json(result);
-  } catch (err) {
-    const message = err instanceof Error ? err.message : 'Import failed';
-    return c.json({ message }, 400);
-  }
-});
-
-procurementListRoutes.post('/procurement/lists/:type/clear', async (c) => {
-  const access = await assertProcurementListAccess(c, c.req.param('type'), { write: true });
-  if ('response' in access) return access.response;
-
-  const user = await getCurrentUser(c);
-
-  try {
-    const result = await clearProcurementListData(access.type, user.id);
-    return c.json(result);
-  } catch (err) {
-    const message = err instanceof Error ? err.message : 'Clear failed';
-    return c.json({ message }, 400);
-  }
-});
+procurementListRoutes.post('/procurement/lists/:type/clear', async (c) => analysisOnlyResponse(c));

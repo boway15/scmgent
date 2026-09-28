@@ -679,7 +679,7 @@ function SummaryLotRow({
   const [productionStatus, setProductionStatus] = useState(lot.productionStatus ?? 'completed');
   const unknown = lot.dateUnknown || !lot.availableAt;
   const shareLabel = shareSourceLabel(lot.sourceId);
-  const editable = lot.pool === 'local';
+  const editable = false;
 
   return (
     <tr className={unknown ? 'bg-amber-50/80' : undefined}>
@@ -786,31 +786,10 @@ function LotRow({
       </td>
       <td className="py-2 pr-3 font-mono">{row.qty}</td>
       {pool === 'local' && (
-        <td className="py-2 pr-3">
-          <select
-            className="h-8 rounded border border-border bg-white px-2 text-xs"
-            value={productionStatus}
-            onChange={(e) =>
-              setProductionStatus(e.target.value as typeof productionStatus)
-            }
-          >
-            {Object.entries(PROD_LABEL).map(([k, label]) => (
-              <option key={k} value={k}>
-                {label}
-              </option>
-            ))}
-          </select>
-        </td>
+        <td className="py-2 pr-3 text-text-sub">{PROD_LABEL[productionStatus] ?? productionStatus}</td>
       )}
       {pool === 'local' && (
-        <td className="py-2 pr-3">
-          <input
-            type="date"
-            className="h-8 rounded border border-border px-2 font-mono text-xs"
-            value={shipReadyAt}
-            onChange={(e) => setShipReadyAt(e.target.value)}
-          />
-        </td>
+        <td className="py-2 pr-3 font-mono text-text-sub">{shipReadyAt || '—'}</td>
       )}
       <td className="py-2 pr-3 font-mono">
         {row.availableAt ?? <span className="text-amber-700">不可计入可售</span>}
@@ -818,28 +797,12 @@ function LotRow({
       </td>
       <td className="py-2 pr-3 text-xs text-text-sub">{row.source}</td>
       <td className="py-2 pr-3">
-        {pool === 'local' ? (
-          <Button
-            size="sm"
-            variant="outline"
-            disabled={saving}
-            onClick={() =>
-              onSave({
-                productionStatus,
-                shipReadyAt: shipReadyAt || null,
-              })
-            }
-          >
-            保存
-          </Button>
-        ) : (
-          <Link
-            className="text-xs text-primary hover:underline"
-            to={`/inventory/planning/${row.skuId}?warehouse=${encodeURIComponent(row.warehouseCode)}`}
-          >
-            时间轴
-          </Link>
-        )}
+        <Link
+          className="text-xs text-primary hover:underline"
+          to={`/inventory/planning/${row.skuId}?warehouse=${encodeURIComponent(row.warehouseCode)}`}
+        >
+          时间轴
+        </Link>
       </td>
     </tr>
   );

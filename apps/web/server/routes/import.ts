@@ -1,4 +1,5 @@
 import { Hono } from 'hono';
+import { analysisOnlyResponse } from '../lib/analysis-only.js';
 import { getCurrentUser } from '../lib/auth-context.js';
 import {
   parseImportContent,
@@ -169,6 +170,10 @@ importRoutes.post('/import/:type', requireImportAccess(), async (c) => {
 
   if (!VALID_TYPES.includes(type)) {
     return c.json({ message: `Invalid import type. Use: ${VALID_TYPES.join(', ')}` }, 400);
+  }
+
+  if (type === 'inventory' || type === 'pmc_plans') {
+    return analysisOnlyResponse(c);
   }
 
   const contentType = c.req.header('content-type') ?? '';

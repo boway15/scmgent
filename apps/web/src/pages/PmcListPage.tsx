@@ -176,21 +176,6 @@ export function PmcListPage() {
                     >
                       导出
                     </Button>
-                    {p.status === 'draft' && (
-                      <Button size="sm" variant="outline" onClick={() => updateStatus.mutate({ id: p.id, status: 'confirmed' })}>
-                        确认计划
-                      </Button>
-                    )}
-                    {p.status === 'confirmed' && (
-                      <Button size="sm" variant="outline" onClick={() => updateStatus.mutate({ id: p.id, status: 'in_progress' })}>
-                        开始执行
-                      </Button>
-                    )}
-                    {p.status === 'in_progress' && (
-                      <Button size="sm" variant="outline" onClick={() => updateStatus.mutate({ id: p.id, status: 'completed' })}>
-                        完成
-                      </Button>
-                    )}
                   </td>
                 </tr>
               ))}

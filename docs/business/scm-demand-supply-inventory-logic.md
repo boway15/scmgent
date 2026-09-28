@@ -190,7 +190,7 @@ flowchart LR
 
 在不接正式 ERP 采购单、船司 API、供应商门户的前提下，跑通「补货建议 → PMC 计划 → 采购跟单 → 发运里程碑 → 三池供给批次 → 到仓入库」，并支持出货前不定目的仓的 `OVERSEAS` 未分配供应池确认落仓。
 
-另有两张飞书镜像列表 `bulk_stock_request`（大件备货申请）和 `purchase_follow_up`（采购跟单列表），与系统内 `purchase_drafts` 是**两条独立的线**：前者是多维表格的全量镜像，后者是 PMC 确认后自动生成的闭环台账。
+飞书镜像列表 `bulk_stock_request`（大件备货申请）与 `purchase_follow_up`（采购跟单）是**在途/在产供给的唯一单据来源**（三池同步 `syncInventorySupplyLots`）。`bulk_stock_request.目的仓` 经 `需求单号` 关联到跟单行；无目的仓时批次留在 `OVERSEAS`。系统内历史 `purchase_drafts` / `shipments` 不再参与批次构建。
 
 ### 2.2 核心数据表
 
@@ -264,10 +264,10 @@ flowchart TB
 
 **⑥ 三池同步** `syncInventorySupplyLots`（`inventory-supply-lot-sync.ts`）
 
-1. 读取各物理仓最新 `inventory_records`（排除 `IN-PRODUCTION`），以及在产仓最新 `qty_in_production`。
-2. 读取未完结跟单、未 `available/cancelled` 的发运。
+1. 读取各物理仓最新 `inventory_records`（`source = import`，排除 `IN-PRODUCTION` 与 `pmc_receipt` / 手工行），以及在产仓最新 `qty_in_production`（同样仅 `import`）。
+2. 读取飞书镜像 `procurement_list_rows`：`purchase_follow_up` 提供在途/在产单据（数量、状态、确认交期/交货日期/预计货好时间）；`bulk_stock_request` 经 `需求单号` 提供 `目的仓`。
 3. 从 `skus.encoding_meta` 取销售占比、在途分桶、最早在途/PO 上架时间。
-4. 纯函数 `buildLotsFromInputs` 构建批次；再套用已确认的目的仓分配。
+4. 纯函数 `buildLotsFromInputs` 构建批次（`shipments` 入参恒为空；不再读 `purchase_drafts`）。
 5. 取消旧的非 manual open 批次，按唯一键 upsert 新批次。
 
 跟单状态 → 池映射（`inventory-supply-lots.ts`）：
@@ -288,8 +288,8 @@ flowchart TB
 **⑧ 未分配供应池**（`inventory-dest-allocation*.ts`）
 
 - 判定：`status = open` 且 `warehouse_code = OVERSEAS`。
-- 系统按销售占比给出建议分配；人工确认时分配数量之和必须等于批次数量，且不能分到 `OVERSEAS` / `IN-PRODUCTION`。
-- 结果写 `inventory_dest_allocations` + 审计日志，下次同步时套用，不会被打回 `OVERSEAS`。
+- 目的仓只来自迅捷经飞书同步的数据（周转快照物理仓列、大件备货「目的仓」）；**本系统不再确认落仓**，三池同步也不套用 `inventory_dest_allocations`。
+- 有销售占比时，规划/有效供给可按占比做**只读参考拆分**；无占比时生成 `unallocated_warehouse` 数据问题工单。
 
 ### 2.4 关键规则与公式
 
@@ -592,6 +592,7 @@ flowchart TB
 
 ## 7. 相关文档索引
 
+- 运作 SOP（角色、RACI、节奏、时限、升级、KPI）：[`scm-sop-operating-standard.md`](./scm-sop-operating-standard.md)
 - PRD：`docs/prd/mvp-business-loop.md`、`mvp-inventory-replenishment.md`、`mvp-pmc.md`
 - 需求：`docs/superpowers/specs/2026-06-29-sales-forecast-collaboration-design.md`、`2026-09-21-demand-plan-pilot-design.md`、`2026-09-21-sales-based-demand-reconstruction-design.md`、`2026-09-22-planning-horizon-weekly-monthly-design.md`
 - 供应：`docs/superpowers/specs/2026-07-29-inventory-planning-pmc-evolution-design.md`、`2026-09-21-unallocated-supply-pool-design.md`、`2026-07-23-procurement-feishu-pull-cron-design.md`、`docs/feishu-bitable-sync.md`

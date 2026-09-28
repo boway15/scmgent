@@ -2,6 +2,7 @@ import { db, shipmentMilestones, shipments } from '@scm/db';
 import { desc, eq, inArray, and, or, ilike, sql } from 'drizzle-orm';
 import { Hono } from 'hono';
 import { calcMilestoneDelayDays } from '../lib/shipment-delay.js';
+import { analysisOnlyResponse } from '../lib/analysis-only.js';
 import { requireMenu } from '../lib/rbac.js';
 import { parseListPagination } from '../lib/list-pagination.js';
 
@@ -274,69 +275,8 @@ shipmentRoutes.get('/shipments/delays', shipmentMenu, async (c) => {
   return c.json(result);
 });
 
-shipmentRoutes.post('/shipments', shipmentMenu, async (c) => {
-  const parsed = parseCreateInput(await c.req.json<ShipmentInput>());
-  if (!parsed.ok) return c.json({ message: parsed.message }, 400);
-  const [row] = await db.insert(shipments).values(parsed.value).returning();
-  return c.json(row, 201);
-});
+shipmentRoutes.post('/shipments', shipmentMenu, async (c) => analysisOnlyResponse(c));
 
-shipmentRoutes.patch('/shipments/:id', shipmentMenu, async (c) => {
-  const shipmentId = c.req.param('id');
-  if (!shipmentId) return c.json({ message: 'id is required' }, 400);
-  const parsed = parsePatchInput(await c.req.json<ShipmentInput>());
-  if (!parsed.ok) return c.json({ message: parsed.message }, 400);
-  const [row] = await db
-    .update(shipments)
-    .set(parsed.value)
-    .where(eq(shipments.id, shipmentId))
-    .returning();
-  if (!row) return c.json({ message: 'Shipment not found' }, 404);
-  return c.json(row);
-});
+shipmentRoutes.patch('/shipments/:id', shipmentMenu, async (c) => analysisOnlyResponse(c));
 
-shipmentRoutes.post('/shipments/:id/milestones', shipmentMenu, async (c) => {
-  const shipmentId = c.req.param('id');
-  if (!shipmentId) return c.json({ message: 'id is required' }, 400);
-  const body = await c.req.json<MilestoneInput>();
-  if (!MILESTONES.includes(body.milestone as (typeof MILESTONES)[number])) {
-    return c.json({ message: 'milestone is invalid' }, 400);
-  }
-  if (body.plannedAt != null && !isDateOnly(body.plannedAt)) {
-    return c.json({ message: 'plannedAt must be YYYY-MM-DD' }, 400);
-  }
-  if (body.actualAt != null && !isDateOnly(body.actualAt)) {
-    return c.json({ message: 'actualAt must be YYYY-MM-DD' }, 400);
-  }
-
-  const [shipment] = await db
-    .select({ id: shipments.id })
-    .from(shipments)
-    .where(eq(shipments.id, shipmentId))
-    .limit(1);
-  if (!shipment) return c.json({ message: 'Shipment not found' }, 404);
-
-  const values = {
-    shipmentId,
-    milestone: body.milestone as string,
-    plannedAt: optionalText(body.plannedAt),
-    actualAt: optionalText(body.actualAt),
-    remark: optionalText(body.remark),
-  };
-  const [row] = await db
-    .insert(shipmentMilestones)
-    .values(values)
-    .onConflictDoUpdate({
-      target: [shipmentMilestones.shipmentId, shipmentMilestones.milestone],
-      set: {
-        plannedAt: values.plannedAt,
-        actualAt: values.actualAt,
-        remark: values.remark,
-      },
-    })
-    .returning();
-  return c.json({
-    ...row,
-    delayDays: calcMilestoneDelayDays(row.plannedAt, row.actualAt, new Date()),
-  });
-});
+shipmentRoutes.post('/shipments/:id/milestones', shipmentMenu, async (c) => analysisOnlyResponse(c));

@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQuery } from '@tanstack/react-query';
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { PageHeader } from '@/components/PageHeader';
@@ -14,102 +14,16 @@ const POOL_LABEL: Record<UnallocatedSupplyRow['pool'], string> = {
   overseas: '海外',
 };
 
-const BLOCKED_DEST = new Set(['OVERSEAS', 'IN-PRODUCTION']);
-
-type DestDraft = { warehouseCode: string; qty: number };
-
-function draftFromLot(lot: UnallocatedSupplyRow): DestDraft[] {
-  if (lot.suggestedDestinations.length) return lot.suggestedDestinations;
-  return [{ warehouseCode: '', qty: lot.qty }];
-}
-
-function AssignEditor({
-  lot,
-  warehouses,
-  pending,
-  onSubmit,
-}: {
-  lot: UnallocatedSupplyRow;
-  warehouses: Array<{ code: string; name: string }>;
-  pending: boolean;
-  onSubmit: (assignments: DestDraft[]) => void;
-}) {
-  const [rows, setRows] = useState<DestDraft[]>(() => draftFromLot(lot));
-  const sum = rows.reduce((total, row) => total + (Number(row.qty) || 0), 0);
-  const dests = warehouses.filter((wh) => !BLOCKED_DEST.has(wh.code));
-  const valid =
-    rows.length > 0 &&
-    sum === lot.qty &&
-    rows.every((row) => row.warehouseCode && Number(row.qty) > 0 && !BLOCKED_DEST.has(row.warehouseCode));
-
-  return (
-    <div className="space-y-2">
-      {rows.map((row, index) => (
-        <div key={`${lot.id}-${index}`} className="flex flex-wrap items-center gap-2">
-          <select
-            className="h-8 min-w-[10rem] rounded-md border border-border bg-white px-2 font-mono text-xs"
-            value={row.warehouseCode}
-            onChange={(event) => {
-              const next = [...rows];
-              next[index] = { ...row, warehouseCode: event.target.value };
-              setRows(next);
-            }}
-          >
-            <option value="">选择目的仓</option>
-            {dests.map((wh) => (
-              <option key={wh.code} value={wh.code}>
-                {wh.code} · {wh.name}
-              </option>
-            ))}
-          </select>
-          <input
-            className="h-8 w-24 rounded-md border border-border bg-white px-2 font-mono text-xs"
-            type="number"
-            min={1}
-            value={row.qty}
-            onChange={(event) => {
-              const next = [...rows];
-              next[index] = { ...row, qty: Number(event.target.value) };
-              setRows(next);
-            }}
-          />
-          {rows.length > 1 ? (
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => setRows(rows.filter((_, i) => i !== index))}
-            >
-              删除
-            </Button>
-          ) : null}
-        </div>
-      ))}
-      <div className="flex flex-wrap items-center gap-2">
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={() => setRows([...rows, { warehouseCode: '', qty: Math.max(lot.qty - sum, 1) }])}
-        >
-          加仓
-        </Button>
-        {lot.suggestedDestinations.length > 0 ? (
-          <Button variant="ghost" size="sm" onClick={() => setRows(draftFromLot(lot))}>
-            按占比草案
-          </Button>
-        ) : null}
-        <span className={sum === lot.qty ? 'text-xs text-text-sub' : 'text-xs text-red-600'}>
-          已分 {sum} / {lot.qty}
-        </span>
-        <Button size="sm" disabled={!valid || pending} onClick={() => onSubmit(rows)}>
-          {pending ? '确认中...' : '确认落仓'}
-        </Button>
-      </div>
-    </div>
-  );
+function formatSuggestedDestinations(row: UnallocatedSupplyRow): string {
+  if (!row.suggestedDestinations.length) {
+    return '无销售占比，需在迅捷 / 飞书补目的仓或占比';
+  }
+  return row.suggestedDestinations
+    .map((d) => `${d.warehouseCode} × ${d.qty}`)
+    .join('；');
 }
 
 export function InventoryUnallocatedPage() {
-  const qc = useQueryClient();
   const [searchParams, setSearchParams] = useSearchParams();
   const skuId = searchParams.get('skuId')?.trim() || undefined;
   const [pool, setPool] = useState('all');
@@ -122,10 +36,6 @@ export function InventoryUnallocatedPage() {
     setPage(1);
   }, [skuId, pool, appliedKeyword]);
 
-  const warehouses = useQuery({
-    queryKey: ['warehouses'],
-    queryFn: api.getWarehouses,
-  });
   const list = useQuery({
     queryKey: ['inventory-unallocated', skuId, pool, page, pageSize, appliedKeyword],
     queryFn: () =>
@@ -138,16 +48,6 @@ export function InventoryUnallocatedPage() {
       }),
   });
   const total = list.data?.total ?? list.data?.count ?? 0;
-  const assign = useMutation({
-    mutationFn: (params: { id: string; assignments: DestDraft[] }) =>
-      api.assignUnallocatedLot(params.id, { assignments: params.assignments }),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['inventory-unallocated'] });
-      qc.invalidateQueries({ queryKey: ['inventory-pools'] });
-      qc.invalidateQueries({ queryKey: ['inventory-planning'] });
-      qc.invalidateQueries({ queryKey: ['planning-dashboard'] });
-    },
-  });
 
   const items = list.data?.items ?? [];
   const skuCodes = useMemo(
@@ -173,13 +73,13 @@ export function InventoryUnallocatedPage() {
       </PageHeader>
 
       <p className="text-sm text-text-sub">
-        停在 OVERSEAS 的开放批次不能计入某仓确定线。确认目的仓后写入落仓记录，三池同步仍会尊重。有销售占比的 SKU 继续自动拆仓，不会被改回未确认。
+        停在 OVERSEAS 的批次不能计入某仓确定线。目的仓以迅捷同步到飞书的数据为准（周转快照物理仓列、大件备货「目的仓」）。本页只读；有销售占比时下方展示按占比的参考拆分，不代表已落仓。
       </p>
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
         <Card className="shadow-card">
           <CardContent className="pt-6">
-            <p className="text-sm text-text-sub">待确认批次</p>
+            <p className="text-sm text-text-sub">未定仓批次</p>
             <p className="mt-2 font-mono text-2xl font-semibold text-text-main">
               {list.data?.openCount ?? list.data?.count ?? 0}
             </p>
@@ -187,7 +87,7 @@ export function InventoryUnallocatedPage() {
         </Card>
         <Card className="shadow-card">
           <CardContent className="pt-6">
-            <p className="text-sm text-text-sub">待确认件数</p>
+            <p className="text-sm text-text-sub">未定仓件数</p>
             <p className="mt-2 font-mono text-2xl font-semibold text-text-main">
               {list.data?.openQty ?? 0}
             </p>
@@ -200,12 +100,6 @@ export function InventoryUnallocatedPage() {
           </CardContent>
         </Card>
       </div>
-
-      {assign.isError ? (
-        <p className="text-sm text-red-600">
-          {assign.error instanceof Error ? assign.error.message : '确认落仓失败'}
-        </p>
-      ) : null}
 
       <div className="flex flex-wrap gap-2">
         <select
@@ -225,7 +119,7 @@ export function InventoryUnallocatedPage() {
 
       <Card className="shadow-card">
         <CardHeader>
-          <CardTitle>待分配批次（{total}）</CardTitle>
+          <CardTitle>未定仓批次（{total}）</CardTitle>
         </CardHeader>
         <CardContent className="overflow-x-auto">
           <ListSearchBar
@@ -248,7 +142,7 @@ export function InventoryUnallocatedPage() {
                   <th className="py-2 pr-3">数量</th>
                   <th className="py-2 pr-3">可用日</th>
                   <th className="py-2 pr-3">来源</th>
-                  <th className="py-2 pr-3">确认落仓</th>
+                  <th className="py-2 pr-3">参考拆分（只读）</th>
                 </tr>
               </thead>
               <tbody>
@@ -270,17 +164,7 @@ export function InventoryUnallocatedPage() {
                       {row.source}
                       {row.sourceId ? ` · ${row.sourceId}` : ''}
                     </td>
-                    <td className="py-2 pr-3">
-                      <AssignEditor
-                        key={`${row.id}-${row.qty}-${row.suggestedDestinations.map((d) => `${d.warehouseCode}:${d.qty}`).join(',')}`}
-                        lot={row}
-                        warehouses={warehouses.data ?? []}
-                        pending={assign.isPending}
-                        onSubmit={(assignments) =>
-                          assign.mutate({ id: row.id, assignments })
-                        }
-                      />
-                    </td>
+                    <td className="py-2 pr-3 text-xs text-text-sub">{formatSuggestedDestinations(row)}</td>
                   </tr>
                 ))}
                 {!items.length && (

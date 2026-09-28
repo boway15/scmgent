@@ -2,20 +2,12 @@ import { eq, desc, and, inArray, or, ilike, sql } from 'drizzle-orm';
 import { parseListPagination } from '../lib/list-pagination.js';
 import { Hono } from 'hono';
 import { db, purchaseDrafts, skus, pmcPlans, users } from '@scm/db';
+import { analysisOnlyResponse } from '../lib/analysis-only.js';
 import { requireMenu } from '../lib/rbac.js';
-import { getCurrentUser } from '../lib/auth-context.js';
 import {
-  assertPurchaseDraftTransition,
   normalizePurchaseDraftStatus,
   PURCHASE_DRAFT_STATUS_LABEL,
-  type PurchaseDraftStatus,
 } from '../lib/purchase-draft-lifecycle.js';
-import { receivePurchaseDraft } from '../lib/purchase-draft-receipt.js';
-import { buildEtaPatch } from '../lib/purchase-draft-eta.js';
-import {
-  buildMilestonePatch,
-  type PurchaseDraftMilestonePatch,
-} from '../lib/purchase-draft-milestones.js';
 
 function draftNo(): string {
   const d = new Date();
@@ -203,97 +195,15 @@ procurementRoutes.get('/purchase-drafts', async (c) => {
   });
 });
 
-procurementRoutes.post('/purchase-drafts', async (c) => {
-  return c.json({ message: '采购跟单仅由计划确认后自动生成' }, 403);
-});
+procurementRoutes.post('/purchase-drafts', async (c) => analysisOnlyResponse(c));
 
-procurementRoutes.patch('/purchase-drafts/:id', requireMenu('pmc.tracking'), async (c) => {
-  const user = await getCurrentUser(c);
-  const draftId = c.req.param('id');
-  const body = await c.req.json<
-    {
-      status?: PurchaseDraftStatus;
-      remark?: string;
-      etaAvailable?: string;
-      confirmedDeliveryDate?: string;
-      actualShipDate?: string;
-      exceptionReason?: string;
-      ownerUserId?: string;
-    } & PurchaseDraftMilestonePatch
-  >();
+procurementRoutes.patch('/purchase-drafts/:id', requireMenu('pmc.tracking'), async (c) =>
+  analysisOnlyResponse(c),
+);
 
-  const [existing] = await db
-    .select()
-    .from(purchaseDrafts)
-    .where(eq(purchaseDrafts.id, draftId))
-    .limit(1);
-  if (!existing) return c.json({ message: 'Draft not found' }, 404);
-
-  const currentStatus = normalizePurchaseDraftStatus(existing.status);
-  const nextStatus = body.status ? normalizePurchaseDraftStatus(body.status) : undefined;
-
-  if (nextStatus) {
-    assertPurchaseDraftTransition(currentStatus, nextStatus);
-  }
-
-  const patch: Partial<typeof purchaseDrafts.$inferInsert> = {
-    updatedAt: new Date(),
-  };
-
-  if (nextStatus) patch.status = nextStatus;
-  if (body.remark != null) patch.remark = body.remark;
-  if (body.etaAvailable) {
-    Object.assign(patch, buildEtaPatch(body.etaAvailable));
-  } else if (body.confirmedDeliveryDate) {
-    Object.assign(patch, buildEtaPatch(body.confirmedDeliveryDate));
-  }
-  if (body.actualShipDate) patch.actualShipDate = body.actualShipDate;
-  Object.assign(patch, buildMilestonePatch(body));
-  if (body.exceptionReason != null) patch.exceptionReason = body.exceptionReason;
-  if (body.ownerUserId) patch.ownerUserId = body.ownerUserId;
-
-  if (nextStatus === 'confirmed' && !existing.supplierConfirmedAt) {
-    patch.supplierConfirmedAt = new Date();
-    if (!body.etaAvailable && !body.confirmedDeliveryDate && existing.expectedDate) {
-      Object.assign(patch, buildEtaPatch(existing.expectedDate));
-    }
-  }
-
-  if (!existing.ownerUserId) {
-    patch.ownerUserId = user.id;
-  }
-
-  const [row] = await db
-    .update(purchaseDrafts)
-    .set(patch)
-    .where(eq(purchaseDrafts.id, draftId))
-    .returning();
-
-  return c.json(row);
-});
-
-procurementRoutes.post('/purchase-drafts/:id/receive', requireMenu('pmc.tracking'), async (c) => {
-  const user = await getCurrentUser(c);
-  const body = await c.req.json<{
-    qtyReceived: number;
-    receivedDate?: string;
-    idempotencyKey?: string;
-  }>();
-
-  try {
-    const result = await receivePurchaseDraft({
-      draftId: c.req.param('id'),
-      qtyReceived: body.qtyReceived,
-      receivedDate: body.receivedDate,
-      idempotencyKey: body.idempotencyKey,
-      userId: user.id,
-    });
-    return c.json(result);
-  } catch (err) {
-    const message = err instanceof Error ? err.message : 'Receive failed';
-    return c.json({ message }, 400);
-  }
-});
+procurementRoutes.post('/purchase-drafts/:id/receive', requireMenu('pmc.tracking'), async (c) =>
+  analysisOnlyResponse(c),
+);
 
 /** Next plan number sequence */
 export async function nextPlanNo(): Promise<string> {

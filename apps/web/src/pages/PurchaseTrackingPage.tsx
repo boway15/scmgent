@@ -159,13 +159,8 @@ export function PurchaseTrackingPage() {
         <CardHeader>
           <CardTitle>跟单列表</CardTitle>
           <p className="text-sm text-text-sub">
-            内部履约台账，非正式采购单。确认交期 → 生产 → 发货 → 在途 → 登记到货回写库存。
+            历史内部台账只读。正式跟单进度请以飞书「采购跟单」镜像为准（状态、确认交期、未入库数量等由迅捷同步）。
             交期/日期表示预计可售日（到仓上架后可售），不是到港日。
-            数据来自{' '}
-            <Link to="/pmc/list" className="text-primary hover:underline">
-              计划列表
-            </Link>
-            中已确认的计划。
           </p>
         </CardHeader>
         <CardContent>
@@ -234,205 +229,18 @@ export function PurchaseTrackingPage() {
                         >
                           查看发运
                         </Link>
-                      ) : SHIPMENT_LINK_STATUSES.includes(d.status) ? (
-                        <Link
-                          to={`/pmc/shipments?draftId=${d.id}`}
-                          className="text-primary hover:underline"
-                        >
-                          创建发运
-                        </Link>
                       ) : (
                         '-'
                       )}
                     </td>
-                    <td className="space-y-1 p-2">
-                      <div className="flex flex-wrap gap-1">
-                        {d.status === 'draft' && (
-                          <>
-                            <Input
-                              type="date"
-                              className="h-8 w-36"
-                              value={confirmDate}
-                              onChange={(e) =>
-                                setConfirmEtaDate((prev) => ({ ...prev, [d.id]: e.target.value }))
-                              }
-                            />
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              disabled={updateStatus.isPending || !confirmDate}
-                              onClick={() =>
-                                updateStatus.mutate({
-                                  id: d.id,
-                                  status: 'confirmed',
-                                  etaAvailable: confirmDate,
-                                })
-                              }
-                            >
-                              确认交期
-                            </Button>
-                          </>
-                        )}
-                        {d.status === 'confirmed' && (
-                          <>
-                            <Input
-                              type="date"
-                              className="h-8 w-36"
-                              value={
-                                updateEtaDate[d.id] ??
-                                d.etaAvailable ??
-                                d.confirmedDeliveryDate ??
-                                ''
-                              }
-                              onChange={(e) =>
-                                setUpdateEtaDate((prev) => ({ ...prev, [d.id]: e.target.value }))
-                              }
-                            />
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              disabled={
-                                updateStatus.isPending ||
-                                !(updateEtaDate[d.id] ?? d.etaAvailable ?? d.confirmedDeliveryDate)
-                              }
-                              onClick={() =>
-                                updateStatus.mutate({
-                                  id: d.id,
-                                  etaAvailable:
-                                    updateEtaDate[d.id] ??
-                                    d.etaAvailable ??
-                                    d.confirmedDeliveryDate ??
-                                    undefined,
-                                })
-                              }
-                            >
-                              更新可售日
-                            </Button>
-                          </>
-                        )}
-                        {actions.map((a) => (
-                          <Button
-                            key={a.status}
-                            size="sm"
-                            variant="outline"
-                            disabled={updateStatus.isPending}
-                            onClick={() => updateStatus.mutate({ id: d.id, status: a.status })}
-                          >
-                            {a.label}
-                          </Button>
-                        ))}
-                        {!['received', 'cancelled'].includes(d.status) && (
-                          <>
-                            <Input
-                              className="h-8 w-28"
-                              placeholder="异常原因"
-                              value={exceptionReason[d.id] ?? ''}
-                              onChange={(e) =>
-                                setExceptionReason((prev) => ({ ...prev, [d.id]: e.target.value }))
-                              }
-                            />
-                            <Button
-                              size="sm"
-                              variant="ghost"
-                              onClick={() =>
-                                updateStatus.mutate({
-                                  id: d.id,
-                                  status: 'exception',
-                                  exceptionReason: exceptionReason[d.id] || '需人工跟进',
-                                })
-                              }
-                            >
-                              标记异常
-                            </Button>
-                            <Button
-                              size="sm"
-                              variant="ghost"
-                              onClick={() => updateStatus.mutate({ id: d.id, status: 'cancelled' })}
-                            >
-                              取消
-                            </Button>
-                          </>
-                        )}
-                      </div>
-                      <details className="rounded-md border border-border/60 p-2">
-                        <summary className="cursor-pointer text-xs text-text-sub">里程碑日期</summary>
-                        <div className="mt-2 grid grid-cols-2 gap-2">
-                          {MILESTONE_FIELDS.map(({ key, label }) => (
-                            <label key={key} className="space-y-1 text-xs text-text-sub">
-                              <span>{label}</span>
-                              <Input
-                                type="date"
-                                className="h-8 min-w-32"
-                                value={milestoneDates[d.id]?.[key] ?? d[key] ?? ''}
-                                onChange={(e) =>
-                                  setMilestoneDates((prev) => ({
-                                    ...prev,
-                                    [d.id]: { ...prev[d.id], [key]: e.target.value },
-                                  }))
-                                }
-                              />
-                            </label>
-                          ))}
-                        </div>
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          className="mt-2"
-                          disabled={updateStatus.isPending}
-                          onClick={() => {
-                            const values = milestoneDates[d.id] ?? {};
-                            updateStatus.mutate({
-                              id: d.id,
-                              etd: values.etd === undefined ? d.etd : values.etd || null,
-                              etaPort:
-                                values.etaPort === undefined ? d.etaPort : values.etaPort || null,
-                              etaWarehouse:
-                                values.etaWarehouse === undefined
-                                  ? d.etaWarehouse
-                                  : values.etaWarehouse || null,
-                              etaAvailable:
-                                values.etaAvailable === undefined
-                                  ? d.etaAvailable ?? undefined
-                                  : values.etaAvailable || undefined,
-                            });
-                          }}
-                        >
-                          保存里程碑
-                        </Button>
-                      </details>
-                      {canReceive && (
-                        <div className="flex items-center gap-2">
-                          <Input
-                            type="number"
-                            className="h-8 w-20"
-                            placeholder="到货量"
-                            value={receiveQty[d.id] ?? ''}
-                            onChange={(e) =>
-                              setReceiveQty((prev) => ({ ...prev, [d.id]: e.target.value }))
-                            }
-                          />
-                          <Button
-                            size="sm"
-                            disabled={receiveDraft.isPending || !receiveQty[d.id]}
-                            onClick={() =>
-                              receiveDraft.mutate({
-                                id: d.id,
-                                qtyReceived: Number(receiveQty[d.id]),
-                              })
-                            }
-                          >
-                            登记到货
-                          </Button>
-                        </div>
-                      )}
-                    </td>
+                    <td className="p-2 text-xs text-text-sub">—</td>
                   </tr>
                 );
               })}
               {!records.length && (
                 <tr>
                   <td colSpan={9} className="p-4 text-center text-text-hint">
-                    暂无跟单记录，请先在计划列表确认计划
+                    暂无历史台账记录；正式跟单请查看飞书采购镜像同步结果
                   </td>
                 </tr>
               )}

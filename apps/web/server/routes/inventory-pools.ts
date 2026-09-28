@@ -13,8 +13,8 @@ import {
   listSupplyLots,
   parseSupplyLotExportFilters,
   syncInventorySupplyLots,
-  updateLocalLotDates,
 } from '../lib/inventory-supply-lot-sync.js';
+import { analysisOnlyResponse } from '../lib/analysis-only.js';
 import { parseListPagination } from '../lib/list-pagination.js';
 import { requireMenu } from '../lib/rbac.js';
 
@@ -129,29 +129,5 @@ inventoryPoolsRoutes.post(
 inventoryPoolsRoutes.patch(
   '/inventory/pools/:id',
   requireMenu('inventory.pools', 'inventory.planning'),
-  async (c) => {
-    const id = c.req.param('id');
-    const body = await c.req.json<{
-      productionStatus?: 'in_production' | 'qc_pending' | 'completed';
-      shipReadyAt?: string | null;
-      latestShipDate?: string | null;
-      remainingLogisticsDays?: number;
-    }>();
-    try {
-      const updated = await updateLocalLotDates({
-        lotId: id,
-        productionStatus: body.productionStatus,
-        shipReadyAt: body.shipReadyAt,
-        latestShipDate: body.latestShipDate,
-        remainingLogisticsDays: body.remainingLogisticsDays,
-      });
-      if (!updated) return c.json({ message: 'Lot not found' }, 404);
-      return c.json(updated);
-    } catch (err) {
-      return c.json(
-        { message: err instanceof Error ? err.message : 'update failed' },
-        400,
-      );
-    }
-  },
+  async (c) => analysisOnlyResponse(c),
 );

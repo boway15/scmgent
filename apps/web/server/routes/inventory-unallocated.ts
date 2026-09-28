@@ -1,9 +1,7 @@
 import { Hono } from 'hono';
-import { getCurrentUser } from '../lib/auth-context.js';
 import { requireMenu } from '../lib/rbac.js';
-import { writeAuditLog } from '../lib/audit-log.js';
+import { analysisOnlyResponse } from '../lib/analysis-only.js';
 import {
-  assignUnallocatedLot,
   countOpenUnallocatedLots,
   listUnallocatedSupply,
   sumOpenUnallocatedQtyFiltered,
@@ -34,38 +32,5 @@ inventoryUnallocatedRoutes.get('/inventory/unallocated', requireMenu(MENU), asyn
 inventoryUnallocatedRoutes.post(
   '/inventory/unallocated/:id/assign',
   requireMenu(MENU),
-  async (c) => {
-    const user = await getCurrentUser(c);
-    const body = await c.req.json<{
-      assignments?: Array<{ warehouseCode?: string; qty?: number }>;
-    }>();
-    const assignments = (body.assignments ?? []).map((row) => ({
-      warehouseCode: String(row.warehouseCode ?? ''),
-      qty: Number(row.qty),
-    }));
-
-    try {
-      const result = await assignUnallocatedLot({
-        lotId: c.req.param('id'),
-        assignments,
-        userId: user.id,
-      });
-      if (!result) return c.json({ message: 'Lot not found' }, 404);
-
-      await writeAuditLog(c, {
-        action: 'inventory_dest_allocation.assign',
-        resourceType: 'inventory_supply_lot',
-        resourceId: c.req.param('id'),
-        detail: { assignments, destCount: result.items.length },
-        user,
-      });
-
-      return c.json(result);
-    } catch (err) {
-      return c.json(
-        { message: err instanceof Error ? err.message : 'assign failed' },
-        400,
-      );
-    }
-  },
+  async (c) => analysisOnlyResponse(c),
 );

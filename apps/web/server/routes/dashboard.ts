@@ -188,7 +188,7 @@ dashboardRoutes.get('/dashboard', requireMenu('dashboard'), async (c) => {
     todos.push({
       type: 'tracking_transit',
       title: `${trackingInTransit!.count} 条跟单在途或部分到货`,
-      subtitle: '请登记到货以回写库存',
+      subtitle: '请在迅捷登记到货，同步后自动体现',
       href: '/pmc/tracking',
       priority: 'medium',
     });

@@ -195,47 +195,6 @@ export function ProcurementBitableListPage({ listType, title, description }: Pro
           >
             {pullSync.isPending ? '同步中…' : '从飞书同步'}
           </Button>
-          <Button variant="outline" onClick={() => fileRef.current?.click()}>
-            {importFile ? `已选：${importFile.name}` : '选择 CSV/Excel'}
-          </Button>
-          <Button
-            disabled={!importFile || uploadPreview.isPending}
-            variant="outline"
-            onClick={() => importFile && uploadPreview.mutate(importFile)}
-          >
-            {uploadPreview.isPending ? '预览中…' : '上传预览'}
-          </Button>
-          <Button
-            variant="outline"
-            className="text-destructive hover:text-destructive"
-            disabled={clearLocal.isPending || (meta?.rowCount ?? 0) === 0}
-            onClick={() => {
-              const n = meta?.rowCount ?? 0;
-              if (
-                !window.confirm(
-                  `将删除本地全部 ${n} 行数据，飞书多维表格不受影响。此操作不可恢复。确定清空？`,
-                )
-              ) {
-                return;
-              }
-              clearLocal.mutate();
-            }}
-          >
-            {clearLocal.isPending ? '清空中…' : '清空当前数据'}
-          </Button>
-          <input
-            ref={fileRef}
-            type="file"
-            accept=".csv,.xlsx,.xls"
-            className="hidden"
-            onChange={(event) => {
-              const file = event.target.files?.[0] ?? null;
-              setImportFile(file);
-              setPreview(null);
-              setMessage('');
-              if (file) uploadPreview.mutate(file);
-            }}
-          />
         </div>
       </PageHeader>
 

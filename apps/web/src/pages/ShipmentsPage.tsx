@@ -274,7 +274,7 @@ export function ShipmentsPage() {
         </Card>
       )}
 
-      {createDraft && (
+      {false && createDraft && (
         <Card>
           <CardHeader>
             <CardTitle>创建发运</CardTitle>
@@ -571,16 +571,7 @@ export function ShipmentsPage() {
                 {saveMilestones.error instanceof Error ? saveMilestones.error.message : '保存失败'}
               </p>
             )}
-            <div className="mt-5 flex justify-end">
-              <Button
-                disabled={saveMilestones.isPending}
-                onClick={() =>
-                  saveMilestones.mutate({ shipmentId: selected.id, values: milestoneDraft })
-                }
-              >
-                {saveMilestones.isPending ? '保存中...' : '保存里程碑'}
-              </Button>
-            </div>
+            <p className="mt-5 text-sm text-text-sub">发运里程碑只读；请在迅捷维护后由同步更新。</p>
           </div>
         </div>
       )}

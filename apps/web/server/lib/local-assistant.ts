@@ -1,6 +1,7 @@
 import { eq, and, desc } from 'drizzle-orm';
 import { db, skus, stockAlerts, reorderSuggestions, inventoryRecords } from '@scm/db';
-import { getLatestInventorySnapshot, getLatestInProductionQty } from './inventory-snapshot.js';
+import { getLatestInProductionQty } from './inventory-snapshot.js';
+import { resolveInventoryPosition } from './inventory-position.js';
 import { IN_PRODUCTION_WAREHOUSE, isPhysicalWarehouse } from './inventory-constants.js';
 import {
   getExceptionPurchaseTracking,
@@ -71,7 +72,7 @@ const FAQ: FaqEntry[] = [
   {
     keywords: ['有效供给', '在途', '在产'],
     answer:
-      '分仓有效供给 = 可售 + 在途（在途已指向目的仓）。在产为 SKU 级未分仓池，货物发出后才计入目的仓在途。\n仓网/全局有效供给 = 各仓（可售+在途）之和 + 在产池。补货与预警按仓比较 ROP，仓网互调时参考全局池。',
+      '分仓有效供给 = 可售 + 在途 − 已分配（在途已指向目的仓；本仓无量时按销售占比分摊 OVERSEAS）。在产为 SKU 级未分仓池，货物发出后才计入目的仓在途。\n仓网/全局有效供给 = 各仓（可售+在途）之和 + 在产池。补货与预警按仓比较 ROP，仓网互调时参考全局池。',
   },
 ];
 
@@ -106,10 +107,10 @@ export async function buildSkuContext(params: {
   const lines: string[] = [`【SKU 上下文】${sku.code} ${sku.name}`];
 
   if (params.warehouseCode) {
-    const snap = await getLatestInventorySnapshot(id, params.warehouseCode);
+    const pos = await resolveInventoryPosition({ skuId: id, warehouseCode: params.warehouseCode });
     const inProduction = await getLatestInProductionQty(id);
     lines.push(
-      `仓 ${params.warehouseCode}：可售 ${snap.qtyAvailable}，在途 ${snap.qtyInTransit}，本仓有效 ${snap.localEffectiveQty}`,
+      `仓 ${params.warehouseCode}：可售 ${pos.qtyAvailable}，在途 ${pos.qtyInTransit}，已分配 ${pos.qtyReserved}，本仓有效 ${pos.effectiveQty}`,
     );
     lines.push(`SKU 在产池（未分仓）：${inProduction}`);
   } else {
@@ -120,9 +121,9 @@ export async function buildSkuContext(params: {
 
     for (const { warehouse } of whRows) {
       if (!isPhysicalWarehouse(warehouse)) continue;
-      const snap = await getLatestInventorySnapshot(id, warehouse);
+      const pos = await resolveInventoryPosition({ skuId: id, warehouseCode: warehouse });
       lines.push(
-        `仓 ${warehouse}：本仓有效 ${snap.localEffectiveQty}（可售 ${snap.qtyAvailable} / 在途 ${snap.qtyInTransit}）`,
+        `仓 ${warehouse}：本仓有效 ${pos.effectiveQty}（可售 ${pos.qtyAvailable} / 在途 ${pos.qtyInTransit} / 已分配 ${pos.qtyReserved}）`,
       );
     }
     const inProduction = await getLatestInProductionQty(id);

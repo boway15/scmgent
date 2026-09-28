@@ -1,6 +1,57 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { calcSafetyStockQty, zFromServiceLevel } from './safety-stock-z.js';
+import {
+  calcSafetyStockQty,
+  resolvePlanningSafetyStock,
+  zFromServiceLevel,
+} from './safety-stock-z.js';
+
+describe('resolvePlanningSafetyStock', () => {
+  const base = { avgDaily: 10, demandStdDev: 4, totalLeadDays: 25 };
+
+  it('defaults to coverage_days × 14 without policy', () => {
+    const r = resolvePlanningSafetyStock(base);
+    assert.equal(r.method, 'coverage_days');
+    assert.equal(r.safetyStockQty, 140);
+    assert.equal(r.reorderPoint, 390);
+  });
+
+  it('uses configured safety stock days', () => {
+    const r = resolvePlanningSafetyStock({
+      ...base,
+      policy: { safetyStockMethod: 'coverage_days', safetyStockDays: 7, calcMethod: 'eoq' },
+    });
+    assert.equal(r.safetyStockQty, 70);
+  });
+
+  it('computes z_demand with configured service level', () => {
+    const r = resolvePlanningSafetyStock({
+      ...base,
+      policy: { safetyStockMethod: 'z_demand', serviceLevel: '0.990', calcMethod: 'eoq' },
+    });
+    assert.equal(r.method, 'z_demand');
+    assert.equal(r.safetyStockQty, Math.ceil(2.33 * 4 * 5));
+  });
+
+  it('keeps manual quantity and derives ROP from it', () => {
+    const r = resolvePlanningSafetyStock({
+      ...base,
+      policy: { calcMethod: 'manual', safetyStockQty: 55, safetyStockDays: 14 },
+    });
+    assert.equal(r.method, 'manual');
+    assert.equal(r.safetyStockQty, 55);
+    assert.equal(r.reorderPoint, 305);
+  });
+
+  it('falls back to method calc when manual qty is empty', () => {
+    const r = resolvePlanningSafetyStock({
+      ...base,
+      policy: { calcMethod: 'manual', safetyStockQty: 0, safetyStockDays: 3 },
+    });
+    assert.equal(r.method, 'coverage_days');
+    assert.equal(r.safetyStockQty, 30);
+  });
+});
 
 describe('zFromServiceLevel', () => {
   it('maps standard service levels to Z scores', () => {

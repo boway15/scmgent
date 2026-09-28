@@ -1,9 +1,7 @@
 import { eq, and, desc } from 'drizzle-orm';
 import { db, inventoryRecords, reorderSuggestions, stockAlerts } from '@scm/db';
-import {
-  getLatestInventorySnapshot,
-  getLatestInProductionQty,
-} from '../../lib/inventory-snapshot.js';
+import { getLatestInProductionQty } from '../../lib/inventory-snapshot.js';
+import { resolveInventoryPosition } from '../../lib/inventory-position.js';
 import { IN_PRODUCTION_WAREHOUSE, isPhysicalWarehouse } from '../../lib/inventory-constants.js';
 import { recordToolCall } from '../trace.js';
 import { resolveSkuId } from './sku.js';
@@ -22,10 +20,10 @@ export async function getSkuInventoryContext(input: InventoryContextInput, runId
     const lines: string[] = [];
 
     if (input.warehouseCode) {
-      const snap = await getLatestInventorySnapshot(id, input.warehouseCode);
+      const pos = await resolveInventoryPosition({ skuId: id, warehouseCode: input.warehouseCode });
       const inProduction = await getLatestInProductionQty(id);
       lines.push(
-        `仓 ${input.warehouseCode}：可售 ${snap.qtyAvailable}，在途 ${snap.qtyInTransit}，本仓有效 ${snap.localEffectiveQty}`,
+        `仓 ${input.warehouseCode}：可售 ${pos.qtyAvailable}，在途 ${pos.qtyInTransit}，已分配 ${pos.qtyReserved}，本仓有效 ${pos.effectiveQty}`,
       );
       lines.push(`SKU 在产池（未分仓）：${inProduction}`);
     } else {
@@ -36,9 +34,9 @@ export async function getSkuInventoryContext(input: InventoryContextInput, runId
 
       for (const { warehouse } of whRows) {
         if (!isPhysicalWarehouse(warehouse) || warehouse === IN_PRODUCTION_WAREHOUSE) continue;
-        const snap = await getLatestInventorySnapshot(id, warehouse);
+        const pos = await resolveInventoryPosition({ skuId: id, warehouseCode: warehouse });
         lines.push(
-          `仓 ${warehouse}：本仓有效 ${snap.localEffectiveQty}（可售 ${snap.qtyAvailable} / 在途 ${snap.qtyInTransit}）`,
+          `仓 ${warehouse}：本仓有效 ${pos.effectiveQty}（可售 ${pos.qtyAvailable} / 在途 ${pos.qtyInTransit} / 已分配 ${pos.qtyReserved}）`,
         );
       }
       const inProduction = await getLatestInProductionQty(id);

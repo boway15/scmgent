@@ -30,9 +30,13 @@ export async function receivePurchaseDraft(input: ReceivePurchaseDraftInput) {
     planItemId: draft.planItemId,
     qtyReceived: input.qtyReceived,
     receivedDate: input.receivedDate,
-    idempotencyKey: input.idempotencyKey ?? `draft:${input.draftId}:${input.qtyReceived}`,
+    idempotencyKey: input.idempotencyKey,
     userId: input.userId,
   });
+
+  if (receiptResult.duplicate) {
+    return { draft, receipt: receiptResult, duplicate: true };
+  }
 
   const [planItem] = await db
     .select({ plannedQty: pmcPlanItems.plannedQty })
@@ -58,5 +62,6 @@ export async function receivePurchaseDraft(input: ReceivePurchaseDraftInput) {
   return {
     draft: updatedDraft,
     receipt: receiptResult,
+    duplicate: false,
   };
 }

@@ -40,7 +40,12 @@ import {
   calcTimelineDecisionHealth,
 } from './inventory-light.js';
 import { DEFAULT_OVERSTOCK_THRESHOLD_DAYS } from './replenishment-coverage.js';
-import { evaluateDemandGate } from './planning-demand-gate.js';
+import {
+  computeRecentSkuWmape,
+  evaluateDemandGate,
+  isDemandReconstructCapHit,
+  stockoutDaysFromInStockRatio,
+} from './planning-demand-gate.js';
 import { buildLatePoActions, type LatePoAction } from './planning-late-po-actions.js';
 
 export type SkuPlanningView = {
@@ -327,6 +332,7 @@ export async function getSkuPlanningView(params: {
     lifecycle: undefined,
     versionId: null,
   };
+  const share = parseSharesFromSnapshot(readTurnoverSnapshot(sku.encodingMeta));
   const health = await computeSkuWarehouseHealth({
     sku: {
       id: sku.id,
@@ -341,6 +347,7 @@ export async function getSkuPlanningView(params: {
     policyMap: new Map(policies.map((policy) => [policy.warehouseCode, policy])),
     forecastByStation: new Map(),
     forecastEntry,
+    share,
     moq: sku.skuMoq || sku.spuMoq || undefined,
   });
   const etaAvailableNearest = pickNearestEtaAvailable(
@@ -351,9 +358,6 @@ export async function getSkuPlanningView(params: {
     })),
     warehouse.code,
   );
-
-  const snapshot = readTurnoverSnapshot(sku.encodingMeta);
-  const share = parseSharesFromSnapshot(snapshot);
 
   let timeline: DailyInventoryResult | null = null;
   let timelineSuggestedQty: number | undefined;
@@ -411,17 +415,18 @@ export async function getSkuPlanningView(params: {
     snapshotDate,
   });
 
-  const [accuracyRow] = await db
+  const accuracyRows = await db
     .select({
-      mape: forecastAccuracyMonthly.mape,
+      station: forecastAccuracyMonthly.station,
+      platform: forecastAccuracyMonthly.platform,
+      forecastYear: forecastAccuracyMonthly.forecastYear,
+      month: forecastAccuracyMonthly.month,
+      forecastDailyAvg: forecastAccuracyMonthly.forecastDailyAvg,
+      actualDailyAvg: forecastAccuracyMonthly.actualDailyAvg,
+      computedAt: forecastAccuracyMonthly.computedAt,
     })
     .from(forecastAccuracyMonthly)
-    .where(eq(forecastAccuracyMonthly.skuId, sku.id))
-    .orderBy(
-      desc(forecastAccuracyMonthly.forecastYear),
-      desc(forecastAccuracyMonthly.month),
-    )
-    .limit(1);
+    .where(eq(forecastAccuracyMonthly.skuId, sku.id));
 
   const [demandAudit] = await db
     .select({
@@ -441,24 +446,19 @@ export async function getSkuPlanningView(params: {
     .orderBy(desc(demandPlanMonthly.updatedAt))
     .limit(1);
 
-  const recentWmape =
-    accuracyRow?.mape != null && accuracyRow.mape !== ''
-      ? Number(accuracyRow.mape)
-      : null;
   const unconstrained =
     demandAudit?.unconstrainedRecentDaily != null
       ? Number(demandAudit.unconstrainedRecentDaily)
       : null;
   const demandGate = evaluateDemandGate({
-    reconstructCapHit: demandAudit?.source === 'reconstructed_shape' && unconstrained != null
-      ? unconstrained > health.avgDaily * 1.49
-      : false,
+    reconstructCapHit: isDemandReconstructCapHit({
+      source: demandAudit?.source,
+      unconstrainedDaily: unconstrained,
+      avgDaily: health.avgDaily,
+    }),
     unconstrainedDaily: unconstrained,
-    stockoutDays:
-      demandAudit?.inStockDayRatio != null
-        ? Math.round((1 - Number(demandAudit.inStockDayRatio)) * 90)
-        : null,
-    recentWmape: Number.isFinite(recentWmape as number) ? recentWmape : null,
+    stockoutDays: stockoutDaysFromInStockRatio(demandAudit?.inStockDayRatio),
+    recentWmape: computeRecentSkuWmape(accuracyRows),
   });
 
   let latePoActions: LatePoAction[] | undefined;

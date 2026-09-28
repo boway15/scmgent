@@ -1,6 +1,85 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { evaluateDemandGate, isAutoAdoptableSuggestion } from './planning-demand-gate.js';
+import {
+  computeRecentSkuWmape,
+  evaluateDemandGate,
+  isAutoAdoptableSuggestion,
+  isDemandReconstructCapHit,
+  stockoutDaysFromInStockRatio,
+} from './planning-demand-gate.js';
+
+describe('computeRecentSkuWmape', () => {
+  const row = (
+    station: string,
+    month: number,
+    forecast: number,
+    actual: number,
+    computedAt = '2026-09-01T00:00:00Z',
+  ) => ({
+    station,
+    platform: 'ALL',
+    forecastYear: 2026,
+    month,
+    forecastDailyAvg: String(forecast),
+    actualDailyAvg: String(actual),
+    computedAt,
+  });
+
+  it('weights stations by actual volume instead of taking an arbitrary row', () => {
+    // US: |12-10|=2, UK: |3-1|=2 → WMAPE = 4/11；单行 UK MAPE 会是 200%
+    const wmape = computeRecentSkuWmape([row('UK', 8, 3, 1), row('US', 8, 12, 10)]);
+    assert.ok(wmape != null);
+    assert.ok(Math.abs(wmape - 4 / 11) < 1e-9);
+  });
+
+  it('only uses the latest settled month', () => {
+    const wmape = computeRecentSkuWmape([row('US', 7, 50, 10), row('US', 8, 11, 10)]);
+    assert.ok(wmape != null);
+    assert.ok(Math.abs(wmape - 0.1) < 1e-9);
+  });
+
+  it('keeps only the latest computed version per station/platform', () => {
+    const wmape = computeRecentSkuWmape([
+      row('US', 8, 20, 10, '2026-09-01T00:00:00Z'),
+      row('US', 8, 10, 10, '2026-09-05T00:00:00Z'),
+    ]);
+    assert.equal(wmape, 0);
+  });
+
+  it('returns null when no comparable volume', () => {
+    assert.equal(computeRecentSkuWmape([]), null);
+    assert.equal(computeRecentSkuWmape([row('US', 8, 5, 0)]), null);
+  });
+});
+
+describe('isDemandReconstructCapHit', () => {
+  it('hits when reconstructed daily reaches the cap', () => {
+    assert.equal(
+      isDemandReconstructCapHit({ source: 'reconstructed_shape', unconstrainedDaily: 15, avgDaily: 10 }),
+      true,
+    );
+  });
+
+  it('ignores non-reconstructed sources and values below cap', () => {
+    assert.equal(
+      isDemandReconstructCapHit({ source: 'forecast', unconstrainedDaily: 15, avgDaily: 10 }),
+      false,
+    );
+    assert.equal(
+      isDemandReconstructCapHit({ source: 'reconstructed_shape', unconstrainedDaily: 12, avgDaily: 10 }),
+      false,
+    );
+    assert.equal(
+      isDemandReconstructCapHit({ source: 'reconstructed_shape', unconstrainedDaily: null, avgDaily: 10 }),
+      false,
+    );
+  });
+
+  it('converts in-stock ratio to stockout days over 90d', () => {
+    assert.equal(stockoutDaysFromInStockRatio('0.8'), 18);
+    assert.equal(stockoutDaysFromInStockRatio(null), null);
+  });
+});
 
 describe('planning-demand-gate', () => {
   it('flags reconstruct cap for manual confirm', () => {

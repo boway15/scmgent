@@ -1,5 +1,5 @@
 import { and, desc, eq } from 'drizzle-orm';
-import { db, inventoryRecords, purchaseDrafts, skus } from '@scm/db';
+import { db, inventoryRecords, skus } from '@scm/db';
 import { IN_PRODUCTION_WAREHOUSE, UNALLOCATED_TRANSIT_WAREHOUSE } from './inventory-constants.js';
 import { normalizePurchaseDraftStatus } from './purchase-draft-lifecycle.js';
 import {
@@ -188,7 +188,7 @@ export function mergeInventoryPosition(input: {
   sources?: InventoryPositionSource[];
   unassignedOpenQty?: number;
 }): InventoryPositionBreakdown {
-  const dedupeMode = input.dedupeMode ?? 'drafts_fill_gap';
+  const dedupeMode = input.dedupeMode ?? PLANNING_INVENTORY_DEDUPE_MODE;
   const s = input.snapshot;
   const d = input.draftBuckets;
 
@@ -391,81 +391,41 @@ async function loadLatestInventoryRecordSnapshot(params: {
   };
 }
 
+/** 单 SKU × 仓库存位置唯一入口（规划口径 snapshot_only：native 快照，缺量时按占比分摊 OVERSEAS）。 */
 export async function resolveInventoryPosition(params: {
   skuId: string;
   warehouseCode: string;
-  dedupeMode?: InventoryDedupeMode;
 }): Promise<InventoryPositionBreakdown> {
-  const dedupeMode = params.dedupeMode ?? 'drafts_fill_gap';
-
-  if (dedupeMode === 'snapshot_only' || params.warehouseCode === IN_PRODUCTION_WAREHOUSE) {
-    const [nativeRecord, overseasRecord, skuRow] = await Promise.all([
-      loadLatestInventoryRecordSnapshot({
-        skuId: params.skuId,
-        warehouseCode: params.warehouseCode,
-      }),
-      params.warehouseCode === IN_PRODUCTION_WAREHOUSE
-        ? Promise.resolve(null)
-        : loadLatestInventoryRecordSnapshot({
-            skuId: params.skuId,
-            warehouseCode: UNALLOCATED_TRANSIT_WAREHOUSE,
-          }),
-      params.warehouseCode === IN_PRODUCTION_WAREHOUSE
-        ? Promise.resolve(null)
-        : db
-            .select({ encodingMeta: skus.encodingMeta })
-            .from(skus)
-            .where(eq(skus.id, params.skuId))
-            .limit(1)
-            .then((rows) => rows[0] ?? null),
-    ]);
-
-    const share = skuRow
-      ? parseSharesFromSnapshot(readTurnoverSnapshot(skuRow.encodingMeta))
-      : undefined;
-
-    return resolvePlanningInventoryPositionFromSnapshots({
+  const isProduction = params.warehouseCode === IN_PRODUCTION_WAREHOUSE;
+  const [nativeRecord, overseasRecord, skuRow] = await Promise.all([
+    loadLatestInventoryRecordSnapshot({
+      skuId: params.skuId,
       warehouseCode: params.warehouseCode,
-      nativeSnapshot: nativeRecord,
-      overseasSnapshot: overseasRecord,
-      share,
-      dedupeMode,
-    });
-  }
+    }),
+    isProduction
+      ? Promise.resolve(null)
+      : loadLatestInventoryRecordSnapshot({
+          skuId: params.skuId,
+          warehouseCode: UNALLOCATED_TRANSIT_WAREHOUSE,
+        }),
+    isProduction
+      ? Promise.resolve(null)
+      : db
+          .select({ encodingMeta: skus.encodingMeta })
+          .from(skus)
+          .where(eq(skus.id, params.skuId))
+          .limit(1)
+          .then((rows) => rows[0] ?? null),
+  ]);
 
-  const record = await loadLatestInventoryRecordSnapshot({
-    skuId: params.skuId,
+  const share = skuRow
+    ? parseSharesFromSnapshot(readTurnoverSnapshot(skuRow.encodingMeta))
+    : undefined;
+
+  return resolvePlanningInventoryPositionFromSnapshots({
     warehouseCode: params.warehouseCode,
-  });
-
-  const snapshot = normalizeSnapshotForWarehouse(
-    toInventoryPositionSnapshot(record),
-    params.warehouseCode,
-  );
-
-  const draftRows = await db
-    .select({
-      id: purchaseDrafts.id,
-      status: purchaseDrafts.status,
-      qty: purchaseDrafts.qty,
-      receivedQty: purchaseDrafts.receivedQty,
-    })
-    .from(purchaseDrafts)
-    .where(eq(purchaseDrafts.skuId, params.skuId));
-
-  const draftLines: DraftOpenLine[] = draftRows.map((row) => ({
-    draftId: row.id,
-    status: row.status,
-    openQty: openDraftQty(row.qty, row.receivedQty),
-    warehouseCode: null,
-  }));
-  const aggregated = aggregateDraftBucketsForWarehouse(draftLines, params.warehouseCode);
-
-  return mergeInventoryPosition({
-    dedupeMode,
-    snapshot,
-    draftBuckets: aggregated.draftBuckets,
-    sources: [...snapshotSources(snapshot), ...aggregated.sources],
-    unassignedOpenQty: aggregated.unassignedOpenQty,
+    nativeSnapshot: nativeRecord,
+    overseasSnapshot: overseasRecord,
+    share,
   });
 }

@@ -17,12 +17,14 @@ import {
   excludedCrossGroupSpuIds,
   type SkuPilotInput,
 } from './demand-plan-eligibility.js';
-import { warehouseShareWeight } from './demand-plan-reconstruct.js';
 import {
   resolvePlanningDemandFromInputs,
   type PlanningDemandResult,
 } from './demand-plan-resolve.js';
-import { parseSharesFromSnapshot } from './inventory-share-allocation.js';
+import {
+  parseSharesFromSnapshot,
+  resolveWarehouseDemandShare,
+} from './inventory-share-allocation.js';
 import { readTurnoverSnapshot } from './inventory-turnover-snapshot.js';
 
 export type LoadPlanningDemandSku = {
@@ -98,7 +100,7 @@ function shareFromEncodingMeta(
   encodingMeta: unknown,
 ): number | null {
   const parsed = parseSharesFromSnapshot(readTurnoverSnapshot(encodingMeta));
-  return warehouseShareWeight(warehouseCode, parsed.weights);
+  return resolveWarehouseDemandShare(warehouseCode, parsed);
 }
 
 async function defaultLoadSku(skuId: string): Promise<LoadPlanningDemandSku | undefined> {
@@ -243,6 +245,8 @@ export async function loadPlanningDemandForSkuWarehouse(
   const loadAdoption = deps.loadAdoption ?? defaultLoadAdoption;
   const loadPublishedDemandRows =
     deps.loadPublishedDemandRows ?? defaultLoadPublishedDemandRows;
+  const networkScope = input.warehouseCode === DEMAND_PLAN_WAREHOUSE_ALL;
+
   const skuRow = await loadSku(input.skuId);
   if (!skuRow) {
     return resolvePlanningDemandFromInputs({
@@ -253,6 +257,7 @@ export async function loadPlanningDemandForSkuWarehouse(
       demandRows: [],
       championWarehouseRows: [],
       stationForecastMap: input.championForecastMap,
+      networkScope,
     });
   }
 
@@ -278,6 +283,7 @@ export async function loadPlanningDemandForSkuWarehouse(
       demandRows: [],
       championWarehouseRows,
       stationForecastMap: input.championForecastMap,
+      networkScope,
     });
   }
 
@@ -299,6 +305,7 @@ export async function loadPlanningDemandForSkuWarehouse(
       demandRows: [],
       championWarehouseRows,
       stationForecastMap: input.championForecastMap,
+      networkScope,
     });
   }
 
@@ -367,5 +374,6 @@ export async function loadPlanningDemandForSkuWarehouse(
     demandRows,
     championWarehouseRows,
     stationForecastMap: input.championForecastMap,
+    networkScope,
   });
 }

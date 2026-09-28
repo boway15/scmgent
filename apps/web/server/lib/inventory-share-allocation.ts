@@ -68,6 +68,34 @@ export function parseSharesFromSnapshot(snapshot: Record<string, string | undefi
   };
 }
 
+const SHARE_COLUMN_WAREHOUSES = new Set(
+  FEISHU_REGION_SALES_SHARE_FIELDS.map((region) => TURNOVER_BUCKET_WAREHOUSE_MAP[region]).filter(
+    (warehouse): warehouse is string => Boolean(warehouse),
+  ),
+);
+
+/**
+ * 分仓需求占比（全站预测 → 目的仓）。
+ * - 有占比列的仓：取归一化占比；该 SKU 在此仓无份额 → 0
+ * - SKU 无任何占比，或仓本身无占比列（如 UK）→ null，调用方回退全站需求并标 no_share
+ */
+export function resolveWarehouseDemandShare(
+  warehouseCode: string,
+  parsed: ShareParseResult,
+): number | null {
+  if (parsed.method !== 'sales_share') return null;
+  if (!SHARE_COLUMN_WAREHOUSES.has(warehouseCode)) return null;
+  return parsed.weights.find((row) => row.warehouse === warehouseCode)?.weight ?? 0;
+}
+
+export function scaleDailyMapByShare(
+  map: Map<string, number>,
+  share: number | null,
+): Map<string, number> {
+  if (share == null) return map;
+  return new Map([...map.entries()].map(([period, daily]) => [period, daily * share]));
+}
+
 export function allocateByShare(qty: number, parsed: ShareParseResult): Map<string, number> {
   if (qty <= 0 || parsed.method === 'unallocated' || parsed.weights.length === 0) {
     return new Map();

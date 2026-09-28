@@ -27,7 +27,6 @@ import { DEMAND_PLAN_WAREHOUSE_ALL } from './demand-plan-config.js';
 import { readTurnoverSnapshot } from './inventory-turnover-snapshot.js';
 import { loadPlanningDemandForSkuWarehouse } from './demand-plan-load.js';
 import {
-  pickDemandMapForTimeline,
   type PlanningDemandResult,
 } from './demand-plan-resolve.js';
 
@@ -208,11 +207,7 @@ export async function buildSkuWarehouseTimeline(params: {
     warehouseCode: params.warehouseCode,
     championForecastMap: stationForecastMap,
   });
-  const timelineMap = pickDemandMapForTimeline({
-    source: planningDemand.source,
-    demandMap: planningDemand.demandMap,
-    stationForecastMap,
-  });
+  const timelineMap = planningDemand.demandMap;
   const fallbackDaily = pickTimelineFallbackDaily({
     source: planningDemand.source,
     planningFallbackDaily: planningDemand.fallbackDaily,
@@ -337,11 +332,7 @@ export async function buildSkuNetworkTimeline(params: {
     warehouseCode: DEMAND_PLAN_WAREHOUSE_ALL,
     championForecastMap: stationForecastMap,
   });
-  const timelineMap = pickDemandMapForTimeline({
-    source: planningDemand.source,
-    demandMap: planningDemand.demandMap,
-    stationForecastMap,
-  });
+  const timelineMap = planningDemand.demandMap;
   const fallbackDaily = pickTimelineFallbackDaily({
     source: planningDemand.source,
     planningFallbackDaily: planningDemand.fallbackDaily,

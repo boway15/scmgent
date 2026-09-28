@@ -2,7 +2,11 @@ import { and, asc, eq, gte, lt } from 'drizzle-orm';
 import { db, inventoryRecords } from '@scm/db';
 import { calcForwardAvgDaily } from './forecast-demand.js';
 import { loadMergedPublishedForecastBySkuIds } from './forecast-published-resolve.js';
-import { resolveHistoricalDemand } from './inventory-health-service.js';
+import { loadSkuShare, resolveHistoricalDemand } from './inventory-health-service.js';
+import {
+  resolveWarehouseDemandShare,
+  scaleDailyMapByShare,
+} from './inventory-share-allocation.js';
 import { resolveLeadTimeForSkuWarehouse } from './lead-time-resolver.js';
 import { calcDailyStats } from './replenishment.js';
 import { loadDailySalesForSku } from './sales-history-query.js';
@@ -177,7 +181,16 @@ export async function resolveSuggestionInputs(params: {
 
   if (hasForecast && forecastEntry) {
     const stats = calcDailyStats(whSales, windowDays);
-    avgDaily = calcForwardAvgDaily(forecastEntry.map, new Date(), 90, stats.avgDaily);
+    const demandShare = resolveWarehouseDemandShare(
+      params.warehouseCode,
+      await loadSkuShare(params.sku.id),
+    );
+    avgDaily = calcForwardAvgDaily(
+      scaleDailyMapByShare(forecastEntry.map, demandShare),
+      new Date(),
+      90,
+      stats.avgDaily,
+    );
     demandSource = 'forecast';
   } else {
     const inventoryRows = await loadDailyAvailability({

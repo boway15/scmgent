@@ -32,6 +32,8 @@ type ResolvePlanningDemandInput = {
   demandRows: DemandRow[]; // period 可为 YYYY-Www
   championWarehouseRows: ChampionRow[];
   stationForecastMap: Map<string, number>;
+  /** 网络级（ALL）规划：直接使用全站预测，不按仓拆分也不标 no_share */
+  networkScope?: boolean;
 };
 
 export function effectiveDemandDaily(
@@ -65,16 +67,24 @@ function meanOfLastThreePositive(map: Map<string, number>): number {
   return lastThree.reduce((sum, value) => sum + value, 0) / lastThree.length;
 }
 
+/** 预测口径：物理仓按销售占比拆全站预测；无占比回退全站并标 no_share */
 function forecastFallback(
   input: ResolvePlanningDemandInput,
   flags: PlanningDemandFlag[],
 ): PlanningDemandResult {
+  const championMap = championMapFromRows(input.championWarehouseRows);
+  const useWarehouseShare = !input.networkScope && input.hasShare;
+  const demandMap = useWarehouseShare ? championMap : input.stationForecastMap;
+  const outFlags = [...flags];
+  if (!input.networkScope && !input.hasShare && !outFlags.includes('no_share')) {
+    outFlags.push('no_share');
+  }
   return {
-    demandMap: input.stationForecastMap,
-    championMap: championMapFromRows(input.championWarehouseRows),
+    demandMap,
+    championMap,
     source: 'forecast',
-    flags,
-    fallbackDaily: meanOfLastThreePositive(input.stationForecastMap),
+    flags: outFlags,
+    fallbackDaily: meanOfLastThreePositive(demandMap),
   };
 }
 
@@ -90,27 +100,22 @@ export function resolvePlanningDemandFromInputs(
   if (input.adoptionSource !== 'demand_plan') {
     return forecastFallback(input, []);
   }
-  if (!input.hasShare) {
-    return forecastFallback(input, ['no_share']);
-  }
   if (input.demandRows.length === 0) {
-    return forecastFallback(input, ['demand_missing_fallback_forecast']);
+    const flags: PlanningDemandFlag[] = ['demand_missing_fallback_forecast'];
+    if (!input.hasShare) flags.push('no_share');
+    return forecastFallback(input, flags);
   }
 
   const demandMap = monthMapFromRows(input.demandRows);
+  const flags: PlanningDemandFlag[] = ['pilot_hit'];
+  if (!input.hasShare) flags.push('no_share');
   return {
     demandMap,
-    championMap: championMapFromRows(input.championWarehouseRows),
+    championMap: input.hasShare
+      ? championMapFromRows(input.championWarehouseRows)
+      : new Map<string, number>(),
     source: 'demand_plan',
-    flags: ['pilot_hit'],
+    flags,
     fallbackDaily: meanOfLastThreePositive(demandMap),
   };
-}
-
-export function pickDemandMapForTimeline(input: {
-  source: 'demand_plan' | 'forecast';
-  demandMap: Map<string, number>;
-  stationForecastMap: Map<string, number>;
-}): Map<string, number> {
-  return input.source === 'demand_plan' ? input.demandMap : input.stationForecastMap;
 }

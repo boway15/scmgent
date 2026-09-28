@@ -660,7 +660,9 @@ export async function loadPlanningDemandForSkuWarehouse(input: {
 7. Champion 仓口径：`championForecastMap` 各月 × share（无 share 则 championMap 空，demand 回退全站预测 Map 以保持现网）
 8. `resolvePlanningDemandFromInputs`
 
-**现网兼容：** 非试点时 `demandMap` 必须等于今天 `loadMergedPublishedForecastBySkuIds` 的 map（share 不乘进 Champion 全站预测——现网时间轴吃的是全站预测日均，**非试点不得改这个口径**）。
+~~**现网兼容：** 非试点时 `demandMap` 必须等于今天 `loadMergedPublishedForecastBySkuIds` 的 map（share 不乘进 Champion 全站预测——现网时间轴吃的是全站预测日均，**非试点不得改这个口径**）。~~
+
+> 2026-09-28 已废止：非试点同样按仓占比拆分全站预测（无占比回退全站并标 `no_share`），口径见 `docs/business/scm-demand-supply-inventory-logic.md` §3.3「分仓需求」。
 
 因此 `championWarehouseRows` 仅用于影子对照与需求生成；**非试点 `demandMap` = 传入/加载的未拆仓 forecastMap**。把这条写进 `resolvePlanningDemandFromInputs`：增加 `stationForecastMap`：
 

@@ -6,6 +6,7 @@ import { requireMenu } from '../lib/rbac.js';
 import { buildCsv, csvAttachment } from '../lib/csv-export.js';
 import { IN_PRODUCTION_WAREHOUSE } from '../lib/inventory-constants.js';
 import { getLatestInProductionQty } from '../lib/inventory-snapshot.js';
+import { resolveInventoryPosition } from '../lib/inventory-position.js';
 import {
   applyReplenishLightToRows,
   normalizeReplenishLight,
@@ -208,6 +209,7 @@ inventoryRoutes.get('/inventory/export', async (c) => {
       const qtyInTransit = record?.qtyInTransit ?? 0;
       const qtyReserved = record?.qtyReserved ?? 0;
       const localEffectiveQty = qtyAvailable + qtyInTransit;
+      const position = await resolveInventoryPosition({ skuId: sku.id, warehouseCode: wh.code });
 
       rows.push([
         wh.code,
@@ -219,13 +221,14 @@ inventoryRoutes.get('/inventory/export', async (c) => {
         qtyInProduction,
         qtyReserved,
         localEffectiveQty,
+        position.effectiveQty,
         cfg?.reorderPoint ?? '',
       ]);
     }
   }
 
   const csv = buildCsv(
-    ['warehouse', 'sku_code', 'sku_name', 'replenish_light', 'qty_available', 'qty_in_transit', 'sku_qty_in_production', 'qty_reserved', 'local_effective_qty', 'reorder_point'],
+    ['warehouse', 'sku_code', 'sku_name', 'replenish_light', 'qty_available', 'qty_in_transit', 'sku_qty_in_production', 'qty_reserved', 'local_effective_qty', 'effective_qty', 'reorder_point'],
     rows,
   );
   return csvAttachment(`inventory-${new Date().toISOString().slice(0, 10)}.csv`, csv);

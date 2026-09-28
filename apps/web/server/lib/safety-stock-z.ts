@@ -2,6 +2,60 @@
 
 export type SafetyStockMethod = 'coverage_days' | 'z_demand' | 'z_demand_leadtime';
 
+export const DEFAULT_PLANNING_SAFETY_STOCK_DAYS = 14;
+
+export type PlanningSafetyStockPolicy = {
+  safetyStockMethod?: string | null;
+  safetyStockDays?: number | null;
+  safetyStockQty?: number | null;
+  serviceLevel?: number | string | null;
+  leadTimeStdDev?: number | string | null;
+  calcMethod?: string | null;
+};
+
+function toFiniteNumber(value: number | string | null | undefined): number | undefined {
+  if (value == null || value === '') return undefined;
+  const n = Number(value);
+  return Number.isFinite(n) ? n : undefined;
+}
+
+/**
+ * 规划主路径安全库存（健康 / 时间轴 / 补货任务同源），按 safety_stock_config 生效：
+ * - calcMethod=manual 且件数 >0：沿用人工件数
+ * - coverage_days（默认）：日均 × 安全天数
+ * - z_demand / z_demand_leadtime：按配置服务水平与交期标准差实时计算
+ */
+export function resolvePlanningSafetyStock(params: {
+  policy?: PlanningSafetyStockPolicy | null;
+  avgDaily: number;
+  demandStdDev: number;
+  totalLeadDays: number;
+}): { safetyStockQty: number; reorderPoint: number; method: SafetyStockMethod | 'manual' } {
+  const policy = params.policy ?? null;
+  const reorderPointFor = (safetyStockQty: number) =>
+    Math.ceil(params.avgDaily * params.totalLeadDays + safetyStockQty);
+
+  const manualQty = policy?.safetyStockQty ?? 0;
+  if (policy?.calcMethod === 'manual' && manualQty > 0) {
+    return { safetyStockQty: manualQty, reorderPoint: reorderPointFor(manualQty), method: 'manual' };
+  }
+
+  const method: SafetyStockMethod =
+    policy?.safetyStockMethod === 'z_demand' || policy?.safetyStockMethod === 'z_demand_leadtime'
+      ? policy.safetyStockMethod
+      : 'coverage_days';
+  const { safetyStockQty } = calcSafetyStockQty({
+    method,
+    serviceLevel: toFiniteNumber(policy?.serviceLevel),
+    demandStdDev: params.demandStdDev,
+    totalLeadDays: params.totalLeadDays,
+    avgDaily: params.avgDaily,
+    leadTimeStdDev: toFiniteNumber(policy?.leadTimeStdDev),
+    safetyStockDays: policy?.safetyStockDays ?? DEFAULT_PLANNING_SAFETY_STOCK_DAYS,
+  });
+  return { safetyStockQty, reorderPoint: reorderPointFor(safetyStockQty), method };
+}
+
 const SERVICE_LEVEL_Z_TABLE: ReadonlyArray<{ serviceLevel: number; z: number }> = [
   { serviceLevel: 0.9, z: 1.28 },
   { serviceLevel: 0.95, z: 1.65 },

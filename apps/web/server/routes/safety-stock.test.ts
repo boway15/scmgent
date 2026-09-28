@@ -3,6 +3,7 @@ import { describe, it } from 'node:test';
 import { calculateSafetyStockValues } from './safety-stock.js';
 
 const recentDate = new Date().toISOString().slice(0, 10);
+const yesterdayDate = new Date(Date.now() - 86_400_000).toISOString().slice(0, 10);
 
 describe('calculateSafetyStockValues', () => {
   it('uses coverage days when coverage_days is selected', () => {
@@ -20,11 +21,11 @@ describe('calculateSafetyStockValues', () => {
     assert.equal(result.serviceLevel, null);
   });
 
-  it('uses sales standard deviation when z_demand has no stored sigma', () => {
+  it('uses sales standard deviation (zero-sale days included) when z_demand has no stored sigma', () => {
     const result = calculateSafetyStockValues({
       sales: [
         { qtySold: 2, saleDate: recentDate },
-        { qtySold: 8, saleDate: recentDate.replace(/.$/, (day) => String(Math.max(0, Number(day) - 1))) },
+        { qtySold: 8, saleDate: yesterdayDate },
       ],
       leadTimeDays: 4,
       unitCost: 1,
@@ -32,8 +33,13 @@ describe('calculateSafetyStockValues', () => {
       serviceLevel: 0.95,
     });
 
-    assert.equal(result.demandStdDev, 3);
-    assert.equal(result.safetyStockQty, 10);
+    // 90 天窗口：2 天有量（2、8），88 天为 0
+    const mean = 10 / 90;
+    const expectedSigma = Math.sqrt(
+      (88 * mean ** 2 + (2 - mean) ** 2 + (8 - mean) ** 2) / 90,
+    );
+    assert.ok(Math.abs(result.demandStdDev - expectedSigma) < 1e-9);
+    assert.equal(result.safetyStockQty, Math.ceil(1.65 * expectedSigma * 2));
     assert.equal(result.safetyStockMethod, 'z_demand');
     assert.equal(result.serviceLevel, 0.95);
   });

@@ -7,14 +7,12 @@ import {
   warehouses,
   spus,
   forecastAccuracyMonthly,
+  demandPlanMonthly,
+  demandPlanVersions,
 } from '@scm/db';
-import { applyMoq, calcReplenishment, resolveEffectiveMoq } from '../lib/replenishment.js';
+import { applyMoq, resolveEffectiveMoq } from '../lib/replenishment.js';
 import { formatCoverageReason, type InventoryHealth } from '../lib/replenishment-coverage.js';
 import { getRegionPoolSnapshot } from '../lib/inventory-snapshot.js';
-import {
-  PLANNING_INVENTORY_DEDUPE_MODE,
-  resolveInventoryPosition,
-} from '../lib/inventory-position.js';
 import { shouldDeferReplenishment, US_WAREHOUSE_CODES } from '../lib/warehouse-domain.js';
 import {
   collapseSkuReplenishmentCandidates,
@@ -30,6 +28,7 @@ import { enhanceReplenishmentReasons } from '../integrations/dify-workflows.js';
 import { isReplenishmentWorkflowEnabled } from '../integrations/dify.js';
 import {
   computeSkuWarehouseHealth,
+  shareFromEncodingMeta,
   type SkuHealthRow,
 } from '../lib/inventory-health-service.js';
 import {
@@ -55,13 +54,19 @@ import {
 } from '../lib/replenishment-coverage.js';
 import { IN_PRODUCTION_WAREHOUSE } from '../lib/inventory-constants.js';
 import { DEMAND_PLAN_WAREHOUSE_ALL } from '../lib/demand-plan-config.js';
-import { evaluateDemandGate } from '../lib/planning-demand-gate.js';
+import {
+  computeRecentSkuWmape,
+  evaluateDemandGate,
+  isDemandReconstructCapHit,
+  stockoutDaysFromInStockRatio,
+} from '../lib/planning-demand-gate.js';
 import { buildLatePoActions } from '../lib/planning-late-po-actions.js';
 
+/** 回写本轮规划口径的件数 / ROP；人工配置（calcMethod=manual）不覆盖 */
 async function upsertSafetyStock(
   skuId: string,
   warehouseCode: string,
-  calc: ReturnType<typeof calcReplenishment>,
+  calc: { safetyStockQty: number; reorderPoint: number; reorderQty: number },
 ) {
   const [existing] = await db
     .select()
@@ -70,6 +75,8 @@ async function upsertSafetyStock(
       and(eq(safetyStockConfig.skuId, skuId), eq(safetyStockConfig.warehouseCode, warehouseCode)),
     )
     .limit(1);
+
+  if (existing?.calcMethod === 'manual') return;
 
   if (existing) {
     await db
@@ -127,6 +134,7 @@ export async function runReplenishmentForecast() {
       unitCost: skus.unitCost,
       lifecycle: skus.lifecycle,
       commercialStatusNorm: skus.commercialStatusNorm,
+      encodingMeta: skus.encodingMeta,
     })
     .from(skus)
     .where(eq(skus.isActive, true));
@@ -148,25 +156,56 @@ export async function runReplenishmentForecast() {
   const salesBySkuId = await loadDailySalesBySkuIds(activeSkus.map((sku) => sku.id));
 
   const accuracyBySku = new Map<string, number>();
+  const demandAuditBySkuWh = new Map<
+    string,
+    { unconstrainedRecentDaily: string | null; inStockDayRatio: string | null; source: string | null }
+  >();
   const skuIds = activeSkus.map((s) => s.id);
   if (skuIds.length > 0) {
     const accuracyRows = await db
       .select({
         skuId: forecastAccuracyMonthly.skuId,
-        mape: forecastAccuracyMonthly.mape,
+        station: forecastAccuracyMonthly.station,
+        platform: forecastAccuracyMonthly.platform,
         forecastYear: forecastAccuracyMonthly.forecastYear,
         month: forecastAccuracyMonthly.month,
+        forecastDailyAvg: forecastAccuracyMonthly.forecastDailyAvg,
+        actualDailyAvg: forecastAccuracyMonthly.actualDailyAvg,
+        computedAt: forecastAccuracyMonthly.computedAt,
       })
       .from(forecastAccuracyMonthly)
-      .where(inArray(forecastAccuracyMonthly.skuId, skuIds))
-      .orderBy(
-        desc(forecastAccuracyMonthly.forecastYear),
-        desc(forecastAccuracyMonthly.month),
-      );
+      .where(inArray(forecastAccuracyMonthly.skuId, skuIds));
+    const accuracyRowsBySku = new Map<string, typeof accuracyRows>();
     for (const row of accuracyRows) {
-      if (accuracyBySku.has(row.skuId)) continue;
-      const mape = row.mape != null ? Number(row.mape) : NaN;
-      if (Number.isFinite(mape)) accuracyBySku.set(row.skuId, mape);
+      const list = accuracyRowsBySku.get(row.skuId) ?? [];
+      list.push(row);
+      accuracyRowsBySku.set(row.skuId, list);
+    }
+    for (const [skuId, rows] of accuracyRowsBySku) {
+      const wmape = computeRecentSkuWmape(rows);
+      if (wmape != null) accuracyBySku.set(skuId, wmape);
+    }
+
+    const auditRows = await db
+      .select({
+        skuId: demandPlanMonthly.skuId,
+        warehouseCode: demandPlanMonthly.warehouseCode,
+        unconstrainedRecentDaily: demandPlanMonthly.unconstrainedRecentDaily,
+        inStockDayRatio: demandPlanMonthly.inStockDayRatio,
+        source: demandPlanMonthly.source,
+      })
+      .from(demandPlanMonthly)
+      .innerJoin(demandPlanVersions, eq(demandPlanMonthly.versionId, demandPlanVersions.id))
+      .where(
+        and(
+          inArray(demandPlanMonthly.skuId, skuIds),
+          eq(demandPlanVersions.status, 'pilot_published'),
+        ),
+      )
+      .orderBy(desc(demandPlanMonthly.updatedAt));
+    for (const row of auditRows) {
+      const key = `${row.skuId}:${row.warehouseCode}`;
+      if (!demandAuditBySkuWh.has(key)) demandAuditBySkuWh.set(key, row);
     }
   }
 
@@ -199,6 +238,7 @@ export async function runReplenishmentForecast() {
     const coverageByWh: Record<string, SkuHealthRow['coverage']> = {};
     const networkRopByRegion: Record<string, number> = {};
 
+    const share = shareFromEncodingMeta(sku.encodingMeta);
     for (const wh of whRows) {
       const health = await computeSkuWarehouseHealth({
         sku,
@@ -206,22 +246,21 @@ export async function runReplenishmentForecast() {
         salesRows,
         policyMap,
         forecastByStation,
+        share,
         moq: effectiveMoq || undefined,
       });
       healthRows.push(health);
       dailyByWh[wh.code] = health.avgDaily;
       coverageByWh[wh.code] = health.coverage;
 
-      const eoqCalc = calcReplenishment({
-        sales: salesRows
-          .filter((s) => s.warehouseCode === wh.code)
-          .map((s) => ({ qtySold: s.qtySold, saleDate: String(s.saleDate) })),
-        leadTimeDays: health.totalLeadDays,
-        unitCost: sku.unitCost ? Number(sku.unitCost) : 1,
+      const reorderPoint = (health.metrics.reorderPoint as number) ?? 0;
+      await upsertSafetyStock(sku.id, wh.code, {
+        safetyStockQty: (health.metrics.safetyStockQty as number) ?? 0,
+        reorderPoint,
+        reorderQty: (health.metrics.eoqQty as number) ?? 0,
       });
-      await upsertSafetyStock(sku.id, wh.code, eoqCalc);
       networkRopByRegion[wh.regionGroup] =
-        (networkRopByRegion[wh.regionGroup] ?? 0) + eoqCalc.reorderPoint;
+        (networkRopByRegion[wh.regionGroup] ?? 0) + reorderPoint;
     }
 
     const usPool = await getRegionPoolSnapshot(sku.id, 'US');
@@ -249,11 +288,7 @@ export async function runReplenishmentForecast() {
         continue;
       }
 
-      const position = await resolveInventoryPosition({
-        skuId: sku.id,
-        warehouseCode: wh.code,
-        dedupeMode: PLANNING_INVENTORY_DEDUPE_MODE,
-      });
+      const position = health.position;
       const eoqRop = (health.metrics.reorderPoint as number) ?? 0;
 
       let suggestedQty = coverage.suggestedQty;
@@ -372,9 +407,20 @@ export async function runReplenishmentForecast() {
       const stockoutNote = health.metrics.timelineStockoutDate
         ? `，确定缺货日 ${health.metrics.timelineStockoutDate}`
         : '';
+      const demandAudit = demandAuditBySkuWh.get(`${sku.id}:${wh.code}`);
+      const unconstrained =
+        demandAudit?.unconstrainedRecentDaily != null
+          ? Number(demandAudit.unconstrainedRecentDaily)
+          : null;
       const demandGate = evaluateDemandGate({
         recentWmape: accuracyBySku.get(sku.id) ?? null,
-        reconstructCapHit: false,
+        reconstructCapHit: isDemandReconstructCapHit({
+          source: demandAudit?.source,
+          unconstrainedDaily: unconstrained,
+          avgDaily: health.avgDaily,
+        }),
+        unconstrainedDaily: unconstrained,
+        stockoutDays: stockoutDaysFromInStockRatio(demandAudit?.inStockDayRatio),
       });
       let reason =
         health.demandSource === 'forecast'

@@ -6,6 +6,8 @@ import {
   parseSharesFromSnapshot,
   parseTransitBuckets,
   resolvePlanningAllocation,
+  resolveWarehouseDemandShare,
+  scaleDailyMapByShare,
   shouldSkipConfirmedHorizon,
   splitResidualTransit,
   type ShareParseResult,
@@ -224,5 +226,26 @@ describe('shouldSkipConfirmedHorizon', () => {
     assert.equal(shouldSkipConfirmedHorizon('unallocated'), true);
     assert.equal(shouldSkipConfirmedHorizon('sales_share'), false);
     assert.equal(shouldSkipConfirmedHorizon('native_warehouse'), false);
+  });
+});
+
+describe('resolveWarehouseDemandShare', () => {
+  const parsed = parseSharesFromSnapshot({ 美西: '0.6', 美东: '0.4' });
+
+  it('returns normalized share for warehouses with a share column', () => {
+    assert.equal(resolveWarehouseDemandShare('US-WEST', parsed), 0.6);
+    assert.equal(resolveWarehouseDemandShare('US-SOUTH', parsed), 0);
+  });
+
+  it('returns null for warehouses without a share column or SKUs without shares', () => {
+    assert.equal(resolveWarehouseDemandShare('UK', parsed), null);
+    assert.equal(resolveWarehouseDemandShare('ALL', parsed), null);
+    assert.equal(resolveWarehouseDemandShare('US-WEST', parseSharesFromSnapshot({})), null);
+  });
+
+  it('scales daily map by share and keeps the original when share is null', () => {
+    const map = new Map([['2026-10', 10]]);
+    assert.equal(scaleDailyMapByShare(map, 0.6).get('2026-10'), 6);
+    assert.equal(scaleDailyMapByShare(map, null), map);
   });
 });

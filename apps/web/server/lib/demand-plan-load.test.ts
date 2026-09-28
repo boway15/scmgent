@@ -66,7 +66,7 @@ describe('loadPlanningDemandForSkuWarehouse', () => {
     assert.equal(publishedCalls, 0);
     assert.equal(adoptionCalls, 0);
     assert.equal(result.source, 'forecast');
-    assert.equal(result.demandMap, stationForecastMap);
+    assert.deepEqual([...result.demandMap.entries()], [...stationForecastMap.entries()]);
     assert.deepEqual(result.flags, []);
     assert.equal(result.championMap.get('2026-10'), 20);
   });
@@ -140,7 +140,52 @@ describe('loadPlanningDemandForSkuWarehouse', () => {
     assert.equal(publishedCalls, 0);
     assert.equal(result.source, 'forecast');
     assert.deepEqual(result.flags, []);
+    assert.deepEqual([...result.demandMap.entries()], [...stationForecastMap.entries()]);
+  });
+
+  const disabledDeps = (encodingMeta: unknown) => ({
+    env: { DEMAND_PLAN_PILOT_ENABLED: 'false' },
+    loadSku: async () => ({
+      projectGroup: '项目6组',
+      spuId: 'spu-1',
+      isActive: true,
+      encodingMeta,
+    }),
+  });
+
+  it('splits station forecast by sales share for non-pilot warehouses', async () => {
+    const meta = { turnoverSnapshot: { 美西: '0.6', 美东: '0.4' } };
+    const east = await loadPlanningDemandForSkuWarehouse(
+      { skuId: 'sku-1', warehouseCode: 'US-EAST', championForecastMap: stationForecastMap },
+      disabledDeps(meta),
+    );
+    assert.equal(east.demandMap.get('2026-10'), 8);
+    assert.deepEqual(east.flags, []);
+
+    const south = await loadPlanningDemandForSkuWarehouse(
+      { skuId: 'sku-1', warehouseCode: 'US-SOUTH', championForecastMap: stationForecastMap },
+      disabledDeps(meta),
+    );
+    assert.equal(south.demandMap.get('2026-10'), 0);
+    assert.equal(south.fallbackDaily, 0);
+  });
+
+  it('falls back to station forecast with no_share for warehouses without a share column', async () => {
+    const result = await loadPlanningDemandForSkuWarehouse(
+      { skuId: 'sku-1', warehouseCode: 'UK', championForecastMap: stationForecastMap },
+      disabledDeps({ turnoverSnapshot: { 美西: '1' } }),
+    );
     assert.equal(result.demandMap, stationForecastMap);
+    assert.deepEqual(result.flags, ['no_share']);
+  });
+
+  it('keeps station forecast without flags for network ALL', async () => {
+    const result = await loadPlanningDemandForSkuWarehouse(
+      { skuId: 'sku-1', warehouseCode: 'ALL', championForecastMap: stationForecastMap },
+      disabledDeps({ turnoverSnapshot: { 美西: '1' } }),
+    );
+    assert.equal(result.demandMap, stationForecastMap);
+    assert.deepEqual(result.flags, []);
   });
 
   it('falls back to forecast when share is missing and rows are network ALL', async () => {
@@ -171,7 +216,7 @@ describe('loadPlanningDemandForSkuWarehouse', () => {
       },
     );
     assert.equal(result.source, 'forecast');
-    assert.deepEqual(result.flags, ['no_share']);
+    assert.deepEqual(result.flags, ['demand_missing_fallback_forecast', 'no_share']);
     assert.equal(result.demandMap, stationForecastMap);
     assert.equal(result.demandMap.get('2026-10'), 20);
     assert.equal(result.championMap.size, 0);

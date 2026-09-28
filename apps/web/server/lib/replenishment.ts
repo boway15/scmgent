@@ -1,6 +1,7 @@
 /** Local replenishment algorithms (MVP — replaces Dify Workflow) */
 
-const Z_SCORE_95 = 1.65;
+import { calcSafetyStockQty } from './safety-stock-z.js';
+
 const DEFAULT_HOLDING_COST_RATE = 0.2;
 const DEFAULT_ORDER_COST = 50;
 
@@ -17,26 +18,26 @@ export function calcDailyStats(sales: SalesDataPoint[], days = 90) {
   const totalSold = filtered.reduce((sum, s) => sum + s.qtySold, 0);
   const avgDaily = totalSold / days;
 
-  if (filtered.length < 2) {
-    return { avgDaily, stdDev: avgDaily * 0.3, totalSold };
-  }
-
   const dailyMap = new Map<string, number>();
   for (const s of filtered) {
     dailyMap.set(s.saleDate, (dailyMap.get(s.saleDate) ?? 0) + s.qtySold);
   }
-  const dailyValues = Array.from(dailyMap.values());
-  const mean = dailyValues.reduce((a, b) => a + b, 0) / dailyValues.length;
-  const variance =
-    dailyValues.reduce((sum, v) => sum + (v - mean) ** 2, 0) / dailyValues.length;
-  const stdDev = Math.sqrt(variance);
+  // 窗口内无销量的日子按 0 计入，与 avgDaily 同一分母
+  const salesDays = Math.min(dailyMap.size, days);
+  let sumSq = (days - salesDays) * avgDaily ** 2;
+  for (const v of dailyMap.values()) sumSq += (v - avgDaily) ** 2;
+  const stdDev = Math.sqrt(sumSq / days);
 
   return { avgDaily, stdDev, totalSold };
 }
 
 export function calcSafetyStock(stdDev: number, leadTimeDays: number, serviceLevel = 0.95) {
-  const z = serviceLevel >= 0.95 ? Z_SCORE_95 : 1.28;
-  return Math.ceil(z * stdDev * Math.sqrt(leadTimeDays));
+  return calcSafetyStockQty({
+    method: 'z_demand',
+    serviceLevel,
+    demandStdDev: stdDev,
+    totalLeadDays: leadTimeDays,
+  }).safetyStockQty;
 }
 
 export function calcReorderPoint(avgDaily: number, leadTimeDays: number, safetyStock: number) {

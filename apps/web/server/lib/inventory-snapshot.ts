@@ -3,21 +3,17 @@ import { db, inventoryRecords, warehouses } from '@scm/db';
 import { IN_PRODUCTION_WAREHOUSE } from './inventory-constants.js';
 import {
   effectiveQtyWithProductionFallback,
-  PLANNING_INVENTORY_DEDUPE_MODE,
   resolveInventoryPosition,
   type InventoryPositionBreakdown,
 } from './inventory-position.js';
 
+/** 原始 inventory_records 最新一行（不分摊、不算有效供给；有效供给请用 resolveInventoryPosition） */
 export type InventorySnapshot = {
   warehouseCode: string;
   qtyAvailable: number;
   qtyInTransit: number;
   qtyInProduction: number;
   qtyReserved: number;
-  /** 本仓可售 + 在途（不含在产） */
-  localEffectiveQty: number;
-  /** 兼容旧字段：物理仓 = localEffectiveQty；在产仓 = qtyInProduction */
-  effectiveQty: number;
 };
 
 /** SKU 级在产池（未分仓，发出后才计入目的仓在途） */
@@ -46,8 +42,6 @@ export async function getLatestInventorySnapshot(
       qtyInTransit: 0,
       qtyInProduction,
       qtyReserved: 0,
-      localEffectiveQty: 0,
-      effectiveQty: qtyInProduction,
     };
   }
 
@@ -62,19 +56,12 @@ export async function getLatestInventorySnapshot(
     .orderBy(desc(inventoryRecords.recordedDate), desc(inventoryRecords.createdAt))
     .limit(1);
 
-  const qtyAvailable = record?.qtyAvailable ?? 0;
-  const qtyInTransit = record?.qtyInTransit ?? 0;
-  const qtyReserved = Number(record?.qtyReserved ?? 0);
-  const localEffectiveQty = qtyAvailable + qtyInTransit;
-
   return {
     warehouseCode,
-    qtyAvailable,
-    qtyInTransit,
+    qtyAvailable: record?.qtyAvailable ?? 0,
+    qtyInTransit: record?.qtyInTransit ?? 0,
     qtyInProduction: 0,
-    qtyReserved,
-    localEffectiveQty,
-    effectiveQty: localEffectiveQty,
+    qtyReserved: Number(record?.qtyReserved ?? 0),
   };
 }
 
@@ -95,11 +82,7 @@ export async function getRegionPoolSnapshot(
   const byWarehouse: Array<InventoryPositionBreakdown & { warehouseCode: string }> = [];
 
   for (const code of warehouseCodes) {
-    const position = await resolveInventoryPosition({
-      skuId,
-      warehouseCode: code,
-      dedupeMode: PLANNING_INVENTORY_DEDUPE_MODE,
-    });
+    const position = await resolveInventoryPosition({ skuId, warehouseCode: code });
     byWarehouse.push({ warehouseCode: code, ...position });
   }
 
@@ -115,13 +98,7 @@ export async function sumEffectiveQtyForWarehouses(skuId: string, codes: string[
   if (!codes.length) return 0;
   const positions: InventoryPositionBreakdown[] = [];
   for (const code of codes) {
-    positions.push(
-      await resolveInventoryPosition({
-        skuId,
-        warehouseCode: code,
-        dedupeMode: PLANNING_INVENTORY_DEDUPE_MODE,
-      }),
-    );
+    positions.push(await resolveInventoryPosition({ skuId, warehouseCode: code }));
   }
   return effectiveQtyWithProductionFallback(positions, await getLatestInProductionQty(skuId));
 }

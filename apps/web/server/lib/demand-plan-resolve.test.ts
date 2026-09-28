@@ -3,7 +3,6 @@ import { describe, it } from 'node:test';
 import {
   effectiveDemandDaily,
   monthMapFromRows,
-  pickDemandMapForTimeline,
   resolvePlanningDemandFromInputs,
 } from './demand-plan-resolve.js';
 
@@ -67,7 +66,7 @@ describe('monthMapFromRows', () => {
 });
 
 describe('resolvePlanningDemandFromInputs', () => {
-  it('uses station forecast when excluded even if in pilot', () => {
+  it('uses share-split forecast when excluded even if in pilot', () => {
     const result = resolvePlanningDemandFromInputs(
       baseInput({
         pilotEnabled: true,
@@ -76,30 +75,44 @@ describe('resolvePlanningDemandFromInputs', () => {
       }),
     );
     assert.equal(result.source, 'forecast');
-    assert.equal(result.demandMap, stationForecastMap);
     assert.deepEqual(result.flags, ['cross_spu_excluded']);
-    assert.deepEqual([...result.championMap.entries()], [
+    assert.deepEqual([...result.demandMap.entries()], [
       ['2026-08', 2],
       ['2026-09', 3],
       ['2026-10', 4],
     ]);
   });
 
-  it('uses station forecast with empty flags when not in pilot', () => {
+  it('splits station forecast by warehouse share when not in pilot', () => {
     const result = resolvePlanningDemandFromInputs(baseInput());
     assert.equal(result.source, 'forecast');
-    assert.equal(result.demandMap, stationForecastMap);
-    assert.notEqual(result.demandMap.get('2026-10'), 4);
-    assert.equal(result.demandMap.get('2026-10'), 11);
     assert.deepEqual(result.flags, []);
-    assert.deepEqual([...result.championMap.entries()], [
+    assert.deepEqual([...result.demandMap.entries()], [
       ['2026-08', 2],
       ['2026-09', 3],
       ['2026-10', 4],
     ]);
+    assert.equal(result.fallbackDaily, 3);
   });
 
-  it('falls back to station forecast with no_share when in pilot without share', () => {
+  it('falls back to station forecast and flags no_share when warehouse has no share', () => {
+    const result = resolvePlanningDemandFromInputs(
+      baseInput({ hasShare: false, championWarehouseRows: [] }),
+    );
+    assert.equal(result.source, 'forecast');
+    assert.equal(result.demandMap, stationForecastMap);
+    assert.deepEqual(result.flags, ['no_share']);
+  });
+
+  it('uses station forecast without no_share flag for network scope', () => {
+    const result = resolvePlanningDemandFromInputs(
+      baseInput({ hasShare: false, championWarehouseRows: [], networkScope: true }),
+    );
+    assert.equal(result.demandMap, stationForecastMap);
+    assert.deepEqual(result.flags, []);
+  });
+
+  it('uses demand rows on pilot hit even without share and flags no_share for champion shadow', () => {
     const result = resolvePlanningDemandFromInputs(
       baseInput({
         pilotEnabled: true,
@@ -107,12 +120,13 @@ describe('resolvePlanningDemandFromInputs', () => {
         hasShare: false,
       }),
     );
-    assert.equal(result.source, 'forecast');
-    assert.equal(result.demandMap, stationForecastMap);
-    assert.deepEqual(result.flags, ['no_share']);
+    assert.equal(result.source, 'demand_plan');
+    assert.deepEqual(result.flags, ['pilot_hit', 'no_share']);
+    assert.equal(result.demandMap.get('2026-09'), 8);
+    assert.equal(result.championMap.size, 0);
   });
 
-  it('falls back to station forecast when in pilot with share but no demand rows', () => {
+  it('falls back to share-split forecast when in pilot with share but no demand rows', () => {
     const result = resolvePlanningDemandFromInputs(
       baseInput({
         pilotEnabled: true,
@@ -122,7 +136,7 @@ describe('resolvePlanningDemandFromInputs', () => {
       }),
     );
     assert.equal(result.source, 'forecast');
-    assert.equal(result.demandMap, stationForecastMap);
+    assert.equal(result.demandMap.get('2026-10'), 4);
     assert.deepEqual(result.flags, ['demand_missing_fallback_forecast']);
   });
 
@@ -208,7 +222,7 @@ describe('resolvePlanningDemandFromInputs', () => {
       ['2026-10', 10],
     ]);
     const result = resolvePlanningDemandFromInputs(
-      baseInput({ stationForecastMap: station }),
+      baseInput({ stationForecastMap: station, hasShare: false, championWarehouseRows: [] }),
     );
     assert.equal(result.source, 'forecast');
     assert.equal(result.fallbackDaily, 8);
@@ -216,37 +230,9 @@ describe('resolvePlanningDemandFromInputs', () => {
 
   it('uses zero fallbackDaily when station map has no positive values', () => {
     const result = resolvePlanningDemandFromInputs(
-      baseInput({ stationForecastMap: new Map() }),
+      baseInput({ stationForecastMap: new Map(), hasShare: false, championWarehouseRows: [] }),
     );
     assert.equal(result.source, 'forecast');
     assert.equal(result.fallbackDaily, 0);
-  });
-});
-
-describe('pickDemandMapForTimeline', () => {
-  it('uses demand map when source is demand_plan', () => {
-    const demand = new Map([['2026-10', 2]]);
-    const forecast = new Map([['2026-10', 1]]);
-    assert.equal(
-      pickDemandMapForTimeline({
-        source: 'demand_plan',
-        demandMap: demand,
-        stationForecastMap: forecast,
-      }).get('2026-10'),
-      2,
-    );
-  });
-
-  it('uses station forecast when source is forecast', () => {
-    const demand = new Map([['2026-10', 2]]);
-    const forecast = new Map([['2026-10', 1]]);
-    assert.equal(
-      pickDemandMapForTimeline({
-        source: 'forecast',
-        demandMap: demand,
-        stationForecastMap: forecast,
-      }).get('2026-10'),
-      1,
-    );
   });
 });

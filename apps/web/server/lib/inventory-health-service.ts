@@ -13,7 +13,8 @@ import {
   merchants,
   skuSuppliers,
 } from '@scm/db';
-import { calcReorderPoint, calcReplenishment } from './replenishment.js';
+import { calcReplenishment } from './replenishment.js';
+import { resolvePlanningSafetyStock } from './safety-stock-z.js';
 import {
   calcCoverageReplenishmentFromForecast,
   calcForwardAvgDaily,
@@ -34,6 +35,13 @@ import {
   type InventoryPositionBreakdown,
 } from './inventory-position.js';
 import { UNALLOCATED_TRANSIT_WAREHOUSE } from './inventory-constants.js';
+import {
+  parseSharesFromSnapshot,
+  resolveWarehouseDemandShare,
+  scaleDailyMapByShare,
+  type ShareParseResult,
+} from './inventory-share-allocation.js';
+import { readTurnoverSnapshot } from './inventory-turnover-snapshot.js';
 import { buildAllocationBySku } from './inventory-supply-lot-sync.js';
 import { isGrayLifecycle, type InventoryHealth } from './inventory-light.js';
 import { isPlanningExcluded } from './commercial-status.js';
@@ -129,6 +137,19 @@ async function loadDailyAvailability(params: {
       ),
     )
     .orderBy(asc(inventoryRecords.recordedDate), asc(inventoryRecords.createdAt));
+}
+
+export function shareFromEncodingMeta(encodingMeta: unknown): ShareParseResult {
+  return parseSharesFromSnapshot(readTurnoverSnapshot(encodingMeta));
+}
+
+export async function loadSkuShare(skuId: string): Promise<ShareParseResult> {
+  const [row] = await db
+    .select({ encodingMeta: skus.encodingMeta })
+    .from(skus)
+    .where(eq(skus.id, skuId))
+    .limit(1);
+  return shareFromEncodingMeta(row?.encodingMeta);
 }
 
 async function loadPolicyMapsBySkuIds(
@@ -418,6 +439,8 @@ export async function computeSkuWarehouseHealth(params: {
   policyMap: Map<string, PolicyRow | undefined>;
   forecastByStation: Map<string, { map: Map<string, number>; lifecycle?: string }>;
   forecastEntry?: { map: Map<string, number>; lifecycle?: string };
+  /** SKU 销售占比（周转快照）；缺省时按需查库 */
+  share?: ShareParseResult;
   moq?: number;
   /** 全量预加载缓存：传入后跳过 lead / position / availability 的按条查库 */
   caches?: {
@@ -452,7 +475,6 @@ export async function computeSkuWarehouseHealth(params: {
     (await resolveInventoryPosition({
       skuId: params.sku.id,
       warehouseCode: params.warehouse.code,
-      dedupeMode: PLANNING_INVENTORY_DEDUPE_MODE,
     }));
 
   if (!params.forecastEntry) {
@@ -472,6 +494,14 @@ export async function computeSkuWarehouseHealth(params: {
   const forecastEntry =
     params.forecastEntry ??
     params.forecastByStation.get(FORECAST_GLOBAL_STATION) ?? { map: new Map(), lifecycle: undefined };
+
+  const demandShare = forecastEntry.map.size
+    ? resolveWarehouseDemandShare(
+        params.warehouse.code,
+        params.share ?? (await loadSkuShare(params.sku.id)),
+      )
+    : null;
+  const warehouseForecastMap = scaleDailyMapByShare(forecastEntry.map, demandShare);
 
   const demandWindowDays = replenishmentSalesLookbackDays();
   let historicalDemand = {
@@ -494,20 +524,12 @@ export async function computeSkuWarehouseHealth(params: {
       inventoryRows,
       windowDays: demandWindowDays,
     });
-    eoqCalc = {
-      ...eoqCalc,
-      avgDaily: historicalDemand.avgDaily,
-      reorderPoint: calcReorderPoint(
-        historicalDemand.avgDaily,
-        leadTime.totalLeadDays,
-        eoqCalc.safetyStockQty,
-      ),
-    };
+    eoqCalc = { ...eoqCalc, avgDaily: historicalDemand.avgDaily };
   }
 
   const coverage = calcCoverageReplenishmentFromForecast({
     effectiveQty: position.effectiveQty,
-    forecasts: forecastEntry.map,
+    forecasts: warehouseForecastMap,
     historicalAvgDaily: eoqCalc.avgDaily,
     productionDays: leadTime.productionDays,
     shippingDays: leadTime.shippingDays,
@@ -521,8 +543,15 @@ export async function computeSkuWarehouseHealth(params: {
 
   const avgDaily =
     coverage.demandSource === 'forecast'
-      ? calcForwardAvgDaily(forecastEntry.map, new Date(), 90, eoqCalc.avgDaily)
+      ? calcForwardAvgDaily(warehouseForecastMap, new Date(), 90, eoqCalc.avgDaily)
       : eoqCalc.avgDaily;
+
+  const safetyStock = resolvePlanningSafetyStock({
+    policy,
+    avgDaily,
+    demandStdDev: eoqCalc.stdDev,
+    totalLeadDays: leadTime.totalLeadDays,
+  });
 
   const lifecycleLabel = forecastEntry.lifecycle ?? params.sku.lifecycle ?? null;
   if (
@@ -561,11 +590,16 @@ export async function computeSkuWarehouseHealth(params: {
       safetyStockDays: coverage.safetyStockDays,
       targetCoverageDays: coverage.targetCoverageDays,
       overstockThresholdDays: coverage.overstockThresholdDays,
-      reorderPoint: eoqCalc.reorderPoint,
-      safetyStockQty: eoqCalc.safetyStockQty,
+      reorderPoint: safetyStock.reorderPoint,
+      safetyStockQty: safetyStock.safetyStockQty,
+      safetyStockMethod: safetyStock.method,
+      eoqQty: eoqCalc.reorderQty,
+      demandStdDev: eoqCalc.stdDev,
       stockoutAdjusted: historicalDemand.stockoutAdjusted,
       inStockDays: historicalDemand.inStockDays,
       demandWindowDays: historicalDemand.demandWindowDays,
+      demandShare,
+      demandShareFallback: coverage.demandSource === 'forecast' && demandShare == null,
       ...buildInventoryPositionMetrics(position),
     },
     coverage,
@@ -592,6 +626,7 @@ export async function computeAllInventoryHealth(): Promise<SkuHealthRow[]> {
       unitCost: skus.unitCost,
       lifecycle: skus.lifecycle,
       commercialStatusNorm: skus.commercialStatusNorm,
+      encodingMeta: skus.encodingMeta,
     })
     .from(skus)
     .where(eq(skus.isActive, true));
@@ -665,6 +700,7 @@ export async function computeAllInventoryHealth(): Promise<SkuHealthRow[]> {
     const forecastByStation = new Map<string, { map: Map<string, number>; lifecycle?: string }>();
     const salesRows = salesBySkuId.get(sku.id) ?? [];
     const hasForecast = forecastEntry.map.size > 0;
+    const share = shareFromEncodingMeta(sku.encodingMeta);
 
     for (const wh of whRows) {
       const key = positionKey(sku.id, wh.code);
@@ -684,6 +720,7 @@ export async function computeAllInventoryHealth(): Promise<SkuHealthRow[]> {
         policyMap,
         forecastByStation,
         forecastEntry,
+        share,
         moq: effectiveMoq || undefined,
         caches: {
           leadTime,

@@ -15,6 +15,10 @@ import {
 } from './forecast-monthly-abcd.js';
 import { buildLast12MonthlyQty } from './forecast-profile-snapshot.js';
 import type { DemandReconstructAudit } from './forecast-demand-unconstrain.js';
+import {
+  applyFlexBiasShadowCorrection,
+  mergeFlexBiasShadowHorizonFactors,
+} from './forecast-flex-bias-shadow.js';
 
 export type AllCatV41Tier = 'T1' | 'T2' | 'T3' | 'T3P' | 'T4A' | 'T4B' | 'T99';
 
@@ -64,6 +68,9 @@ export type AllCatV41BoundedSnapshot = {
   peerPlatformFloor?: number | null;
   growthSignal?: boolean;
   rollingRatio?: number;
+  /** 柔性窗 T4A/T4B/T99 偏差校正系数（k=3–5） */
+  flexBiasCorrection?: number;
+  forecastDailyPreFlexBias?: number;
 };
 
 /** 全渠道汇总时各渠道对系统列的贡献（仅 API 展示，不落库） */
@@ -138,6 +145,8 @@ export function parseAllCatV41HorizonFactors(raw: unknown): AllCatV41HorizonDisp
     peerPlatformFloor: peerPlatformFloor != null ? peerPlatformFloor : undefined,
     growthSignal: value.growthSignal === true ? true : value.growthSignal === false ? false : undefined,
     rollingRatio: num('rollingRatio'),
+    flexBiasCorrection: num('flexBiasCorrection'),
+    forecastDailyPreFlexBias: num('forecastDailyPreFlexBias'),
     aggregatedPlatformCount:
       aggregatedPlatformCount != null && aggregatedPlatformCount >= 1
         ? Math.round(aggregatedPlatformCount)
@@ -188,6 +197,8 @@ export function aggregateAllCatV41HorizonFactorsForDisplay(
     nearHorizonFloor: undefined,
     growthSignal: undefined,
     rollingRatio: undefined,
+    flexBiasCorrection: undefined,
+    forecastDailyPreFlexBias: undefined,
     aggregatedPlatformCount: factors.length,
   };
 }
@@ -1210,6 +1221,8 @@ export function computeAllCatV41ForecastForMonth(input: {
    */
   historyCapEnd?: Date;
   demandReconstruct?: DemandReconstructAudit;
+  /** 柔性窗偏差校正；默认读 forecast-calibration.json flexBiasShadow.enabled */
+  flexBiasShadow?: boolean | null;
 }): AllCatV41ForecastResult {
   const tierMetrics = computeWalkForwardMetrics(
     input.monthlyRows,
@@ -1258,7 +1271,13 @@ export function computeAllCatV41ForecastForMonth(input: {
           horizonIndex: input.horizonIndex,
           peerPlatformRecentDaily: input.peerPlatformRecentDaily,
         });
-  const forecastDaily = peerLift.forecastDaily;
+  const flexBiasShadow = applyFlexBiasShadowCorrection({
+    tier,
+    horizonIndex: input.horizonIndex,
+    forecastDaily: peerLift.forecastDaily,
+    flexBiasShadow: input.flexBiasShadow,
+  });
+  const forecastDaily = flexBiasShadow.forecastDaily;
   const effectiveTarget = resolveWalkForwardMetricsTarget(
     input.forecastYear,
     input.forecastMonth,
@@ -1317,6 +1336,7 @@ export function computeAllCatV41ForecastForMonth(input: {
     horizonFactors.seasonalDaily = seasonalDaily != null ? roundDaily(seasonalDaily) : undefined;
     horizonFactors.levelDaily = roundDaily(levelDaily);
   }
+  mergeFlexBiasShadowHorizonFactors(horizonFactors, flexBiasShadow);
 
   return {
     tier,

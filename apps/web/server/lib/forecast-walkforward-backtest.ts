@@ -42,6 +42,7 @@ import { FORECAST_HORIZON_MONTHS } from './forecast-limits.js';
 import { getKpiTarget, isKpiMet } from './forecast-kpi-targets.js';
 import { segmentLabel, type ProfileSegment } from './forecast-profile-class.js';
 import { isAllCatV41KpiComparableTier } from './forecast-allcat-v41.js';
+import { parseHorizonDiscountProduct } from './forecast-flex-bias-attribution.js';
 
 const WALK_FORWARD_KPI_TIERS = ['T1', 'T2', 'T3', 'T3P', 'T4A'] as const;
 
@@ -383,6 +384,8 @@ export type WalkForwardBacktestInput = {
   tierFilter?: 'core' | 'mid' | 'tail' | 'all';
   /** legacy | monthly_abcd */
   algoMode?: 'legacy' | 'monthly_abcd';
+  /** 启用柔性窗 T4A/T4B/T99 影子偏差校正 */
+  flexBiasShadow?: boolean;
 };
 
 export type WalkForwardMonthResult = {
@@ -477,6 +480,7 @@ async function loadWalkForwardExportRows(
       forecastDailyP90: salesForecastMonthly.forecastDailyP90,
       forecastModel: salesForecastMonthly.forecastModel,
       forecastProfileClass: salesForecastMonthly.forecastProfileClass,
+      horizonFactors: salesForecastMonthly.horizonFactors,
     })
     .from(salesForecastMonthly)
     .innerJoin(skus, eq(skus.id, salesForecastMonthly.skuId))
@@ -565,6 +569,12 @@ export async function exportWalkForwardCsv(
     'profile_segment',
     'segment_label',
     'horizon_band',
+    'horizon_index',
+    'discount_product',
+    'flex_bias_correction',
+    'level_daily',
+    'anchor_daily',
+    'seasonal_daily',
     'forecast_daily_p10',
     'forecast_daily_p90',
     'forecast_model',
@@ -580,9 +590,16 @@ export async function exportWalkForwardCsv(
 
   for (const row of rows) {
     const segment = row.profileSegment ?? 'A:mid';
+    const horizonIndex = horizonMonthIndex(row.forecastYear, row.month, asOfDate);
     const band =
       (row.horizonBand as ReturnType<typeof horizonBandFromIndex> | null) ??
-      horizonBandFromIndex(horizonMonthIndex(row.forecastYear, row.month, asOfDate));
+      horizonBandFromIndex(horizonIndex);
+    const factors = row.horizonFactors as Record<string, unknown> | null;
+    const discountProduct = parseHorizonDiscountProduct(factors);
+    const flexBiasCorrection = factors?.flexBiasCorrection;
+    const levelDaily = factors?.levelDaily;
+    const anchorDaily = factors?.anchorDaily;
+    const seasonalDaily = factors?.seasonalDaily;
     const actual = row.actualDailyAvg;
     const wmape =
       actual != null && actual > 0
@@ -604,6 +621,12 @@ export async function exportWalkForwardCsv(
         csvEscape(segment),
         csvEscape(segmentLabel(segment)),
         csvEscape(band),
+        csvEscape(horizonIndex),
+        csvEscape(discountProduct),
+        csvEscape(flexBiasCorrection),
+        csvEscape(levelDaily),
+        csvEscape(anchorDaily),
+        csvEscape(seasonalDaily),
         csvEscape(row.forecastDailyP10),
         csvEscape(row.forecastDailyP90),
         csvEscape(row.forecastModel),
@@ -725,6 +748,7 @@ export async function runWalkForwardAccuracyBacktest(input: WalkForwardBacktestI
     forceNewVersion: !replaceVersion,
     existingVersionId,
     algoMode: input.algoMode,
+    flexBiasShadow: input.flexBiasShadow,
   });
 
   const versionId = generated.version.id;

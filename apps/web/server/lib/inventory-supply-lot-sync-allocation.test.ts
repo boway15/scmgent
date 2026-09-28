@@ -33,7 +33,7 @@ describe('buildAllocationBySku', () => {
 });
 
 describe('resolveDraftLeadWarehouse', () => {
-  it('prefers draft warehouse, then first share weight, then US-WEST', () => {
+  it('returns draft warehouse only; null when pre-shipment unallocated', () => {
     const skuId = 'sku-lead';
     const allocationBySku = buildAllocationBySku([
       {
@@ -50,7 +50,7 @@ describe('resolveDraftLeadWarehouse', () => {
       resolveDraftLeadWarehouse('EU-CENTRAL', skuId, allocationBySku),
       'EU-CENTRAL',
     );
-    assert.equal(resolveDraftLeadWarehouse(null, skuId, allocationBySku), 'US-EAST');
-    assert.equal(resolveDraftLeadWarehouse(null, 'missing-sku', new Map()), 'US-WEST');
+    assert.equal(resolveDraftLeadWarehouse(null, skuId, allocationBySku), null);
+    assert.equal(resolveDraftLeadWarehouse(null, 'missing-sku', new Map()), null);
   });
 });

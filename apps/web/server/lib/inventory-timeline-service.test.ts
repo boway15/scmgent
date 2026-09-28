@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { parseSharesFromSnapshot } from './inventory-share-allocation.js';
 import {
+  buildNetworkNativeBackfillLot,
   pickTimelineFallbackDaily,
   resolveReservedQty,
   shouldBackfillNativeAvailable,
@@ -78,5 +79,36 @@ describe('shouldBackfillNativeAvailable', () => {
     assert.equal(shouldBackfillNativeAvailable(false, 0, 'US-WEST'), false);
     assert.equal(shouldBackfillNativeAvailable(true, 8, 'US-WEST'), false);
     assert.equal(shouldBackfillNativeAvailable(false, 100, 'OVERSEAS'), false);
+  });
+});
+
+describe('buildNetworkNativeBackfillLot', () => {
+  it('sums physical warehouse native available when no confirmed overseas lots', () => {
+    const lot = buildNetworkNativeBackfillLot({
+      hasConfirmedOverseas: false,
+      nativeAvailableByWarehouse: [
+        { warehouseCode: 'US-WEST', qtyAvailable: 30 },
+        { warehouseCode: 'US-EAST', qtyAvailable: 20 },
+        { warehouseCode: 'OVERSEAS', qtyAvailable: 999 },
+        { warehouseCode: 'IN-PRODUCTION', qtyAvailable: 50 },
+      ],
+      today: '2026-09-22',
+    });
+
+    assert.ok(lot);
+    assert.equal(lot!.qty, 50);
+    assert.equal(lot!.availableAt, '2026-09-22');
+    assert.equal(lot!.supplyClass, 'confirmed');
+  });
+
+  it('returns null when confirmed overseas lots already exist', () => {
+    assert.equal(
+      buildNetworkNativeBackfillLot({
+        hasConfirmedOverseas: true,
+        nativeAvailableByWarehouse: [{ warehouseCode: 'US-WEST', qtyAvailable: 10 }],
+        today: '2026-09-22',
+      }),
+      null,
+    );
   });
 });

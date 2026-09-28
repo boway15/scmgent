@@ -21,5 +21,17 @@
       1.16
     ],
     "declineRecent30Ratio": 0.8
+  },
+  "flexBiasShadow": {
+    "enabled": true,
+    "fromK": 3,
+    "toK": 5,
+    "minFactor": 0.9,
+    "maxFactor": 1.7,
+    "tiers": {
+      "T4A": { "3": 1.45, "4": 1.55, "5": 1.65 },
+      "T4B": { "3": 1.35, "4": 1.45, "5": 1.55 },
+      "T99": { "3": 1.4, "4": 1.5, "5": 1.6 }
+    }
   }
 }

@@ -9,8 +9,10 @@ import {
   normalizeSnapshotForWarehouse,
   openDraftQty,
   resolveInventoryPositionFromSnapshot,
+  resolvePlanningInventoryPositionFromSnapshots,
 } from './inventory-position.js';
 import { IN_PRODUCTION_WAREHOUSE } from './inventory-constants.js';
+import { parseSharesFromSnapshot } from './inventory-share-allocation.js';
 
 describe('inventory-position pure', () => {
   it('maps draft statuses to buckets', () => {
@@ -237,6 +239,41 @@ describe('inventory-position pure', () => {
     assert.equal(result.qtyInTransit, 30);
     assert.equal(result.qtyConfirmedOpen, 10);
     assert.equal(result.effectiveQty, 100 + 55 + 30 + 10);
+  });
+
+  it('allocates OVERSEAS stock to physical warehouses by sales share', () => {
+    const share = parseSharesFromSnapshot({ 美东: '0.6', 美西: '0.4' });
+    const east = resolvePlanningInventoryPositionFromSnapshots({
+      warehouseCode: 'US-EAST',
+      nativeSnapshot: null,
+      overseasSnapshot: { qtyAvailable: 100, qtyInTransit: 0, qtyInProduction: 0, qtyReserved: 0 },
+      share,
+      dedupeMode: 'snapshot_only',
+    });
+    const west = resolvePlanningInventoryPositionFromSnapshots({
+      warehouseCode: 'US-WEST',
+      nativeSnapshot: null,
+      overseasSnapshot: { qtyAvailable: 100, qtyInTransit: 0, qtyInProduction: 0, qtyReserved: 0 },
+      share,
+      dedupeMode: 'snapshot_only',
+    });
+
+    assert.equal(east.qtyAvailable, 60);
+    assert.equal(west.qtyAvailable, 40);
+    assert.equal(east.effectiveQty, 60);
+  });
+
+  it('prefers native warehouse snapshot over OVERSEAS allocation', () => {
+    const share = parseSharesFromSnapshot({ 美东: '1' });
+    const pos = resolvePlanningInventoryPositionFromSnapshots({
+      warehouseCode: 'US-EAST',
+      nativeSnapshot: { qtyAvailable: 25, qtyInTransit: 0, qtyInProduction: 0, qtyReserved: 0 },
+      overseasSnapshot: { qtyAvailable: 100, qtyInTransit: 0, qtyInProduction: 0, qtyReserved: 0 },
+      share,
+      dedupeMode: 'snapshot_only',
+    });
+    assert.equal(pos.qtyAvailable, 25);
+    assert.equal(pos.effectiveQty, 25);
   });
 
   it('fills region production once only when warehouse positions contain none', () => {

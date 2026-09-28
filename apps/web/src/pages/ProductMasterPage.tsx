@@ -40,6 +40,8 @@ type SkuEditForm = {
   merchantCode: string;
   merchantName: string;
   replenishLight: ReplenishLight;
+  commercialStatus: string;
+  commercialStatusLocked: boolean;
 };
 
 type SkuFilters = {
@@ -176,6 +178,8 @@ export function ProductMasterPage() {
     merchantCode: '',
     merchantName: '',
     replenishLight: 'red',
+    commercialStatus: '',
+    commercialStatusLocked: false,
   });
 
   const createSpu = useMutation({
@@ -234,6 +238,8 @@ export function ProductMasterPage() {
         merchantCode: skuEditForm.merchantCode.trim() || undefined,
         merchantName: skuEditForm.merchantName.trim() || undefined,
         replenishLight: skuEditForm.replenishLight,
+        commercialStatus: skuEditForm.commercialStatus.trim() || null,
+        commercialStatusLocked: skuEditForm.commercialStatusLocked,
       });
     },
     onSuccess: () => {
@@ -256,6 +262,8 @@ export function ProductMasterPage() {
       merchantCode: sku.merchantCode ?? '',
       merchantName: sku.merchantName ?? '',
       replenishLight: sku.replenishLight ?? 'red',
+      commercialStatus: sku.commercialStatus ?? '',
+      commercialStatusLocked: sku.commercialStatusLocked ?? false,
     });
   };
 
@@ -623,6 +631,24 @@ export function ProductMasterPage() {
                     <option value="yellow">黄灯</option>
                     <option value="green">绿灯</option>
                   </select>
+                  <Input
+                    placeholder="ERP商业状态"
+                    className="h-9 w-36"
+                    value={skuEditForm.commercialStatus}
+                    onChange={(e) =>
+                      setSkuEditForm({ ...skuEditForm, commercialStatus: e.target.value })
+                    }
+                  />
+                  <label className="flex h-9 items-center gap-1.5 rounded-md border border-input bg-card px-3 text-xs text-text-main">
+                    <input
+                      type="checkbox"
+                      checked={skuEditForm.commercialStatusLocked}
+                      onChange={(e) =>
+                        setSkuEditForm({ ...skuEditForm, commercialStatusLocked: e.target.checked })
+                      }
+                    />
+                    锁定商业状态
+                  </label>
                   <Button size="sm" onClick={() => updateSku.mutate()} disabled={updateSku.isPending}>
                     保存
                   </Button>

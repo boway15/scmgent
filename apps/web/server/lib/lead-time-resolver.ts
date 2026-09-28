@@ -131,6 +131,129 @@ export function resolveLeadTimeFromCaches(
   };
 }
 
+function findMerchantLeadProfile(
+  caches: LeadTimeResolveCaches,
+  merchantCode: string | null | undefined,
+  transportMode?: string | null,
+): LeadTimeProfileRow | undefined {
+  if (!merchantCode) return undefined;
+  for (const rows of caches.profilesByWarehouse.values()) {
+    const warehouses = [...new Set(rows.map((row) => row.destinationWarehouseCode))];
+    for (const warehouseCode of warehouses) {
+      const picked = pickLeadTimeProfile(rows, {
+        merchantCode,
+        warehouseCode,
+        transportMode,
+      });
+      if (picked) return picked;
+    }
+  }
+  return undefined;
+}
+
+/** 出货前纯生产交期：仅 productionDays，不含国内段/订舱/目的仓海运/清关/上架。 */
+export function resolvePreShipmentLeadTimeFromCaches(
+  params: {
+    skuId: string;
+    merchantCode?: string | null;
+    skuLeadTimeDays?: number | null;
+    transportMode?: string | null;
+  },
+  caches: LeadTimeResolveCaches,
+): LeadTimeBreakdown & { merchantCode?: string | null; profileId?: string | null } {
+  const profile = findMerchantLeadProfile(caches, params.merchantCode, params.transportMode);
+
+  let productionDays = profile
+    ? resolveProductionLeadDays(profile.productionDays, params.skuLeadTimeDays)
+    : resolveProductionLeadDays(params.skuLeadTimeDays);
+  if (params.merchantCode) {
+    const merchantDays = caches.merchantProductionDays.get(params.merchantCode);
+    if (merchantDays) {
+      productionDays = resolveProductionLeadDays(merchantDays, params.skuLeadTimeDays);
+    }
+  }
+
+  const supplierDays = caches.skuDefaultSupplierLeadDays.get(params.skuId);
+  productionDays = resolveProductionLeadDays(
+    supplierDays,
+    productionDays,
+    params.skuLeadTimeDays,
+  );
+
+  return {
+    ...calcTotalLeadTime({
+      productionDays,
+      domesticDays: 0,
+      bookingDays: 0,
+      transitDays: 0,
+      customsDays: 0,
+      inboundDays: 0,
+    }),
+    profileId: profile?.id ?? null,
+    merchantCode: params.merchantCode,
+  };
+}
+
+export async function resolvePreShipmentLeadTimeForSku(params: {
+  skuId: string;
+  merchantCode?: string | null;
+  skuLeadTimeDays?: number | null;
+  transportMode?: string | null;
+}): Promise<LeadTimeBreakdown & { merchantCode?: string | null; profileId?: string | null }> {
+  const profileRows = params.merchantCode
+    ? await db
+        .select({
+          id: leadTimeProfiles.id,
+          merchantCode: leadTimeProfiles.merchantCode,
+          destinationWarehouseCode: leadTimeProfiles.destinationWarehouseCode,
+          transportMode: leadTimeProfiles.transportMode,
+          productionDays: leadTimeProfiles.productionDays,
+          domesticDays: leadTimeProfiles.domesticDays,
+          bookingDays: leadTimeProfiles.bookingDays,
+          transitDays: leadTimeProfiles.transitDays,
+          customsDays: leadTimeProfiles.customsDays,
+          inboundDays: leadTimeProfiles.inboundDays,
+        })
+        .from(leadTimeProfiles)
+        .where(
+          and(
+            eq(leadTimeProfiles.merchantCode, params.merchantCode),
+            eq(leadTimeProfiles.isDefault, true),
+          ),
+        )
+    : [];
+
+  const profilesByWarehouse = new Map<string, LeadTimeProfileRow[]>();
+  for (const row of profileRows) {
+    const bucket = profilesByWarehouse.get(row.destinationWarehouseCode) ?? [];
+    bucket.push(row);
+    profilesByWarehouse.set(row.destinationWarehouseCode, bucket);
+  }
+
+  const merchantProductionDays = new Map<string, number | null | undefined>();
+  if (params.merchantCode) {
+    const [merchant] = await db
+      .select({ productionLeadDays: merchants.productionLeadDays })
+      .from(merchants)
+      .where(eq(merchants.code, params.merchantCode))
+      .limit(1);
+    merchantProductionDays.set(params.merchantCode, merchant?.productionLeadDays);
+  }
+
+  const [defaultSupplier] = await db
+    .select({ leadTimeDays: skuSuppliers.leadTimeDays })
+    .from(skuSuppliers)
+    .where(and(eq(skuSuppliers.skuId, params.skuId), eq(skuSuppliers.isDefault, true)))
+    .limit(1);
+
+  return resolvePreShipmentLeadTimeFromCaches(params, {
+    profilesByWarehouse,
+    merchantProductionDays,
+    skuDefaultSupplierLeadDays: new Map([[params.skuId, defaultSupplier?.leadTimeDays]]),
+    warehouseShipping: new Map(),
+  });
+}
+
 export async function resolveLeadTimeForSkuWarehouse(params: {
   skuId: string;
   merchantCode?: string | null;

@@ -19,6 +19,7 @@ import {
 import {
   skuMatchesProjectGroupFilter,
 } from './sku-category.js';
+import { isAccessorySku } from './sku-encoding.js';
 import {
   FORECAST_GLOBAL_STATION,
   isForecastGlobalStation,
@@ -109,6 +110,7 @@ import {
   isAllCatV41RecentSalesAbsent,
   resolveAllCatProductCategory,
 } from './forecast-allcat-v41.js';
+import { resolveFlexBiasShadowEnabled } from './forecast-flex-bias-shadow.js';
 import {
   resolveBaselineForecastPlatforms,
   resolveForecastPlatformFilter,
@@ -836,6 +838,8 @@ export async function generateBaselineForecastVersion(input: {
   forceNewVersion?: boolean;
   /** 走步 --replace：在已有版本上继续生成 */
   existingVersionId?: string;
+  /** 柔性窗偏差校正；默认读 forecast-calibration.json */
+  flexBiasShadow?: boolean;
 }) {
   assertForecastWriteAllowed();
   const result = await generateBaselineForecastVersionForStation({
@@ -864,6 +868,7 @@ async function generateBaselineForecastVersionForStation(input: {
   useGlobalVersion?: boolean;
   purgeSkuScope?: boolean;
   forceNewVersion?: boolean;
+  flexBiasShadow?: boolean;
 }) {
   const platforms = resolveBaselineForecastPlatforms(input.platform);
   if (platforms.length === 1) {
@@ -938,6 +943,7 @@ async function generateBaselineForStationPlatform(input: {
   purgeSkuScope?: boolean;
   purgePlatformScope?: 'all' | 'current';
   forceNewVersion?: boolean;
+  flexBiasShadow?: boolean;
 }) {
   const station = resolveForecastGenerationStation(input.station);
   const platform = normalizeSalesPlatform(input.platform);
@@ -974,6 +980,7 @@ async function generateBaselineForStationPlatform(input: {
   const algoMode = input.algoMode ?? resolveForecastAlgoMode();
   const useMonthlyAbcd = isMonthlyAbcdAlgoMode(algoMode);
   const useAllCatV41 = isAllCatV41AlgoMode(algoMode);
+  const flexBiasShadow = input.flexBiasShadow ?? resolveFlexBiasShadowEnabled();
   const calibration = loadForecastCalibrationConfig();
   const profileConfig = calibration.profile;
   const aCoreConfig = calibration.aCore;
@@ -1013,6 +1020,7 @@ async function generateBaselineForStationPlatform(input: {
       projectGroup: skus.projectGroup,
       productCategory: skus.productCategory,
       forceForecast: skus.forceForecast,
+      skuKind: skus.skuKind,
     })
     .from(skus)
     .where(eq(skus.isActive, true));
@@ -1028,7 +1036,12 @@ async function generateBaselineForStationPlatform(input: {
     if (skuRows.length === 0) {
       throw new Error(`SKU ${input.skuCode?.trim()} 不存在、未启用，或与所选项目组不匹配`);
     }
+    if (skuRows.every((sku) => isAccessorySku({ code: sku.code, skuKind: sku.skuKind }))) {
+      throw new Error(`SKU ${input.skuCode?.trim()} 为配件（变化含 P），不参与销售预测`);
+    }
   }
+
+  skuRows = skuRows.filter((sku) => !isAccessorySku({ code: sku.code, skuKind: sku.skuKind }));
 
   if (!input.purgeSkuScope) {
     if (input.purgePlatformScope === 'all') {
@@ -1292,6 +1305,7 @@ async function generateBaselineForStationPlatform(input: {
         peerPlatformRecentDaily,
         historyCapEnd,
         demandReconstruct,
+        flexBiasShadow,
       });
       const anchorTier = anchorV41.tier;
       const anchorForecastable = isAllCatV41Forecastable(anchorTier);
@@ -1334,6 +1348,7 @@ async function generateBaselineForStationPlatform(input: {
           peerPlatformRecentDaily,
           historyCapEnd,
           demandReconstruct,
+          flexBiasShadow,
         });
 
         if (!anchorForecastable) {

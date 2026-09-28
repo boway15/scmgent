@@ -41,12 +41,12 @@ describe('inventory × product master boundary', () => {
     assert.ok(fields.length >= 8);
   });
 
-  it('feishu mapper does not emit 生命周期', () => {
+  it('feishu mapper passes 生命周期 for commercial status without touching skus.lifecycle column mapping', () => {
     const mapped = mapInventoryTurnoverBitableFields({
       SKU: 'DJ503970_2',
       SKU名称: '测试',
       品类: '床',
-      生命周期: '不应被采用',
+      生命周期: '停售',
       海外仓在库: '1',
       德国: '1',
       调拨在途合计: '0',
@@ -54,8 +54,10 @@ describe('inventory × product master boundary', () => {
       预下单: '0',
     });
     assert.ok(mapped);
-    assert.equal(mapped.row['生命周期'], undefined);
-    assert.ok(!('生命周期' in mapped.row));
+    assert.equal(mapped.row['生命周期'], '停售');
+    const expanded = expandFobInventoryRows([mapped.row], '2026-07-24');
+    assert.equal(expanded[0]?.commercialStatusRaw, '停售');
+    assert.equal(expanded[0]?.lifecycle, undefined);
   });
 
   it('expand path leaves lifecycle undefined when feishu row has no such column', () => {

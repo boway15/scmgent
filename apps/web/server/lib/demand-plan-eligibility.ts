@@ -1,10 +1,16 @@
-import type { DemandPlanPilotConfig } from './demand-plan-config.js';
+import {
+  isProjectGroupInPilot,
+  isWarehouseInPilot,
+  type DemandPlanPilotConfig,
+} from './demand-plan-config.js';
 
 export type SkuPilotInput = {
   skuId: string;
   projectGroup: string | null;
   spuId: string | null;
   isActive: boolean;
+  skuCode?: string | null;
+  skuKind?: string | null;
 };
 
 export function excludedCrossGroupSpuIds(skus: SkuPilotInput[]): Set<string> {
@@ -40,11 +46,11 @@ export function isSkuWarehouseInPilot(input: {
     return false;
   }
 
-  if (!sku.projectGroup || !config.projectGroups.includes(sku.projectGroup)) {
+  if (!isProjectGroupInPilot(sku.projectGroup, config)) {
     return false;
   }
 
-  if (!config.warehouses.includes(warehouseCode)) {
+  if (!isWarehouseInPilot(warehouseCode, config)) {
     return false;
   }
 

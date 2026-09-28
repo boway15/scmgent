@@ -19,6 +19,7 @@ import { skuEncodingToColumns } from '../sku-encoding.js';
 import { ensureSkuFromImport } from '../ensure-sku-from-import.js';
 import { extractProjectGroupFromCategory } from '../sku-category.js';
 import { refreshSkuLifecycles } from '../sku-lifecycle.js';
+import { applyCommercialStatusBatch } from '../commercial-status.js';
 import {
   expandFobInventoryRows,
   isFobInventoryFormat,
@@ -346,6 +347,11 @@ async function importFobInventoryRows(
   };
   const pendingInventory: InvRow[] = [];
   const touchedSkuIds = new Set<string>();
+  const commercialStatusRows: Array<{
+    skuId: string;
+    rawStatus: string | null | undefined;
+    source: 'erp_turnover';
+  }> = [];
   const FLUSH_SIZE = 250;
 
   async function flushInventory() {
@@ -391,6 +397,14 @@ async function importFobInventoryRows(
       touchedSkuIds.add(ensured.id);
       if (ensured.created) createdSkus++;
       else if (ensured.updated) enrichedSkus++;
+
+      if (row.commercialStatusRaw) {
+        commercialStatusRows.push({
+          skuId: ensured.id,
+          rawStatus: row.commercialStatusRaw,
+          source: 'erp_turnover',
+        });
+      }
 
       if (row.merchantCode) {
         await upsertSkuSupplierFromImport(ensured.id, row.merchantCode, row.merchantName, {
@@ -473,6 +487,15 @@ async function importFobInventoryRows(
   }
 
   await flushInventory();
+
+  if (commercialStatusRows.length > 0) {
+    try {
+      await applyCommercialStatusBatch(commercialStatusRows);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      errors.push(`commercial status sync: ${message}`);
+    }
+  }
 
   if (touchedSkuIds.size > 0) {
     try {

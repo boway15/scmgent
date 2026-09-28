@@ -29,9 +29,8 @@ import { DashboardPage } from '@/pages/DashboardPage';
 import { SalesHistoryPage } from '@/pages/SalesHistoryPage';
 import { SalesForecastListPage } from '@/pages/SalesForecastListPage';
 import { DemandPlanPilotPage } from '@/pages/DemandPlanPilotPage';
+import { DemandPlanDetailPage } from '@/pages/DemandPlanDetailPage';
 import { SalesForecastVersionDetailPage } from '@/pages/SalesForecastVersionDetailPage';
-import { LayeredForecastListPage } from '@/pages/LayeredForecastListPage';
-import { LayeredForecastDetailPage } from '@/pages/LayeredForecastDetailPage';
 import { SalesAnalyticsPage } from '@/pages/SalesAnalyticsPage';
 import { HelpCenterPage } from '@/pages/HelpCenterPage';
 import { RegisterPage } from '@/pages/RegisterPage';
@@ -77,10 +76,9 @@ export function AppRouter() {
           <Route path="data/sales" element={<SalesHistoryPage />} />
           <Route path="data/forecast" element={<SalesForecastListPage />} />
           <Route path="data/demand-plan" element={<DemandPlanPilotPage />} />
+          <Route path="data/demand-plan/:id" element={<DemandPlanDetailPage />} />
           <Route path="data/forecast/strategy" element={<Navigate to="/data/forecast?tab=strategy" replace />} />
           <Route path="data/forecast/:versionId" element={<SalesForecastVersionDetailPage />} />
-          <Route path="data/layered-forecast" element={<LayeredForecastListPage />} />
-          <Route path="data/layered-forecast/:versionId" element={<LayeredForecastDetailPage />} />
           <Route path="data/sales-analytics" element={<SalesAnalyticsPage />} />
           <Route path="pmc/import" element={<Navigate to="/pmc/list?import=1" replace />} />
           <Route path="reorder/suggestions" element={<Navigate to="/pmc/suggestions" replace />} />

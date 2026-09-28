@@ -28,6 +28,7 @@ type ShipmentInput = {
   bookingRef?: unknown;
   trackingNo?: unknown;
   transportMode?: unknown;
+  destinationWarehouseCode?: unknown;
   status?: unknown;
   etaAvailable?: unknown;
   sourceSystem?: unknown;
@@ -68,6 +69,10 @@ function parseCreateInput(body: ShipmentInput) {
   if (body.etaAvailable != null && !isDateOnly(body.etaAvailable)) {
     return { ok: false as const, message: 'etaAvailable must be YYYY-MM-DD' };
   }
+  const destinationWarehouseCode = optionalText(body.destinationWarehouseCode);
+  if (!destinationWarehouseCode) {
+    return { ok: false as const, message: 'destinationWarehouseCode is required' };
+  }
 
   return {
     ok: true as const,
@@ -81,6 +86,7 @@ function parseCreateInput(body: ShipmentInput) {
       bookingRef: optionalText(body.bookingRef),
       trackingNo: optionalText(body.trackingNo),
       transportMode: optionalText(body.transportMode),
+      destinationWarehouseCode,
       status: (body.status as string | undefined) ?? 'booked',
       etaAvailable: optionalText(body.etaAvailable),
       sourceSystem: optionalText(body.sourceSystem),
@@ -100,6 +106,7 @@ function parsePatchInput(body: ShipmentInput) {
     'bookingRef',
     'trackingNo',
     'transportMode',
+    'destinationWarehouseCode',
     'sourceSystem',
     'externalId',
   ] as const;

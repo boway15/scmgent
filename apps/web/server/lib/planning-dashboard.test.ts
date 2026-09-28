@@ -4,30 +4,46 @@ import { aggregatePlanningDashboard } from './planning-dashboard.js';
 
 const today = new Date('2026-07-29T12:00:00.000Z');
 
+const baseSource = {
+  skuActiveCount: 100,
+  skuOperationalCount: 70,
+  skuDormantCount: 30,
+  skuPlanningEligibleCount: 80,
+  skuGrayLifecycleCount: 20,
+  skuForecastCoveredCount: 60,
+  skuForecastGapCount: 20,
+  healthRedCount: 24,
+  healthYellowCount: 16,
+  healthRedSkuCount: 8,
+  healthYellowSkuCount: 12,
+  belowRopCount: 15,
+  pendingSuggestions: 2,
+  shipments: [] as [],
+  purchaseDrafts: [] as [],
+};
+
 describe('aggregatePlanningDashboard', () => {
-  it('aggregates planning KPIs and derives the approximate stockout rate', () => {
-    const dashboard = aggregatePlanningDashboard(
-      {
-        skuActiveCount: 4,
-        healthRedCount: 2,
-        healthYellowCount: 1,
-        belowRopCount: 3,
-        pendingSuggestions: 2,
-        shipments: [],
-        purchaseDrafts: [],
-      },
-      today,
-    );
+  it('aggregates planning KPIs and derives rates from planning-eligible SKUs', () => {
+    const dashboard = aggregatePlanningDashboard(baseSource, today);
 
     assert.deepEqual(dashboard, {
-      skuActiveCount: 4,
-      healthRedCount: 2,
-      healthYellowCount: 1,
-      belowRopCount: 3,
+      skuActiveCount: 100,
+      skuOperationalCount: 70,
+      skuDormantCount: 30,
+      skuPlanningEligibleCount: 80,
+      skuGrayLifecycleCount: 20,
+      skuForecastCoveredCount: 60,
+      skuForecastGapCount: 20,
+      forecastCoverageRate: 0.75,
+      healthRedCount: 24,
+      healthYellowCount: 16,
+      healthRedSkuCount: 8,
+      healthYellowSkuCount: 12,
+      belowRopCount: 15,
       pendingSuggestions: 2,
       delayedShipments: 0,
       delayedDraftsEtaAvailable: 0,
-      stockoutRateApprox: 0.5,
+      stockoutRateApprox: 0.1,
       stockoutHorizon7: 0,
       stockoutHorizon15: 0,
       stockoutHorizon30: 0,
@@ -42,13 +58,18 @@ describe('aggregatePlanningDashboard', () => {
   it('passes through uncoverableByNewPoCount from the source', () => {
     const dashboard = aggregatePlanningDashboard(
       {
+        ...baseSource,
         skuActiveCount: 0,
+        skuPlanningEligibleCount: 0,
+        skuGrayLifecycleCount: 0,
+        skuForecastCoveredCount: 0,
+        skuForecastGapCount: 0,
         healthRedCount: 0,
         healthYellowCount: 0,
+        healthRedSkuCount: 0,
+        healthYellowSkuCount: 0,
         belowRopCount: 0,
         pendingSuggestions: 0,
-        shipments: [],
-        purchaseDrafts: [],
         uncoverableByNewPoCount: 3,
       },
       today,
@@ -59,9 +80,16 @@ describe('aggregatePlanningDashboard', () => {
   it('counts shipments delayed by ETA or an open milestone once each', () => {
     const dashboard = aggregatePlanningDashboard(
       {
+        ...baseSource,
         skuActiveCount: 0,
+        skuPlanningEligibleCount: 0,
+        skuGrayLifecycleCount: 0,
+        skuForecastCoveredCount: 0,
+        skuForecastGapCount: 0,
         healthRedCount: 0,
         healthYellowCount: 0,
+        healthRedSkuCount: 0,
+        healthYellowSkuCount: 0,
         belowRopCount: 0,
         pendingSuggestions: 0,
         shipments: [
@@ -93,9 +121,16 @@ describe('aggregatePlanningDashboard', () => {
   it('counts overdue non-terminal drafts strictly before today', () => {
     const dashboard = aggregatePlanningDashboard(
       {
+        ...baseSource,
         skuActiveCount: 1,
+        skuPlanningEligibleCount: 1,
+        skuGrayLifecycleCount: 0,
+        skuForecastCoveredCount: 0,
+        skuForecastGapCount: 1,
         healthRedCount: 0,
         healthYellowCount: 0,
+        healthRedSkuCount: 0,
+        healthYellowSkuCount: 0,
         belowRopCount: 0,
         pendingSuggestions: 0,
         shipments: [],

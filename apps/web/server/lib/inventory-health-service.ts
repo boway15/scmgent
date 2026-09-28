@@ -30,9 +30,13 @@ import {
   PLANNING_INVENTORY_DEDUPE_MODE,
   resolveInventoryPosition,
   resolveInventoryPositionFromSnapshot,
+  resolvePlanningInventoryPositionFromSnapshots,
   type InventoryPositionBreakdown,
 } from './inventory-position.js';
+import { UNALLOCATED_TRANSIT_WAREHOUSE } from './inventory-constants.js';
+import { buildAllocationBySku } from './inventory-supply-lot-sync.js';
 import { isGrayLifecycle, type InventoryHealth } from './inventory-light.js';
+import { isPlanningExcluded } from './commercial-status.js';
 import {
   buildLeadTimeMetrics,
   type CoverageReplenishmentResult,
@@ -162,9 +166,12 @@ type LatestInvRow = {
 
 async function loadLatestInventorySnapshotsBySkuIds(
   skuIds: string[],
+  physicalWarehouseCodes: string[],
 ): Promise<Map<string, InventoryPositionBreakdown>> {
   const result = new Map<string, InventoryPositionBreakdown>();
-  if (!skuIds.length) return result;
+  if (!skuIds.length || !physicalWarehouseCodes.length) return result;
+
+  const rawBySku = new Map<string, Map<string, LatestInvRow>>();
 
   for (let offset = 0; offset < skuIds.length; offset += SKU_IN_CHUNK) {
     const chunk = skuIds.slice(offset, offset + SKU_IN_CHUNK);
@@ -195,19 +202,49 @@ async function loadLatestInventorySnapshotsBySkuIds(
     `);
 
     for (const row of Array.from(queryResult as unknown as LatestInvRow[])) {
+      let byWarehouse = rawBySku.get(row.skuId);
+      if (!byWarehouse) {
+        byWarehouse = new Map();
+        rawBySku.set(row.skuId, byWarehouse);
+      }
+      byWarehouse.set(row.warehouseCode, row);
+    }
+  }
+
+  const allocationBySku = buildAllocationBySku(
+    (
+      await db
+        .select({ skuId: skus.id, encodingMeta: skus.encodingMeta })
+        .from(skus)
+        .where(inArray(skus.id, skuIds))
+    ).map((row) => ({ skuId: row.skuId, encodingMeta: row.encodingMeta })),
+  );
+
+  for (const skuId of skuIds) {
+    const byWarehouse = rawBySku.get(skuId) ?? new Map<string, LatestInvRow>();
+    const overseas = byWarehouse.get(UNALLOCATED_TRANSIT_WAREHOUSE);
+    const share = allocationBySku.get(skuId)?.share ?? {
+      method: 'unallocated' as const,
+      shareSum: 0,
+      shareSumWarning: false,
+      weights: [],
+    };
+
+    for (const warehouseCode of physicalWarehouseCodes) {
+      const native = byWarehouse.get(warehouseCode);
       result.set(
-        positionKey(row.skuId, row.warehouseCode),
-        resolveInventoryPositionFromSnapshot({
-          warehouseCode: row.warehouseCode,
-          qtyAvailable: row.qtyAvailable,
-          qtyInTransit: row.qtyInTransit,
-          qtyInProduction: row.qtyInProduction,
-          qtyReserved: row.qtyReserved,
+        positionKey(skuId, warehouseCode),
+        resolvePlanningInventoryPositionFromSnapshots({
+          warehouseCode,
+          nativeSnapshot: native,
+          overseasSnapshot: overseas,
+          share,
           dedupeMode: PLANNING_INVENTORY_DEDUPE_MODE,
         }),
       );
     }
   }
+
   return result;
 }
 
@@ -373,6 +410,8 @@ export async function computeSkuWarehouseHealth(params: {
     merchantCode: string | null;
     leadTimeDays: number | null;
     unitCost: string | null;
+    lifecycle?: string | null;
+    commercialStatusNorm?: string | null;
   };
   warehouse: { code: string; regionGroup: string; countryCode: string | null };
   salesRows: Array<{ qtySold: number; saleDate: string; warehouseCode: string | null }>;
@@ -485,6 +524,18 @@ export async function computeSkuWarehouseHealth(params: {
       ? calcForwardAvgDaily(forecastEntry.map, new Date(), 90, eoqCalc.avgDaily)
       : eoqCalc.avgDaily;
 
+  const lifecycleLabel = forecastEntry.lifecycle ?? params.sku.lifecycle ?? null;
+  if (
+    isPlanningExcluded({
+      lifecycle: lifecycleLabel,
+      commercialStatusNorm: params.sku.commercialStatusNorm,
+    })
+  ) {
+    coverage.healthStatus = 'gray';
+    coverage.needsReplenishment = false;
+    coverage.suggestedQty = 0;
+  }
+
   return {
     skuId: params.sku.id,
     skuCode: params.sku.code,
@@ -500,7 +551,7 @@ export async function computeSkuWarehouseHealth(params: {
     coverageDays: coverage.coverageDays,
     totalLeadDays: coverage.leadTime.totalLeadDays,
     latestOrderDays: coverage.latestOrderDays,
-    lifecycle: forecastEntry.lifecycle,
+    lifecycle: lifecycleLabel,
     needsReplenishment: coverage.needsReplenishment,
     suggestedQty: coverage.suggestedQty,
     suggestedDate: coverage.suggestedDate,
@@ -539,6 +590,8 @@ export async function computeAllInventoryHealth(): Promise<SkuHealthRow[]> {
       merchantCode: skus.merchantCode,
       leadTimeDays: skus.leadTimeDays,
       unitCost: skus.unitCost,
+      lifecycle: skus.lifecycle,
+      commercialStatusNorm: skus.commercialStatusNorm,
     })
     .from(skus)
     .where(eq(skus.isActive, true));
@@ -566,9 +619,10 @@ export async function computeAllInventoryHealth(): Promise<SkuHealthRow[]> {
   console.info(`[inventory-health] sales+forecast ${Date.now() - tSales}ms`);
 
   const tPreload = Date.now();
+  const physicalWarehouseCodes = whRows.map((wh) => wh.code);
   const [policyBySku, positionByKey, leadTimeCaches] = await Promise.all([
     loadPolicyMapsBySkuIds(skuIds),
-    loadLatestInventorySnapshotsBySkuIds(skuIds),
+    loadLatestInventorySnapshotsBySkuIds(skuIds, physicalWarehouseCodes),
     loadLeadTimeCaches(skuIds),
   ]);
 

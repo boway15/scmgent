@@ -60,6 +60,7 @@ describe('ShipmentsPage helpers', () => {
         planItemId: 'plan-item-1',
         skuId: 'sku-1',
         qty: 60,
+        destinationWarehouseCode: '',
         etaAvailable: '2026-08-01',
         transportMode: '',
       },

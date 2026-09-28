@@ -1,7 +1,17 @@
 import { Hono } from 'hono';
+import { csvAttachment } from '../lib/csv-export.js';
 import {
+  buildSupplyLotSummaryExportCsv,
+  countSupplyLotSummaries,
+  listSupplyLotSummaries,
+  listSupplyLotWarehouseOptions,
+  parseSupplyLotSummaryFilters,
+} from '../lib/inventory-supply-lot-summary.js';
+import {
+  buildSupplyLotsExportCsv,
   countSupplyLots,
   listSupplyLots,
+  parseSupplyLotExportFilters,
   syncInventorySupplyLots,
   updateLocalLotDates,
 } from '../lib/inventory-supply-lot-sync.js';
@@ -9,6 +19,78 @@ import { parseListPagination } from '../lib/list-pagination.js';
 import { requireMenu } from '../lib/rbac.js';
 
 export const inventoryPoolsRoutes = new Hono();
+
+function todayFilenameSuffix() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+inventoryPoolsRoutes.get(
+  '/inventory/pools/warehouses',
+  requireMenu('inventory.pools', 'inventory.planning'),
+  async (c) => {
+    const items = await listSupplyLotWarehouseOptions();
+    return c.json({ items });
+  },
+);
+
+inventoryPoolsRoutes.get(
+  '/inventory/pools/summary/export',
+  requireMenu('inventory.pools', 'inventory.planning'),
+  async (c) => {
+    const filters = parseSupplyLotSummaryFilters({
+      q: c.req.query('q'),
+      warehouse: c.req.query('warehouse'),
+      hasOverseas: c.req.query('hasOverseas'),
+      hasInTransit: c.req.query('hasInTransit'),
+      hasLocal: c.req.query('hasLocal'),
+      hasUndatedTransit: c.req.query('hasUndatedTransit'),
+      multiTransitBatch: c.req.query('multiTransitBatch'),
+    });
+    const csv = await buildSupplyLotSummaryExportCsv(filters);
+    return csvAttachment(`inventory-pools-summary-${todayFilenameSuffix()}.csv`, csv);
+  },
+);
+
+inventoryPoolsRoutes.get(
+  '/inventory/pools/export',
+  requireMenu('inventory.pools', 'inventory.planning'),
+  async (c) => {
+    const filters = parseSupplyLotExportFilters({
+      pool: c.req.query('pool'),
+      warehouse: c.req.query('warehouse'),
+      q: c.req.query('q'),
+      dateUnknown: c.req.query('dateUnknown'),
+    });
+    const csv = await buildSupplyLotsExportCsv(filters);
+    const poolSuffix = filters.pool ?? 'all';
+    return csvAttachment(`inventory-pools-batches-${poolSuffix}-${todayFilenameSuffix()}.csv`, csv);
+  },
+);
+
+inventoryPoolsRoutes.get(
+  '/inventory/pools/summary',
+  requireMenu('inventory.pools', 'inventory.planning'),
+  async (c) => {
+    const { page, pageSize, offset } = parseListPagination(
+      c.req.query('page')?.trim(),
+      c.req.query('pageSize')?.trim(),
+    );
+    const filters = parseSupplyLotSummaryFilters({
+      q: c.req.query('q'),
+      warehouse: c.req.query('warehouse'),
+      hasOverseas: c.req.query('hasOverseas'),
+      hasInTransit: c.req.query('hasInTransit'),
+      hasLocal: c.req.query('hasLocal'),
+      hasUndatedTransit: c.req.query('hasUndatedTransit'),
+      multiTransitBatch: c.req.query('multiTransitBatch'),
+    });
+    const [items, total] = await Promise.all([
+      listSupplyLotSummaries({ ...filters, limit: pageSize, offset }),
+      countSupplyLotSummaries(filters),
+    ]);
+    return c.json({ items, total, page, pageSize });
+  },
+);
 
 inventoryPoolsRoutes.get('/inventory/pools', requireMenu('inventory.pools', 'inventory.planning'), async (c) => {
   const { page, pageSize, offset } = parseListPagination(
@@ -19,11 +101,13 @@ inventoryPoolsRoutes.get('/inventory/pools', requireMenu('inventory.pools', 'inv
   const warehouseCode = c.req.query('warehouse')?.trim() || undefined;
   const skuId = c.req.query('skuId')?.trim() || undefined;
   const q = c.req.query('q')?.trim() || undefined;
+  const dateUnknown = c.req.query('dateUnknown') === 'true' ? true : undefined;
   const filters = {
     pool: pool || undefined,
     warehouseCode,
     skuId,
     q,
+    dateUnknown,
   };
   const [items, total, dateUnknownCount] = await Promise.all([
     listSupplyLots({ ...filters, limit: pageSize, offset }),

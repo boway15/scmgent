@@ -2,7 +2,7 @@ import { eq, desc, and, or, ilike, sql } from 'drizzle-orm';
 import { Hono } from 'hono';
 import { db, stockAlerts, skus } from '@scm/db';
 import { getCurrentUser } from '../lib/auth-context.js';
-import { formatAlertSummaryFromRows } from '../lib/replenishment.js';
+import { alertSupplyKey, loadAlertListSupply } from '../lib/alert-list-supply.js';
 import { requireMenu } from '../lib/rbac.js';
 import { writeAuditLog } from '../lib/audit-log.js';
 import { parseListPagination } from '../lib/list-pagination.js';
@@ -75,27 +75,30 @@ alertRoutes.get('/alerts', requireMenu('inventory.alert'), async (c) => {
       .where(eq(stockAlerts.isResolved, false)),
   ]);
 
-  const openRows = await db
-    .select({
-      alertType: stockAlerts.alertType,
-      skuCode: skus.code,
-      currentQty: stockAlerts.currentQty,
-      safetyQty: stockAlerts.safetyQty,
-    })
-    .from(stockAlerts)
-    .innerJoin(skus, eq(skus.id, stockAlerts.skuId))
-    .where(eq(stockAlerts.isResolved, false))
-    .orderBy(desc(stockAlerts.notifiedAt))
-    .limit(500);
-
-  const summary = formatAlertSummaryFromRows(openRows);
+  const supplyByKey = await loadAlertListSupply(
+    rows.map((row) => ({
+      skuId: row.skuId,
+      warehouseCode: row.warehouseCode,
+      projectedStockoutDate: row.projectedStockoutDate,
+    })),
+  );
+  const items = rows.map((row) => {
+    const supply = supplyByKey.get(alertSupplyKey(row.skuId, row.warehouseCode));
+    return {
+      ...row,
+      localQty: supply?.localQty ?? 0,
+      overseasQty: supply?.overseasQty ?? 0,
+      inTransitQty: supply?.inTransitQty ?? 0,
+      futureNeedQty: supply?.futureNeedQty ?? null,
+      projectedStockoutDate: supply?.projectedStockoutDate ?? row.projectedStockoutDate,
+    };
+  });
 
   return c.json({
-    items: rows,
+    items,
     total: countRow[0]?.count ?? 0,
     page,
     pageSize,
-    summary,
     openCount: openCountRow[0]?.count ?? 0,
   });
 });

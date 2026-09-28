@@ -72,6 +72,12 @@ export const INVENTORY_PRODUCT_FIELD_OWNERSHIP: OwnershipRow[] = [
     notes: '默认为空；有销量后按 classifySalesLifecycle 写入中文标签；库存/飞书导入不覆盖',
   },
   {
+    field: 'commercialStatus / commercialStatusNorm',
+    storage: 'skus.commercial_status / commercial_status_norm',
+    owner: 'feishu_inventory',
+    notes: 'ERP 商业状态（生命周期/产品状态列）；与销量 lifecycle 分离；commercialStatusLocked 时不同步',
+  },
+  {
     field: 'moq / unit / replenishLight / isActive',
     storage: 'skus',
     owner: 'product_master',
@@ -113,6 +119,8 @@ export const FEISHU_SYNC_SKU_COLUMN_KEYS = [
   'merchantName',
   'leadTimeDays',
   'unitCost',
+  'commercialStatus',
+  'commercialStatusNorm',
 ] as const;
 
 /** 飞书同步明确不覆盖的 skus 列 */
@@ -122,4 +130,5 @@ export const FEISHU_SYNC_PRESERVED_SKU_COLUMN_KEYS = [
   'unit',
   'replenishLight',
   'isActive',
+  'commercialStatusLocked',
 ] as const;

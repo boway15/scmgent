@@ -148,6 +148,20 @@ export async function supersedePendingSuggestions(skuId: string, warehouseCode: 
     );
 }
 
+/** 网络级补货：同一 SKU 只保留一条 pending 建议 */
+export async function supersedeAllPendingSuggestionsForSku(skuId: string) {
+  await db
+    .update(reorderSuggestions)
+    .set({ supersededAt: new Date() })
+    .where(
+      and(
+        eq(reorderSuggestions.skuId, skuId),
+        eq(reorderSuggestions.status, 'pending'),
+        isNull(reorderSuggestions.supersededAt),
+      ),
+    );
+}
+
 export async function findOpenStockAlert(params: {
   skuId: string;
   warehouseCode: string | null;

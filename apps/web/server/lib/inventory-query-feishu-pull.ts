@@ -10,6 +10,7 @@ import {
   publishInventoryQuerySnapshot,
   type InventoryQuerySnapshotItem,
 } from './inventory-query-snapshot.js';
+import { syncCommercialStatusFromInventoryQuerySnapshot } from './commercial-status-sync.js';
 
 /** 与库存总览同一 Base 下的「SKU库存周转情况查询-明细」表；可用 env 覆盖 */
 export const DEFAULT_INVENTORY_QUERY_TABLE_ID = 'tblubb08s6pe6DXI';
@@ -100,6 +101,16 @@ export async function pullAndPublishInventoryQueryFromFeishu(): Promise<{
     columns: publishedColumns,
   });
 
+  let commercialStatusSync = { updated: 0, scanned: 0 };
+  try {
+    const sync = await syncCommercialStatusFromInventoryQuerySnapshot({
+      snapshotDate: published.snapshotDate,
+    });
+    commercialStatusSync = { updated: sync.updated, scanned: sync.scanned };
+  } catch (err) {
+    console.warn('[inventory-query-pull] commercial status sync skipped:', err);
+  }
+
   return {
     imported: items.length,
     warningCount: mapped.warningCount,
@@ -108,6 +119,7 @@ export async function pullAndPublishInventoryQueryFromFeishu(): Promise<{
     snapshotRowCount: published.rowCount,
     snapshotRunId: published.runId,
     columns: publishedColumns,
+    commercialStatusSync,
   };
 }
 

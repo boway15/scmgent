@@ -1,6 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  buildGrayLifecycleSqlCondition,
   calcConfirmedCoverageDays,
   calcInventoryHealth,
   calcTimelineDecisionHealth,
@@ -19,6 +20,12 @@ describe('inventory-light', () => {
   it('detects gray lifecycle keywords', () => {
     assert.equal(isGrayLifecycle('即将停售'), true);
     assert.equal(isGrayLifecycle('成熟期'), false);
+  });
+
+  it('builds gray lifecycle SQL condition', () => {
+    const condition = buildGrayLifecycleSqlCondition('lifecycle');
+    assert.match(condition, /lower\(lifecycle\) LIKE '%停售%'/);
+    assert.match(condition, /lower\(lifecycle\) LIKE '%discontinu%'/);
   });
 
   it('detects slow-moving stock', () => {

@@ -1,6 +1,11 @@
 import { desc, eq, sql, type SQL } from 'drizzle-orm';
 import { db, salesForecastVersions } from '@scm/db';
 import { capSkuWmapeForStats } from './forecast-accuracy-tier.js';
+import {
+  buildTierHorizonAttribution,
+  formatTierHorizonAttributionTable,
+  type TierHorizonAttributionSummary,
+} from './forecast-flex-bias-attribution.js';
 import { PROFILE_SEGMENT_META, type ProfileSegment } from './forecast-profile-class.js';
 
 export type ForecastAccuracyDiagnosticsInput = {
@@ -129,6 +134,8 @@ export type ForecastAccuracyDiagnostics = {
   byVolumeTier: ForecastAccuracyMetricSummary[];
   byCategory: ForecastAccuracyMetricSummary[];
   topErrorSkus: ForecastAccuracyTopErrorSku[];
+  /** T 层 × 预测距离 k 柔性窗归因（规划口径，含 T4B/T99） */
+  tierHorizonAttribution: TierHorizonAttributionSummary;
   recommendations: string[];
 };
 
@@ -553,6 +560,49 @@ async function loadGlobalMetrics(scope: AccuracyQueryScope, horizonRef?: YearMon
   };
 }
 
+async function loadTierHorizonAttributionRows(
+  scope: AccuracyQueryScope,
+  horizonRef: YearMonth,
+): Promise<
+  Array<{
+    profileSegment: string;
+    horizonIndex: number;
+    forecastDaily: number;
+    actualDaily: number;
+    horizonFactors: unknown;
+  }>
+> {
+  if (!scope.versionId) return [];
+  const filters = buildAccuracyFilters(scope);
+  filters.push(sql`fa.forecast_daily_avg::numeric > 0`);
+  filters.push(sql`fa.actual_daily_avg::numeric > 0`);
+
+  const result = await db.execute(sql`
+    select
+      coalesce(nullif(sfm.profile_segment, ''), 'unclassified') as profile_segment,
+      ((fa.forecast_year - ${horizonRef.year}) * 12 + (fa.month - ${horizonRef.month}))::int as horizon_index,
+      fa.forecast_daily_avg::float8 as forecast_daily,
+      fa.actual_daily_avg::float8 as actual_daily,
+      sfm.horizon_factors as horizon_factors
+    from forecast_accuracy_monthly fa
+    left join sales_forecast_monthly sfm on sfm.version_id = fa.version_id
+      and sfm.sku_id = fa.sku_id
+      and sfm.station = fa.station
+      and sfm.platform = fa.platform
+      and sfm.forecast_year = fa.forecast_year
+      and sfm.month = fa.month
+    ${whereClause(filters)}
+  `);
+
+  return (result.rows as Array<Record<string, unknown>>).map((row) => ({
+    profileSegment: String(row.profile_segment ?? 'unclassified'),
+    horizonIndex: Number(row.horizon_index ?? 0),
+    forecastDaily: Number(row.forecast_daily ?? 0),
+    actualDaily: Number(row.actual_daily ?? 0),
+    horizonFactors: row.horizon_factors,
+  }));
+}
+
 async function loadGroupedMetrics(input: {
   scope: AccuracyQueryScope;
   horizonRef?: YearMonth;
@@ -939,6 +989,11 @@ export async function buildForecastAccuracyDiagnostics(
     minComparableRows: 10,
   });
   const topErrorSkus = await loadTopErrorSkus({ scope, horizonRef, limit: limitTopErrors });
+  const tierHorizonAttribution = buildTierHorizonAttribution(
+    horizonRef
+      ? await loadTierHorizonAttributionRows(scope, horizonRef)
+      : [],
+  );
 
   const diagnosticScope: ForecastAccuracyDiagnosticScope = {
     versionId: version?.id,
@@ -953,13 +1008,16 @@ export async function buildForecastAccuracyDiagnostics(
     asOf: asOf?.key,
   };
 
-  const recommendations = buildRecommendations({
-    dataQuality,
-    global,
-    byProfileSegment,
-    byVolumeTier,
-    byHorizonBand,
-  });
+  const recommendations = [
+    ...buildRecommendations({
+      dataQuality,
+      global,
+      byProfileSegment,
+      byVolumeTier,
+      byHorizonBand,
+    }),
+    ...tierHorizonAttribution.recommendations,
+  ];
 
   return {
     scope: diagnosticScope,
@@ -970,6 +1028,7 @@ export async function buildForecastAccuracyDiagnostics(
     byVolumeTier,
     byCategory,
     topErrorSkus,
+    tierHorizonAttribution,
     recommendations,
   };
 }
@@ -1296,6 +1355,11 @@ export function formatForecastAccuracyDiagnosticsMarkdown(
   for (const row of diagnostics.byVolumeTier) lines.push(`  - ${metricLine(row)}`);
   lines.push('- 画像层 Top：');
   for (const row of diagnostics.byProfileSegment.slice(0, 8)) lines.push(`  - ${metricLine(row)}`);
+  lines.push('');
+  lines.push('### T 层 × k 柔性窗归因（规划口径）');
+  lines.push('```text');
+  lines.push(...formatTierHorizonAttributionTable(diagnostics.tierHorizonAttribution));
+  lines.push('```');
   lines.push('');
   lines.push('### 误差贡献 Top SKU');
   for (const sku of diagnostics.topErrorSkus.slice(0, 10)) {

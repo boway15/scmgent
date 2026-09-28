@@ -24,6 +24,7 @@ import { categoryMatchesFilterCondition } from './sku-category.js';
 import { loadMonthlySalesBySkuIds } from './sales-history-query.js';
 import { MAX_FORECAST_MONTH_COUNT } from './forecast-limits.js';
 import { resolveForecastStartMonthAsOf } from './forecast-start-month.js';
+import { excludeAccessorySkuSql } from './planning-accessory-filter.js';
 
 const ALLCAT_V41_PROFILE_SEGMENTS = new Set(['T1', 'T2', 'T3', 'T3P', 'T4A', 'T4B', 'T99']);
 
@@ -918,6 +919,7 @@ async function listForecastHorizonAggregated(input: {
     eq(salesForecastMonthly.versionId, input.versionId),
     inArray(salesForecastMonthly.platform, [...FORECAST_V41_PLATFORM_CODES]),
     eq(salesForecastMonthly.station, stationFilter),
+    excludeAccessorySkuSql(),
   ];
   if (input.skuId?.trim()) {
     conditions.push(eq(salesForecastMonthly.skuId, input.skuId.trim()));
@@ -1237,6 +1239,7 @@ export async function listForecastHorizon(input: {
     eq(salesForecastMonthly.versionId, versionId),
     eq(salesForecastMonthly.station, stationFilter),
     eq(salesForecastMonthly.platform, platformNormalized),
+    excludeAccessorySkuSql(),
   ];
   if (input.skuId?.trim()) {
     conditions.push(eq(salesForecastMonthly.skuId, input.skuId.trim()));

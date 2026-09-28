@@ -30,6 +30,8 @@ export const shipments = pgTable(
     bookingRef: varchar('booking_ref', { length: 100 }),
     trackingNo: varchar('tracking_no', { length: 100 }),
     transportMode: varchar('transport_mode', { length: 50 }),
+    /** 出货时确定的目的仓 */
+    destinationWarehouseCode: varchar('destination_warehouse_code', { length: 100 }),
     status: varchar('status', { length: 30 }).notNull().default('booked'),
     etaAvailable: date('eta_available'),
     sourceSystem: varchar('source_system', { length: 50 }),

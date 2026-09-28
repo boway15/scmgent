@@ -148,6 +148,23 @@ export const FORECAST_METHODOLOGY_SECTIONS: ForecastMethodologySection[] = [
     ],
   },
   {
+    title: '三-D2、柔性窗偏差校正（V4.1 · v2_2026-09）',
+    paragraphs: [
+      '针对走步验收中 T4A/T4B/T99 在 k=3–5（第 4–6 预测月）系统性低估，在套限幅与跨平台抬底之后，对系统日均乘以分层校正系数。近端 k≤2 与 T1–T3 不动。',
+      '配置：apps/web/server/config/forecast-calibration.json → flexBiasShadow。紧急关闭：环境变量 FORECAST_V41_FLEX_BIAS_CORRECTION=0。',
+      '走步对照（2026-01-01 asOf）：柔性窗整体偏差 -13.1% → -8.2%；T4A -52% → -26%；T4B -43% → -17%；近端 k≤2 保持 +1.7%。',
+    ],
+    table: {
+      headers: ['T 层', 'k=3', 'k=4', 'k=5', '说明'],
+      rows: [
+        ['T4A', '×1.45', '×1.55', '×1.65', '亚马逊边界层'],
+        ['T4B', '×1.35', '×1.45', '×1.55', '稳定保底层'],
+        ['T99', '×1.40', '×1.50', '×1.60', '保守保底层'],
+        ['T1–T3', '—', '—', '—', '不校正'],
+      ],
+    },
+  },
+  {
     title: '三-D、偏差预算（业务目标）',
     paragraphs: [
       '主力 SKU 走步回测验收目标：地平线 k=0~2（前 3 个预测月）|bias|≤20%；k=3~5（第 4~6 月）|bias|≤35%。',

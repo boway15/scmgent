@@ -1,13 +1,13 @@
 import { and, desc, eq } from 'drizzle-orm';
-import {
-  db,
-  inventoryRecords,
-  pmcPlanItems,
-  pmcPlans,
-  purchaseDrafts,
-} from '@scm/db';
-import { IN_PRODUCTION_WAREHOUSE } from './inventory-constants.js';
+import { db, inventoryRecords, purchaseDrafts, skus } from '@scm/db';
+import { IN_PRODUCTION_WAREHOUSE, UNALLOCATED_TRANSIT_WAREHOUSE } from './inventory-constants.js';
 import { normalizePurchaseDraftStatus } from './purchase-draft-lifecycle.js';
+import {
+  allocateByShare,
+  parseSharesFromSnapshot,
+  type ShareParseResult,
+} from './inventory-share-allocation.js';
+import { readTurnoverSnapshot } from './inventory-turnover-snapshot.js';
 
 export type InventoryDedupeMode = 'snapshot_only' | 'drafts_fill_gap' | 'sum_both';
 
@@ -255,6 +255,85 @@ function snapshotSources(snapshot: {
     .map(([bucket, qty]) => ({ source: 'snapshot', bucket, qty }));
 }
 
+function toInventoryPositionSnapshot(
+  raw?: Partial<InventoryPositionSnapshot> | null,
+): InventoryPositionSnapshot {
+  return {
+    qtyAvailable: raw?.qtyAvailable ?? 0,
+    qtyInTransit: raw?.qtyInTransit ?? 0,
+    qtyInProduction: raw?.qtyInProduction ?? 0,
+    qtyReserved: raw?.qtyReserved ?? 0,
+  };
+}
+
+/** 物理仓：native 有量优先；否则按销售占比从 OVERSEAS 分摊（与规划页 / supply_lots 一致）。 */
+export function resolvePlanningInventoryPositionFromSnapshots(params: {
+  warehouseCode: string;
+  nativeSnapshot?: Partial<InventoryPositionSnapshot> | null;
+  overseasSnapshot?: Partial<InventoryPositionSnapshot> | null;
+  share?: ShareParseResult;
+  dedupeMode?: InventoryDedupeMode;
+}): InventoryPositionBreakdown {
+  const dedupeMode = params.dedupeMode ?? PLANNING_INVENTORY_DEDUPE_MODE;
+  const native = normalizeSnapshotForWarehouse(
+    toInventoryPositionSnapshot(params.nativeSnapshot),
+    params.warehouseCode,
+  );
+
+  if (params.warehouseCode === IN_PRODUCTION_WAREHOUSE) {
+    return mergeInventoryPosition({
+      dedupeMode,
+      snapshot: native,
+      draftBuckets: { inProduction: 0, inTransit: 0, confirmedOpen: 0 },
+      sources: snapshotSources(native),
+    });
+  }
+
+  const hasNativeStock = native.qtyAvailable > 0 || native.qtyInTransit > 0;
+  if (hasNativeStock) {
+    return mergeInventoryPosition({
+      dedupeMode,
+      snapshot: native,
+      draftBuckets: { inProduction: 0, inTransit: 0, confirmedOpen: 0 },
+      sources: snapshotSources(native),
+    });
+  }
+
+  const overseas = toInventoryPositionSnapshot(params.overseasSnapshot);
+  const share = params.share;
+  if (
+    share?.method === 'sales_share' &&
+    (overseas.qtyAvailable > 0 || overseas.qtyInTransit > 0)
+  ) {
+    const qtyAvailable =
+      allocateByShare(overseas.qtyAvailable, share).get(params.warehouseCode) ?? 0;
+    const qtyInTransit =
+      allocateByShare(overseas.qtyInTransit, share).get(params.warehouseCode) ?? 0;
+    const allocated = normalizeSnapshotForWarehouse(
+      {
+        qtyAvailable,
+        qtyInTransit,
+        qtyInProduction: 0,
+        qtyReserved: native.qtyReserved,
+      },
+      params.warehouseCode,
+    );
+    return mergeInventoryPosition({
+      dedupeMode,
+      snapshot: allocated,
+      draftBuckets: { inProduction: 0, inTransit: 0, confirmedOpen: 0 },
+      sources: snapshotSources(allocated),
+    });
+  }
+
+  return mergeInventoryPosition({
+    dedupeMode,
+    snapshot: native,
+    draftBuckets: { inProduction: 0, inTransit: 0, confirmedOpen: 0 },
+    sources: snapshotSources(native),
+  });
+}
+
 /** 仅用最新 inventory_records 快照构建仓位（规划/健康全量路径 snapshot_only，不查 drafts）。 */
 export function resolveInventoryPositionFromSnapshot(params: {
   warehouseCode: string;
@@ -282,11 +361,10 @@ export function resolveInventoryPositionFromSnapshot(params: {
   });
 }
 
-export async function resolveInventoryPosition(params: {
+async function loadLatestInventoryRecordSnapshot(params: {
   skuId: string;
   warehouseCode: string;
-  dedupeMode?: InventoryDedupeMode;
-}): Promise<InventoryPositionBreakdown> {
+}): Promise<InventoryPositionSnapshot | null> {
   const [record] = await db
     .select({
       qtyAvailable: inventoryRecords.qtyAvailable,
@@ -304,26 +382,64 @@ export async function resolveInventoryPosition(params: {
     .orderBy(desc(inventoryRecords.recordedDate), desc(inventoryRecords.createdAt))
     .limit(1);
 
+  if (!record) return null;
+  return {
+    qtyAvailable: record.qtyAvailable ?? 0,
+    qtyInTransit: record.qtyInTransit ?? 0,
+    qtyInProduction: record.qtyInProduction ?? 0,
+    qtyReserved: record.qtyReserved ?? 0,
+  };
+}
+
+export async function resolveInventoryPosition(params: {
+  skuId: string;
+  warehouseCode: string;
+  dedupeMode?: InventoryDedupeMode;
+}): Promise<InventoryPositionBreakdown> {
   const dedupeMode = params.dedupeMode ?? 'drafts_fill_gap';
 
   if (dedupeMode === 'snapshot_only' || params.warehouseCode === IN_PRODUCTION_WAREHOUSE) {
-    return resolveInventoryPositionFromSnapshot({
+    const [nativeRecord, overseasRecord, skuRow] = await Promise.all([
+      loadLatestInventoryRecordSnapshot({
+        skuId: params.skuId,
+        warehouseCode: params.warehouseCode,
+      }),
+      params.warehouseCode === IN_PRODUCTION_WAREHOUSE
+        ? Promise.resolve(null)
+        : loadLatestInventoryRecordSnapshot({
+            skuId: params.skuId,
+            warehouseCode: UNALLOCATED_TRANSIT_WAREHOUSE,
+          }),
+      params.warehouseCode === IN_PRODUCTION_WAREHOUSE
+        ? Promise.resolve(null)
+        : db
+            .select({ encodingMeta: skus.encodingMeta })
+            .from(skus)
+            .where(eq(skus.id, params.skuId))
+            .limit(1)
+            .then((rows) => rows[0] ?? null),
+    ]);
+
+    const share = skuRow
+      ? parseSharesFromSnapshot(readTurnoverSnapshot(skuRow.encodingMeta))
+      : undefined;
+
+    return resolvePlanningInventoryPositionFromSnapshots({
       warehouseCode: params.warehouseCode,
-      qtyAvailable: record?.qtyAvailable,
-      qtyInTransit: record?.qtyInTransit,
-      qtyInProduction: record?.qtyInProduction,
-      qtyReserved: record?.qtyReserved,
+      nativeSnapshot: nativeRecord,
+      overseasSnapshot: overseasRecord,
+      share,
       dedupeMode,
     });
   }
 
+  const record = await loadLatestInventoryRecordSnapshot({
+    skuId: params.skuId,
+    warehouseCode: params.warehouseCode,
+  });
+
   const snapshot = normalizeSnapshotForWarehouse(
-    {
-      qtyAvailable: record?.qtyAvailable ?? 0,
-      qtyInTransit: record?.qtyInTransit ?? 0,
-      qtyInProduction: record?.qtyInProduction ?? 0,
-      qtyReserved: record?.qtyReserved ?? 0,
-    },
+    toInventoryPositionSnapshot(record),
     params.warehouseCode,
   );
 
@@ -333,19 +449,15 @@ export async function resolveInventoryPosition(params: {
       status: purchaseDrafts.status,
       qty: purchaseDrafts.qty,
       receivedQty: purchaseDrafts.receivedQty,
-      itemWarehouseCode: pmcPlanItems.warehouseCode,
-      planWarehouseCode: pmcPlans.targetWarehouseCode,
     })
     .from(purchaseDrafts)
-    .leftJoin(pmcPlanItems, eq(purchaseDrafts.planItemId, pmcPlanItems.id))
-    .leftJoin(pmcPlans, eq(pmcPlanItems.planId, pmcPlans.id))
     .where(eq(purchaseDrafts.skuId, params.skuId));
 
   const draftLines: DraftOpenLine[] = draftRows.map((row) => ({
     draftId: row.id,
     status: row.status,
     openQty: openDraftQty(row.qty, row.receivedQty),
-    warehouseCode: row.itemWarehouseCode ?? row.planWarehouseCode,
+    warehouseCode: null,
   }));
   const aggregated = aggregateDraftBucketsForWarehouse(draftLines, params.warehouseCode);
 

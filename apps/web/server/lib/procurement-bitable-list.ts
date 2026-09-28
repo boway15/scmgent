@@ -19,6 +19,7 @@ import {
 } from '../integrations/feishu-bitable.js';
 import { getBitableAppToken } from './bitable-sync.js';
 import { assertRowCount } from './upload-guard.js';
+import { syncCommercialStatusFromProcurementList } from './commercial-status-sync.js';
 import { decodeCsvBytes, parseDelimitedText } from './import/parse.js';
 import { formatXlsxCellValue } from './turnover-date-format.js';
 
@@ -330,10 +331,21 @@ export async function replaceProcurementListData(params: {
       });
   });
 
+  let commercialStatusSync = { updated: 0, scanned: 0 };
+  if (params.listType === 'bulk_stock_request') {
+    try {
+      const sync = await syncCommercialStatusFromProcurementList('bulk_stock_request');
+      commercialStatusSync = { updated: sync.updated, scanned: sync.scanned };
+    } catch (err) {
+      console.warn('[procurement] commercial status sync skipped:', err);
+    }
+  }
+
   return {
     imported: rows.length,
     columnOrder,
     source: params.source,
+    commercialStatusSync,
   };
 }
 

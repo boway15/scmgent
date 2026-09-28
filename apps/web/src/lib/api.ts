@@ -42,6 +42,8 @@ export type Sku = {
   merchantCode?: string | null;
   merchantName?: string | null;
   replenishLight?: ReplenishLight;
+  commercialStatus?: string | null;
+  commercialStatusLocked?: boolean;
   isActive: boolean;
 };
 
@@ -468,6 +470,7 @@ export type Shipment = {
   bookingRef?: string | null;
   trackingNo?: string | null;
   transportMode?: string | null;
+  destinationWarehouseCode?: string | null;
   status: ShipmentStatus;
   etaAvailable?: string | null;
   sourceSystem?: string | null;
@@ -596,10 +599,17 @@ export type DemandPlanVersionListItem = {
   status: string;
   projectGroup: string;
   warehouseCode: string;
+  startWeek?: string | null;
+  horizonWeeks?: number | null;
+  startMonth?: string;
+  horizonMonths?: number | null;
+  publishedAt?: string | null;
+  createdAt?: string;
 };
 
 export type DemandPlanMonthRow = {
   id: string;
+  skuId?: string;
   skuCode?: string;
   period: string;
   systemDailyAvg: string;
@@ -621,17 +631,165 @@ export type DemandPlanAdoption = {
   adoptedBy?: string | null;
 };
 
+export type DemandPlanPeriodPage = {
+  items: DemandPlanWeekRow[];
+  total: number;
+  skuTotal: number;
+  page: number;
+  pageSize: number;
+};
+
+export type DemandPlanSkuWeeklyActual = {
+  weekKey: string;
+  qtySold: number;
+  actualDailyAvg: number | null;
+  inProgress: boolean;
+};
+
+export type DemandPlanSkuWeeklyForecast = {
+  weekKey: string;
+  anchorMonthLabel: string;
+  systemDailyAvg: number;
+  manualDailyAvg: number | null;
+  effectiveDailyAvg: number;
+  hasManual: boolean;
+  actualDailyAvg: number | null;
+  actualInProgress: boolean;
+  qtySold: number | null;
+  confidenceLevel: string | null;
+  baselineDailyAvg: number | null;
+  seasonalityFactor: number | null;
+  trendFactor: number | null;
+  categoryCombinedFactor: number | null;
+  categoryTrendWasClipped: boolean;
+  categoryTrendMatched: boolean;
+  horizonFactors: {
+    nearLevel: number;
+    structuralLevel: number;
+    yoyMonthLevel: number;
+    yoyAnchorLevel: number;
+    growthFactor: number;
+    wNear: number;
+    wYoy: number;
+    horizonMonthIndex: number;
+  } | null;
+  allCatV41Factors: {
+    d6: number;
+    d3: number;
+    trendRatio: number;
+    anchorDaily?: number;
+    seasonalDaily?: number;
+    levelDaily?: number;
+    formula: string;
+    productCategory?: string | null;
+  } | null;
+  aiAssistRationale: string | null;
+  aiAssistMode: 'auto' | 'human' | null;
+  planSystemDailyAvg: string | null;
+  planEffectiveDailyAvg: string | null;
+  planManualDailyAvg: string | null;
+  championForecastDaily: string | null;
+  planSource: string | null;
+};
+
+export type DemandPlanSkuWeeklyPlan = {
+  weekKey: string;
+  systemDailyAvg: string;
+  manualDailyAvg: string | null;
+  effectiveDailyAvg: string;
+  championForecastDaily: string | null;
+  source: string;
+};
+
+export type DemandPlanSkuDetail = {
+  sku: {
+    id: string;
+    code: string;
+    name: string;
+    category: string | null;
+    productCategory: string | null;
+    lifecycle: string | null;
+    salesCountry: string | null;
+    ownerName: string | null;
+    developerName: string | null;
+    unit: string | null;
+    leadTimeDays: number | null;
+    moq: number | null;
+  };
+  historyWeeks: DemandPlanSkuWeeklyActual[];
+  planWeeks: DemandPlanSkuWeeklyPlan[];
+  forecastWeeks: DemandPlanSkuWeeklyForecast[];
+  forecastVersion: { id: string; versionNo: string; versionName: string } | null;
+  forecastHorizon: {
+    profileSegment: string | null;
+    forecastProfileClass: string | null;
+    lifecycle: string | null;
+    platform: string;
+    station: string;
+    months: Array<{
+      id: string;
+      monthLabel: string;
+      forecastDailyAvg: number;
+      manualDailyAvg: number | null;
+      effectiveDailyAvg: number;
+      adjustReason: string | null;
+      baselineDailyAvg: number | null;
+      confidenceLevel: string | null;
+      seasonalityFactor: number;
+      trendFactor: number;
+      categoryCombinedFactor: number;
+      categoryTrendWasClipped: boolean;
+      categoryTrendMatched: boolean;
+      horizonFactors: DemandPlanSkuWeeklyForecast['horizonFactors'];
+      allCatV41Factors: DemandPlanSkuWeeklyForecast['allCatV41Factors'];
+      aiAssistRationale?: string | null;
+      aiAssistMode?: 'auto' | 'human' | null;
+    }>;
+  } | null;
+  forecastContext: SkuForecastContext | null;
+};
+
+export type DemandPlanWideRow = {
+  skuId: string;
+  skuCode: string;
+  cells: Record<string, DemandPlanWeekRow>;
+};
+
+export type DemandPlanWidePage = {
+  items: DemandPlanWideRow[];
+  total: number;
+  page: number;
+  pageSize: number;
+};
+
+export type DemandPlanDetailView = 'wide' | 'long';
+
 export type DemandPlanDetail = {
   version: DemandPlanVersionListItem;
-  months: DemandPlanMonthRow[];
-  weeks?: DemandPlanWeekRow[];
+  view: DemandPlanDetailView;
+  grain: 'week' | 'month';
+  periods: string[];
+  stats: { rowTotal: number; skuTotal: number };
+  long: DemandPlanPeriodPage;
+  wide: DemandPlanWidePage;
   adoption?: DemandPlanAdoption | null;
 };
 
 export type PlanningDashboard = {
   skuActiveCount: number;
+  /** 近 30 天周转表 或 近 90 天有销量 */
+  skuOperationalCount: number;
+  /** 启用但未满足运营口径 */
+  skuDormantCount: number;
+  skuPlanningEligibleCount: number;
+  skuGrayLifecycleCount: number;
+  skuForecastCoveredCount: number;
+  skuForecastGapCount: number;
+  forecastCoverageRate: number;
   healthRedCount: number;
   healthYellowCount: number;
+  healthRedSkuCount: number;
+  healthYellowSkuCount: number;
   belowRopCount: number;
   pendingSuggestions: number;
   delayedShipments: number;
@@ -689,6 +847,45 @@ export type SupplyLotRow = {
   updatedAt: string;
 };
 
+export type SupplyLotSummaryRow = {
+  skuId: string;
+  skuCode: string;
+  skuName: string;
+  warehouseCode: string;
+  overseasQty: number;
+  inTransitQty: number;
+  localQty: number;
+  undatedTransitQty: number;
+  inTransitBatchCount: number;
+  localBatchCount: number;
+  overseasBatchCount: number;
+  nextTransitAt: string | null;
+  nextTransitQty: number;
+  nextTransitEstimated: boolean;
+  nextLocalAt: string | null;
+  nextLocalQty: number;
+  batchCount: number;
+  updatedAt: string;
+};
+
+export type SupplyLotSummaryFilters = {
+  q?: string;
+  warehouse?: string;
+  hasOverseas?: boolean;
+  hasInTransit?: boolean;
+  hasLocal?: boolean;
+  hasUndatedTransit?: boolean;
+  multiTransitBatch?: boolean;
+};
+
+export type SupplyLotBatchFilters = {
+  pool?: 'overseas' | 'in_transit' | 'local';
+  warehouse?: string;
+  skuId?: string;
+  q?: string;
+  dateUnknown?: boolean;
+};
+
 export type UnallocatedSupplyRow = SupplyLotRow & {
   suggestedDestinations: Array<{ warehouseCode: string; qty: number }>;
 };
@@ -703,7 +900,11 @@ export type SkuOverview = {
   projectGroup?: string | null;
   /** A 品类 */
   lifecycle?: string | null;
-  /** C 生命周期 */
+  /** 销量推断生命周期 */
+  commercialStatus?: string | null;
+  commercialStatusNorm?: string | null;
+  commercialStatusLocked?: boolean;
+  /** E 销售国家 */
   salesCountry?: string | null;
   /** E 销售国家 */
   productCategory?: string | null;
@@ -932,55 +1133,6 @@ export type ForecastVersionBasic = {
   publishedAt?: string | null;
 };
 
-export type LayeredForecastVersion = {
-  id: string;
-  versionNo: string;
-  versionName: string;
-  status: 'draft' | 'published' | 'archived';
-  startMonth: string;
-  horizonMonths: number;
-  station: string;
-  algoMeta?: Record<string, unknown> | null;
-  createdBy?: string | null;
-  publishedBy?: string | null;
-  publishedAt?: string | null;
-  createdAt: string;
-  updatedAt: string;
-};
-
-export type LayeredForecastNodeLevel = 'project_group' | 'category' | 'platform' | 'sku';
-
-export type LayeredForecastNode = {
-  id: string;
-  versionId: string;
-  level: LayeredForecastNodeLevel;
-  projectGroup: string;
-  category: string;
-  platform: string;
-  skuId: string | null;
-  period: string;
-  qty: number;
-  systemQty: number;
-  draftQty: number | null;
-  locked: boolean;
-  seasonalityFactor: number | null;
-  trendFactor: number | null;
-  peakMonth: number | null;
-  manualEdited: boolean;
-  createdAt: string;
-  updatedAt: string;
-};
-
-export type LayeredForecastNodesQuery = {
-  level?: LayeredForecastNodeLevel;
-  projectGroup?: string;
-  category?: string;
-  platform?: string;
-  period?: string;
-  limit?: number;
-  offset?: number;
-};
-
 export type SkuMonthlyForecastCell = {
   forecastYear: number;
   month: number;
@@ -1065,6 +1217,28 @@ export type ForecastAccuracyDiagnostics = {
     forecastDailySum: number;
     absErrorSum: number;
   }>;
+  tierHorizonAttribution: {
+    flexWindow: { fromK: number; toK: number };
+    flexTotalActual: number;
+    flexWeightedBias: number | null;
+    precisionWeightedBias: number | null;
+    cells: Array<{
+      tier: string;
+      tierLabel: string;
+      horizonIndex: number;
+      horizonBand: 'precision' | 'flex' | 'strategic';
+      comparableRows: number;
+      actualDailySum: number;
+      forecastDailySum: number;
+      weightedBias: number | null;
+      wmape: number | null;
+      flexContribution: number | null;
+      discountProductMedian: number | null;
+      discountProductP25: number | null;
+      discountProductP75: number | null;
+    }>;
+    recommendations: string[];
+  };
   recommendations: string[];
 };
 
@@ -2060,14 +2234,41 @@ export const api = {
       : '';
     return request<SkuPlanningView>(`/api/inventory/planning/${skuId}${query}`);
   },
-  getSupplyLots: (params?: {
-    pool?: 'overseas' | 'in_transit' | 'local';
-    warehouse?: string;
-    skuId?: string;
-    page?: number;
-    pageSize?: number;
-    q?: string;
-  }) => {
+  getSupplyLotSummaries: (params?: SupplyLotSummaryFilters & { page?: number; pageSize?: number }) => {
+    const qs = new URLSearchParams();
+    if (params?.page) qs.set('page', String(params.page));
+    if (params?.pageSize) qs.set('pageSize', String(params.pageSize));
+    if (params?.q) qs.set('q', params.q);
+    if (params?.warehouse) qs.set('warehouse', params.warehouse);
+    if (params?.hasOverseas) qs.set('hasOverseas', 'true');
+    if (params?.hasInTransit) qs.set('hasInTransit', 'true');
+    if (params?.hasLocal) qs.set('hasLocal', 'true');
+    if (params?.hasUndatedTransit) qs.set('hasUndatedTransit', 'true');
+    if (params?.multiTransitBatch) qs.set('multiTransitBatch', 'true');
+    const query = qs.toString();
+    return request<PaginatedResult<SupplyLotSummaryRow>>(
+      `/api/inventory/pools/summary${query ? `?${query}` : ''}`,
+    );
+  },
+  exportSupplyLotSummariesCsv: async (params?: SupplyLotSummaryFilters) => {
+    const qs = new URLSearchParams();
+    if (params?.q) qs.set('q', params.q);
+    if (params?.warehouse) qs.set('warehouse', params.warehouse);
+    if (params?.hasOverseas) qs.set('hasOverseas', 'true');
+    if (params?.hasInTransit) qs.set('hasInTransit', 'true');
+    if (params?.hasLocal) qs.set('hasLocal', 'true');
+    if (params?.hasUndatedTransit) qs.set('hasUndatedTransit', 'true');
+    if (params?.multiTransitBatch) qs.set('multiTransitBatch', 'true');
+    const query = qs.toString();
+    const res = await apiFetch(
+      apiUrl(`/api/inventory/pools/summary/export${query ? `?${query}` : ''}`),
+    );
+    if (!res.ok) throw new Error('Export failed');
+    return res.blob();
+  },
+  getSupplyLotWarehouses: () =>
+    request<{ items: string[] }>('/api/inventory/pools/warehouses'),
+  getSupplyLots: (params?: SupplyLotBatchFilters & { page?: number; pageSize?: number }) => {
     const qs = new URLSearchParams();
     if (params?.pool) qs.set('pool', params.pool);
     if (params?.warehouse) qs.set('warehouse', params.warehouse);
@@ -2075,10 +2276,22 @@ export const api = {
     if (params?.page) qs.set('page', String(params.page));
     if (params?.pageSize) qs.set('pageSize', String(params.pageSize));
     if (params?.q) qs.set('q', params.q);
+    if (params?.dateUnknown) qs.set('dateUnknown', 'true');
     const query = qs.toString();
     return request<PaginatedResult<SupplyLotRow> & { dateUnknownCount?: number }>(
       `/api/inventory/pools${query ? `?${query}` : ''}`,
     );
+  },
+  exportSupplyLotsCsv: async (params?: SupplyLotBatchFilters) => {
+    const qs = new URLSearchParams();
+    if (params?.pool) qs.set('pool', params.pool);
+    if (params?.warehouse) qs.set('warehouse', params.warehouse);
+    if (params?.q) qs.set('q', params.q);
+    if (params?.dateUnknown) qs.set('dateUnknown', 'true');
+    const query = qs.toString();
+    const res = await apiFetch(apiUrl(`/api/inventory/pools/export${query ? `?${query}` : ''}`));
+    if (!res.ok) throw new Error('Export failed');
+    return res.blob();
   },
   syncSupplyLots: () =>
     request<{ lotCount: number; eligibleCount: number }>('/api/inventory/pools/sync', {
@@ -2392,12 +2605,15 @@ export const api = {
         horizonDays?: number | null;
         projectedQty?: number | null;
         projectedStockoutDate?: string | null;
+        localQty: number;
+        overseasQty: number;
+        inTransitQty: number;
+        futureNeedQty: number | null;
         isResolved: boolean;
       }>;
       total: number;
       page: number;
       pageSize: number;
-      summary: string;
       openCount: number;
     }>(`/api/alerts${query ? `?${query}` : ''}`);
   },
@@ -4059,60 +4275,6 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ confirmAll: true }),
     }),
-  listLayeredForecastVersions: () =>
-    request<{ items: LayeredForecastVersion[] }>('/api/layered-forecasts/versions'),
-  getLayeredForecastVersion: (id: string) =>
-    request<LayeredForecastVersion>(`/api/layered-forecasts/versions/${id}`),
-  listLayeredForecastNodes: (id: string, params: LayeredForecastNodesQuery = {}) => {
-    const qs = new URLSearchParams();
-    if (params.level) qs.set('level', params.level);
-    if (params.projectGroup) qs.set('projectGroup', params.projectGroup);
-    if (params.category) qs.set('category', params.category);
-    if (params.platform) qs.set('platform', params.platform);
-    if (params.period) qs.set('period', params.period);
-    if (params.limit != null) qs.set('limit', String(params.limit));
-    if (params.offset != null) qs.set('offset', String(params.offset));
-    const query = qs.toString();
-    return request<{ items: LayeredForecastNode[]; total: number }>(
-      `/api/layered-forecasts/versions/${id}/nodes${query ? `?${query}` : ''}`,
-    );
-  },
-  generateLayeredForecast: (body: {
-    startMonth?: string;
-    horizonMonths?: number;
-    projectGroup?: string;
-    category?: string;
-  }) =>
-    request<{ versionId: string; versionNo: string; nodeCount: number }>('/api/layered-forecasts/generate', {
-      method: 'POST',
-      body: JSON.stringify(body),
-    }),
-  patchLayeredForecastNode: (
-    versionId: string,
-    nodeId: string,
-    body: { qty: number; cascade?: boolean },
-  ) =>
-    request<{ ok: true }>(`/api/layered-forecasts/versions/${versionId}/nodes/${nodeId}`, {
-      method: 'PATCH',
-      body: JSON.stringify(body),
-    }),
-  lockLayeredForecastNode: (versionId: string, nodeId: string, locked: boolean) =>
-    request<{ ok: true }>(`/api/layered-forecasts/versions/${versionId}/nodes/${nodeId}/lock`, {
-      method: 'POST',
-      body: JSON.stringify({ locked }),
-    }),
-  reconcileLayeredForecast: (
-    versionId: string,
-    body: { mode: 'from_parent' | 'reset_parent_from_children'; nodeId: string },
-  ) =>
-    request<{ ok: true }>(`/api/layered-forecasts/versions/${versionId}/reconcile`, {
-      method: 'POST',
-      body: JSON.stringify(body),
-    }),
-  publishLayeredForecast: (versionId: string) =>
-    request<{ ok: true }>(`/api/layered-forecasts/versions/${versionId}/publish`, {
-      method: 'POST',
-    }),
   getSalesForecastVersions: (params?: {
     status?: 'draft' | 'published' | 'archived';
     includeStats?: boolean;
@@ -4679,14 +4841,39 @@ export const api = {
         projectGroup: string;
         warehouseCode: string;
         startMonth?: string;
+        startWeek?: string | null;
+        horizonWeeks?: number | null;
         publishedAt?: string | null;
         createdAt?: string;
       }>
     >(`/api/demand-plans${query ? `?${query}` : ''}`);
   },
-  getDemandPlan: (id: string) =>
-    request<DemandPlanDetail>(`/api/demand-plans/${id}`),
-  generateDemandPlan: (body: { projectGroup: string; warehouseCode: string; versionName?: string }) =>
+  listDemandPlanProjectGroups: () =>
+    request<{ items: string[]; horizonWeeks: number }>('/api/demand-plans/project-groups'),
+  resolveDemandPlanSkuForecastVersion: (skuId: string) =>
+    request<{ versionId: string | null }>(
+      `/api/demand-plans/forecast-version-for-sku?skuId=${encodeURIComponent(skuId)}`,
+    ),
+  getDemandPlanSkuDetail: (versionId: string, skuId: string) =>
+    request<DemandPlanSkuDetail>(`/api/demand-plans/${versionId}/sku-detail?skuId=${encodeURIComponent(skuId)}`),
+  getDemandPlan: (
+    id: string,
+    params?: {
+      view?: DemandPlanDetailView;
+      page?: number;
+      pageSize?: number;
+      skuCode?: string;
+    },
+  ) => {
+    const search = new URLSearchParams();
+    if (params?.view) search.set('view', params.view);
+    if (params?.page != null) search.set('page', String(params.page));
+    if (params?.pageSize != null) search.set('pageSize', String(params.pageSize));
+    if (params?.skuCode) search.set('skuCode', params.skuCode);
+    const query = search.toString();
+    return request<DemandPlanDetail>(`/api/demand-plans/${id}${query ? `?${query}` : ''}`);
+  },
+  generateDemandPlan: (body?: { projectGroup?: string; versionName?: string }) =>
     request<{
       version: DemandPlanVersionListItem;
       skipped: Array<{ skuId: string; skuCode: string; reason: string }>;
@@ -4698,7 +4885,7 @@ export const api = {
     ),
   adoptDemandPlan: (id: string) =>
     request<DemandPlanAdoption>(`/api/demand-plans/${id}/adopt`, { method: 'POST' }),
-  adoptForecast: (body: { projectGroup: string; warehouseCode: string }) =>
+  adoptForecast: (body: { projectGroup: string; warehouseCode?: string }) =>
     request<DemandPlanAdoption>('/api/demand-plans/adopt-forecast', {
       method: 'POST',
       body: JSON.stringify(body),

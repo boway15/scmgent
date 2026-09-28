@@ -5,6 +5,7 @@ import {
   parseTurnoverWarehouseBuckets,
   type TurnoverWarehouseBucket,
 } from './turnover-bucket-warehouse.js';
+import { extractCommercialStatusRaw } from './commercial-status.js';
 
 export type FobInventoryExpandedRow = {
   skuCode: string;
@@ -36,6 +37,8 @@ export type FobInventoryExpandedRow = {
   /** 全链条合计库存（CD），用于校验 */
   qtyChainTotal?: number;
   recordedDate: string;
+  /** ERP 商业状态原文（生命周期 / 产品状态） */
+  commercialStatusRaw?: string | null;
   /** 除 A:K 主数据外的导入列原值 */
   turnoverSnapshot?: Record<string, string>;
   /** 周转表分区仓库存（美东/美南/…），禁止合并为区域 FOB 仓 */
@@ -256,10 +259,16 @@ function expandTurnoverInventoryRow(
   const warehouseBuckets = parseTurnoverWarehouseBuckets(row);
 
   const master = extractTurnoverSkuMaster(row);
+  const turnoverSnapshot = extractTurnoverSnapshot(row);
+  const commercialStatusRaw =
+    extractCommercialStatusRaw(row) ??
+    extractCommercialStatusRaw(turnoverSnapshot) ??
+    null;
 
   return {
     skuCode,
-    turnoverSnapshot: extractTurnoverSnapshot(row),
+    turnoverSnapshot,
+    commercialStatusRaw,
     name: master.name || skuCode,
     category: master.category,
     salesCountry: master.salesCountry,

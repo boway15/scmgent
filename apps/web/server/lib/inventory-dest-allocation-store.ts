@@ -5,6 +5,7 @@ import {
   inventorySupplyLots,
   skus,
 } from '@scm/db';
+import { IN_PRODUCTION_WAREHOUSE } from './inventory-constants.js';
 import {
   applyDestAssignments,
   isUnallocatedLot,
@@ -290,7 +291,10 @@ export async function sumOpenUnallocatedQty(skuId: string): Promise<number> {
       and(
         eq(inventorySupplyLots.skuId, skuId),
         eq(inventorySupplyLots.status, 'open'),
-        eq(inventorySupplyLots.warehouseCode, UNALLOCATED_WAREHOUSE),
+        inArray(inventorySupplyLots.warehouseCode, [
+          UNALLOCATED_WAREHOUSE,
+          IN_PRODUCTION_WAREHOUSE,
+        ]),
       ),
     );
   return Number(row?.qty ?? 0);

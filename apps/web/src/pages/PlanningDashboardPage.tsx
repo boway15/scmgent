@@ -12,28 +12,77 @@ type PlanningDashboardCard = {
   value: string;
   href: string;
   highlight?: boolean;
+  hint?: string;
 };
 
 export function buildPlanningDashboardCards(
   dashboard: PlanningDashboard,
 ): PlanningDashboardCard[] {
+  const planningEligible = dashboard.skuPlanningEligibleCount ?? dashboard.skuActiveCount;
+  const redSkuCount = dashboard.healthRedSkuCount ?? dashboard.healthRedCount;
+  const yellowSkuCount = dashboard.healthYellowSkuCount ?? dashboard.healthYellowCount;
+
+  const operational = dashboard.skuOperationalCount ?? planningEligible;
+
   return [
+    {
+      label: '运营 SKU',
+      value: String(operational),
+      href: '/inventory/overview',
+      hint: '近 30 天出现在周转表，或近 90 天有销量；驾驶舱 KPI 分母',
+    },
     {
       label: '启用 SKU',
       value: String(dashboard.skuActiveCount),
-      href: '/inventory/overview',
+      href: '/data/products?tab=sku',
+      hint: `主数据全量启用；其中 ${dashboard.skuDormantCount ?? 0} 个为休眠（未满足运营口径）`,
     },
     {
-      label: '红灯风险',
-      value: String(dashboard.healthRedCount),
+      label: '可规划 SKU',
+      value: String(planningEligible),
       href: '/inventory/overview',
-      highlight: dashboard.healthRedCount > 0,
+      hint: '运营 SKU 中排除疑似停售，参与补货与风险计算',
     },
     {
-      label: '黄灯预警',
-      value: String(dashboard.healthYellowCount),
+      label: '疑似停售',
+      value: String(dashboard.skuGrayLifecycleCount ?? 0),
+      href: '/data/products?tab=sku',
+      highlight: (dashboard.skuGrayLifecycleCount ?? 0) > 0,
+      hint: 'ERP 停售/下架或生命周期含停售/滞销标签，暂停自动补货',
+    },
+    {
+      label: '预测已覆盖',
+      value: String(dashboard.skuForecastCoveredCount ?? 0),
+      href: '/data/forecast',
+      hint: '可规划 SKU 中已有已发布销量预测的 SKU',
+    },
+    {
+      label: '预测缺口',
+      value: String(dashboard.skuForecastGapCount ?? 0),
+      href: '/data/forecast',
+      highlight: (dashboard.skuForecastGapCount ?? 0) > 0,
+      hint: '可规划 SKU 中尚无已发布预测的 SKU',
+    },
+    {
+      label: '预测覆盖率',
+      value: `${((dashboard.forecastCoverageRate ?? 0) * 100).toFixed(1)}%`,
+      href: '/data/forecast',
+      highlight: (dashboard.forecastCoverageRate ?? 0) < 0.8,
+      hint: '预测已覆盖 / 可规划 SKU',
+    },
+    {
+      label: '红灯 SKU',
+      value: String(redSkuCount),
       href: '/inventory/overview',
-      highlight: dashboard.healthYellowCount > 0,
+      highlight: redSkuCount > 0,
+      hint: '任一仓为红灯的 SKU 数',
+    },
+    {
+      label: '黄灯 SKU',
+      value: String(yellowSkuCount),
+      href: '/inventory/overview',
+      highlight: yellowSkuCount > 0,
+      hint: '无红灯但有黄灯的 SKU 数',
     },
     {
       label: '7天缺货（确定线）',
@@ -106,6 +155,7 @@ export function buildPlanningDashboardCards(
       value: `${(dashboard.stockoutRateApprox * 100).toFixed(1)}%`,
       href: '/inventory/overview',
       highlight: dashboard.stockoutRateApprox > 0,
+      hint: '红灯 SKU / 可规划 SKU',
     },
   ];
 }
@@ -141,6 +191,8 @@ export function PlanningDashboardPage() {
   }
 
   const cards = buildPlanningDashboardCards(dashboard.data);
+  const compositionCards = cards.slice(0, 7);
+  const riskCards = cards.slice(7);
 
   return (
     <div className="space-y-6">
@@ -150,30 +202,73 @@ export function PlanningDashboardPage() {
         统计时间：{formatDateTimeCst(dashboard.data.calculatedAt)}
       </p>
 
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        {cards.map((card) => (
-          <Link key={card.label} to={card.href}>
-            <Card
-              className={cn(
-                'h-full shadow-card transition-shadow hover:shadow-md',
-                card.highlight && 'border-primary/40',
-              )}
-            >
-              <CardContent className="pt-6">
-                <p className="text-sm text-text-sub">{card.label}</p>
-                <p
-                  className={cn(
-                    'mt-2 font-mono text-2xl font-semibold',
-                    card.highlight ? 'text-primary' : 'text-text-main',
-                  )}
-                >
-                  {card.value}
-                </p>
-              </CardContent>
-            </Card>
-          </Link>
-        ))}
-      </div>
+      <section className="space-y-3">
+        <div>
+          <h2 className="text-sm font-medium text-text-main">SKU 构成</h2>
+          <p className="text-xs text-text-sub">
+            运营 {dashboard.data.skuOperationalCount ?? 0} = 可规划 {dashboard.data.skuPlanningEligibleCount ?? 0} + 疑似停售{' '}
+            {dashboard.data.skuGrayLifecycleCount ?? 0}
+            （主数据启用 {dashboard.data.skuActiveCount}，休眠 {dashboard.data.skuDormantCount ?? 0}）
+          </p>
+        </div>
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+          {compositionCards.map((card) => (
+            <Link key={card.label} to={card.href}>
+              <Card
+                className={cn(
+                  'h-full shadow-card transition-shadow hover:shadow-md',
+                  card.highlight && 'border-primary/40',
+                )}
+              >
+                <CardContent className="pt-6">
+                  <p className="text-sm text-text-sub">{card.label}</p>
+                  <p
+                    className={cn(
+                      'mt-2 font-mono text-2xl font-semibold',
+                      card.highlight ? 'text-primary' : 'text-text-main',
+                    )}
+                  >
+                    {card.value}
+                  </p>
+                  {card.hint ? <p className="mt-2 text-xs text-text-sub">{card.hint}</p> : null}
+                </CardContent>
+              </Card>
+            </Link>
+          ))}
+        </div>
+      </section>
+
+      <section className="space-y-3">
+        <div>
+          <h2 className="text-sm font-medium text-text-main">风险与履约</h2>
+          <p className="text-xs text-text-sub">红灯/黄灯按 SKU 去重；缺货预警仍按 SKU 计数</p>
+        </div>
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          {riskCards.map((card) => (
+            <Link key={card.label} to={card.href}>
+              <Card
+                className={cn(
+                  'h-full shadow-card transition-shadow hover:shadow-md',
+                  card.highlight && 'border-primary/40',
+                )}
+              >
+                <CardContent className="pt-6">
+                  <p className="text-sm text-text-sub">{card.label}</p>
+                  <p
+                    className={cn(
+                      'mt-2 font-mono text-2xl font-semibold',
+                      card.highlight ? 'text-primary' : 'text-text-main',
+                    )}
+                  >
+                    {card.value}
+                  </p>
+                  {card.hint ? <p className="mt-2 text-xs text-text-sub">{card.hint}</p> : null}
+                </CardContent>
+              </Card>
+            </Link>
+          ))}
+        </div>
+      </section>
 
       <Card className="shadow-card">
         <CardHeader>

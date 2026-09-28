@@ -39,8 +39,8 @@ describe('buildMatrixRows', () => {
     });
     assert.equal(rows.length, 1);
     const row = rows[0]!;
-    assert.match(row.modelLabel, /趋势\+季节/);
-    assert.doesNotMatch(row.modelLabel, /移动平均|朴素法/);
+    assert.match(row.modelLabel, /锚定\+限幅季节|锚定\+衰减趋势/);
+    assert.doesNotMatch(row.modelLabel, /朴素法/);
     assert.equal(row.fc.length, 5);
     const uniq = new Set(row.fc.map((x) => x.val));
     assert.ok(uniq.size > 1, `expected varying fc months, got ${[...uniq]}`);
@@ -64,7 +64,7 @@ describe('buildMatrixRows', () => {
       rangeEnd: periods.length - 1,
       horizon: 4,
     });
-    assert.equal(rows[0]!.modelLabel.includes('线性趋势'), true);
-    assert.doesNotMatch(rows[0]!.modelLabel, /季节/);
+    assert.equal(rows[0]!.modelLabel.includes('锚定'), true);
+    assert.doesNotMatch(rows[0]!.modelLabel, /限幅季节/);
   });
 });

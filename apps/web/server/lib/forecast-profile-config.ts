@@ -19,10 +19,27 @@ export type ACoreAlgoConfig = {
   declineRecent30Ratio: number;
 };
 
+export type FlexBiasShadowTierFactors = Partial<Record<number, number>>;
+
+export type FlexBiasShadowConfig = {
+  /** 生产默认开；FORECAST_V41_FLEX_BIAS_CORRECTION=0 可紧急关闭 */
+  enabled?: boolean;
+  fromK?: number;
+  toK?: number;
+  minFactor?: number;
+  maxFactor?: number;
+  tiers?: {
+    T4A?: FlexBiasShadowTierFactors;
+    T4B?: FlexBiasShadowTierFactors;
+    T99?: FlexBiasShadowTierFactors;
+  };
+};
+
 export type ForecastCalibrationConfig = {
   version: number;
   profile: ForecastProfileConfig;
   aCore: ACoreAlgoConfig;
+  flexBiasShadow?: FlexBiasShadowConfig;
 };
 
 export const DEFAULT_FORECAST_PROFILE_CONFIG: ForecastProfileConfig = {
@@ -65,6 +82,20 @@ function mergeACoreConfig(raw: Partial<ACoreAlgoConfig> | undefined): ACoreAlgoC
   return base;
 }
 
+function mergeFlexBiasShadowConfig(
+  raw: Partial<FlexBiasShadowConfig> | undefined,
+): FlexBiasShadowConfig | undefined {
+  if (!raw) return undefined;
+  return {
+    enabled: raw.enabled ?? true,
+    fromK: raw.fromK ?? 3,
+    toK: raw.toK ?? 5,
+    minFactor: raw.minFactor ?? 0.9,
+    maxFactor: raw.maxFactor ?? 1.25,
+    tiers: raw.tiers,
+  };
+}
+
 export function parseForecastCalibrationConfig(raw: unknown): ForecastCalibrationConfig {
   if (!raw || typeof raw !== 'object') {
     return { ...DEFAULT_FORECAST_CALIBRATION_CONFIG };
@@ -74,6 +105,7 @@ export function parseForecastCalibrationConfig(raw: unknown): ForecastCalibratio
     version: typeof obj.version === 'number' ? obj.version : 1,
     profile: mergeProfileConfig(obj.profile),
     aCore: mergeACoreConfig(obj.aCore),
+    flexBiasShadow: mergeFlexBiasShadowConfig(obj.flexBiasShadow),
   };
 }
 

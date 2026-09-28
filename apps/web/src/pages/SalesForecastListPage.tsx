@@ -260,7 +260,7 @@ export function SalesForecastListPage() {
       {hasPublishedDemandPlanPilot ? (
         <Card className="border-primary/20 bg-primary/5">
           <CardContent className="py-3 text-sm text-text-sub">
-            采用周计划的组×仓：改月预测不改该仓建议
+            采用周计划后：改月预测不改补货建议（仓库在出货/调拨时选择）
           </CardContent>
         </Card>
       ) : null}

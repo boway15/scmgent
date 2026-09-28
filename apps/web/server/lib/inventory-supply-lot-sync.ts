@@ -3,8 +3,6 @@ import {
   db,
   inventoryRecords,
   inventorySupplyLots,
-  pmcPlanItems,
-  pmcPlans,
   purchaseDrafts,
   shipments,
   skus,
@@ -25,6 +23,7 @@ import { applyConfirmedDestinationsToLots } from './inventory-dest-allocation.js
 import { loadConfirmedDestAllocations } from './inventory-dest-allocation-store.js';
 import { readTurnoverSnapshot } from './inventory-turnover-snapshot.js';
 import { openDraftQty } from './inventory-position.js';
+import { buildCsv } from './csv-export.js';
 import {
   DEFAULT_INBOUND_BUFFER_DAYS,
   DEFAULT_SHIPPING_LEAD_BY_WAREHOUSE,
@@ -111,22 +110,16 @@ async function loadAllocationBySkuIds(
   return buildAllocationBySku(rows);
 }
 
-const DEFAULT_LEAD_WAREHOUSE = 'US-WEST';
-
 /**
- * Lead days must follow a destination warehouse, not ship-ready (0).
- * Unallocated drafts still use first share weight or US-WEST as a proxy dest.
+ * 出货前不定目的仓：跟单无 warehouse 时不叠加海运段，仅算可出货日。
+ * @deprecated 保留导出供旧测试迁移；同步逻辑直接使用 remainingLogisticsDays=0。
  */
 export function resolveDraftLeadWarehouse(
   draftWarehouseCode: string | null | undefined,
-  skuId: string,
-  allocationBySku: Map<string, SkuAllocationContext>,
-): string {
-  return (
-    draftWarehouseCode ||
-    allocationBySku.get(skuId)?.share.weights[0]?.warehouse ||
-    DEFAULT_LEAD_WAREHOUSE
-  );
+  _skuId: string,
+  _allocationBySku: Map<string, SkuAllocationContext>,
+): string | null {
+  return draftWarehouseCode ?? null;
 }
 
 /**
@@ -147,7 +140,6 @@ export async function syncInventorySupplyLots(params?: {
       status: purchaseDrafts.status,
       qty: purchaseDrafts.qty,
       receivedQty: purchaseDrafts.receivedQty,
-      warehouseCode: pmcPlans.targetWarehouseCode,
       shipReadyAt: purchaseDrafts.plannedPickupDate,
       plannedProductionDoneDate: purchaseDrafts.plannedProductionDoneDate,
       etaAvailable: purchaseDrafts.etaAvailable,
@@ -155,8 +147,6 @@ export async function syncInventorySupplyLots(params?: {
       skuLeadTimeDays: skus.leadTimeDays,
     })
     .from(purchaseDrafts)
-    .leftJoin(pmcPlanItems, eq(purchaseDrafts.planItemId, pmcPlanItems.id))
-    .leftJoin(pmcPlans, eq(pmcPlanItems.planId, pmcPlans.id))
     .innerJoin(skus, eq(purchaseDrafts.skuId, skus.id))
     .where(notInArray(purchaseDrafts.status, ['received', 'cancelled']));
 
@@ -167,14 +157,10 @@ export async function syncInventorySupplyLots(params?: {
       qty: shipments.qty,
       etaAvailable: shipments.etaAvailable,
       status: shipments.status,
-      draftId: shipments.draftId,
+      destinationWarehouseCode: shipments.destinationWarehouseCode,
     })
     .from(shipments)
     .where(notInArray(shipments.status, ['available', 'cancelled']));
-
-  const draftWarehouseById = new Map(
-    openDrafts.map((d) => [d.draftId, d.warehouseCode ?? null]),
-  );
 
   const remainingBySkuWh = new Map<string, number>();
   async function remainingLogistics(skuId: string, warehouseCode: string, merchantCode?: string | null, skuLead?: number | null) {
@@ -204,22 +190,11 @@ export async function syncInventorySupplyLots(params?: {
   for (const d of openDrafts) {
     const openQty = openDraftQty(d.qty, d.receivedQty);
     if (openQty <= 0) continue;
-    const wh = d.warehouseCode ?? null;
-    const fallbackWarehouse = resolveDraftLeadWarehouse(
-      d.warehouseCode,
-      d.skuId,
-      allocationBySku,
-    );
-    const remaining = await remainingLogistics(
-      d.skuId,
-      fallbackWarehouse,
-      d.merchantCode,
-      d.skuLeadTimeDays,
-    );
+    const remaining = 0;
     draftInputs.push({
       draftId: d.draftId,
       skuId: d.skuId,
-      warehouseCode: wh,
+      warehouseCode: null,
       status: d.status,
       openQty,
       shipReadyAt: d.shipReadyAt,
@@ -229,16 +204,18 @@ export async function syncInventorySupplyLots(params?: {
     });
   }
 
-  const shipmentInputs = shipmentRows.map((s) => ({
-    shipmentId: s.shipmentId,
-    skuId: s.skuId,
-    warehouseCode: s.draftId ? draftWarehouseById.get(s.draftId) ?? null : null,
-    qty: s.qty,
-    etaAvailable: s.etaAvailable,
-    status: s.status,
-  })).filter((s) => s.warehouseCode);
+  const shipmentInputs = shipmentRows
+    .map((s) => ({
+      shipmentId: s.shipmentId,
+      skuId: s.skuId,
+      warehouseCode: s.destinationWarehouseCode ?? null,
+      qty: s.qty,
+      etaAvailable: s.etaAvailable,
+      status: s.status,
+    }))
+    .filter((s) => s.warehouseCode);
 
-  // 无跟单仓的发运：尝试从 pmc 关联补仓；否则跳过（避免错误摊到仓）
+  // 无目的仓的发运跳过批次同步，待补全 destination_warehouse_code
   const defaultTransit: Record<string, number> = { ...DEFAULT_SHIPPING_LEAD_BY_WAREHOUSE };
   const whRows = await db
     .select({
@@ -411,6 +388,7 @@ export async function listSupplyLots(params: {
   limit?: number;
   offset?: number;
   q?: string;
+  dateUnknown?: boolean;
 }) {
   const limit = params.limit ?? 500;
   const offset = params.offset ?? 0;
@@ -504,33 +482,18 @@ export async function updateLocalLotDates(params: {
   return updated ?? null;
 }
 
-export async function loadOpenLotsForTimeline(params: {
-  skuId: string;
-  warehouseCode: string;
-  today?: string;
-}): Promise<
-  Array<{
-    pool: 'overseas' | 'in_transit' | 'local';
-    qty: number;
-    availableAt: string | null;
-    productionStatus: 'in_production' | 'qc_pending' | 'completed' | null;
-    shipReadyAt: string | null;
-    etaEstimated: boolean;
-    dateUnknown: boolean;
-  }>
-> {
-  const rows = await db
-    .select()
-    .from(inventorySupplyLots)
-    .where(
-      and(
-        eq(inventorySupplyLots.skuId, params.skuId),
-        eq(inventorySupplyLots.warehouseCode, params.warehouseCode),
-        eq(inventorySupplyLots.status, 'open'),
-      ),
-    );
+type OpenTimelineLot = {
+  pool: 'overseas' | 'in_transit' | 'local';
+  qty: number;
+  availableAt: string | null;
+  productionStatus: 'in_production' | 'qc_pending' | 'completed' | null;
+  shipReadyAt: string | null;
+  etaEstimated: boolean;
+  dateUnknown: boolean;
+};
 
-  return rows.map((row) => ({
+function mapOpenTimelineLot(row: typeof inventorySupplyLots.$inferSelect): OpenTimelineLot {
+  return {
     pool: row.pool as 'overseas' | 'in_transit' | 'local',
     qty: row.qty,
     availableAt: row.availableAt,
@@ -542,5 +505,105 @@ export async function loadOpenLotsForTimeline(params: {
     shipReadyAt: row.shipReadyAt,
     etaEstimated: row.etaEstimated,
     dateUnknown: row.dateUnknown,
-  }));
+  };
+}
+
+async function loadOpenLotsForSku(params: {
+  skuId: string;
+  warehouseCode?: string;
+}): Promise<OpenTimelineLot[]> {
+  const conditions = [
+    eq(inventorySupplyLots.skuId, params.skuId),
+    eq(inventorySupplyLots.status, 'open'),
+  ];
+  if (params.warehouseCode) {
+    conditions.push(eq(inventorySupplyLots.warehouseCode, params.warehouseCode));
+  }
+
+  const rows = await db
+    .select()
+    .from(inventorySupplyLots)
+    .where(and(...conditions));
+
+  return rows.map(mapOpenTimelineLot);
+}
+
+export async function loadOpenLotsForTimeline(params: {
+  skuId: string;
+  warehouseCode: string;
+  today?: string;
+}): Promise<OpenTimelineLot[]> {
+  return loadOpenLotsForSku({
+    skuId: params.skuId,
+    warehouseCode: params.warehouseCode,
+  });
+}
+
+/** 全网络 open lots（含 IN-PRODUCTION、OVERSEAS 与各物理目的仓），供 SKU 级网络时间轴聚合供给。 */
+export async function loadOpenLotsForNetworkTimeline(params: {
+  skuId: string;
+}): Promise<OpenTimelineLot[]> {
+  return loadOpenLotsForSku({ skuId: params.skuId });
+}
+
+const POOL_LABEL: Record<'overseas' | 'in_transit' | 'local', string> = {
+  overseas: '在库',
+  in_transit: '在途',
+  local: '本地',
+};
+
+const BATCH_EXPORT_HEADERS = [
+  'SKU',
+  'SKU名称',
+  '目的仓',
+  '池',
+  '数量',
+  '生产状态',
+  '可出货日',
+  '预计可售日',
+  '是否估期',
+  '日期未知',
+  '来源',
+  '来源ID',
+] as const;
+
+export type SupplyLotExportFilters = {
+  pool?: 'overseas' | 'in_transit' | 'local';
+  warehouseCode?: string;
+  q?: string;
+  dateUnknown?: boolean;
+};
+
+export function parseSupplyLotExportFilters(
+  query: Record<string, string | undefined>,
+): SupplyLotExportFilters {
+  const pool = query.pool as 'overseas' | 'in_transit' | 'local' | undefined;
+  return {
+    pool: pool || undefined,
+    warehouseCode: query.warehouse?.trim() || undefined,
+    q: query.q?.trim() || undefined,
+    dateUnknown: query.dateUnknown === 'true' ? true : undefined,
+  };
+}
+
+function supplyLotRowToCsvRow(row: Awaited<ReturnType<typeof listSupplyLots>>[number]) {
+  return [
+    row.skuCode,
+    row.skuName,
+    row.warehouseCode,
+    POOL_LABEL[row.pool as keyof typeof POOL_LABEL] ?? row.pool,
+    row.qty,
+    row.productionStatus ?? '',
+    row.shipReadyAt ?? '',
+    row.availableAt ?? '',
+    row.etaEstimated ? '是' : '否',
+    row.dateUnknown ? '是' : '否',
+    row.source,
+    row.sourceId ?? '',
+  ];
+}
+
+export async function buildSupplyLotsExportCsv(filters: SupplyLotExportFilters) {
+  const rows = await listSupplyLots({ ...filters, limit: 50000, offset: 0 });
+  return buildCsv([...BATCH_EXPORT_HEADERS], rows.map(supplyLotRowToCsvRow));
 }

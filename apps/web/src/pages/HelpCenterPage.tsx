@@ -164,7 +164,7 @@ const SECTIONS: HelpSection[] = [
     body: (
       <ul className="list-disc space-y-2 pl-5">
         <li>
-          <strong>本仓有效</strong> = 可售 + 在途（在途已指向目的仓）；<strong>在产</strong> 为 SKU 级未分仓池。
+          <strong>本仓有效</strong> = 可售 + 已发运在途（发运单指定目的仓）；<strong>在产</strong> 为出货前 SKU 级网络池，不定目的仓。
         </li>
         <li>
           <strong>US 仓网</strong>：美西/美东等仓可互调，单仓低于 ROP 但仓网合计充足时可能推迟补货。
@@ -176,7 +176,7 @@ const SECTIONS: HelpSection[] = [
           <strong>缺货预警</strong>：每日任务检测（或手动触发 <code className="rounded bg-muted px-1">POST /api/tasks/stock-alert</code>），支持飞书群推送（需配置环境变量）。
         </li>
         <li>
-          <strong>补货建议</strong>：采纳后按商家 + 目标仓合并到 PMC 草稿计划。
+          <strong>补货建议</strong>：采纳后按商家合并到 PMC 草稿计划（网络需求，出货时在发运单定目的仓）。
         </li>
       </ul>
     ),

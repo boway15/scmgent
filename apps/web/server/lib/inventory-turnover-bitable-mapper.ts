@@ -111,6 +111,8 @@ export function mapInventoryTurnoverBitableFields(
 
   copyDirect('SKU名称');
   copyDirect('品类');
+  copyDirect('生命周期');
+  copyDirect('产品状态');
   copyDirect('销售国家');
   copyDirect('产品分类');
   copyDirect('负责人');

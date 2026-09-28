@@ -58,6 +58,59 @@ function sortProfileSegmentRows(rows: ForecastAccuracyMetricSummary[]): Forecast
   });
 }
 
+function TierHorizonAttributionTable({
+  attribution,
+}: {
+  attribution: NonNullable<ForecastAccuracyDiagnostics['tierHorizonAttribution']>;
+}) {
+  const flexCells = attribution.cells.filter(
+    (cell) => cell.horizonIndex >= attribution.flexWindow.fromK,
+  );
+  if (!flexCells.length) return null;
+
+  return (
+    <div className="overflow-x-auto rounded-lg border border-border xl:col-span-2">
+      <div className="border-b border-border bg-muted/30 px-3 py-2 text-sm font-medium text-text-main">
+        T 层 × 预测距离 k · 柔性窗偏差归因（规划口径，含 T4B/T99）
+      </div>
+      <p className="border-b border-border/50 px-3 py-2 text-xs text-text-sub">
+        柔性窗 k={attribution.flexWindow.fromK}–{attribution.flexWindow.toK} 整体偏差{' '}
+        {fmtPct(attribution.flexWeightedBias)} · 近端 k≤2 {fmtPct(attribution.precisionWeightedBias)} ·
+        「柔性贡献」= 格子偏差 × 该格实际销量占柔性窗比重
+      </p>
+      <table className="min-w-full text-xs">
+        <thead>
+          <tr className="border-b border-border text-left text-text-sub">
+            <th className="p-2 font-normal">T 层</th>
+            <th className="p-2 font-normal">k</th>
+            <th className="p-2 font-normal">可比行</th>
+            <th className="p-2 font-normal">销量加权偏差</th>
+            <th className="p-2 font-normal">柔性贡献</th>
+            <th className="p-2 font-normal">叠乘 P50</th>
+          </tr>
+        </thead>
+        <tbody>
+          {flexCells.map((cell) => (
+            <tr
+              key={`${cell.tier}-${cell.horizonIndex}`}
+              className="border-b border-border/50 last:border-0"
+            >
+              <td className="p-2">{cell.tierLabel}</td>
+              <td className="p-2 font-numeric">{cell.horizonIndex}</td>
+              <td className="p-2 font-numeric">{fmtNum(cell.comparableRows)}</td>
+              <td className="p-2 font-numeric font-medium">{fmtPct(cell.weightedBias)}</td>
+              <td className="p-2 font-numeric">{fmtPct(cell.flexContribution)}</td>
+              <td className="p-2 font-numeric">
+                {cell.discountProductMedian != null ? cell.discountProductMedian.toFixed(2) : '—'}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 function MetricTable({ title, rows }: { title: string; rows: ForecastAccuracyMetricSummary[] }) {
   if (!rows.length) return null;
 
@@ -154,6 +207,9 @@ export function ForecastAccuracyDiagnosticsPanel({ diagnostics, isLoading, error
             <div className="grid gap-3 xl:grid-cols-2">
               <MetricTable title="决策窗口 × 画像分层" rows={diagnostics.byHorizonBand} />
               <MetricTable title="分层数据" rows={profileSegmentRows} />
+              {diagnostics.tierHorizonAttribution ? (
+                <TierHorizonAttributionTable attribution={diagnostics.tierHorizonAttribution} />
+              ) : null}
             </div>
           </>
         )}

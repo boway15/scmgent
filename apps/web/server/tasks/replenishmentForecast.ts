@@ -15,11 +15,12 @@ import {
   PLANNING_INVENTORY_DEDUPE_MODE,
   resolveInventoryPosition,
 } from '../lib/inventory-position.js';
+import { shouldDeferReplenishment, US_WAREHOUSE_CODES } from '../lib/warehouse-domain.js';
 import {
-  shouldDeferReplenishment,
-  splitQtyByDailyShare,
-  US_WAREHOUSE_CODES,
-} from '../lib/warehouse-domain.js';
+  collapseSkuReplenishmentCandidates,
+  type NetworkTimelineOverride,
+  type ReplenishmentCandidate,
+} from '../lib/network-replenishment.js';
 import {
   normalizeReplenishLight,
   shouldReplenishByLight,
@@ -33,18 +34,27 @@ import {
 } from '../lib/inventory-health-service.js';
 import {
   saveHealthSnapshots,
-  supersedePendingSuggestions,
+  supersedeAllPendingSuggestionsForSku,
 } from '../lib/inventory-health-store.js';
 import { syncReplenishLightFromHealth } from '../lib/replenish-light-sync.js';
 import { loadDailySalesBySkuIds } from '../lib/sales-history-query.js';
-import { buildSkuWarehouseTimeline } from '../lib/inventory-timeline-service.js';
+import {
+  buildSkuNetworkTimeline,
+  buildSkuWarehouseTimeline,
+} from '../lib/inventory-timeline-service.js';
+import { resolvePreShipmentLeadTimeForSku } from '../lib/lead-time-resolver.js';
 import { syncInventorySupplyLots } from '../lib/inventory-supply-lot-sync.js';
 import {
   calcConfirmedCoverageDays,
   calcTimelineDecisionHealth,
   needsReplenishmentByHealth,
 } from '../lib/inventory-light.js';
-import { DEFAULT_OVERSTOCK_THRESHOLD_DAYS } from '../lib/replenishment-coverage.js';
+import {
+  DEFAULT_OVERSTOCK_THRESHOLD_DAYS,
+  DEFAULT_SAFETY_STOCK_DAYS,
+} from '../lib/replenishment-coverage.js';
+import { IN_PRODUCTION_WAREHOUSE } from '../lib/inventory-constants.js';
+import { DEMAND_PLAN_WAREHOUSE_ALL } from '../lib/demand-plan-config.js';
 import { evaluateDemandGate } from '../lib/planning-demand-gate.js';
 import { buildLatePoActions } from '../lib/planning-late-po-actions.js';
 
@@ -115,6 +125,8 @@ export async function runReplenishmentForecast() {
       replenishLight: skus.replenishLight,
       leadTimeDays: skus.leadTimeDays,
       unitCost: skus.unitCost,
+      lifecycle: skus.lifecycle,
+      commercialStatusNorm: skus.commercialStatusNorm,
     })
     .from(skus)
     .where(eq(skus.isActive, true));
@@ -167,21 +179,7 @@ export async function runReplenishmentForecast() {
     healthStatus: InventoryHealth;
     reason: string;
   }> = [];
-  const pending: Array<{
-    skuId: string;
-    skuCode: string;
-    spuId: string | null;
-    replenishLight: ReplenishLight;
-    warehouseCode: string;
-    suggestedQty: number;
-    suggestedDate: string;
-    reason: string;
-    healthStatus: InventoryHealth;
-    coverageDays: number;
-    totalLeadDays: number;
-    latestOrderDays: number;
-    metrics: Record<string, unknown>;
-  }> = [];
+  const pending: ReplenishmentCandidate[] = [];
 
   for (const sku of activeSkus) {
     const replenishLight = normalizeReplenishLight(sku.replenishLight);
@@ -234,6 +232,8 @@ export async function runReplenishmentForecast() {
     );
     const usNetworkCoverage =
       usNetworkDaily > 0 ? usPool.effectiveQty / usNetworkDaily : Number.POSITIVE_INFINITY;
+
+    const skuCandidates: ReplenishmentCandidate[] = [];
 
     for (const wh of whRows) {
       const health = healthRows.find(
@@ -343,13 +343,6 @@ export async function runReplenishmentForecast() {
 
       if (deferUs) continue;
       if (!needsReplenishmentByHealth(decisionHealth)) continue;
-
-      if (wh.regionGroup === 'US' && usPool.effectiveQty < usNetworkRop) {
-        const networkQty = suggestedQty;
-        const split = splitQtyByDailyShare(networkQty, dailyByWh);
-        suggestedQty = split[wh.code] ?? suggestedQty;
-      }
-
       if (suggestedQty <= 0) continue;
 
       const rawQty = suggestedQty;
@@ -410,7 +403,7 @@ export async function runReplenishmentForecast() {
             })
           : [];
 
-      pending.push({
+      skuCandidates.push({
         skuId: sku.id,
         skuCode: sku.code,
         spuId: sku.spuId,
@@ -432,9 +425,70 @@ export async function runReplenishmentForecast() {
           demandGateFlags: demandGate.flags,
           suggestedQtyGross: health.metrics.timelineSuggestedQtyGross,
           latePoActions: lateActions,
+          usNetworkRop,
+          usNetworkEffective: usPool.effectiveQty,
         },
       });
     }
+
+    let networkTimelineOverride: NetworkTimelineOverride | undefined;
+    if (skuCandidates.length > 0) {
+      try {
+        const policyRows = [...policyMap.values()].filter(
+          (row) =>
+            row.warehouseCode !== DEMAND_PLAN_WAREHOUSE_ALL &&
+            row.warehouseCode !== IN_PRODUCTION_WAREHOUSE &&
+            row.warehouseCode !== 'OVERSEAS',
+        );
+        const safetyStockQty = policyRows.reduce(
+          (sum, row) => sum + (row.safetyStockQty ?? 0),
+          0,
+        );
+        const safetyStockDays = policyRows.reduce(
+          (max, row) => Math.max(max, row.safetyStockDays ?? DEFAULT_SAFETY_STOCK_DAYS),
+          DEFAULT_SAFETY_STOCK_DAYS,
+        );
+        const networkAvgDaily = Object.values(dailyByWh).reduce((sum, daily) => sum + daily, 0);
+        const lead = await resolvePreShipmentLeadTimeForSku({
+          skuId: sku.id,
+          merchantCode: sku.merchantCode,
+          skuLeadTimeDays: sku.leadTimeDays,
+        });
+        const networkTimeline = await buildSkuNetworkTimeline({
+          skuId: sku.id,
+          avgDaily: networkAvgDaily,
+          totalLeadDays: lead.totalLeadDays,
+          safetyStockDays,
+          safetyStockQty,
+          moq: effectiveMoq || undefined,
+        });
+        networkTimelineOverride = {
+          suggestedQty: networkTimeline.suggestedQty,
+          suggestedDate:
+            networkTimeline.timeline.reorderDate ?? networkTimeline.timeline.today,
+          totalLeadDays: lead.totalLeadDays,
+          stockoutDate: networkTimeline.timeline.stockoutDateConfirmed,
+          metrics: {
+            timelineSuggestedQty: networkTimeline.suggestedQty,
+            timelineSuggestedQtyGross: networkTimeline.timeline.suggestedQtyGross,
+            timelineReorderDate: networkTimeline.timeline.reorderDate,
+            timelineToday: networkTimeline.timeline.today,
+            uncoverableByNewPo: networkTimeline.timeline.uncoverableByNewPo,
+          },
+        };
+      } catch (err) {
+        console.warn(
+          `[replenishmentForecast] network timeline skipped ${sku.code}:`,
+          err instanceof Error ? err.message : err,
+        );
+      }
+    }
+
+    const networkSuggestion = collapseSkuReplenishmentCandidates(
+      skuCandidates,
+      networkTimelineOverride,
+    );
+    if (networkSuggestion) pending.push(networkSuggestion);
   }
 
   const snapshotCount = await saveHealthSnapshots(healthRows);
@@ -479,9 +533,9 @@ export async function runReplenishmentForecast() {
   }
 
   for (const item of eligibleItems) {
-    await supersedePendingSuggestions(item.skuId, item.warehouseCode);
+    await supersedeAllPendingSuggestionsForSku(item.skuId);
 
-    const reasonKey = `${item.skuCode}::${item.warehouseCode}`;
+    const reasonKey = `${item.skuCode}::${item.warehouseCode ?? 'NETWORK'}`;
     const reason = enhancedReasons.get(reasonKey) ?? item.reason;
 
     await db.insert(reorderSuggestions).values({
@@ -502,7 +556,7 @@ export async function runReplenishmentForecast() {
 
     results.push({
       skuCode: item.skuCode,
-      warehouseCode: item.warehouseCode,
+      warehouseCode: item.warehouseCode ?? 'NETWORK',
       suggestedQty: item.suggestedQty,
       healthStatus: item.healthStatus,
       reason,

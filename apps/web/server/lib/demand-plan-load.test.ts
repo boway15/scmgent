@@ -3,6 +3,7 @@ import { describe, it } from 'node:test';
 import {
   buildChampionWarehouseRows,
   loadPlanningDemandForSkuWarehouse,
+  scaleDemandRowsByShare,
 } from './demand-plan-load.js';
 
 const stationForecastMap = new Map<string, number>([
@@ -142,7 +143,7 @@ describe('loadPlanningDemandForSkuWarehouse', () => {
     assert.equal(result.demandMap, stationForecastMap);
   });
 
-  it('leaves champion map empty and ignores demand rows when share is missing', async () => {
+  it('falls back to forecast when share is missing and rows are network ALL', async () => {
     const result = await loadPlanningDemandForSkuWarehouse(
       {
         skuId: 'sku-1',
@@ -174,5 +175,105 @@ describe('loadPlanningDemandForSkuWarehouse', () => {
     assert.equal(result.demandMap, stationForecastMap);
     assert.equal(result.demandMap.get('2026-10'), 20);
     assert.equal(result.championMap.size, 0);
+  });
+
+  it('loads ALL plan rows first and scales by warehouse share', async () => {
+    const adoptionWarehouses: string[] = [];
+    const rowWarehouses: string[] = [];
+    const result = await loadPlanningDemandForSkuWarehouse(
+      {
+        skuId: 'sku-1',
+        warehouseCode: 'US-WEST',
+        championForecastMap: stationForecastMap,
+      },
+      {
+        env: pilotEnv,
+        loadSku: async () => ({
+          projectGroup: '项目6组',
+          spuId: 'spu-1',
+          isActive: true,
+          encodingMeta: { turnoverSnapshot: { 美西: '0.6', 美东: '0.4' } },
+        }),
+        loadSiblingSkus: async () => [
+          { skuId: 'sku-1', projectGroup: '项目6组', spuId: 'spu-1', isActive: true },
+        ],
+        loadAdoption: async (input) => {
+          adoptionWarehouses.push(input.warehouseCode);
+          if (input.warehouseCode === 'ALL') {
+            return { source: 'demand_plan', demandPlanVersionId: 'version-1' };
+          }
+          return undefined;
+        },
+        loadPublishedDemandRows: async (input) => {
+          rowWarehouses.push(input.warehouseCode);
+          if (input.warehouseCode !== 'ALL') return [];
+          return [
+            { period: '2026-W03', systemDailyAvg: 10, manualDailyAvg: 5 },
+          ];
+        },
+      },
+    );
+    assert.deepEqual(adoptionWarehouses, ['ALL', 'ALL']);
+    assert.deepEqual(rowWarehouses, ['ALL']);
+    assert.equal(result.source, 'demand_plan');
+    assert.equal(result.demandMap.get('2026-W03'), 3);
+    assert.equal(result.championMap.get('2026-10'), 12);
+  });
+
+  it('enables global ALL adoption for SKUs outside legacy pilot groups', async () => {
+    let publishedCalls = 0;
+    const result = await loadPlanningDemandForSkuWarehouse(
+      {
+        skuId: 'sku-2',
+        warehouseCode: 'US-EAST',
+        championForecastMap: stationForecastMap,
+      },
+      {
+        env: pilotEnv,
+        loadSku: async () => ({
+          projectGroup: '项目99组',
+          spuId: 'spu-2',
+          isActive: true,
+          encodingMeta: { turnoverSnapshot: { 美东: '1' } },
+        }),
+        loadSiblingSkus: async () => [
+          { skuId: 'sku-2', projectGroup: '项目99组', spuId: 'spu-2', isActive: true },
+        ],
+        loadAdoption: async (input) => {
+          if (
+            input.projectGroup === 'ALL' &&
+            input.warehouseCode === 'ALL'
+          ) {
+            return { source: 'demand_plan', demandPlanVersionId: 'version-all' };
+          }
+          return undefined;
+        },
+        loadPublishedDemandRows: async () => {
+          publishedCalls += 1;
+          return [{ period: '2026-W03', systemDailyAvg: 4, manualDailyAvg: null }];
+        },
+      },
+    );
+    assert.equal(publishedCalls, 1);
+    assert.equal(result.source, 'demand_plan');
+    assert.equal(result.demandMap.get('2026-W03'), 4);
+  });
+});
+
+describe('scaleDemandRowsByShare', () => {
+  it('scales system and manual daily by warehouse share', () => {
+    assert.deepEqual(
+      scaleDemandRowsByShare(
+        [
+          { period: '2026-W03', systemDailyAvg: 10, manualDailyAvg: 5 },
+          { period: '2026-W04', systemDailyAvg: 8, manualDailyAvg: null },
+        ],
+        0.6,
+      ),
+      [
+        { period: '2026-W03', systemDailyAvg: 6, manualDailyAvg: 3 },
+        { period: '2026-W04', systemDailyAvg: 4.8, manualDailyAvg: null },
+      ],
+    );
   });
 });

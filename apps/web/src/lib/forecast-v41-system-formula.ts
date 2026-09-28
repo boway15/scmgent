@@ -191,6 +191,8 @@ export type AllCatV41BoundedSnapshot = {
   peerPlatformFloor?: number | null;
   growthSignal?: boolean;
   rollingRatio?: number;
+  flexBiasCorrection?: number;
+  forecastDailyPreFlexBias?: number;
 };
 
 export type V41PlatformContribution = {
@@ -279,6 +281,8 @@ export function buildV41SystemBreakdown(input: {
   actualForecastDailyAvg: number;
   /** 生成时持久化的套限幅因子（有则优先，避免前端重算偏差） */
   boundedSnapshot?: AllCatV41BoundedSnapshot | null;
+  flexBiasCorrection?: number | null;
+  forecastDailyPreFlexBias?: number | null;
 }): string {
   const { blendLevel, trendRatio, forecastMonth, tier, d6, actualForecastDailyAvg } = input;
   const d3 = input.d3 ?? 0;
@@ -407,6 +411,28 @@ export function buildV41SystemBreakdown(input: {
     );
   }
 
+  const flexCorrection =
+    input.flexBiasCorrection ??
+    input.boundedSnapshot?.flexBiasCorrection ??
+    null;
+  const preFlexBias =
+    input.forecastDailyPreFlexBias ??
+    input.boundedSnapshot?.forecastDailyPreFlexBias ??
+    null;
+  if (
+    flexCorrection != null &&
+    Number.isFinite(flexCorrection) &&
+    flexCorrection !== 1 &&
+    preFlexBias != null &&
+    Number.isFinite(preFlexBias)
+  ) {
+    lines.push('⑨ 柔性窗偏差校正（k=3–5 · T4A/T4B/T99）');
+    lines.push(
+      `   · ${fmt(preFlexBias)} × ${fmt(flexCorrection)} = ${fmt(roundDaily(preFlexBias * flexCorrection))}`,
+    );
+    pipelineResult = roundDaily(preFlexBias * flexCorrection);
+  }
+
   const actual = roundDaily(actualForecastDailyAvg);
   if (Math.abs(actual - pipelineResult) > 0.005) {
     lines.push(`→ 系统 ${fmt(actual)}（以库内系统值为准；与逐步结果 ${fmt(pipelineResult)} 略有差异）`);
@@ -439,6 +465,8 @@ export function buildV41SystemCellTitle(input: {
     peerPlatformFloor?: number | null;
     growthSignal?: boolean;
     rollingRatio?: number;
+    flexBiasCorrection?: number;
+    forecastDailyPreFlexBias?: number;
     aggregatedPlatformCount?: number;
     platformContributions?: V41PlatformContribution[];
   };
@@ -483,6 +511,8 @@ export function buildV41SystemCellTitle(input: {
     recent90DailyAvg: input.recent90DailyAvg,
     actualForecastDailyAvg: cell.forecastDailyAvg,
     boundedSnapshot: v41,
+    flexBiasCorrection: v41.flexBiasCorrection,
+    forecastDailyPreFlexBias: v41.forecastDailyPreFlexBias,
   });
 }
 

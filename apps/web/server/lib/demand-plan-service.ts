@@ -10,7 +10,12 @@ import {
   safetyStockConfig,
   skus,
 } from '@scm/db';
-import { parseDemandPlanPilotConfig } from './demand-plan-config.js';
+import {
+  DEMAND_PLAN_PROJECT_GROUP_ALL,
+  DEMAND_PLAN_WAREHOUSE_ALL,
+  isAllScopeProjectGroup,
+  parseDemandPlanPilotConfig,
+} from './demand-plan-config.js';
 import {
   excludedCrossGroupSpuIds,
   type SkuPilotInput,
@@ -18,18 +23,23 @@ import {
 import {
   championRefLevel,
   classifyReconstructSource,
+  hasForecastShape,
   systemDailyAvgForWeek,
-  warehouseShareWeight,
-  weekWeightedForecastDaily,
+  weekForecastDailyForPlan,
 } from './demand-plan-reconstruct.js';
+import { chunkRowsForInsert } from './inventory-health-store.js';
 import { calcEffectiveDailyDemand } from './effective-daily-demand.js';
 import { forecastMonthKey } from './forecast-demand.js';
 import { FORECAST_HORIZON_MONTHS } from './forecast-limits.js';
 import { loadMergedPublishedForecastBySkuIds } from './forecast-published-resolve.js';
-import { parseSharesFromSnapshot } from './inventory-share-allocation.js';
-import { buildSkuWarehouseTimeline } from './inventory-timeline-service.js';
-import { readTurnoverSnapshot } from './inventory-turnover-snapshot.js';
-import { resolveLeadTimeForSkuWarehouse } from './lead-time-resolver.js';
+import {
+  buildSkuNetworkTimeline,
+  buildSkuWarehouseTimeline,
+} from './inventory-timeline-service.js';
+import {
+  resolveLeadTimeForSkuWarehouse,
+  resolvePreShipmentLeadTimeForSku,
+} from './lead-time-resolver.js';
 import {
   buildIsoWeekHorizon,
   DEMAND_PLAN_HORIZON_WEEKS,
@@ -40,14 +50,17 @@ import {
 import { DEFAULT_SAFETY_STOCK_DAYS } from './replenishment-coverage.js';
 import { freezeHorizonMonths, isDemandPeriodFrozen } from './demand-plan-freeze.js';
 import { loadDailySalesBySkuIdsInRange } from './sales-history-query.js';
+import { isAccessorySku } from './sku-encoding.js';
 
 export type DemandPlanVersionStatus = 'draft' | 'pilot_published' | 'archived';
 
 export type DemandPlanSkipLog = {
   skuId: string;
   skuCode: string;
-  reason: 'cross_group_spu' | 'no_share' | 'no_forecast';
+  reason: 'cross_group_spu' | 'accessory' | 'no_share' | 'no_forecast' | 'no_recent_demand';
 };
+
+const DEMAND_PLAN_WEEKLY_INSERT_CHUNK = 500;
 
 export type DemandPlanVersion = typeof demandPlanVersions.$inferSelect;
 export type AdoptionRow = typeof planningDemandAdoptions.$inferSelect;
@@ -94,6 +107,14 @@ function qtyAvailableFromPayload(payload: unknown, warehouseCode: string): numbe
   const rec = payload as Record<string, unknown>;
   const stocks = rec.warehouseStocks;
   if (Array.isArray(stocks)) {
+    if (warehouseCode === DEMAND_PLAN_WAREHOUSE_ALL) {
+      return stocks.reduce((sum, row) => {
+        if (!row || typeof row !== 'object') return sum;
+        const stock = row as Record<string, unknown>;
+        const n = Number(stock.qtyAvailable ?? stock.qty_available ?? 0);
+        return sum + (Number.isFinite(n) ? n : 0);
+      }, 0);
+    }
     const match = stocks.find((row) => {
       if (!row || typeof row !== 'object') return false;
       const stock = row as Record<string, unknown>;
@@ -253,13 +274,11 @@ async function upsertAdoption(params: {
   return row;
 }
 
-function assertPilotScope(projectGroup: string, warehouseCode: string, env?: NodeJS.ProcessEnv) {
+function assertPilotScope(projectGroup: string, env?: NodeJS.ProcessEnv) {
+  if (isAllScopeProjectGroup(projectGroup)) return;
   const config = parseDemandPlanPilotConfig(env ?? process.env);
-  if (config.projectGroups.length === 0 || config.warehouses.length === 0) {
-    httpError('pilot project group/warehouse not configured', 400);
-  }
-  if (!config.projectGroups.includes(projectGroup) || !config.warehouses.includes(warehouseCode)) {
-    httpError('project group/warehouse is not in the pilot config', 400);
+  if (config.projectGroups.length > 0 && !config.projectGroups.includes(projectGroup)) {
+    httpError('project group is not in the pilot config', 400);
   }
 }
 
@@ -279,17 +298,17 @@ async function allocateDemandPlanVersionNo(now: Date): Promise<string> {
 
 /**
  * generateDemandPlanDraft:
- * 1. Config lists must be non-empty; projectGroup/warehouse must match.
- * 2. Active SKUs in the group; skip cross-group SPUs (logged).
+ * 1. Default projectGroup=ALL（全量 active SKU）；legacy 单组生成仍可用。
+ * 2. Active SKUs in scope; skip cross-group SPUs (logged).
  * 3. 26 ISO weeks from asOf; startMonth = week-start month; horizonMonths = 6 (doc only).
  * 4. Recent 90d sales on [windowEnd-89, windowEnd] via planningRecentWindowEnd.
  * 5. U = calcEffectiveDailyDemand with asOf = windowEnd+1d.
- * 6. No share → skip. Champion must cover 6 consecutive YYYY-MM from startMonth.
- * 7. Insert draft version + demand_plan_weekly rows (no monthly inserts).
+ * 6. Plan is project-group level (warehouse=ALL, share=1).近窗销量 U 为主；月预测仅作季节形状（可选）。
+ * 7. Insert draft version + demand_plan_weekly rows (no monthly inserts), batched insert.
  */
 export async function generateDemandPlanDraft(params: {
-  projectGroup: string;
-  warehouseCode: string;
+  projectGroup?: string;
+  warehouseCode?: string;
   versionName?: string;
   createdBy?: string;
   now?: Date;
@@ -297,7 +316,9 @@ export async function generateDemandPlanDraft(params: {
 }) {
   const now = params.now ?? new Date();
   const asOf = now;
-  assertPilotScope(params.projectGroup, params.warehouseCode, params.env);
+  const warehouseCode = DEMAND_PLAN_WAREHOUSE_ALL;
+  const projectGroup = params.projectGroup?.trim() || DEMAND_PLAN_PROJECT_GROUP_ALL;
+  assertPilotScope(projectGroup, params.env);
 
   const groupSkus = await db
     .select({
@@ -307,31 +328,46 @@ export async function generateDemandPlanDraft(params: {
       spuId: skus.spuId,
       isActive: skus.isActive,
       encodingMeta: skus.encodingMeta,
+      skuKind: skus.skuKind,
     })
     .from(skus)
-    .where(and(eq(skus.projectGroup, params.projectGroup), eq(skus.isActive, true)));
+    .where(
+      isAllScopeProjectGroup(projectGroup)
+        ? eq(skus.isActive, true)
+        : and(eq(skus.projectGroup, projectGroup), eq(skus.isActive, true)),
+    );
 
   const spuIds = [...new Set(groupSkus.map((row) => row.spuId).filter((id): id is string => Boolean(id)))];
-  const siblingRows: SkuPilotInput[] = spuIds.length
-    ? await db
-        .select({
-          skuId: skus.id,
-          projectGroup: skus.projectGroup,
-          spuId: skus.spuId,
-          isActive: skus.isActive,
-        })
-        .from(skus)
-        .where(and(inArray(skus.spuId, spuIds), eq(skus.isActive, true)))
-    : groupSkus.map((row) => ({
-        skuId: row.skuId,
-        projectGroup: row.projectGroup,
-        spuId: row.spuId,
-        isActive: row.isActive,
-      }));
+  const siblingRows: SkuPilotInput[] = (
+    spuIds.length
+      ? await db
+          .select({
+            skuId: skus.id,
+            skuCode: skus.code,
+            skuKind: skus.skuKind,
+            projectGroup: skus.projectGroup,
+            spuId: skus.spuId,
+            isActive: skus.isActive,
+          })
+          .from(skus)
+          .where(and(inArray(skus.spuId, spuIds), eq(skus.isActive, true)))
+      : groupSkus.map((row) => ({
+          skuId: row.skuId,
+          skuCode: row.skuCode,
+          skuKind: row.skuKind,
+          projectGroup: row.projectGroup,
+          spuId: row.spuId,
+          isActive: row.isActive,
+        }))
+  ).filter((row) => !isAccessorySku({ code: row.skuCode, skuKind: row.skuKind }));
   const excludedSpuIds = excludedCrossGroupSpuIds(siblingRows);
 
   const skipped: DemandPlanSkipLog[] = [];
   const eligible = groupSkus.filter((row) => {
+    if (isAccessorySku({ code: row.skuCode, skuKind: row.skuKind })) {
+      skipped.push({ skuId: row.skuId, skuCode: row.skuCode, reason: 'accessory' });
+      return false;
+    }
     if (row.spuId && excludedSpuIds.has(row.spuId)) {
       skipped.push({ skuId: row.skuId, skuCode: row.skuCode, reason: 'cross_group_spu' });
       return false;
@@ -381,28 +417,15 @@ export async function generateDemandPlanDraft(params: {
     const list = availabilityBySku.get(row.skuId) ?? [];
     list.push({
       date: String(row.snapshotDate).slice(0, 10),
-      qtyAvailable: qtyAvailableFromPayload(row.payload, params.warehouseCode),
+      qtyAvailable: qtyAvailableFromPayload(row.payload, warehouseCode),
     });
     availabilityBySku.set(row.skuId, list);
   }
 
+  const forecastHorizon = horizonMonths(startMonth, FORECAST_HORIZON_MONTHS);
   const weeklyValues: Array<typeof demandPlanWeekly.$inferInsert> = [];
   for (const sku of eligible) {
-    const share = warehouseShareWeight(
-      params.warehouseCode,
-      parseSharesFromSnapshot(readTurnoverSnapshot(sku.encodingMeta)).weights,
-    );
-    if (share == null) {
-      skipped.push({ skuId: sku.skuId, skuCode: sku.skuCode, reason: 'no_share' });
-      continue;
-    }
-
     const forecastMap = forecastBySku.get(sku.skuId)?.map ?? new Map<string, number>();
-    if (!championCoversHorizon(forecastMap, startMonth, FORECAST_HORIZON_MONTHS)) {
-      skipped.push({ skuId: sku.skuId, skuCode: sku.skuCode, reason: 'no_forecast' });
-      continue;
-    }
-
     const availability = availabilityBySku.get(sku.skuId) ?? [];
     const hasAvailabilitySeries = availability.length > 0;
     const reconstructed = calcEffectiveDailyDemand({
@@ -414,6 +437,11 @@ export async function generateDemandPlanDraft(params: {
       windowDays: 90,
       asOf: demandAsOf,
     });
+    if (reconstructed.avgDaily <= 0) {
+      skipped.push({ skuId: sku.skuId, skuCode: sku.skuCode, reason: 'no_recent_demand' });
+      continue;
+    }
+
     const source = hasAvailabilitySeries
       ? classifyReconstructSource({
           hasAvailabilitySeries,
@@ -421,26 +449,32 @@ export async function generateDemandPlanDraft(params: {
         })
       : 'calendar_recent';
     const unconstrainedRecentDaily = reconstructed.avgDaily;
-    const championRefDaily = championRefLevel(
-      horizonMonths(startMonth, FORECAST_HORIZON_MONTHS).map((period) => forecastMap.get(period) ?? 0),
-    );
+    const useForecastShape = hasForecastShape(forecastMap, forecastHorizon);
+    const championRefDaily = useForecastShape
+      ? championRefLevel(forecastHorizon.map((period) => forecastMap.get(period) ?? 0))
+      : unconstrainedRecentDaily;
 
     for (const week of weeks) {
-      const weekForecastDaily = weekWeightedForecastDaily(week, forecastMap);
+      const weekForecastDaily = weekForecastDailyForPlan({
+        weekKey: week,
+        monthlyDaily: forecastMap,
+        flatDaily: unconstrainedRecentDaily,
+        useForecastShape,
+      });
       weeklyValues.push({
         skuId: sku.skuId,
-        warehouseCode: params.warehouseCode,
+        warehouseCode,
         period: week,
         systemDailyAvg: toNumeric(
           systemDailyAvgForWeek({
             unconstrainedRecentDaily,
-            share,
+            share: 1,
             weekForecastDaily,
             championRefDaily,
           }),
         )!,
         unconstrainedRecentDaily: toNumeric(unconstrainedRecentDaily),
-        championForecastDaily: toNumeric(weekForecastDaily * share),
+        championForecastDaily: toNumeric(weekForecastDaily),
         source,
       });
     }
@@ -457,17 +491,18 @@ export async function generateDemandPlanDraft(params: {
       horizonWeeks: DEMAND_PLAN_HORIZON_WEEKS,
       startMonth,
       horizonMonths: FORECAST_HORIZON_MONTHS,
-      projectGroup: params.projectGroup,
-      warehouseCode: params.warehouseCode,
+      projectGroup,
+      warehouseCode,
       createdBy: params.createdBy ?? null,
     })
     .returning();
   if (!version) throw new Error('Failed to insert demand plan version');
 
   if (weeklyValues.length) {
-    await db.insert(demandPlanWeekly).values(
-      weeklyValues.map((row) => ({ ...row, versionId: version.id })),
-    );
+    const rowsWithVersion = weeklyValues.map((row) => ({ ...row, versionId: version.id }));
+    for (const chunk of chunkRowsForInsert(rowsWithVersion, DEMAND_PLAN_WEEKLY_INSERT_CHUNK)) {
+      await db.insert(demandPlanWeekly).values(chunk);
+    }
   }
 
   return { version, skipped };
@@ -530,9 +565,38 @@ export async function publishDemandPlan(params: {
     .select()
     .from(demandPlanMonthly)
     .where(eq(demandPlanMonthly.versionId, version.id));
-  const firstBySku = new Map<string, (typeof monthRows)[number]>();
+  const firstBySku = new Map<
+    string,
+    {
+      unconstrainedRecentDaily: string | null;
+      championForecastDaily: string | null;
+      inStockDayRatio: string | null;
+    }
+  >();
   for (const row of monthRows) {
-    if (!firstBySku.has(row.skuId)) firstBySku.set(row.skuId, row);
+    if (!firstBySku.has(row.skuId)) {
+      firstBySku.set(row.skuId, {
+        unconstrainedRecentDaily: row.unconstrainedRecentDaily,
+        championForecastDaily: row.championForecastDaily,
+        inStockDayRatio: row.inStockDayRatio,
+      });
+    }
+  }
+  if (firstBySku.size === 0) {
+    const weekRows = await db
+      .select()
+      .from(demandPlanWeekly)
+      .where(eq(demandPlanWeekly.versionId, version.id))
+      .orderBy(demandPlanWeekly.skuId, demandPlanWeekly.period);
+    for (const row of weekRows) {
+      if (!firstBySku.has(row.skuId)) {
+        firstBySku.set(row.skuId, {
+          unconstrainedRecentDaily: row.unconstrainedRecentDaily,
+          championForecastDaily: row.championForecastDaily,
+          inStockDayRatio: null,
+        });
+      }
+    }
   }
 
   for (const [skuId, month] of firstBySku) {
@@ -559,23 +623,59 @@ export async function publishDemandPlan(params: {
     let suggestedQtyDemand: string | null = null;
     let suggestedQtyForecast: string | null = null;
     try {
-      const lead = await resolveLeadTimeForSkuWarehouse({
-        skuId,
-        warehouseCode: version.warehouseCode,
-        merchantCode: sku?.merchantCode,
-        skuLeadTimeDays: sku?.leadTimeDays,
-      });
-      const built = await buildSkuWarehouseTimeline({
-        skuId,
-        warehouseCode: version.warehouseCode,
-        avgDaily: Number(month.unconstrainedRecentDaily) || 0,
-        totalLeadDays: lead.totalLeadDays,
-        safetyStockDays: policy?.safetyStockDays ?? DEFAULT_SAFETY_STOCK_DAYS,
-        safetyStockQty: policy?.safetyStockQty ?? 0,
-        moq: sku?.moq ?? undefined,
-        encodingMeta: sku?.encodingMeta,
-        includeChampionShadow: true,
-      });
+      const isNetworkPlan = version.warehouseCode === DEMAND_PLAN_WAREHOUSE_ALL;
+      const [allPolicies, lead] = await Promise.all([
+        isNetworkPlan
+          ? db.select().from(safetyStockConfig).where(eq(safetyStockConfig.skuId, skuId))
+          : Promise.resolve([]),
+        isNetworkPlan
+          ? resolvePreShipmentLeadTimeForSku({
+              skuId,
+              merchantCode: sku?.merchantCode,
+              skuLeadTimeDays: sku?.leadTimeDays,
+            })
+          : resolveLeadTimeForSkuWarehouse({
+              skuId,
+              warehouseCode: version.warehouseCode,
+              merchantCode: sku?.merchantCode,
+              skuLeadTimeDays: sku?.leadTimeDays,
+            }),
+      ]);
+      const networkSafety = isNetworkPlan
+        ? allPolicies
+            .filter((row) => row.warehouseCode !== DEMAND_PLAN_WAREHOUSE_ALL)
+            .reduce(
+              (acc, row) => ({
+                safetyStockDays: Math.max(
+                  acc.safetyStockDays,
+                  row.safetyStockDays ?? DEFAULT_SAFETY_STOCK_DAYS,
+                ),
+                safetyStockQty: acc.safetyStockQty + (row.safetyStockQty ?? 0),
+              }),
+              { safetyStockDays: DEFAULT_SAFETY_STOCK_DAYS, safetyStockQty: 0 },
+            )
+        : null;
+      const built = isNetworkPlan
+        ? await buildSkuNetworkTimeline({
+            skuId,
+            avgDaily: Number(month.unconstrainedRecentDaily) || 0,
+            totalLeadDays: lead.totalLeadDays,
+            safetyStockDays: networkSafety!.safetyStockDays,
+            safetyStockQty: networkSafety!.safetyStockQty,
+            moq: sku?.moq ?? undefined,
+            includeChampionShadow: true,
+          })
+        : await buildSkuWarehouseTimeline({
+            skuId,
+            warehouseCode: version.warehouseCode,
+            avgDaily: Number(month.unconstrainedRecentDaily) || 0,
+            totalLeadDays: lead.totalLeadDays,
+            safetyStockDays: policy?.safetyStockDays ?? DEFAULT_SAFETY_STOCK_DAYS,
+            safetyStockQty: policy?.safetyStockQty ?? 0,
+            moq: sku?.moq ?? undefined,
+            encodingMeta: sku?.encodingMeta,
+            includeChampionShadow: true,
+          });
       stockoutDateDemand = built.timeline.stockoutDateConfirmed;
       suggestedQtyDemand = toNumeric(built.suggestedQty);
       stockoutDateForecast = built.championTimeline?.stockoutDateConfirmed ?? null;

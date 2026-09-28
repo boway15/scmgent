@@ -121,21 +121,30 @@ export function ForecastPanel({
       : null;
   const trendWord =
     !f ? '' : f.b > 0 ? '整体呈上升趋势' : f.b < 0 ? '整体呈下降趋势' : '整体基本平稳';
-  const scopeWord =
-    scope === 'all'
-      ? '（整体预测，基于全量数据，不随上方筛选变化）'
-      : '（当前筛选预测，随上方筛选动态变化）';
   const reason =
     f && hasSeries
-      ? [
-          `基于 ${periods[0]} ~ ${periods[periods.length - 1]} 共 ${series.length} 个${granWord}的实际数据，采用「线性趋势${isWeek ? '' : ' + 月度季节性'}」乘法模型拟合。`,
-          `① 趋势项：最小二乘斜率 ${(f.b >= 0 ? '+' : '') + f.b.toFixed(1)} 件/期，R²=${f.r2.toFixed(2)}，即 ${trendWord}；`,
-          isWeek
-            ? '（周度粒度不做月度季节性分解，按线性趋势外推）'
-            : `② 季节性：峰值 ${MONTH_NAME[f.peakM - 1]}(因子 ${(f.sIdx[f.peakM] ?? 1).toFixed(2)})、谷值 ${MONTH_NAME[f.troughM - 1]}(因子 ${(f.sIdx[f.troughM] ?? 1).toFixed(2)})；`,
-          `③ 预估结果：最新期实际 ${fmtQty(f.last)} 件为起点，未来 ${fc.length} ${granWord}合计约 ${fmtQty(fcSum)} 件` +
-            (vsAvg == null ? '。' : `；较近 5 ${granWord}均值 ${vsAvg >= 0 ? '上升' : '下降'} ${fmtPct(Math.abs(vsAvg))}。`),
-        ].join('')
+      ? f.path === 'avg'
+        ? [
+            `基于 ${periods[0]} ~ ${periods[periods.length - 1]} 共 ${series.length} 个${granWord}，趋势弱或历史不足 24 月，采用近 ${f.avgWindow ?? 6} 期均值 ${fmtQty(f.anchor)} 件平稳外推。`,
+            `R²=${f.r2.toFixed(2)}；未来 ${fc.length} ${granWord}合计约 ${fmtQty(fcSum)} 件。`,
+          ].join('')
+        : f.path === 'naive'
+          ? [
+              `基于 ${periods[0]} ~ ${periods[periods.length - 1]} 共 ${series.length} 个${granWord}，无明显趋势(R²=${f.r2.toFixed(2)})，以最新期 ${fmtQty(f.last)} 件外推。`,
+              `未来 ${fc.length} ${granWord}合计约 ${fmtQty(fcSum)} 件。`,
+            ].join('')
+          : [
+              `基于 ${periods[0]} ~ ${periods[periods.length - 1]} 共 ${series.length} 个${granWord}（已去前导零${isWeek ? '' : '、进行中月折整'}），采用「近端锚定 + 衰减趋势${isWeek ? '' : ' × 限幅季节(0.85–1.15)'}」。`,
+              `① 锚定：近 ${isWeek ? 8 : 6} ${granWord}均值 ${fmtQty(f.anchor)} 件；`,
+              `② 趋势：斜率 ${(f.b >= 0 ? '+' : '') + f.b.toFixed(1)} 件/期，R²=${f.r2.toFixed(2)}，${trendWord}；`,
+              isWeek
+                ? '（周度不做月度季节分解）'
+                : f.path === 'seasonal'
+                  ? `③ 季节：峰值 ${MONTH_NAME[f.peakM - 1]}(因子 ${(f.sIdx[f.peakM] ?? 1).toFixed(2)})、谷值 ${MONTH_NAME[f.troughM - 1]}(因子 ${(f.sIdx[f.troughM] ?? 1).toFixed(2)})；`
+                  : '③ 季节强度不足，未叠加季节因子；',
+              `④ 预估：未来 ${fc.length} ${granWord}合计约 ${fmtQty(fcSum)} 件` +
+                (vsAvg == null ? '。' : `；较近 5 ${granWord}均值 ${vsAvg >= 0 ? '上升' : '下降'} ${fmtPct(Math.abs(vsAvg))}。`),
+            ].join('')
       : '';
 
   return (

@@ -41,7 +41,7 @@ export function normalizeInventoryHealth(
   return LEGACY_HEALTH_MAP[key] ?? null;
 }
 
-const GRAY_LIFECYCLE_KEYWORDS = [
+export const GRAY_LIFECYCLE_KEYWORDS = [
   '停售',
   '即将停售',
   '停产',
@@ -52,7 +52,16 @@ const GRAY_LIFECYCLE_KEYWORDS = [
   '清仓',
   'eol',
   'discontinu',
-];
+] as const;
+
+/** 供 SQL 聚合使用：匹配 skus.lifecycle 是否属于停售/滞销类标签 */
+export function buildGrayLifecycleSqlCondition(lifecycleColumnSql: string): string {
+  const conditions = GRAY_LIFECYCLE_KEYWORDS.map((keyword) => {
+    const escaped = keyword.replace(/'/g, "''").toLowerCase();
+    return `lower(${lifecycleColumnSql}) LIKE '%${escaped}%'`;
+  });
+  return `(${conditions.join(' OR ')})`;
+}
 
 export const SLOW_MOVING_MAX_DAILY = 0.1;
 export const SLOW_MOVING_MIN_COVERAGE_DAYS = 90;

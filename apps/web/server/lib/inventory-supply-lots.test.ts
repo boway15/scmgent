@@ -330,7 +330,7 @@ describe('inventory-supply-lots pure', () => {
     );
   });
 
-  it('deducts shipment transit globally then splits undated OVERSEAS residual', () => {
+  it('deducts shipment transit globally then keeps undated OVERSEAS residual unallocated', () => {
     const { lots } = buildLotsFromInputs({
       snapshots: [
         {
@@ -368,25 +368,17 @@ describe('inventory-supply-lots pure', () => {
     const residuals = lots.filter(
       (l) => l.source === 'snapshot' && l.pool === 'in_transit',
     );
-    assert.equal(residuals.length, 2);
-    assert.equal(
-      residuals.find((l) => l.warehouseCode === 'US-WEST')?.qty,
-      30,
-    );
-    assert.equal(
-      residuals.find((l) => l.warehouseCode === 'US-EAST')?.qty,
-      20,
-    );
-    for (const lot of residuals) {
-      assert.equal(lot.availableAt, null);
-      assert.equal(lot.dateUnknown, true);
-      assert.equal(lot.etaEstimated, true);
-      assert.ok(lot.sourceId?.startsWith('transit-share:'));
-      assert.ok(lot.sourceId?.endsWith(':undated'));
-    }
+    assert.equal(residuals.length, 1);
+    assert.equal(residuals[0]!.warehouseCode, 'OVERSEAS');
+    assert.equal(residuals[0]!.qty, 50);
+    assert.equal(residuals[0]!.availableAt, null);
+    assert.equal(residuals[0]!.dateUnknown, true);
+    assert.equal(residuals[0]!.etaEstimated, true);
+    assert.ok(residuals[0]!.sourceId?.startsWith('transit-unalloc:'));
+    assert.ok(residuals[0]!.sourceId?.endsWith(':undated'));
   });
 
-  it('deducts in_transit purchase_draft globally then splits undated OVERSEAS residual', () => {
+  it('deducts in_transit purchase_draft globally then keeps undated OVERSEAS residual', () => {
     const { lots } = buildLotsFromInputs({
       snapshots: [
         {
@@ -425,29 +417,15 @@ describe('inventory-supply-lots pure', () => {
     const residuals = lots.filter(
       (l) => l.source === 'snapshot' && l.pool === 'in_transit',
     );
-    assert.equal(residuals.length, 2);
-    assert.equal(
-      residuals.find((l) => l.warehouseCode === 'US-WEST')?.qty,
-      30,
-    );
-    assert.equal(
-      residuals.find((l) => l.warehouseCode === 'US-EAST')?.qty,
-      20,
-    );
-    assert.equal(
-      residuals.reduce((sum, lot) => sum + lot.qty, 0),
-      50,
-    );
-    for (const lot of residuals) {
-      assert.equal(lot.availableAt, null);
-      assert.equal(lot.dateUnknown, true);
-      assert.equal(lot.etaEstimated, true);
-      assert.ok(lot.sourceId?.startsWith('transit-share:'));
-      assert.ok(lot.sourceId?.endsWith(':undated'));
-    }
+    assert.equal(residuals.length, 1);
+    assert.equal(residuals[0]!.warehouseCode, 'OVERSEAS');
+    assert.equal(residuals[0]!.qty, 50);
+    assert.equal(residuals[0]!.availableAt, null);
+    assert.equal(residuals[0]!.dateUnknown, true);
+    assert.ok(residuals[0]!.sourceId?.startsWith('transit-unalloc:'));
   });
 
-  it('splits dated residual buckets to planned lots and leaves leftover undated', () => {
+  it('keeps dated residual buckets on OVERSEAS and leaves leftover undated', () => {
     const today = '2026-09-17';
     const { lots } = buildLotsFromInputs({
       snapshots: [
@@ -472,11 +450,11 @@ describe('inventory-supply-lots pure', () => {
     const residuals = lots.filter(
       (l) => l.source === 'snapshot' && l.pool === 'in_transit',
     );
-    const d5 = residuals.find((l) => l.sourceId === 'transit-share:sku-1:US-WEST:d5');
-    const d15 = residuals.find((l) => l.sourceId === 'transit-share:sku-1:US-WEST:d15');
-    const d25 = residuals.find((l) => l.sourceId === 'transit-share:sku-1:US-WEST:d25');
+    const d5 = residuals.find((l) => l.sourceId === 'transit-unalloc:sku-1:OVERSEAS:d5');
+    const d15 = residuals.find((l) => l.sourceId === 'transit-unalloc:sku-1:OVERSEAS:d15');
+    const d25 = residuals.find((l) => l.sourceId === 'transit-unalloc:sku-1:OVERSEAS:d25');
     const undated = residuals.find(
-      (l) => l.sourceId === 'transit-share:sku-1:US-WEST:undated',
+      (l) => l.sourceId === 'transit-unalloc:sku-1:OVERSEAS:undated',
     );
 
     assert.equal(d5?.qty, 40);
@@ -531,51 +509,29 @@ describe('inventory-supply-lots pure', () => {
     assert.equal(overseas[0]!.sourceId, 'avail:sku-1:US-WEST');
   });
 
-  it('splits warehouse-less local drafts by sales share and keeps OVERSEAS without share', () => {
-    const sharedDraft: SupplyLotDraftInput = {
+  it('keeps warehouse-less local drafts on IN-PRODUCTION regardless of sales share', () => {
+    const draft: SupplyLotDraftInput = {
       draftId: 'd-share',
       skuId: 'sku-1',
       warehouseCode: null,
       status: 'in_production',
       openQty: 100,
-      remainingLogisticsDays: 52,
-    };
-    const unsharedDraft: SupplyLotDraftInput = {
-      draftId: 'd-none',
-      skuId: 'sku-2',
-      warehouseCode: null,
-      status: 'in_production',
-      openQty: 100,
-      remainingLogisticsDays: 52,
+      remainingLogisticsDays: 0,
     };
 
-    const shared = buildLotsFromInputs({
+    const { lots } = buildLotsFromInputs({
       snapshots: [],
-      drafts: [sharedDraft],
+      drafts: [draft],
       shipments: [],
       today: '2026-09-17',
       defaultTransitLeadDaysByWarehouse: {},
       allocationBySku: allocationMap('sku-1', WEST_EAST_SHARE),
     });
-    const localShared = shared.lots.filter((l) => l.pool === 'local');
-    assert.equal(localShared.length, 2);
-    assert.equal(localShared.find((l) => l.warehouseCode === 'US-WEST')?.qty, 60);
-    assert.equal(localShared.find((l) => l.warehouseCode === 'US-EAST')?.qty, 40);
-    assert.ok(localShared.every((l) => l.sourceId?.endsWith('#share')));
-
-    const unshared = buildLotsFromInputs({
-      snapshots: [],
-      drafts: [unsharedDraft],
-      shipments: [],
-      today: '2026-09-17',
-      defaultTransitLeadDaysByWarehouse: {},
-      allocationBySku: allocationMap('sku-2', UNALLOCATED_SHARE),
-    });
-    const localUnshared = unshared.lots.filter((l) => l.pool === 'local');
-    assert.equal(localUnshared.length, 1);
-    assert.equal(localUnshared[0]!.warehouseCode, 'OVERSEAS');
-    assert.equal(localUnshared[0]!.qty, 100);
-    assert.equal(localUnshared[0]!.sourceId, 'd-none');
+    const local = lots.filter((l) => l.pool === 'local');
+    assert.equal(local.length, 1);
+    assert.equal(local[0]!.warehouseCode, 'IN-PRODUCTION');
+    assert.equal(local[0]!.qty, 100);
+    assert.equal(local[0]!.sourceId, 'd-share');
   });
 
   it('projects IN-PRODUCTION snapshot into local pool after deducting local drafts', () => {
@@ -603,13 +559,10 @@ describe('inventory-supply-lots pure', () => {
     const snapshotLocal = lots.filter(
       (l) => l.pool === 'local' && l.source === 'snapshot',
     );
-    assert.equal(snapshotLocal.reduce((s, l) => s + l.qty, 0), 100);
-    assert.equal(snapshotLocal.find((l) => l.warehouseCode === 'US-WEST')?.qty, 60);
-    assert.equal(snapshotLocal.find((l) => l.warehouseCode === 'US-EAST')?.qty, 40);
-    assert.equal(
-      snapshotLocal.find((l) => l.warehouseCode === 'US-WEST')?.sourceId,
-      'prod-share:sku-1:US-WEST',
-    );
+    assert.equal(snapshotLocal.length, 1);
+    assert.equal(snapshotLocal[0]!.warehouseCode, 'IN-PRODUCTION');
+    assert.equal(snapshotLocal[0]!.qty, 100);
+    assert.equal(snapshotLocal[0]!.sourceId, 'prod:sku-1:IN-PRODUCTION');
     assert.ok(snapshotLocal.every((l) => l.availableAt === '2026-11-01'));
     assert.equal(
       eligibleLots.filter((l) => l.source === 'snapshot' && l.pool === 'local').length,
@@ -618,7 +571,7 @@ describe('inventory-supply-lots pure', () => {
     );
   });
 
-  it('keeps unallocated in-production on OVERSEAS local pool with no available_at', () => {
+  it('keeps unallocated in-production on IN-PRODUCTION local pool with no available_at', () => {
     const { lots } = buildLotsFromInputs({
       snapshots: [],
       drafts: [],
@@ -629,9 +582,9 @@ describe('inventory-supply-lots pure', () => {
     });
     assert.equal(lots.length, 1);
     assert.equal(lots[0]!.pool, 'local');
-    assert.equal(lots[0]!.warehouseCode, 'OVERSEAS');
+    assert.equal(lots[0]!.warehouseCode, 'IN-PRODUCTION');
     assert.equal(lots[0]!.qty, 80);
     assert.equal(lots[0]!.availableAt, null);
-    assert.equal(lots[0]!.sourceId, 'prod:sku-2:OVERSEAS');
+    assert.equal(lots[0]!.sourceId, 'prod:sku-2:IN-PRODUCTION');
   });
 });

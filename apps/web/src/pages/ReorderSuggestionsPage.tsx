@@ -101,7 +101,7 @@ export function ReorderSuggestionsPage() {
       <Card className="border-primary/20 bg-primary/5">
         <CardContent className="pt-6 text-sm text-text-sub">
           <p>
-            <strong className="text-text-main">补货预测</strong>：基于销量、飞书库存快照（可售+在途+在产−已分配，不含跟单）与供应链六段提前期计算覆盖天数与健康灯，生成建议行。
+            <strong className="text-text-main">补货预测</strong>：基于销量、飞书库存快照（可售+在途+在产−已分配，不含跟单）与供应链提前期计算覆盖天数与健康灯；同一 SKU 多仓缺口合并为一条<strong className="text-text-main">网络</strong>采购建议，避免重复下单。
           </p>
           <p className="mt-1">
             <strong className="text-text-main">补货建议</strong>：预测产出的待办清单，默认按建议下单日排序（逾期优先）；采纳后合并到同商家草稿计划，在
@@ -129,12 +129,12 @@ export function ReorderSuggestionsPage() {
               setPage(1);
               if (skuFromUrl) clearSkuFilter();
             }}
-            placeholder="SKU / 商家 / 目标仓"
+            placeholder="SKU / 商家 / 网络"
           />
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-border text-left text-text-sub">
-                <th className="p-2 font-normal">目标仓</th>
+                <th className="p-2 font-normal">网络</th>
                 <th className="p-2 font-normal">SKU</th>
                 <th className="p-2 font-normal">商家</th>
                 <th className="p-2 font-normal">健康灯</th>
@@ -155,7 +155,15 @@ export function ReorderSuggestionsPage() {
                   item.status === 'pending' && isSuggestedOrderOverdue(item.suggestedDate);
                 return (
                 <tr key={item.id} className="border-b border-border/60">
-                  <td className="p-2 font-mono text-primary">{item.warehouseCode ?? '-'}</td>
+                  <td className="p-2 font-mono text-primary">
+                    {item.warehouseCode ?? '网络'}
+                    {Array.isArray(item.metrics?.triggerWarehouses) &&
+                    (item.metrics.triggerWarehouses as string[]).length > 0 ? (
+                      <span className="ml-1 block text-xs font-sans text-text-sub">
+                        触发：{(item.metrics.triggerWarehouses as string[]).join('、')}
+                      </span>
+                    ) : null}
+                  </td>
                   <td className="p-2 font-mono text-text-main">
                     {item.skuId ? (
                       <Link

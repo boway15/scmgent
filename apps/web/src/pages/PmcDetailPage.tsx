@@ -97,7 +97,8 @@ export function PmcDetailPage() {
         <CardHeader>
           <CardTitle>{plan.name}</CardTitle>
           <p className="text-sm text-text-sub">
-            商家 {plan.merchantName ?? plan.merchantCode} · 目标仓 {plan.targetWarehouseCode ?? '-'} · 计划日期{' '}
+            商家 {plan.merchantName ?? plan.merchantCode} ·{' '}
+            {plan.targetWarehouseCode ? `目标仓 ${plan.targetWarehouseCode}` : '网络计划（出货定仓）'} · 计划日期{' '}
             {String(plan.planDate).slice(0, 10)} · 交期 {String(plan.deliveryDate).slice(0, 10)} · 状态{' '}
             {STATUS_LABEL[plan.status] ?? plan.status}
           </p>

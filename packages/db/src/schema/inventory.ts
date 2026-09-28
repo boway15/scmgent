@@ -46,8 +46,17 @@ export const skus = pgTable(
     category: varchar('category', { length: 500 }),
     /** 从品类路径第二段派生的项目组，如 项目1组 */
     projectGroup: varchar('project_group', { length: 20 }),
-    /** C 生命周期（库存周转表） */
+    /** C 生命周期（销量推断：新品/间歇/疑似断货） */
     lifecycle: varchar('lifecycle', { length: 50 }),
+    /** ERP 商业状态原文（飞书生命周期/产品状态） */
+    commercialStatus: varchar('commercial_status', { length: 50 }),
+    /** 归一化：active | phase_out | discontinued | unknown */
+    commercialStatusNorm: varchar('commercial_status_norm', { length: 30 }),
+    /** erp_turnover | erp_query | erp_procurement | manual */
+    commercialStatusSource: varchar('commercial_status_source', { length: 20 }),
+    commercialStatusAt: timestamp('commercial_status_at', { withTimezone: true }),
+    /** 人工锁定后 ERP 同步不覆盖 */
+    commercialStatusLocked: boolean('commercial_status_locked').notNull().default(false),
     /** E 销售国家（库存周转表） */
     salesCountry: varchar('sales_country', { length: 100 }),
     /** F 产品分类（库存周转表，区别于 A 品类） */

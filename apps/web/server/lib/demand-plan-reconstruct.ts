@@ -85,3 +85,21 @@ export function systemDailyAvgForWeek(input: {
     championRefDaily: input.championRefDaily,
   });
 }
+
+/** 任一 horizon 月有预测日均即视为可用季节形状；不强制 6 个月全覆盖。 */
+export function hasForecastShape(monthlyDaily: Map<string, number>, periods: string[]): boolean {
+  return periods.some((period) => (monthlyDaily.get(period) ?? 0) > 0);
+}
+
+/** 无月预测时周需求拉平为近窗反推日均；有预测时仅作季节形状（月权重低）。 */
+export function weekForecastDailyForPlan(input: {
+  weekKey: string;
+  monthlyDaily: Map<string, number>;
+  flatDaily: number;
+  useForecastShape: boolean;
+}): number {
+  if (!input.useForecastShape) {
+    return input.flatDaily;
+  }
+  return weekWeightedForecastDaily(input.weekKey, input.monthlyDaily);
+}

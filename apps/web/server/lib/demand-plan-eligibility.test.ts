@@ -40,6 +40,19 @@ describe('demand-plan-eligibility', () => {
     );
   });
 
+  it('allows any warehouse when pilot warehouse list is empty', () => {
+    const sku = { skuId: 'a', projectGroup: '项目6组', spuId: 'spu1', isActive: true };
+    const openWhConfig = {
+      enabled: true,
+      projectGroups: ['项目6组'],
+      warehouses: [] as string[],
+    };
+    assert.equal(
+      isSkuWarehouseInPilot({ sku, warehouseCode: 'US-EAST', config: openWhConfig, excludedSpuIds: new Set() }),
+      true,
+    );
+  });
+
   it('misses when disabled or SPU excluded', () => {
     const sku = { skuId: 'a', projectGroup: '项目6组', spuId: 'spu1', isActive: true };
     assert.equal(

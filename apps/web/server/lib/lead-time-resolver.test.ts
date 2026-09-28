@@ -1,7 +1,11 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import * as leadTimeResolver from './lead-time-resolver.js';
-import { resolveLeadTimeFromCaches, type LeadTimeResolveCaches } from './lead-time-resolver.js';
+import {
+  resolveLeadTimeFromCaches,
+  resolvePreShipmentLeadTimeFromCaches,
+  type LeadTimeResolveCaches,
+} from './lead-time-resolver.js';
 
 type ProfileRow = {
   id: string;
@@ -230,5 +234,43 @@ describe('lead-time-resolver', () => {
     assert.equal(resolved.shippingDays, 15);
     assert.equal(resolved.inboundBufferDays, 3);
     assert.equal(resolved.totalLeadDays, 25 + 15 + 3);
+  });
+
+  it('resolvePreShipmentLeadTimeFromCaches uses pure production only', () => {
+    const resolved = resolvePreShipmentLeadTimeFromCaches(
+      {
+        skuId: 'sku-1',
+        merchantCode: 'M1',
+        skuLeadTimeDays: 10,
+      },
+      emptyCaches({
+        profilesByWarehouse: new Map([
+          [
+            'US-WEST',
+            [
+              {
+                id: 'p1',
+                merchantCode: 'M1',
+                destinationWarehouseCode: 'US-WEST',
+                transportMode: null,
+                productionDays: 30,
+                domesticDays: 5,
+                bookingDays: 2,
+                transitDays: 40,
+                customsDays: 5,
+                inboundDays: 7,
+              },
+            ],
+          ],
+        ]),
+      }),
+    );
+
+    assert.equal(resolved.profileId, 'p1');
+    assert.equal(resolved.productionDays, 30);
+    assert.equal(resolved.domesticDays, 0);
+    assert.equal(resolved.bookingDays, 0);
+    assert.equal(resolved.transitDays, 0);
+    assert.equal(resolved.totalLeadDays, 30);
   });
 });

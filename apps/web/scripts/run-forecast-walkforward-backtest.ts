@@ -31,15 +31,17 @@ async function main() {
   const tierArg = readArg('--tier');
   const algoArg = readArg('--algo');
   const replaceVersion = process.argv.includes('--replace');
+  const flexBiasShadow = process.argv.includes('--flex-bias-shadow');
   const algoMode: ForecastAlgoMode = resolveForecastAlgoMode(algoArg);
   const tierFilter =
     tierArg === 'core' || tierArg === 'mid' || tierArg === 'tail' ? tierArg : tierArg === 'all' ? 'all' : undefined;
-  const csvPath =
-    readArg('--csv') ??
-    resolve(
-      ROOT,
-      `docs/samples/forecast-backtest/walkforward-${asOf}-${months}m${algoMode === 'monthly_abcd' ? '-abcd' : ''}.csv`,
-    );
+  const csvArg = readArg('--csv');
+  const csvPath = csvArg
+    ? resolve(ROOT, csvArg)
+    : resolve(
+        ROOT,
+        `docs/samples/forecast-backtest/walkforward-${asOf}-${months}m${algoMode === 'monthly_abcd' ? '-abcd' : ''}${flexBiasShadow ? '-flex-shadow' : ''}.csv`,
+      );
 
   if (!Number.isInteger(months) || months < 1 || months > 24) {
     console.error('--months must be an integer between 1 and 24');
@@ -50,6 +52,7 @@ async function main() {
   if (skuCode) console.log(`单 SKU：${skuCode}`);
   if (tierFilter) console.log(`分层汇总：${tierFilter}`);
   if (replaceVersion) console.log('版本模式：--replace（purge 后复用同名版本）');
+  if (flexBiasShadow) console.log('柔性窗：--flex-bias-shadow（显式启用 v2 校正，生产默认已开）');
 
   const result = await runWalkForwardAccuracyBacktest({
     asOf,
@@ -63,6 +66,7 @@ async function main() {
     createReviewItems: false,
     tierFilter,
     algoMode,
+    flexBiasShadow,
   });
 
   console.log('\n' + result.summary);

@@ -77,20 +77,16 @@ export function AlertsPage() {
         </div>
       </PageHeader>
 
-      {data.openCount > 0 && (
-        <Card className="border-primary/20 bg-primary/5">
-          <CardHeader>
-            <CardTitle className="text-base">预警摘要（{data.openCount} 条待处理）</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <pre className="whitespace-pre-wrap text-sm text-text-main">{data.summary}</pre>
-          </CardContent>
-        </Card>
-      )}
-
       <Card>
         <CardHeader>
-          <CardTitle>预警列表</CardTitle>
+          <CardTitle>
+            预警列表
+            {data.openCount > 0 && (
+              <span className="ml-2 text-sm font-normal text-text-sub">
+                （{data.openCount.toLocaleString()} 条待处理）
+              </span>
+            )}
+          </CardTitle>
         </CardHeader>
         <CardContent>
           <ListSearchBar
@@ -102,17 +98,22 @@ export function AlertsPage() {
             }}
             placeholder="SKU 编码 / 名称"
           />
-          <table className="w-full text-sm">
+          <p className="mb-3 text-xs text-text-hint">
+            本地 / 海外仓 / 在途优先取该目的仓供给批次；没有批次时用飞书周转合计（供应商订单、海外仓在库、调拨在途，同一 SKU 各仓相同）。未来需求为采购周期内预测销量，有待处理补货建议时改为建议量。预计缺货优先用预警上的断货日。
+          </p>
+          <div className="overflow-x-auto">
+          <table className="w-full min-w-[960px] text-sm">
             <thead>
               <tr className="border-b border-border text-left text-text-sub">
                 <th className="p-2 font-normal">SKU</th>
                 <th className="p-2 font-normal">仓库</th>
                 <th className="p-2 font-normal">类型</th>
                 <th className="p-2 font-normal">窗口</th>
-                <th className="p-2 font-normal">投影库存</th>
-                <th className="p-2 font-normal">阈值</th>
-                <th className="p-2 font-normal">预计断货</th>
-                <th className="p-2 font-normal">状态</th>
+                <th className="p-2 font-normal">本地</th>
+                <th className="p-2 font-normal">海外仓</th>
+                <th className="p-2 font-normal">在途</th>
+                <th className="p-2 font-normal">未来需求</th>
+                <th className="p-2 font-normal">预计缺货</th>
                 <th className="p-2 font-normal">操作</th>
               </tr>
             </thead>
@@ -123,13 +124,14 @@ export function AlertsPage() {
                   <td className="p-2 font-mono text-text-sub">{a.warehouseCode ?? '—'}</td>
                   <td className="p-2 text-text-main">{TYPE_LABEL[a.alertType] ?? a.alertType}</td>
                   <td className="p-2 font-mono">{a.horizonDays != null ? `${a.horizonDays}天` : '—'}</td>
+                  <td className="p-2 font-numeric">{a.localQty.toLocaleString()}</td>
+                  <td className="p-2 font-numeric">{a.overseasQty.toLocaleString()}</td>
+                  <td className="p-2 font-numeric">{a.inTransitQty.toLocaleString()}</td>
                   <td className="p-2 font-numeric text-primary">
-                    {a.projectedQty ?? a.currentQty}
+                    {a.futureNeedQty == null ? '—' : a.futureNeedQty.toLocaleString()}
                   </td>
-                  <td className="p-2 font-numeric">{a.safetyQty}</td>
                   <td className="p-2 font-mono text-xs">{a.projectedStockoutDate ?? '—'}</td>
-                  <td className="p-2 text-text-main">{a.isResolved ? '已处理' : '待处理'}</td>
-                  <td className="space-x-1 p-2">
+                  <td className="space-x-1 p-2 whitespace-nowrap">
                     {!a.isResolved && (
                       <>
                         <Link
@@ -154,13 +156,14 @@ export function AlertsPage() {
               ))}
               {!alerts.length && (
                 <tr>
-                  <td colSpan={9} className="p-4 text-center text-text-hint">
+                  <td colSpan={10} className="p-4 text-center text-text-hint">
                     暂无预警
                   </td>
                 </tr>
               )}
             </tbody>
           </table>
+          </div>
           <ListPagination
             page={page}
             pageSize={pageSize}

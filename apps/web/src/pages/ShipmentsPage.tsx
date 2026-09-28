@@ -86,6 +86,7 @@ export type ShipmentCreatePrefill = {
   planItemId: string;
   skuId: string;
   qty: number;
+  destinationWarehouseCode: string;
   etaAvailable: string;
   transportMode: string;
 };
@@ -107,6 +108,7 @@ export function buildShipmentCreatePrefill(draft: TrackingDraft): ShipmentCreate
     planItemId: draft.planItemId ?? '',
     skuId: draft.skuId,
     qty: draft.remainingQty > 0 ? draft.remainingQty : draft.qty,
+    destinationWarehouseCode: '',
     etaAvailable: draft.etaAvailable ?? draft.confirmedDeliveryDate ?? draft.expectedDate ?? '',
     transportMode: draft.transportMode ?? '',
   };
@@ -120,6 +122,11 @@ export function ShipmentsPage() {
   const [selected, setSelected] = useState<Shipment | null>(null);
   const [milestoneDraft, setMilestoneDraft] = useState<MilestoneDraft | null>(null);
   const [createDraft, setCreateDraft] = useState<ShipmentCreatePrefill | null>(null);
+  const { data: warehouses = [] } = useQuery({
+    queryKey: ['warehouses'],
+    queryFn: api.getWarehouses,
+    enabled: Boolean(createDraft),
+  });
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
   const [keyword, setKeyword] = useState('');
@@ -181,6 +188,7 @@ export function ShipmentsPage() {
           planItemId: values.planItemId || null,
           skuId: values.skuId,
           qty: values.qty,
+          destinationWarehouseCode: values.destinationWarehouseCode,
           etaAvailable: values.etaAvailable || null,
           transportMode: values.transportMode || null,
         }),
@@ -271,7 +279,7 @@ export function ShipmentsPage() {
           <CardHeader>
             <CardTitle>创建发运</CardTitle>
             <p className="text-sm text-text-sub">
-              已从跟单 {linkedDraft?.draftNo} 预填，提交后将关联 draftId。
+              已从跟单 {linkedDraft?.draftNo} 预填；<strong>目的仓在出货时确定</strong>，创建发运时必选。
             </p>
           </CardHeader>
           <CardContent className="grid gap-3 sm:grid-cols-2">
@@ -293,6 +301,23 @@ export function ShipmentsPage() {
                   setCreateDraft({ ...createDraft, qty: Number(event.target.value) || 0 })
                 }
               />
+            </label>
+            <label className="space-y-1 text-sm text-text-sub">
+              <span>目的仓</span>
+              <select
+                className="h-10 w-full rounded-md border border-input bg-card px-3 text-sm"
+                value={createDraft.destinationWarehouseCode}
+                onChange={(event) =>
+                  setCreateDraft({ ...createDraft, destinationWarehouseCode: event.target.value })
+                }
+              >
+                <option value="">选择目的仓</option>
+                {warehouses.map((wh) => (
+                  <option key={wh.code} value={wh.code}>
+                    {wh.code} · {wh.name}
+                  </option>
+                ))}
+              </select>
             </label>
             <label className="space-y-1 text-sm text-text-sub">
               <span>预计可售日</span>
@@ -324,6 +349,7 @@ export function ShipmentsPage() {
                   createShipment.isPending ||
                   !createDraft.shipmentNo ||
                   !createDraft.skuId ||
+                  !createDraft.destinationWarehouseCode ||
                   createDraft.qty <= 0
                 }
                 onClick={() => createShipment.mutate(createDraft)}

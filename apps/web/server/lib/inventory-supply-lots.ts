@@ -8,6 +8,7 @@ import {
   splitResidualTransit,
   type ShareParseResult,
 } from './inventory-share-allocation.js';
+import { preShipmentWarehouse } from './inventory-constants.js';
 import { addDaysIso, subtractDaysIso } from './inventory-iso-date.js';
 
 export { addDaysIso, subtractDaysIso, diffDaysIso } from './inventory-iso-date.js';
@@ -258,38 +259,20 @@ export function buildLotsFromInputs(params: {
       });
       for (const slice of slices) {
         if (slice.qty <= 0) continue;
-        if (ctx?.share.method === 'sales_share') {
-          const allocated = allocateByShare(slice.qty, ctx.share);
-          for (const [warehouseCode, qty] of allocated) {
-            lots.push({
-              skuId: snap.skuId,
-              warehouseCode,
-              pool: 'in_transit',
-              qty,
-              availableAt: slice.availableAt,
-              source: 'snapshot',
-              sourceId: `transit-share:${snap.skuId}:${warehouseCode}:${slice.bucket}`,
-              status: 'open',
-              etaEstimated: true,
-              shipReadiness: 'shipped',
-              dateUnknown: slice.availableAt == null,
-            });
-          }
-        } else {
-          lots.push({
-            skuId: snap.skuId,
-            warehouseCode: 'OVERSEAS',
-            pool: 'in_transit',
-            qty: slice.qty,
-            availableAt: slice.availableAt,
-            source: 'snapshot',
-            sourceId: `transit-share:${snap.skuId}:OVERSEAS:${slice.bucket}`,
-            status: 'open',
-            etaEstimated: true,
-            shipReadiness: 'shipped',
-            dateUnknown: slice.availableAt == null,
-          });
-        }
+        // 未定仓在途残差：出货前不定目的仓，整批留在 OVERSEAS
+        lots.push({
+          skuId: snap.skuId,
+          warehouseCode: preShipmentWarehouse('in_transit'),
+          pool: 'in_transit',
+          qty: slice.qty,
+          availableAt: slice.availableAt,
+          source: 'snapshot',
+          sourceId: `transit-unalloc:${snap.skuId}:OVERSEAS:${slice.bucket}`,
+          status: 'open',
+          etaEstimated: true,
+          shipReadiness: 'shipped',
+          dateUnknown: slice.availableAt == null,
+        });
       }
       continue;
     }
@@ -319,7 +302,6 @@ export function buildLotsFromInputs(params: {
     const pool = mapDraftToLotPool(draft.status);
     if (!pool) continue;
 
-    const ctx = params.allocationBySku?.get(draft.skuId);
     const destinations: Array<{ warehouseCode: string; qty: number; sourceId: string }> = [];
     if (draft.warehouseCode) {
       destinations.push({
@@ -327,17 +309,9 @@ export function buildLotsFromInputs(params: {
         qty: draft.openQty,
         sourceId: draft.draftId,
       });
-    } else if (ctx?.share.method === 'sales_share') {
-      for (const [warehouseCode, qty] of allocateByShare(draft.openQty, ctx.share)) {
-        destinations.push({
-          warehouseCode,
-          qty,
-          sourceId: `${draft.draftId}#share`,
-        });
-      }
     } else {
       destinations.push({
-        warehouseCode: 'OVERSEAS',
+        warehouseCode: preShipmentWarehouse(pool),
         qty: draft.openQty,
         sourceId: draft.draftId,
       });
@@ -416,29 +390,20 @@ export function buildLotsFromInputs(params: {
     if (residual <= 0) continue;
     const ctx = params.allocationBySku?.get(row.skuId);
     const availableAt = ctx?.earliestPoAvailableAt ?? null;
-    const destinations =
-      ctx?.share.method === 'sales_share'
-        ? Array.from(allocateByShare(residual, ctx.share).entries())
-        : ([['OVERSEAS', residual]] as Array<[string, number]>);
-    for (const [warehouseCode, qty] of destinations) {
-      if (qty <= 0) continue;
-      lots.push({
-        skuId: row.skuId,
-        warehouseCode,
-        pool: 'local',
-        qty,
-        productionStatus: 'in_production',
-        availableAt,
-        source: 'snapshot',
-        sourceId:
-          ctx?.share.method === 'sales_share'
-            ? `prod-share:${row.skuId}:${warehouseCode}`
-            : `prod:${row.skuId}:OVERSEAS`,
-        status: 'open',
-        etaEstimated: availableAt != null,
-        dateUnknown: availableAt == null,
-      });
-    }
+    if (residual <= 0) continue;
+    lots.push({
+      skuId: row.skuId,
+      warehouseCode: preShipmentWarehouse('local'),
+      pool: 'local',
+      qty: residual,
+      productionStatus: 'in_production',
+      availableAt,
+      source: 'snapshot',
+      sourceId: `prod:${row.skuId}:IN-PRODUCTION`,
+      status: 'open',
+      etaEstimated: availableAt != null,
+      dateUnknown: availableAt == null,
+    });
   }
 
   const eligibleLots = lots.filter((lot) =>

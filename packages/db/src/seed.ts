@@ -130,17 +130,10 @@ const MENU_SEEDS: MenuSeed[] = [
       { code: 'data.sales', name: '销量历史', path: '/data/sales', sortOrder: 30, isLeaf: true },
       { code: 'data.forecast', name: '销售预测', path: '/data/forecast', sortOrder: 40, isLeaf: true },
       {
-        code: 'data.layered_forecast',
-        name: '分层销量预测',
-        path: '/data/layered-forecast',
-        sortOrder: 50,
-        isLeaf: true,
-      },
-      {
         code: 'data.demand_plan',
-        name: '需求计划试点',
+        name: '需求计划-周',
         path: '/data/demand-plan',
-        sortOrder: 60,
+        sortOrder: 50,
         isLeaf: true,
       },
     ],
@@ -195,6 +188,7 @@ const DEPRECATED_MENU_CODES = [
   'compliance',
   'data.import',
   'data.forecast.strategy',
+  'data.layered_forecast',
   'pmc',
   'procurement',
   'logistics',
@@ -223,7 +217,6 @@ const DATA_MENU_CODES = [
   'data.products',
   'data.sales',
   'data.forecast',
-  'data.layered_forecast',
 ] as const;
 
 const INVENTORY_MENU_CODES = [

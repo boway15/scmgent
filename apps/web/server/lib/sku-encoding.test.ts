@@ -1,6 +1,12 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseSkuCode, spuFieldsFromParse, skuEncodingToColumns, type SkuKind } from './sku-encoding.js';
+import {
+  isAccessorySku,
+  parseSkuCode,
+  spuFieldsFromParse,
+  skuEncodingToColumns,
+  type SkuKind,
+} from './sku-encoding.js';
 
 describe('parseSkuCode', () => {
   it('parses standard internal 9-digit code', () => {
@@ -179,5 +185,32 @@ describe('spuFieldsFromParse', () => {
     assert.equal(fields.code, '7045761');
     assert.equal(fields.divisionCode, '7');
     assert.equal(fields.encodingSource, 'sku_derived');
+  });
+});
+
+describe('isAccessorySku', () => {
+  it('treats parsed accessory codes as accessories', () => {
+    assert.equal(isAccessorySku({ code: 'DJ478585_2P02' }), true);
+    assert.equal(isAccessorySku({ code: 'DJ485882P01' }), true);
+    assert.equal(isAccessorySku({ code: 'DJ504649_3P19' }), true);
+    assert.equal(isAccessorySku({ code: '704576101P01' }), true);
+  });
+
+  it('treats skuKind accessory as accessories even when code is blank', () => {
+    assert.equal(isAccessorySku({ skuKind: 'accessory' }), true);
+  });
+
+  it('treats unparsed variant containing P as accessories', () => {
+    assert.equal(isAccessorySku({ code: 'CUSTOM_2P' }), true);
+    assert.equal(isAccessorySku({ code: 'FOO_3P01X' }), true);
+  });
+
+  it('keeps standard, multi-box, and return SKUs forecastable', () => {
+    assert.equal(isAccessorySku({ code: 'DJ502313_34' }), false);
+    assert.equal(isAccessorySku({ code: 'DJ505240_2_A' }), false);
+    assert.equal(isAccessorySku({ code: '704576101' }), false);
+    assert.equal(isAccessorySku({ code: '704576101B1' }), false);
+    assert.equal(isAccessorySku({ code: '704576101R' }), false);
+    assert.equal(isAccessorySku({ skuKind: 'standard', code: 'DJ502313_34' }), false);
   });
 });

@@ -34,14 +34,11 @@ export function PmcListPage() {
   const plans = data?.items ?? [];
   const { data: skus = [] } = useQuery({ queryKey: ['skus'], queryFn: api.getSkus });
   const { data: merchants = [] } = useQuery({ queryKey: ['merchants'], queryFn: api.getMerchants });
-  const { data: warehouses = [] } = useQuery({ queryKey: ['warehouses'], queryFn: api.getWarehouses });
-
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState({
     name: '',
     merchantCode: '',
     merchantName: '',
-    targetWarehouseCode: 'US-WEST',
     planDate: new Date().toISOString().slice(0, 10),
     deliveryDate: '',
     skuId: '',
@@ -54,10 +51,9 @@ export function PmcListPage() {
         name: form.name,
         merchantCode: form.merchantCode,
         merchantName: form.merchantName || undefined,
-        targetWarehouseCode: form.targetWarehouseCode,
         planDate: form.planDate,
         deliveryDate: form.deliveryDate || form.planDate,
-        items: [{ skuId: form.skuId, plannedQty: form.plannedQty, warehouseCode: form.targetWarehouseCode }],
+        items: [{ skuId: form.skuId, plannedQty: form.plannedQty }],
       }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['pmc-plans'] });
@@ -106,15 +102,6 @@ export function PmcListPage() {
               ))}
             </datalist>
             <Input placeholder="商家名称" value={form.merchantName} onChange={(e) => setForm({ ...form, merchantName: e.target.value })} />
-            <select
-              className="h-10 rounded-md border border-input bg-card px-3 text-sm"
-              value={form.targetWarehouseCode}
-              onChange={(e) => setForm({ ...form, targetWarehouseCode: e.target.value })}
-            >
-              {warehouses.map((w) => (
-                <option key={w.code} value={w.code}>{w.name}</option>
-              ))}
-            </select>
             <Input type="date" value={form.planDate} onChange={(e) => setForm({ ...form, planDate: e.target.value })} />
             <Input type="date" placeholder="交期" value={form.deliveryDate} onChange={(e) => setForm({ ...form, deliveryDate: e.target.value })} />
             <select

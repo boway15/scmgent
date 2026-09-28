@@ -1,6 +1,12 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { parseDemandPlanPilotConfig } from './demand-plan-config.js';
+import {
+  DEMAND_PLAN_WAREHOUSE_ALL,
+  isProjectGroupInPilot,
+  isUnallocatedPlanWarehouse,
+  isWarehouseInPilot,
+  parseDemandPlanPilotConfig,
+} from './demand-plan-config.js';
 
 describe('parseDemandPlanPilotConfig', () => {
   it('defaults to disabled empty lists', () => {
@@ -23,5 +29,22 @@ describe('parseDemandPlanPilotConfig', () => {
 
   it('treats TRUE only as enabled', () => {
     assert.equal(parseDemandPlanPilotConfig({ DEMAND_PLAN_PILOT_ENABLED: '1' }).enabled, false);
+  });
+
+  it('treats empty and ALL as unallocated plan warehouse', () => {
+    assert.equal(isUnallocatedPlanWarehouse(DEMAND_PLAN_WAREHOUSE_ALL), true);
+    assert.equal(isUnallocatedPlanWarehouse(''), true);
+    assert.equal(isUnallocatedPlanWarehouse('US-WEST'), false);
+  });
+
+  it('treats empty warehouse list as all warehouses in pilot', () => {
+    const config = parseDemandPlanPilotConfig({
+      DEMAND_PLAN_PILOT_ENABLED: 'true',
+      DEMAND_PLAN_PILOT_PROJECT_GROUPS: '项目6组',
+    });
+    assert.equal(isWarehouseInPilot('US-WEST', config), true);
+    assert.equal(isWarehouseInPilot('US-EAST', config), true);
+    assert.equal(isProjectGroupInPilot('项目6组', config), true);
+    assert.equal(isProjectGroupInPilot('其他组', config), false);
   });
 });

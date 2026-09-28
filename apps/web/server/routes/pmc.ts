@@ -167,10 +167,7 @@ pmcRoutes.post('/pmc/plans', requireMenu('pmc.list'), async (c) => {
   }
 
   const planWarehouse =
-    body.targetWarehouseCode?.trim() || body.items[0]?.warehouseCode?.trim();
-  if (!planWarehouse) {
-    return c.json({ message: 'targetWarehouseCode or items[].warehouseCode required' }, 400);
-  }
+    body.targetWarehouseCode?.trim() || body.items[0]?.warehouseCode?.trim() || null;
 
   const planNo = await nextPlanNo();
 
@@ -256,6 +253,7 @@ pmcRoutes.post('/pmc/plans/:id/items/:itemId/receive', requireMenu('pmc.list'), 
   const body = await c.req.json<{
     qtyReceived: number;
     receivedDate?: string;
+    warehouseCode?: string;
     idempotencyKey?: string;
   }>();
 
@@ -265,6 +263,7 @@ pmcRoutes.post('/pmc/plans/:id/items/:itemId/receive', requireMenu('pmc.list'), 
       planItemId: c.req.param('itemId'),
       qtyReceived: body.qtyReceived,
       receivedDate: body.receivedDate,
+      warehouseCode: body.warehouseCode?.trim(),
       idempotencyKey: body.idempotencyKey,
       userId: user.id,
     });

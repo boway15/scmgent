@@ -29,9 +29,7 @@ export function monthIndex(ym: string): number | null {
   return year * 12 + (month - 1);
 }
 
-/**
- * 分层预测上层总量只作约束：reconcile 比例缩放到父级目标，不单独驱动采购。
- */
+/** 将 SKU 底稿按比例缩放到父级目标总量。 */
 export function reconcileSkuQtyToParentTotal(params: {
   skuDraftQty: number[];
   parentTotal: number;

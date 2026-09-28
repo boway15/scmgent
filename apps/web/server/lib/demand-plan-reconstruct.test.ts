@@ -4,9 +4,11 @@ import {
   championRefLevel,
   classifyReconstructSource,
   clipDemandShape,
+  hasForecastShape,
   systemDailyAvgForMonth,
   systemDailyAvgForWeek,
   warehouseShareWeight,
+  weekForecastDailyForPlan,
   weekWeightedForecastDaily,
 } from './demand-plan-reconstruct.js';
 
@@ -68,5 +70,24 @@ describe('demand-plan-reconstruct', () => {
       championRefDaily: 10,
     });
     assert.equal(daily, 10);
+  });
+
+  it('hasForecastShape is true when any horizon month has daily > 0', () => {
+    const map = new Map([['2026-09', 5], ['2026-10', 0]]);
+    assert.equal(hasForecastShape(map, ['2026-09', '2026-10', '2026-11']), true);
+    assert.equal(hasForecastShape(map, ['2026-11', '2026-12']), false);
+  });
+
+  it('weekForecastDailyForPlan falls back to flat daily without forecast shape', () => {
+    const monthly = new Map([['2026-01', 30]]);
+    assert.equal(
+      weekForecastDailyForPlan({
+        weekKey: '2026-W05',
+        monthlyDaily: monthly,
+        flatDaily: 8,
+        useForecastShape: false,
+      }),
+      8,
+    );
   });
 });

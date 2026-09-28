@@ -350,6 +350,32 @@ function parseInternal(raw: string): SkuParseResult | null {
   return null;
 }
 
+/** 变化段（末段 `_` 之后）含 P，视为配件编码。 */
+function skuVariantContainsAccessoryP(code: string): boolean {
+  const upper = code.trim().toUpperCase();
+  if (!upper) return false;
+  const idx = upper.lastIndexOf('_');
+  if (idx >= 0) {
+    return upper.slice(idx + 1).includes('P');
+  }
+  return /(?:[A-Z]+\d+|\d{9})P\d+/i.test(upper);
+}
+
+/**
+ * 配件 SKU 不进入销售预测 / 需求计划。
+ * 优先看 skuKind 与标准解析，其次看变化段含 P（如 2P02）。
+ */
+export function isAccessorySku(input: {
+  code?: string | null;
+  skuKind?: string | null;
+}): boolean {
+  if (input.skuKind === 'accessory') return true;
+  const code = input.code?.trim();
+  if (!code) return false;
+  if (parseSkuCode(code).kind === 'accessory') return true;
+  return skuVariantContainsAccessoryP(code);
+}
+
 export function parseSkuCode(input: string, externalInput?: string | null): SkuParseResult {
   const raw = (input ?? '').trim();
   const ext = externalInput?.trim();

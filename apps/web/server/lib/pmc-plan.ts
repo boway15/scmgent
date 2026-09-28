@@ -37,19 +37,12 @@ export function buildPmcForecastMonthKey(year: number, month: number): string {
   return forecastMonthKey(year, month);
 }
 
-export async function findDraftPlanForMerchantAndWarehouse(
-  merchantCode: string,
-  warehouseCode: string,
-) {
+export async function findDraftPlanForMerchant(merchantCode: string) {
   const [plan] = await db
     .select()
     .from(pmcPlans)
     .where(
-      and(
-        eq(pmcPlans.merchantCode, merchantCode),
-        eq(pmcPlans.targetWarehouseCode, warehouseCode),
-        eq(pmcPlans.status, 'draft'),
-      ),
+      and(eq(pmcPlans.merchantCode, merchantCode), eq(pmcPlans.status, 'draft')),
     )
     .orderBy(desc(pmcPlans.updatedAt))
     .limit(1);
@@ -59,20 +52,13 @@ export async function findDraftPlanForMerchantAndWarehouse(
 export async function mergePlanItem(params: {
   planId: string;
   skuId: string;
-  warehouseCode: string;
   addQty: number;
   unit: string;
 }) {
   const [existing] = await db
     .select()
     .from(pmcPlanItems)
-    .where(
-      and(
-        eq(pmcPlanItems.planId, params.planId),
-        eq(pmcPlanItems.skuId, params.skuId),
-        eq(pmcPlanItems.warehouseCode, params.warehouseCode),
-      ),
-    )
+    .where(and(eq(pmcPlanItems.planId, params.planId), eq(pmcPlanItems.skuId, params.skuId)))
     .limit(1);
 
   if (existing) {
@@ -95,7 +81,6 @@ export async function mergePlanItem(params: {
     .values({
       planId: params.planId,
       skuId: params.skuId,
-      warehouseCode: params.warehouseCode,
       plannedQty: params.addQty,
       unit: params.unit,
       sortOrder: nextSort,
@@ -107,15 +92,10 @@ export async function mergePlanItem(params: {
 export async function findOrCreateDraftPlan(params: {
   merchantCode: string;
   merchantName?: string | null;
-  warehouseCode: string;
-  warehouseName?: string | null;
   deliveryDate?: string;
   createdBy: string;
 }) {
-  const existing = await findDraftPlanForMerchantAndWarehouse(
-    params.merchantCode,
-    params.warehouseCode,
-  );
+  const existing = await findDraftPlanForMerchant(params.merchantCode);
   if (existing) return existing;
 
   const today = new Date().toISOString().slice(0, 10);
@@ -123,16 +103,15 @@ export async function findOrCreateDraftPlan(params: {
     params.deliveryDate ??
     new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 10);
   const merchantLabel = params.merchantName?.trim() || params.merchantCode;
-  const whLabel = params.warehouseName?.trim() || params.warehouseCode;
 
   const [plan] = await db
     .insert(pmcPlans)
     .values({
       planNo: await nextPlanNo(),
-      name: `${merchantLabel} · ${whLabel} 下单计划`,
+      name: `${merchantLabel} 下单计划`,
       merchantCode: params.merchantCode,
       merchantName: params.merchantName ?? undefined,
-      targetWarehouseCode: params.warehouseCode,
+      targetWarehouseCode: null,
       planDate: new Date(today),
       deliveryDate: new Date(delivery),
       status: 'draft',
@@ -155,8 +134,6 @@ export async function mergeSuggestionToPlan(params: {
     .where(eq(reorderSuggestions.id, params.suggestionId))
     .limit(1);
   if (!suggestion) throw new Error('Suggestion not found');
-  if (!suggestion.warehouseCode) throw new Error('补货建议缺少目标仓');
-
   const [sku] = await db.select().from(skus).where(eq(skus.id, suggestion.skuId)).limit(1);
   if (!sku) throw new Error('SKU not found');
 
@@ -168,7 +145,6 @@ export async function mergeSuggestionToPlan(params: {
   const plan = await findOrCreateDraftPlan({
     merchantCode,
     merchantName: params.merchantName ?? sku.merchantName,
-    warehouseCode: suggestion.warehouseCode,
     deliveryDate: String(suggestion.suggestedDate),
     createdBy: params.userId,
   });
@@ -176,7 +152,6 @@ export async function mergeSuggestionToPlan(params: {
   await mergePlanItem({
     planId: plan.id,
     skuId: sku.id,
-    warehouseCode: suggestion.warehouseCode,
     addQty: suggestion.suggestedQty,
     unit: sku.unit,
   });
@@ -207,7 +182,6 @@ export async function generatePurchaseDraftsFromPlan(planId: string, userId: str
 
   const drafts = [];
   for (const item of items) {
-    const wh = item.warehouseCode ?? plan.targetWarehouseCode ?? '-';
     const draft = await createPurchaseDraft({
       skuId: item.skuId,
       qty: item.plannedQty,
@@ -215,7 +189,7 @@ export async function generatePurchaseDraftsFromPlan(planId: string, userId: str
       source: 'pmc',
       sourceRefId: plan.id,
       planItemId: item.id,
-      remark: `计划 ${plan.planNo} / 商家 ${plan.merchantCode} / 仓 ${wh} / ${item.skuCode}`,
+      remark: `计划 ${plan.planNo} / 商家 ${plan.merchantCode} / ${item.skuCode}`,
       createdBy: userId,
     });
     if (draft.expectedDate) {

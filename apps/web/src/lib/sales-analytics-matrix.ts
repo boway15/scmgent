@@ -130,7 +130,7 @@ export function buildMatrixRows(args: {
       fc = panel.fc;
       r2 = panel.r2;
       confidence = fitConfidenceFromR2(panel.r2);
-      modelLabel = trendSeasonalModelLabel(isWeek, panel.r2);
+      modelLabel = trendSeasonalModelLabel(isWeek, panel.r2, panel.path);
       reason = trendSeasonalModelReason(panel, isWeek, series.length);
     } else {
       fc = Array.from({ length: horizon }, (_, i) => ({

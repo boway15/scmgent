@@ -37,7 +37,7 @@ export const pmcPlans = pgTable(
     planDate: timestamp('plan_date', { withTimezone: true }).notNull(),
     deliveryDate: timestamp('delivery_date', { withTimezone: true }).notNull(),
     status: pmcStatusEnum('status').notNull().default('draft'),
-    /** 本计划目标入库仓（一计划一商家一仓） */
+    /** 可选；出货前不定仓时为空，目的仓在发运/到货时填写 */
     targetWarehouseCode: varchar('target_warehouse_code', { length: 100 }),
     remark: text('remark'),
     /** SAP / 外部系统预留 */

@@ -20,6 +20,7 @@ import { runInventoryQueryPull } from '../tasks/inventoryQueryPull.js';
 import { runInventoryTurnoverPull } from '../tasks/inventoryTurnoverPull.js';
 import { INVENTORY_QUERY_PULL_TASK } from '../lib/inventory-query-pull-task.js';
 import { INVENTORY_TURNOVER_PULL_TASK } from '../lib/inventory-turnover-pull-task.js';
+import { runCommercialStatusReconcile } from '../tasks/commercialStatusReconcile.js';
 
 export const taskRoutes = new Hono();
 
@@ -267,6 +268,27 @@ taskRoutes.post('/tasks/inventory-query-pull', requireCronSecret, async (c) => {
     return c.json({ skipped: true, message: result.reason, taskRunId: run.id }, 409);
   }
   return c.json({ ...result, taskRunId: run.id });
+});
+
+taskRoutes.post('/tasks/commercial-status-reconcile', requireCronSecret, async (c) => {
+  const triggeredBy = resolveTriggeredBy(c);
+  const run = await startTaskRun('commercial_status_reconcile', triggeredBy);
+  try {
+    const result = await runCommercialStatusReconcile();
+    await finishTaskRun(run.id, {
+      success: true,
+      resultSummary: JSON.stringify({
+        updated: result.totals.updated,
+        scanned: result.totals.scanned,
+        distribution: result.distribution,
+      }),
+    });
+    return c.json({ ...result, taskRunId: run.id });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'commercial status reconcile failed';
+    await finishTaskRun(run.id, { success: false, errorMessage: message });
+    return c.json({ message, taskRunId: run.id }, 500);
+  }
 });
 
 taskRoutes.post('/tasks/inventory-turnover-pull', requireCronSecret, async (c) => {

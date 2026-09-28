@@ -8,6 +8,10 @@ import { ensureSpuFromSkuEncoding } from '../lib/spu-from-sku.js';
 import { skuEncodingToColumns } from '../lib/sku-encoding.js';
 import { markSkuMasterDataManual } from '../lib/ensure-sku-from-import.js';
 import { markReplenishLightManual } from '../lib/replenish-light-sync.js';
+import {
+  applyCommercialStatus,
+  normalizeCommercialStatus,
+} from '../lib/commercial-status.js';
 import { extractProjectGroupFromCategory } from '../lib/sku-category.js';
 
 export const skuRoutes = new Hono();
@@ -118,10 +122,21 @@ skuRoutes.put('/skus/:id', requireMenu('data.products'), async (c) => {
     merchantCode: string;
     merchantName: string;
     replenishLight: 'red' | 'yellow' | 'green';
+    commercialStatus: string | null;
+    commercialStatusLocked: boolean;
   }>>();
 
-  const { merchantCode, merchantName, unitCost, leadTimeDays, moq, replenishLight, ...skuFields } =
-    body;
+  const {
+    merchantCode,
+    merchantName,
+    unitCost,
+    leadTimeDays,
+    moq,
+    replenishLight,
+    commercialStatus,
+    commercialStatusLocked,
+    ...skuFields
+  } = body;
   // projectGroup 只读派生，忽略客户端传入
   const { projectGroup: _ignoredProjectGroup, ...safeSkuFields } = skuFields as typeof skuFields & {
     projectGroup?: string | null;
@@ -149,17 +164,49 @@ skuRoutes.put('/skus/:id', requireMenu('data.products'), async (c) => {
 
   if (!row) return c.json({ message: 'SKU not found' }, 404);
 
+  if (Object.prototype.hasOwnProperty.call(body, 'commercialStatusLocked')) {
+    await db
+      .update(skus)
+      .set({
+        commercialStatusLocked: Boolean(commercialStatusLocked),
+        updatedAt: new Date(),
+      })
+      .where(eq(skus.id, skuId));
+  }
+
+  if (Object.prototype.hasOwnProperty.call(body, 'commercialStatus')) {
+    const raw = commercialStatus?.trim() ?? '';
+    if (raw) {
+      await applyCommercialStatus({
+        skuId,
+        rawStatus: raw,
+        source: 'manual',
+        force: true,
+      });
+    } else if (normalizeCommercialStatus(raw) === null) {
+      await db
+        .update(skus)
+        .set({
+          commercialStatus: null,
+          commercialStatusNorm: null,
+          commercialStatusSource: null,
+          commercialStatusAt: null,
+          updatedAt: new Date(),
+        })
+        .where(eq(skus.id, skuId));
+    }
+  }
+
   if (merchantCode?.trim()) {
     await upsertSkuSupplierFromImport(skuId, merchantCode.trim(), merchantName, {
       unitPrice: unitCost?.toString() ?? row.unitCost ?? undefined,
       leadTimeDays: leadTimeDays ?? row.leadTimeDays ?? undefined,
       moq: moq ?? row.moq ?? undefined,
     });
-    const [synced] = await db.select().from(skus).where(eq(skus.id, skuId)).limit(1);
-    return c.json(synced ?? row);
   }
 
-  return c.json(row);
+  const [synced] = await db.select().from(skus).where(eq(skus.id, skuId)).limit(1);
+  return c.json(synced ?? row);
 });
 
 skuRoutes.delete('/skus/:id', requireMenu('data.products'), async (c) => {

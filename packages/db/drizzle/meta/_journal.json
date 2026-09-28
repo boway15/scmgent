@@ -596,6 +596,20 @@
       "when": 1787428200000,
       "tag": "0101_all_menu_sort_order",
       "breakpoints": true
+    },
+    {
+      "idx": 85,
+      "version": "6",
+      "when": 1787430600000,
+      "tag": "0102_shipment_destination_warehouse",
+      "breakpoints": true
+    },
+    {
+      "idx": 86,
+      "version": "6",
+      "when": 1787433000000,
+      "tag": "0103_drop_layered_forecast",
+      "breakpoints": true
     }
   ]
 }

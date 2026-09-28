@@ -6,7 +6,13 @@ import {
   planningDemandAdoptions,
   skus,
 } from '@scm/db';
-import { parseDemandPlanPilotConfig } from './demand-plan-config.js';
+import {
+  DEMAND_PLAN_PROJECT_GROUP_ALL,
+  DEMAND_PLAN_WAREHOUSE_ALL,
+  isProjectGroupInPilot,
+  isWarehouseInPilot,
+  parseDemandPlanPilotConfig,
+} from './demand-plan-config.js';
 import {
   excludedCrossGroupSpuIds,
   type SkuPilotInput,
@@ -73,6 +79,17 @@ export function parseDemandPlanMonthlyNumbers(
       row.manualDailyAvg == null || row.manualDailyAvg === ''
         ? null
         : Number(row.manualDailyAvg),
+  }));
+}
+
+export function scaleDemandRowsByShare(
+  rows: Array<{ period: string; systemDailyAvg: number; manualDailyAvg: number | null }>,
+  share: number,
+): Array<{ period: string; systemDailyAvg: number; manualDailyAvg: number | null }> {
+  return rows.map((row) => ({
+    period: row.period,
+    systemDailyAvg: row.systemDailyAvg * share,
+    manualDailyAvg: row.manualDailyAvg == null ? null : row.manualDailyAvg * share,
   }));
 }
 
@@ -166,6 +183,52 @@ async function defaultLoadPublishedDemandRows(input: {
     );
 }
 
+export function buildAdoptionLookupKeys(input: {
+  projectGroup: string | null;
+  warehouseCode: string;
+}): Array<{ projectGroup: string; warehouseCode: string }> {
+  const keys: Array<{ projectGroup: string; warehouseCode: string }> = [];
+  const warehouseCodes =
+    input.warehouseCode === DEMAND_PLAN_WAREHOUSE_ALL
+      ? [DEMAND_PLAN_WAREHOUSE_ALL]
+      : [DEMAND_PLAN_WAREHOUSE_ALL, input.warehouseCode];
+
+  for (const warehouseCode of warehouseCodes) {
+    if (input.projectGroup) {
+      keys.push({ projectGroup: input.projectGroup, warehouseCode });
+    }
+  }
+  for (const warehouseCode of warehouseCodes) {
+    keys.push({ projectGroup: DEMAND_PLAN_PROJECT_GROUP_ALL, warehouseCode });
+  }
+  return keys;
+}
+
+async function resolvePlanningAdoption(input: {
+  projectGroup: string | null;
+  warehouseCode: string;
+  loadAdoption: NonNullable<LoadPlanningDemandDeps['loadAdoption']>;
+}): Promise<
+  | {
+      adoption: LoadPlanningDemandAdoption;
+      adoptionProjectGroup: string;
+      adoptionWarehouse: string;
+    }
+  | undefined
+> {
+  for (const key of buildAdoptionLookupKeys(input)) {
+    const row = await input.loadAdoption(key);
+    if (row) {
+      return {
+        adoption: row,
+        adoptionProjectGroup: key.projectGroup,
+        adoptionWarehouse: key.warehouseCode,
+      };
+    }
+  }
+  return undefined;
+}
+
 export async function loadPlanningDemandForSkuWarehouse(
   input: {
     skuId: string;
@@ -180,7 +243,6 @@ export async function loadPlanningDemandForSkuWarehouse(
   const loadAdoption = deps.loadAdoption ?? defaultLoadAdoption;
   const loadPublishedDemandRows =
     deps.loadPublishedDemandRows ?? defaultLoadPublishedDemandRows;
-
   const skuRow = await loadSku(input.skuId);
   if (!skuRow) {
     return resolvePlanningDemandFromInputs({
@@ -219,17 +281,50 @@ export async function loadPlanningDemandForSkuWarehouse(
     });
   }
 
+  const globalAdoption = await loadAdoption({
+    projectGroup: DEMAND_PLAN_PROJECT_GROUP_ALL,
+    warehouseCode: DEMAND_PLAN_WAREHOUSE_ALL,
+  });
+  const pilotEnabled =
+    globalAdoption?.source === 'demand_plan' ||
+    (isProjectGroupInPilot(skuRow.projectGroup, config) &&
+      isWarehouseInPilot(input.warehouseCode, config));
+
+  if (!pilotEnabled) {
+    return resolvePlanningDemandFromInputs({
+      pilotEnabled: false,
+      adoptionSource: 'forecast',
+      excludedSpu: false,
+      hasShare,
+      demandRows: [],
+      championWarehouseRows,
+      stationForecastMap: input.championForecastMap,
+    });
+  }
+
   const siblingSkus =
     sku.spuId != null ? await loadSiblingSkus(sku.spuId) : [sku];
   const excludedSpuIds = excludedCrossGroupSpuIds(siblingSkus);
   const excludedSpu = Boolean(sku.spuId && excludedSpuIds.has(sku.spuId));
 
-  const adoption = sku.projectGroup
-    ? await loadAdoption({
-        projectGroup: sku.projectGroup,
-        warehouseCode: input.warehouseCode,
-      })
-    : undefined;
+  const warehouseLookups =
+    input.warehouseCode === DEMAND_PLAN_WAREHOUSE_ALL
+      ? [DEMAND_PLAN_WAREHOUSE_ALL]
+      : [DEMAND_PLAN_WAREHOUSE_ALL, input.warehouseCode];
+
+  let adoption: LoadPlanningDemandAdoption | undefined;
+  let adoptionProjectGroup: string | null = sku.projectGroup;
+  let adoptionWarehouse = input.warehouseCode;
+  const resolvedAdoption = await resolvePlanningAdoption({
+    projectGroup: sku.projectGroup,
+    warehouseCode: input.warehouseCode,
+    loadAdoption,
+  });
+  if (resolvedAdoption) {
+    adoption = resolvedAdoption.adoption;
+    adoptionProjectGroup = resolvedAdoption.adoptionProjectGroup;
+    adoptionWarehouse = resolvedAdoption.adoptionWarehouse;
+  }
   const adoptionSource = adoption?.source === 'demand_plan' ? 'demand_plan' : 'forecast';
 
   let demandRows: Array<{
@@ -237,14 +332,31 @@ export async function loadPlanningDemandForSkuWarehouse(
     systemDailyAvg: number;
     manualDailyAvg: number | null;
   }> = [];
-  if (adoptionSource === 'demand_plan' && sku.projectGroup) {
-    demandRows = parseDemandPlanMonthlyNumbers(
-      await loadPublishedDemandRows({
-        skuId: input.skuId,
-        warehouseCode: input.warehouseCode,
-        projectGroup: sku.projectGroup,
-      }),
-    );
+  if (adoptionSource === 'demand_plan' && adoptionProjectGroup) {
+    for (const warehouseCode of warehouseLookups) {
+      demandRows = parseDemandPlanMonthlyNumbers(
+        await loadPublishedDemandRows({
+          skuId: input.skuId,
+          warehouseCode,
+          projectGroup: adoptionProjectGroup,
+        }),
+      );
+      if (demandRows.length) {
+        adoptionWarehouse = warehouseCode;
+        break;
+      }
+    }
+    if (
+      demandRows.length &&
+      adoptionWarehouse === DEMAND_PLAN_WAREHOUSE_ALL &&
+      input.warehouseCode !== DEMAND_PLAN_WAREHOUSE_ALL
+    ) {
+      if (share == null) {
+        demandRows = [];
+      } else {
+        demandRows = scaleDemandRowsByShare(demandRows, share);
+      }
+    }
   }
 
   return resolvePlanningDemandFromInputs({

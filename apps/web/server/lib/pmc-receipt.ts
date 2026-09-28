@@ -7,6 +7,8 @@ export type ReceivePmcItemInput = {
   planItemId: string;
   qtyReceived: number;
   receivedDate?: string;
+  /** 到货目的仓；计划未指定时必填 */
+  warehouseCode?: string;
   idempotencyKey?: string;
   userId: string;
 };
@@ -45,8 +47,11 @@ export async function receivePmcPlanItem(input: ReceivePmcItemInput) {
     .limit(1);
   if (!item) throw new Error('Plan item not found');
 
-  const warehouseCode = item.warehouseCode ?? plan.targetWarehouseCode;
-  if (!warehouseCode) throw new Error('warehouseCode is required');
+  const warehouseCode =
+    input.warehouseCode?.trim() || item.warehouseCode?.trim() || plan.targetWarehouseCode?.trim();
+  if (!warehouseCode) {
+    throw new Error('到货需指定目的仓 warehouseCode');
+  }
 
   const currentCompleted = item.completedQty ?? 0;
   const nextCompleted = currentCompleted + input.qtyReceived;

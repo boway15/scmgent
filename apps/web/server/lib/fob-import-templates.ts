@@ -72,6 +72,7 @@ export const TRANSFER_VOLUME_TEMPLATE_HEADERS = [
   'WSKU',
   '工厂名称',
   '工厂类型',
+  '起运港',
 ] as const;
 
 /** 1. 体积信息：截单清单表头 + 示例行（亦兼容 ED 汇总模板原表导入） */
@@ -115,6 +116,7 @@ function buildVolumeTemplateRows(): unknown[][] {
     'DJ504015_4',
     '广州宏龙办公家具有限公司',
     'FOB',
+    '盐田',
   ];
   return [[...TRANSFER_VOLUME_TEMPLATE_HEADERS], sample];
 }

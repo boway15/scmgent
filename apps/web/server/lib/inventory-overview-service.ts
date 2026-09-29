@@ -2,6 +2,7 @@ import { sql } from 'drizzle-orm';
 import { db } from '@scm/db';
 import { IN_PRODUCTION_WAREHOUSE } from './inventory-constants.js';
 import { normalizeReplenishLight, type ReplenishLight } from './replenish-light.js';
+import type { InventoryHealth } from './inventory-light.js';
 import {
   INVENTORY_OVERVIEW_COLUMNS,
   readSkuPackagingFromEncodingMeta,
@@ -20,6 +21,12 @@ import {
   loadInventorySnapshots,
 } from './inventory-daily-snapshot.js';
 import { filterSnapshotItems } from './inventory-overview-history.js';
+import { productScopeOnSkuAlias, type ProductScope } from './planning-accessory-filter.js';
+import {
+  attachHealthStatusToItems,
+  filterItemsByHealthStatuses,
+  loadWorstHealthBySkuIds,
+} from './sku-health-aggregate.js';
 
 export type InventoryOverviewQuery = {
   page: number;
@@ -35,6 +42,8 @@ export type InventoryOverviewQuery = {
   view?: string;
   columns?: string[];
   snapshotDate?: string;
+  productScope?: ProductScope;
+  healthStatuses?: InventoryHealth[];
 };
 
 export type InventoryTurnoverOverviewItem = {
@@ -63,6 +72,8 @@ export type InventoryTurnoverOverviewItem = {
   salesQty14d: number;
   salesQty30d: number;
   replenishLight: ReplenishLight;
+  /** SKU 跨仓最差健康灯；无快照时为 null */
+  healthStatus: InventoryHealth | null;
   packDimensionsCm: string | null;
   volumeM3: string | null;
   grossWeightKg: string | null;
@@ -140,8 +151,53 @@ function buildSkuFilters(query: InventoryOverviewQuery) {
     parts.push(sql`s.developer_name ILIKE ${ilikePattern(query.developerName)}`);
   }
 
-  if (!parts.length) return sql``;
-  return sql`AND ${sql.join(parts, sql` AND `)}`;
+  const scopeClause = productScopeOnSkuAlias(query.productScope ?? 'goods', 's');
+  if (!parts.length) return scopeClause;
+  return sql`${scopeClause} AND ${sql.join(parts, sql` AND `)}`;
+}
+
+/**
+ * Approach A: SQL subquery of SKUs whose worst (cross-warehouse) health is in statuses.
+ * Priority mirrors HEALTH_PRIORITY (red=5 … gray=1).
+ */
+function buildWorstHealthSkuFilter(statuses: InventoryHealth[] | undefined) {
+  if (!statuses?.length) return sql``;
+  return sql`AND s.id IN (
+    SELECT sku_id
+    FROM (
+      SELECT
+        sku_id,
+        CASE MAX(
+          CASE health_status
+            WHEN 'red' THEN 5
+            WHEN 'yellow' THEN 4
+            WHEN 'green' THEN 3
+            WHEN 'blue' THEN 2
+            WHEN 'gray' THEN 1
+            ELSE 0
+          END
+        )
+          WHEN 5 THEN 'red'
+          WHEN 4 THEN 'yellow'
+          WHEN 3 THEN 'green'
+          WHEN 2 THEN 'blue'
+          WHEN 1 THEN 'gray'
+          ELSE NULL
+        END AS worst_health
+      FROM (
+        SELECT DISTINCT ON (sku_id, warehouse_code)
+          sku_id,
+          health_status
+        FROM inventory_health_snapshots
+        ORDER BY sku_id, warehouse_code, computed_at DESC, id DESC
+      ) latest_health
+      GROUP BY sku_id
+    ) sku_worst
+    WHERE worst_health IN (${sql.join(
+      statuses.map((s) => sql`${s}`),
+      sql`, `,
+    )})
+  )`;
 }
 
 function pickLatestIso(...values: Array<string | Date | null | undefined>): string | null {
@@ -297,6 +353,7 @@ function mapSkuRowToItem(
     salesQty14d: sales?.salesQty14d ?? 0,
     salesQty30d: sales?.salesQty30d ?? 0,
     replenishLight: normalizeReplenishLight(row.replenishLight),
+    healthStatus: null,
     packDimensionsCm: packaging.packDimensionsCm,
     volumeM3: packaging.volumeM3,
     grossWeightKg: packaging.grossWeightKg,
@@ -310,6 +367,7 @@ async function fetchSkuRows(
   options?: { limit?: number; offset?: number; skuId?: string },
 ): Promise<SkuRow[]> {
   const filters = buildSkuFilters(query);
+  const healthFilter = buildWorstHealthSkuFilter(query.healthStatuses);
   const limit = options?.limit ?? query.pageSize;
   const offset = options?.offset ?? query.offset;
   const skuFilter = options?.skuId ? sql`AND s.id = ${options.skuId}::uuid` : sql``;
@@ -346,6 +404,7 @@ async function fetchSkuRows(
     LEFT JOIN sku_latest_source sls ON sls."skuId" = s.id
     WHERE s.is_active = true
     ${filters}
+    ${healthFilter}
     ${skuFilter}
     ORDER BY s.code ASC
     LIMIT ${limit}
@@ -357,6 +416,7 @@ async function fetchSkuRows(
 
 export async function countInventoryOverviewRows(query: InventoryOverviewQuery): Promise<number> {
   const filters = buildSkuFilters(query);
+  const healthFilter = buildWorstHealthSkuFilter(query.healthStatuses);
   const countResult = await db.execute(sql`
     ${OVERVIEW_SKU_CTE}
     SELECT count(*)::int AS count
@@ -364,6 +424,7 @@ export async function countInventoryOverviewRows(query: InventoryOverviewQuery):
     INNER JOIN sku_with_inv sw ON sw."skuId" = s.id
     WHERE s.is_active = true
     ${filters}
+    ${healthFilter}
   `);
   return Number((countResult as unknown as Array<{ count: number }>)[0]?.count ?? 0);
 }
@@ -387,16 +448,32 @@ export async function buildInventoryOverviewRows(query: InventoryOverviewQuery) 
       archived.map((row) => row.payload as InventoryTurnoverOverviewItem),
       query,
     );
-    const pageItems = filtered
-      .slice(query.offset, query.offset + query.pageSize)
-      .map((item) => ({
-        ...item,
-        turnoverExtras: projectTurnoverExtras(item.turnoverExtras ?? {}, columnProjection),
-      }));
+
+    const healthStatuses = query.healthStatuses ?? [];
+    let pageSource: InventoryTurnoverOverviewItem[];
+    let total: number;
+
+    if (healthStatuses.length > 0) {
+      const healthBySku = await loadWorstHealthBySkuIds(filtered.map((item) => item.skuId));
+      const withHealth = attachHealthStatusToItems(filtered, healthBySku);
+      const healthFiltered = filterItemsByHealthStatuses(withHealth, healthStatuses);
+      total = healthFiltered.length;
+      pageSource = healthFiltered.slice(query.offset, query.offset + query.pageSize);
+    } else {
+      const pageSlice = filtered.slice(query.offset, query.offset + query.pageSize);
+      const healthBySku = await loadWorstHealthBySkuIds(pageSlice.map((item) => item.skuId));
+      pageSource = attachHealthStatusToItems(pageSlice, healthBySku);
+      total = filtered.length;
+    }
+
+    const pageItems = pageSource.map((item) => ({
+      ...item,
+      turnoverExtras: projectTurnoverExtras(item.turnoverExtras ?? {}, columnProjection),
+    }));
 
     return {
       items: pageItems,
-      total: filtered.length,
+      total,
       page: query.page,
       pageSize: query.pageSize,
       columns: getInventoryOverviewColumnCatalog(),
@@ -424,18 +501,22 @@ export async function buildInventoryOverviewRows(query: InventoryOverviewQuery) 
   ]);
 
   const skuIds = rows.map((row) => row.skuId);
-  const [salesBySku, stocksBySku] = await Promise.all([
+  const [salesBySku, stocksBySku, healthBySku] = await Promise.all([
     loadSalesVelocityBySkuIds(skuIds),
     loadWarehouseStocksBySkuIds(skuIds),
+    loadWorstHealthBySkuIds(skuIds),
   ]);
 
-  const items: InventoryTurnoverOverviewItem[] = rows.map((row) =>
-    mapSkuRowToItem(
-      row,
-      salesBySku.get(row.skuId),
-      stocksBySku.get(row.skuId) ?? [],
-      columnProjection,
+  const items: InventoryTurnoverOverviewItem[] = attachHealthStatusToItems(
+    rows.map((row) =>
+      mapSkuRowToItem(
+        row,
+        salesBySku.get(row.skuId),
+        stocksBySku.get(row.skuId) ?? [],
+        columnProjection,
+      ),
     ),
+    healthBySku,
   );
 
   return {

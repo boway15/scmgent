@@ -24,7 +24,7 @@ import { categoryMatchesFilterCondition } from './sku-category.js';
 import { loadMonthlySalesBySkuIds } from './sales-history-query.js';
 import { MAX_FORECAST_MONTH_COUNT } from './forecast-limits.js';
 import { resolveForecastStartMonthAsOf } from './forecast-start-month.js';
-import { excludeAccessorySkuSql } from './planning-accessory-filter.js';
+import { parseProductScope, productScopeSql, type ProductScope } from './planning-accessory-filter.js';
 
 const ALLCAT_V41_PROFILE_SEGMENTS = new Set(['T1', 'T2', 'T3', 'T3P', 'T4A', 'T4B', 'T99']);
 
@@ -366,6 +366,8 @@ export type ForecastHorizonResult = {
   total: number;
   page: number;
   pageSize: number;
+  excludeAccessories: boolean;
+  accessoryEmptyReason: 'excluded_at_generation' | null;
   version: {
     id: string;
     versionName: string;
@@ -373,6 +375,21 @@ export type ForecastHorizonResult = {
     station: string | null;
   } | null;
 };
+
+function horizonAccessoryMeta(
+  version: { excludeAccessories?: boolean | null } | null | undefined,
+  productScope: ProductScope,
+  total: number,
+): Pick<ForecastHorizonResult, 'excludeAccessories' | 'accessoryEmptyReason'> {
+  const excludeAccessories = version?.excludeAccessories !== false;
+  return {
+    excludeAccessories,
+    accessoryEmptyReason:
+      productScope === 'accessory' && excludeAccessories && total === 0
+        ? 'excluded_at_generation'
+        : null,
+  };
+}
 
 type ForecastIdentity = {
   skuId: string;
@@ -913,13 +930,14 @@ async function listForecastHorizonAggregated(input: {
   historyMonthCount: number;
   asOf: Date;
   version: Awaited<ReturnType<typeof getForecastVersionById>>;
+  productScope: ProductScope;
 }): Promise<ForecastHorizonResult> {
   const stationFilter = normalizeForecastStation(input.station);
   const conditions = [
     eq(salesForecastMonthly.versionId, input.versionId),
     inArray(salesForecastMonthly.platform, [...FORECAST_V41_PLATFORM_CODES]),
     eq(salesForecastMonthly.station, stationFilter),
-    excludeAccessorySkuSql(),
+    productScopeSql(input.productScope),
   ];
   if (input.skuId?.trim()) {
     conditions.push(eq(salesForecastMonthly.skuId, input.skuId.trim()));
@@ -967,6 +985,7 @@ async function listForecastHorizonAggregated(input: {
               station: input.version.station,
             }
           : null,
+        ...horizonAccessoryMeta(input.version, input.productScope, 0),
       };
     }
     conditions.push(inArray(salesForecastMonthly.skuId, tierSkuIds));
@@ -1055,6 +1074,7 @@ async function listForecastHorizonAggregated(input: {
             station: input.version.station,
           }
         : null,
+      ...horizonAccessoryMeta(input.version, input.productScope, countRow[0]?.count ?? 0),
     };
   }
 
@@ -1168,6 +1188,7 @@ async function listForecastHorizonAggregated(input: {
           station: input.version.station,
         }
       : null,
+    ...horizonAccessoryMeta(input.version, input.productScope, countRow[0]?.count ?? 0),
   };
 }
 
@@ -1185,7 +1206,9 @@ export async function listForecastHorizon(input: {
   monthCount?: number;
   historyMonthCount?: number;
   asOf?: Date;
+  productScope?: ProductScope;
 }): Promise<ForecastHorizonResult> {
+  const productScope = parseProductScope(input.productScope);
   const page = Math.max(1, input.page ?? 1);
   const pageSize = Math.min(100, Math.max(1, input.pageSize ?? 20));
   const offset = (page - 1) * pageSize;
@@ -1209,6 +1232,8 @@ export async function listForecastHorizon(input: {
       page,
       pageSize,
       version: null,
+      excludeAccessories: true,
+      accessoryEmptyReason: null,
     };
   }
   const versionId = explicitVersionId;
@@ -1232,6 +1257,7 @@ export async function listForecastHorizon(input: {
       historyMonthCount,
       asOf,
       version,
+      productScope,
     });
   }
 
@@ -1239,7 +1265,7 @@ export async function listForecastHorizon(input: {
     eq(salesForecastMonthly.versionId, versionId),
     eq(salesForecastMonthly.station, stationFilter),
     eq(salesForecastMonthly.platform, platformNormalized),
-    excludeAccessorySkuSql(),
+    productScopeSql(productScope),
   ];
   if (input.skuId?.trim()) {
     conditions.push(eq(salesForecastMonthly.skuId, input.skuId.trim()));
@@ -1351,6 +1377,7 @@ export async function listForecastHorizon(input: {
             station: version.station,
           }
         : null,
+      ...horizonAccessoryMeta(version, productScope, countRow[0]?.count ?? 0),
     };
   }
 
@@ -1514,5 +1541,6 @@ export async function listForecastHorizon(input: {
           station: version.station,
         }
       : null,
+    ...horizonAccessoryMeta(version, productScope, countRow[0]?.count ?? 0),
   };
 }

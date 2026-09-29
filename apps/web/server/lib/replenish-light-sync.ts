@@ -1,4 +1,4 @@
-import { eq, inArray } from 'drizzle-orm';
+import { inArray } from 'drizzle-orm';
 import { db, skus } from '@scm/db';
 import type { InventoryHealth } from './inventory-light.js';
 import { type ReplenishLight } from './replenish-light.js';
@@ -55,13 +55,20 @@ export async function syncReplenishLightFromHealth(
   const skuIds = [...worstBySku.keys()];
   if (!skuIds.length) return { updated: 0, skippedLocked: 0 };
 
-  const existingRows = await db
-    .select({ id: skus.id, encodingMeta: skus.encodingMeta })
-    .from(skus)
-    .where(inArray(skus.id, skuIds));
+  const existingRows: Array<{ id: string; encodingMeta: unknown }> = [];
+  const READ_CHUNK = 2000;
+  for (let offset = 0; offset < skuIds.length; offset += READ_CHUNK) {
+    const chunk = skuIds.slice(offset, offset + READ_CHUNK);
+    const rows = await db
+      .select({ id: skus.id, encodingMeta: skus.encodingMeta })
+      .from(skus)
+      .where(inArray(skus.id, chunk));
+    existingRows.push(...rows);
+  }
 
   let updated = 0;
   let skippedLocked = 0;
+  const idsByLight = new Map<ReplenishLight, string[]>();
 
   for (const sku of existingRows) {
     if (isReplenishLightManualLocked(sku.encodingMeta)) {
@@ -71,11 +78,22 @@ export async function syncReplenishLightFromHealth(
     const health = worstBySku.get(sku.id);
     if (!health) continue;
     const nextLight = healthToReplenishLight(health);
-    await db
-      .update(skus)
-      .set({ replenishLight: nextLight, updatedAt: new Date() })
-      .where(eq(skus.id, sku.id));
-    updated += 1;
+    const list = idsByLight.get(nextLight) ?? [];
+    list.push(sku.id);
+    idsByLight.set(nextLight, list);
+  }
+
+  const WRITE_CHUNK = 1000;
+  const updatedAt = new Date();
+  for (const [light, ids] of idsByLight) {
+    for (let offset = 0; offset < ids.length; offset += WRITE_CHUNK) {
+      const chunk = ids.slice(offset, offset + WRITE_CHUNK);
+      await db
+        .update(skus)
+        .set({ replenishLight: light, updatedAt })
+        .where(inArray(skus.id, chunk));
+      updated += chunk.length;
+    }
   }
 
   return { updated, skippedLocked };

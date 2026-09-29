@@ -45,9 +45,13 @@ inventoryPoolsRoutes.get(
       hasLocal: c.req.query('hasLocal'),
       hasUndatedTransit: c.req.query('hasUndatedTransit'),
       multiTransitBatch: c.req.query('multiTransitBatch'),
+      productScope: c.req.query('productScope'),
     });
     const csv = await buildSupplyLotSummaryExportCsv(filters);
-    return csvAttachment(`inventory-pools-summary-${todayFilenameSuffix()}.csv`, csv);
+    return csvAttachment(
+      `inventory-pools-summary-${todayFilenameSuffix()}-${filters.productScope}.csv`,
+      csv,
+    );
   },
 );
 
@@ -60,10 +64,14 @@ inventoryPoolsRoutes.get(
       warehouse: c.req.query('warehouse'),
       q: c.req.query('q'),
       dateUnknown: c.req.query('dateUnknown'),
+      productScope: c.req.query('productScope'),
     });
     const csv = await buildSupplyLotsExportCsv(filters);
     const poolSuffix = filters.pool ?? 'all';
-    return csvAttachment(`inventory-pools-batches-${poolSuffix}-${todayFilenameSuffix()}.csv`, csv);
+    return csvAttachment(
+      `inventory-pools-batches-${poolSuffix}-${todayFilenameSuffix()}-${filters.productScope}.csv`,
+      csv,
+    );
   },
 );
 
@@ -83,6 +91,7 @@ inventoryPoolsRoutes.get(
       hasLocal: c.req.query('hasLocal'),
       hasUndatedTransit: c.req.query('hasUndatedTransit'),
       multiTransitBatch: c.req.query('multiTransitBatch'),
+      productScope: c.req.query('productScope'),
     });
     const [items, total] = await Promise.all([
       listSupplyLotSummaries({ ...filters, limit: pageSize, offset }),
@@ -102,17 +111,25 @@ inventoryPoolsRoutes.get('/inventory/pools', requireMenu('inventory.pools', 'inv
   const skuId = c.req.query('skuId')?.trim() || undefined;
   const q = c.req.query('q')?.trim() || undefined;
   const dateUnknown = c.req.query('dateUnknown') === 'true' ? true : undefined;
-  const filters = {
-    pool: pool || undefined,
-    warehouseCode,
+  const filters = parseSupplyLotExportFilters({
+    pool: c.req.query('pool'),
+    warehouse: c.req.query('warehouse'),
+    q: c.req.query('q'),
+    dateUnknown: c.req.query('dateUnknown'),
+    productScope: c.req.query('productScope'),
+  });
+  const lotFilters = {
+    pool: filters.pool,
+    warehouseCode: warehouseCode ?? filters.warehouseCode,
     skuId,
-    q,
-    dateUnknown,
+    q: filters.q,
+    dateUnknown: filters.dateUnknown,
+    productScope: filters.productScope,
   };
   const [items, total, dateUnknownCount] = await Promise.all([
-    listSupplyLots({ ...filters, limit: pageSize, offset }),
-    countSupplyLots(filters),
-    countSupplyLots({ ...filters, dateUnknown: true }),
+    listSupplyLots({ ...lotFilters, limit: pageSize, offset }),
+    countSupplyLots(lotFilters),
+    countSupplyLots({ ...lotFilters, dateUnknown: true }),
   ]);
   return c.json({ items, total, page, pageSize, dateUnknownCount });
 });

@@ -10,6 +10,8 @@ export type FeeRuleRow = {
   allocationMethod: AllocationMethod;
   defaultStage: CostStage;
   priority: number;
+  /** freight 规则挂港口；trucking 为 null */
+  portId?: string | null;
 };
 
 export type RuleMatchResult = {
@@ -23,15 +25,29 @@ export type RuleMatchResult = {
 
 const EXCEPTION_REMARK_PATTERN = /异常|减免|多收|调整|应付款/i;
 
+/** 按账单类型 + 港口过滤规则集。trucking 只用 portId 为空的规则；freight 必须有 portId。 */
+export function filterRulesForMatch(
+  rules: FeeRuleRow[],
+  sourceBillType: 'trucking' | 'freight',
+  portId?: string | null,
+): FeeRuleRow[] {
+  if (sourceBillType === 'trucking') {
+    return rules.filter((r) => r.sourceBillType === 'trucking' && !r.portId);
+  }
+  if (!portId) return [];
+  return rules.filter((r) => r.sourceBillType === 'freight' && r.portId === portId);
+}
+
 export function findMatchingFeeRule(
   feeType: string,
   sourceBillType: 'trucking' | 'freight',
   rules: FeeRuleRow[],
+  portId?: string | null,
 ): FeeRuleRow | undefined {
   const normalizedFee = feeType.trim();
-  const active = rules
-    .filter((r) => r.sourceBillType === sourceBillType)
-    .sort((a, b) => b.priority - a.priority);
+  const active = filterRulesForMatch(rules, sourceBillType, portId).sort(
+    (a, b) => b.priority - a.priority,
+  );
 
   for (const rule of active) {
     if (rule.feeType && rule.feeType === normalizedFee) return rule;
@@ -46,9 +62,10 @@ export function matchAllocationRule(
   rules: FeeRuleRow[],
   remark?: string | null,
   amountCny?: number,
+  portId?: string | null,
 ): RuleMatchResult {
   const normalizedFee = feeType.trim();
-  const matched = findMatchingFeeRule(normalizedFee, sourceBillType, rules);
+  const matched = findMatchingFeeRule(normalizedFee, sourceBillType, rules, portId);
   const ruleConfigured = !!matched;
 
   const method = matched?.allocationMethod ?? inferDefaultMethod(normalizedFee);
@@ -116,3 +133,34 @@ export function storedExceptionReason(item: {
   return 'unconfigured';
 }
 
+/**
+ * 从体积行构建柜号 → 起运港映射。
+ * 同柜多个不同起运港时记入 conflicts。
+ */
+export function buildContainerOriginPortMap(
+  shipments: Array<{ containerNo: string; originPort?: string | null; merchantCode?: string }>,
+  options?: { excludeNonFobMarker?: string },
+): {
+  byContainer: Map<string, string>;
+  conflicts: string[];
+} {
+  const byContainer = new Map<string, string>();
+  const conflictSet = new Set<string>();
+  const marker = options?.excludeNonFobMarker;
+
+  for (const s of shipments) {
+    if (marker && s.merchantCode === marker) continue;
+    const port = (s.originPort ?? '').trim();
+    if (!port) continue;
+    const existing = byContainer.get(s.containerNo);
+    if (existing && existing !== port) {
+      conflictSet.add(s.containerNo);
+      continue;
+    }
+    byContainer.set(s.containerNo, port);
+  }
+
+  for (const c of conflictSet) byContainer.delete(c);
+
+  return { byContainer, conflicts: [...conflictSet].sort() };
+}

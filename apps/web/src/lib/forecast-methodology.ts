@@ -38,6 +38,9 @@ export const FORECAST_METHODOLOGY_SECTIONS: ForecastMethodologySection[] = [
         ['补货消费', '补货建议 / 库存健康', '按日取预测日均', 'forecast-demand + replenishment'],
       ],
     },
+    items: [
+      '配件 SKU（编码变化段含 P 或主数据标记 accessory）默认不参与备货相关列表与预测：页面 URL 参数 productScope 缺省为 goods；生成预测默认勾选「不含配件」，取消后仅该版本包含配件行；需求计划生成与列表始终排除配件。',
+    ],
   },
   {
     title: '一、数据前提与数据源',

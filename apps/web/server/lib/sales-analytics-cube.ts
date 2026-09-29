@@ -9,6 +9,8 @@ import {
   type SalesAnalyticsCubePayload,
 } from '@scm/db';
 import { stationForWarehouse } from './forecast-demand.js';
+import { isAccessorySku } from './sku-encoding.js';
+import type { ProductScope } from './planning-accessory-filter.js';
 import { normalizeSalesPlatformSync } from './sales-platform.js';
 import {
   ANALYTICS_SITE_ORDER,
@@ -197,14 +199,50 @@ export function accumulateCubeRows(
   return finalizeCubeAccumulator(state);
 }
 
-export async function getLatestReadyCube(): Promise<SalesAnalyticsCubePayload | null> {
+function emptyAccessoryCubeFromGoods(goods: SalesAnalyticsCubePayload, note: string): SalesAnalyticsCubePayload {
+  return {
+    meta: {
+      ...goods.meta,
+      recordCount: 0,
+      totalSales: 0,
+      note,
+    },
+    months: goods.months,
+    weeks: goods.weeks,
+    data: [],
+  };
+}
+
+export async function getLatestReadyCube(
+  productScope: ProductScope = 'goods',
+): Promise<SalesAnalyticsCubePayload | null> {
   const [row] = await db
-    .select({ payload: salesAnalyticsCubeSnapshots.payload })
+    .select({
+      payload: salesAnalyticsCubeSnapshots.payload,
+      payloadAccessory: salesAnalyticsCubeSnapshots.payloadAccessory,
+    })
     .from(salesAnalyticsCubeSnapshots)
     .where(eq(salesAnalyticsCubeSnapshots.status, 'ready'))
     .orderBy(desc(salesAnalyticsCubeSnapshots.generatedAt))
     .limit(1);
-  return row?.payload ?? null;
+
+  if (!row?.payload) return null;
+
+  if (productScope === 'accessory') {
+    if (row.payloadAccessory) return row.payloadAccessory;
+    return emptyAccessoryCubeFromGoods(
+      row.payload,
+      '当前快照尚未拆分配件，请重新生成销量分析',
+    );
+  }
+
+  if (!row.payloadAccessory) {
+    return {
+      ...row.payload,
+      meta: { ...row.payload.meta, scopePending: true },
+    };
+  }
+  return row.payload;
 }
 
 export async function getCubeStatus(): Promise<{
@@ -277,11 +315,12 @@ async function loadPlatformNameMap(): Promise<Map<string, string>> {
   return new Map(rows.map((r) => [r.code, r.name]));
 }
 
-async function accumulateSalesHistoryPages(
+async function accumulateSalesHistoryPagesDual(
   warehouseStationByCode: Map<string, string>,
   platformNameByCode: Map<string, string>,
-): Promise<SalesAnalyticsCubePayload> {
-  const state = createCubeAccumulator();
+): Promise<{ goods: SalesAnalyticsCubePayload; accessory: SalesAnalyticsCubePayload }> {
+  const stateGoods = createCubeAccumulator();
+  const stateAccessory = createCubeAccumulator();
   let cursor: string | null = null;
 
   for (;;) {
@@ -294,6 +333,8 @@ async function accumulateSalesHistoryPages(
         warehouseCode: salesHistory.warehouseCode,
         channel: salesHistory.channel,
         category: sql<string | null>`coalesce(${salesHistory.category}, ${skus.category})`,
+        skuCode: skus.code,
+        skuKind: skus.skuKind,
       })
       .from(salesHistory)
       .leftJoin(skus, eq(skus.id, salesHistory.skuId))
@@ -303,21 +344,38 @@ async function accumulateSalesHistoryPages(
 
     if (!batch.length) break;
 
-    const page: CubeSourceRow[] = batch.map((row) => ({
-      saleDate: String(row.saleDate).slice(0, 10),
-      qtySold: Number(row.qtySold) || 0,
-      station: row.station,
-      warehouseCode: row.warehouseCode,
-      channel: row.channel,
-      category: row.category,
-    }));
-    accumulateCubeRowsInto(state, page, warehouseStationByCode, platformNameByCode);
+    const goodsPage: CubeSourceRow[] = [];
+    const accessoryPage: CubeSourceRow[] = [];
+    for (const row of batch) {
+      const cubeRow: CubeSourceRow = {
+        saleDate: String(row.saleDate).slice(0, 10),
+        qtySold: Number(row.qtySold) || 0,
+        station: row.station,
+        warehouseCode: row.warehouseCode,
+        channel: row.channel,
+        category: row.category,
+      };
+      if (isAccessorySku({ code: row.skuCode, skuKind: row.skuKind })) {
+        accessoryPage.push(cubeRow);
+      } else {
+        goodsPage.push(cubeRow);
+      }
+    }
+    if (goodsPage.length) {
+      accumulateCubeRowsInto(stateGoods, goodsPage, warehouseStationByCode, platformNameByCode);
+    }
+    if (accessoryPage.length) {
+      accumulateCubeRowsInto(stateAccessory, accessoryPage, warehouseStationByCode, platformNameByCode);
+    }
 
     cursor = batch[batch.length - 1]!.id;
     if (batch.length < HISTORY_PAGE_SIZE) break;
   }
 
-  return finalizeCubeAccumulator(state);
+  return {
+    goods: finalizeCubeAccumulator(stateGoods),
+    accessory: finalizeCubeAccumulator(stateAccessory),
+  };
 }
 
 async function pruneOldSnapshots(keep = SNAPSHOT_KEEP): Promise<void> {
@@ -361,17 +419,19 @@ export async function rebuildSalesAnalyticsCube(
       loadPlatformNameMap(),
     ]);
 
-    const payload = await accumulateSalesHistoryPages(stationMap, nameMap);
+    const { goods, accessory } = await accumulateSalesHistoryPagesDual(stationMap, nameMap);
     const generatedAt = new Date();
-    payload.meta.generatedAt = generatedAt.toISOString();
+    goods.meta.generatedAt = generatedAt.toISOString();
+    accessory.meta.generatedAt = generatedAt.toISOString();
 
     await db
       .update(salesAnalyticsCubeSnapshots)
       .set({
         status: 'ready',
         generatedAt,
-        meta: payload.meta,
-        payload,
+        meta: goods.meta,
+        payload: goods,
+        payloadAccessory: accessory,
         errorMessage: null,
       })
       .where(eq(salesAnalyticsCubeSnapshots.id, snap.id));

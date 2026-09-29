@@ -5,9 +5,17 @@ import {
   buildReconcileTieredTableAoa,
   buildReconcileWideTableAoa,
   buildTotalBillWideExportAoa,
+  buildTotalExportFileName,
+  buildByMerchantZipFileName,
+  buildAllocationRulesExplanationAoa,
   sanitizeExportFileName,
 } from './fob-reconcile-export.js';
 import type { AllocationRow } from './fob-settlement.js';
+import {
+  buildContainerOriginPortMap,
+  filterRulesForMatch,
+  findMatchingFeeRule,
+} from './fob-fee-rules.js';
 
 const feeRules = [
   {
@@ -83,6 +91,68 @@ assert.equal(merchantTable.length, 2);
 
 assert.equal(buildMerchantExportFileName('工厂 A', 'M1', '2026-06'), '工厂_A2026-06.xlsx');
 assert.equal(sanitizeExportFileName('a/b:c'), 'a_b_c');
+assert.equal(
+  buildTotalExportFileName('FOB-2026060001', '2026年6月分账'),
+  'FOB-2026060001_2026年6月分账_分摊总账.xlsx',
+);
+assert.equal(
+  buildByMerchantZipFileName('FOB-2026060001', '2026年6月分账'),
+  'FOB-2026060001_2026年6月分账_按工厂主体导出.zip',
+);
+
+const explain = buildAllocationRulesExplanationAoa({
+  settlementType: 'freight',
+  rules: [
+    {
+      originPort: '盐田',
+      feeType: '海运费',
+      matchMode: '账单固化',
+      allocationMethod: 'by_volume',
+      stage: 'freight',
+    },
+  ],
+});
+assert.equal(explain[0][0], '分摊规则说明');
+assert.ok(explain.some((row) => row[0] === '起运港'));
+assert.ok(explain.some((row) => row[0] === '盐田' && row[1] === '海运费'));
+
+{
+  const { byContainer, conflicts } = buildContainerOriginPortMap([
+    { containerNo: 'C1', originPort: '盐田' },
+    { containerNo: 'C1', originPort: '盐田' },
+    { containerNo: 'C2', originPort: '宁波' },
+    { containerNo: 'C2', originPort: '盐田' },
+  ]);
+  assert.equal(byContainer.get('C1'), '盐田');
+  assert.equal(byContainer.has('C2'), false);
+  assert.deepEqual(conflicts, ['C2']);
+}
+
+{
+  const rules = [
+    {
+      feeType: '海运费',
+      sourceBillType: 'freight',
+      allocationMethod: 'by_volume' as const,
+      defaultStage: 'freight' as const,
+      priority: 10,
+      portId: 'p1',
+    },
+    {
+      feeType: '拖车费',
+      sourceBillType: 'trucking',
+      allocationMethod: 'by_volume' as const,
+      defaultStage: 'trucking' as const,
+      priority: 10,
+      portId: null,
+    },
+  ];
+  assert.equal(filterRulesForMatch(rules, 'freight', 'p1').length, 1);
+  assert.equal(filterRulesForMatch(rules, 'freight', 'p2').length, 0);
+  assert.equal(findMatchingFeeRule('海运费', 'freight', rules, 'p1')?.feeType, '海运费');
+  assert.equal(findMatchingFeeRule('海运费', 'freight', rules, null), undefined);
+  assert.equal(findMatchingFeeRule('拖车费', 'trucking', rules)?.feeType, '拖车费');
+}
 
 const tiered = buildReconcileTieredTableAoa({
   allocations,

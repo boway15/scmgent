@@ -7,6 +7,7 @@ import { searchSkuCategories, categoryMatchesFilterCondition } from '../lib/sku-
 import { getSalesImportPolicy } from '../lib/sales-import-policy.js';
 
 import { requireMenu } from '../lib/rbac.js';
+import { parseProductScope, productScopeSql } from '../lib/planning-accessory-filter.js';
 
 export const salesRoutes = new Hono();
 
@@ -37,6 +38,7 @@ function parseSalesFilters(c: { req: { query: (k: string) => string | undefined 
     );
     if (categoryCondition) conditions.push(categoryCondition);
   }
+  conditions.push(productScopeSql(parseProductScope(c.req.query('productScope'))));
   return conditions;
 }
 
@@ -81,6 +83,7 @@ function parseMonthlySalesFilters(c: { req: { query: (k: string) => string | und
     );
   }
 
+  conditions.push(productScopeSql(parseProductScope(c.req.query('productScope'))));
   return conditions;
 }
 
@@ -247,7 +250,12 @@ salesRoutes.get('/sales/history/export', requireMenu('data.sales'), async (c) =>
       r.warehouseCode ?? '',
     ]),
   );
-  return csvAttachment(`sales-history-daily-${new Date().toISOString().slice(0, 10)}.csv`, csv);
+  const scope = parseProductScope(c.req.query('productScope'));
+  const scopeSuffix = scope === 'accessory' ? '-accessory' : '-goods';
+  return csvAttachment(
+    `sales-history-daily-${new Date().toISOString().slice(0, 10)}${scopeSuffix}.csv`,
+    csv,
+  );
 });
 
 salesRoutes.get('/sales/history/monthly/export', requireMenu('data.sales'), async (c) => {
@@ -288,7 +296,12 @@ salesRoutes.get('/sales/history/monthly/export', requireMenu('data.sales'), asyn
       r.channel ?? '',
     ]),
   );
-  return csvAttachment(`sales-history-monthly-${new Date().toISOString().slice(0, 10)}.csv`, csv);
+  const scope = parseProductScope(c.req.query('productScope'));
+  const scopeSuffix = scope === 'accessory' ? '-accessory' : '-goods';
+  return csvAttachment(
+    `sales-history-monthly-${new Date().toISOString().slice(0, 10)}${scopeSuffix}.csv`,
+    csv,
+  );
 });
 
 salesRoutes.get('/sales/import-policy', requireMenu('data.sales'), async (c) => {

@@ -1,4 +1,4 @@
-import { eq, desc, and, lt } from 'drizzle-orm';
+import { eq, desc, and, lt, inArray, notInArray } from 'drizzle-orm';
 import { db, taskRuns } from '@scm/db';
 
 export type TaskName =
@@ -50,12 +50,18 @@ export async function failRunningTaskRuns(
 export async function failStaleRunningTaskRuns(input?: {
   maxAgeMs?: number;
   taskName?: TaskName;
+  taskNames?: TaskName[];
+  excludeTaskNames?: TaskName[];
   errorMessage?: string;
 }): Promise<number> {
   const maxAgeMs = input?.maxAgeMs ?? 20 * 60 * 1000;
   const cutoff = new Date(Date.now() - maxAgeMs);
   const conditions = [eq(taskRuns.status, 'running'), lt(taskRuns.startedAt, cutoff)];
   if (input?.taskName) conditions.push(eq(taskRuns.taskName, input.taskName));
+  else if (input?.taskNames?.length) conditions.push(inArray(taskRuns.taskName, input.taskNames));
+  if (input?.excludeTaskNames?.length) {
+    conditions.push(notInArray(taskRuns.taskName, input.excludeTaskNames));
+  }
 
   const rows = await db
     .update(taskRuns)
@@ -73,8 +79,22 @@ export async function failStaleRunningTaskRuns(input?: {
   return rows.length;
 }
 
+const LONG_RUNNING_TASKS: TaskName[] = [
+  'stock_alert',
+  'daily_inventory_pipeline',
+  'replenishment_forecast',
+];
+
 export async function reconcileStaleRunningTaskRuns(): Promise<number> {
-  return failStaleRunningTaskRuns({ maxAgeMs: 10 * 60 * 1000 });
+  const short = await failStaleRunningTaskRuns({
+    maxAgeMs: 10 * 60 * 1000,
+    excludeTaskNames: LONG_RUNNING_TASKS,
+  });
+  const long = await failStaleRunningTaskRuns({
+    maxAgeMs: 45 * 60 * 1000,
+    taskNames: LONG_RUNNING_TASKS,
+  });
+  return short + long;
 }
 
 export async function countRunningTaskRuns(taskName: TaskName) {

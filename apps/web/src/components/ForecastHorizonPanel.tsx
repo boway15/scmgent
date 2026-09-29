@@ -13,6 +13,8 @@ import { resolveHorizonPlatformScope } from '@/lib/forecast-horizon-meta';
 import { isAllCatV41ForecastCell, isT99ForecastTier } from '@/lib/forecast-horizon-display';
 import { cn } from '@/lib/utils';
 import type { ForecastHorizonRow } from '@/components/ForecastSkuDetailDrawer';
+import { useProductScope } from '@/lib/product-scope';
+import { FORECAST_EMPTY_EXCLUDED } from '@/lib/product-scope-copy';
 
 export type ForecastHorizonViewMode = 'future' | 'history' | 'detail';
 
@@ -84,6 +86,7 @@ type Props = {
 };
 
 export function ForecastHorizonPanel({ active, filters, pageSize = 20, onSkuClick }: Props) {
+  const { productScope } = useProductScope();
   const [viewMode, setViewMode] = useState<ForecastHorizonViewMode>('future');
   const [page, setPage] = useState(1);
   const [pageSizeState, setPageSizeState] = useState(pageSize);
@@ -96,6 +99,7 @@ export function ForecastHorizonPanel({ active, filters, pageSize = 20, onSkuClic
       page,
       pageSizeState,
       viewMode,
+      productScope,
     ],
     queryFn: () =>
       api.getSalesForecastHorizon({
@@ -107,6 +111,7 @@ export function ForecastHorizonPanel({ active, filters, pageSize = 20, onSkuClic
         pendingCalibration: filters.pendingCalibration || undefined,
         page,
         pageSize: pageSizeState,
+        productScope,
         // 不传 monthCount：按版本创建时落库地平线展示
         historyMonthCount: viewMode === 'future' ? 0 : PANEL_HISTORY_MONTH_COUNT,
       }),
@@ -128,6 +133,7 @@ export function ForecastHorizonPanel({ active, filters, pageSize = 20, onSkuClic
         profileSegment: filters.profileSegment || undefined,
         pendingCalibration: filters.pendingCalibration || undefined,
         historyMonthCount: mode === 'wide' ? 0 : PANEL_HISTORY_MONTH_COUNT,
+        productScope,
       });
     } catch (err) {
       window.alert(err instanceof Error ? err.message : '导出失败');
@@ -220,10 +226,14 @@ export function ForecastHorizonPanel({ active, filters, pageSize = 20, onSkuClic
         <p className="text-text-sub">加载中…</p>
       ) : !horizon || horizon.total === 0 ? (
         <p className="text-sm text-text-sub">
-          暂无预测数据。
-          {filters.platform?.trim() && resolveHorizonPlatformScope(filters.platform) !== 'ALL' && (
+          {horizon?.accessoryEmptyReason === 'excluded_at_generation'
+            ? FORECAST_EMPTY_EXCLUDED
+            : '暂无预测数据。'}
+          {horizon?.accessoryEmptyReason !== 'excluded_at_generation' &&
+          filters.platform?.trim() &&
+          resolveHorizonPlatformScope(filters.platform) !== 'ALL' ? (
             <span> 可尝试将渠道改为「全渠道汇总」，或确认该渠道在销量历史中已有数据。</span>
-          )}
+          ) : null}
         </p>
       ) : viewMode === 'future' ? (
         <div className="overflow-auto">

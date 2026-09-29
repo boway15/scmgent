@@ -234,7 +234,7 @@ export const inventoryQueryDailySnapshots = pgTable(
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => ({
-    dateSkuCodeUnique: uniqueIndex('inventory_query_daily_snapshots_date_sku_code_unique_idx').on(
+    dateSkuCodeIdx: index('inventory_query_daily_snapshots_date_sku_code_idx').on(
       table.snapshotDate,
       table.skuCode,
     ),
@@ -243,6 +243,94 @@ export const inventoryQueryDailySnapshots = pgTable(
       table.snapshotDate,
     ),
     runIdx: index('inventory_query_daily_snapshots_run_id_idx').on(table.runId),
+  }),
+);
+
+/** 全链库存（飞书宽表 tblWUnYLwD8UATAS）每日发布批次；与库存查询快照隔离 */
+export const procurementOpsSnapshotRuns = pgTable(
+  'procurement_ops_snapshot_runs',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    snapshotDate: date('snapshot_date').notNull(),
+    syncedAt: timestamp('synced_at', { withTimezone: true }).notNull().defaultNow(),
+    source: varchar('source', { length: 50 }).notNull().default('feishu-bitable'),
+    status: varchar('status', { length: 20 }).notNull().default('published'),
+    rowCount: integer('row_count').notNull(),
+    columns: jsonb('columns').$type<string[]>(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    snapshotDateStatusIdx: index('procurement_ops_snapshot_runs_date_status_idx').on(
+      table.snapshotDate,
+      table.status,
+    ),
+  }),
+);
+
+/** 全链库存日快照；payload 为飞书列原名 */
+export const procurementOpsDailySnapshots = pgTable(
+  'procurement_ops_daily_snapshots',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    runId: uuid('run_id')
+      .notNull()
+      .references(() => procurementOpsSnapshotRuns.id, { onDelete: 'cascade' }),
+    snapshotDate: date('snapshot_date').notNull(),
+    skuId: uuid('sku_id').references(() => skus.id, { onDelete: 'set null' }),
+    skuCode: varchar('sku_code', { length: 100 }).notNull(),
+    payload: jsonb('payload').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    dateSkuCodeIdx: index('procurement_ops_daily_snapshots_date_sku_code_idx').on(
+      table.snapshotDate,
+      table.skuCode,
+    ),
+    skuCodeDateIdx: index('procurement_ops_daily_snapshots_sku_code_date_idx').on(
+      table.skuCode,
+      table.snapshotDate,
+    ),
+    runIdx: index('procurement_ops_daily_snapshots_run_id_idx').on(table.runId),
+  }),
+);
+
+/**
+ * 分仓库存影子长表：SKU × 仓库 × 状态。
+ * 由库存查询 / 全链库存日快照拆列构建；默认不写 inventory_records、不驱动规划。
+ */
+export const warehouseStockFacts = pgTable(
+  'warehouse_stock_facts',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    snapshotDate: date('snapshot_date').notNull(),
+    skuId: uuid('sku_id').references(() => skus.id, { onDelete: 'set null' }),
+    skuCode: varchar('sku_code', { length: 100 }).notNull(),
+    warehouseRaw: varchar('warehouse_raw', { length: 100 }).notNull(),
+    warehouseCode: varchar('warehouse_code', { length: 100 }).notNull(),
+    mapped: boolean('mapped').notNull().default(true),
+    bucket: varchar('bucket', { length: 40 }).notNull(),
+    bucketName: varchar('bucket_name', { length: 80 }).notNull(),
+    qty: integer('qty').notNull().default(0),
+    source: varchar('source', { length: 40 }).notNull(),
+    selected: boolean('selected').notNull().default(false),
+    columnName: varchar('column_name', { length: 200 }).notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    dateSkuIdx: index('warehouse_stock_facts_date_sku_idx').on(
+      table.snapshotDate,
+      table.skuCode,
+    ),
+    dateWhBucketIdx: index('warehouse_stock_facts_date_wh_bucket_idx').on(
+      table.snapshotDate,
+      table.warehouseCode,
+      table.bucket,
+    ),
+    dateSelectedIdx: index('warehouse_stock_facts_date_selected_idx').on(
+      table.snapshotDate,
+      table.selected,
+      table.skuId,
+    ),
   }),
 );
 

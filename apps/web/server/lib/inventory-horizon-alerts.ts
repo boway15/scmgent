@@ -12,6 +12,8 @@ export type HorizonAlertCandidate = {
   thresholdQty: number;
 };
 
+import { stockAlertIntegerQty } from './stock-alert-sync.js';
+
 const STOCKOUT_HORIZONS = [7, 15, 30] as const;
 
 /**
@@ -35,7 +37,7 @@ export function deriveHorizonAlerts(params: {
       out.push({
         alertType: 'stockout_horizon',
         horizonDays: h,
-        projectedQty: point.projectedBalance,
+        projectedQty: stockAlertIntegerQty(point.projectedBalance),
         projectedStockoutDate: params.stockoutDate,
         thresholdQty: 0,
       });
@@ -49,9 +51,9 @@ export function deriveHorizonAlerts(params: {
     out.push({
       alertType: 'coverage_short',
       horizonDays: null,
-      projectedQty: Math.round(params.coverageDays),
+      projectedQty: stockAlertIntegerQty(params.coverageDays),
       projectedStockoutDate: params.stockoutDate,
-      thresholdQty: params.totalLeadDays,
+      thresholdQty: stockAlertIntegerQty(params.totalLeadDays),
     });
   }
 
@@ -62,9 +64,9 @@ export function deriveHorizonAlerts(params: {
     out.push({
       alertType: 'overstock',
       horizonDays: null,
-      projectedQty: Math.round(params.coverageDays),
+      projectedQty: stockAlertIntegerQty(params.coverageDays),
       projectedStockoutDate: null,
-      thresholdQty: params.overstockThresholdDays,
+      thresholdQty: stockAlertIntegerQty(params.overstockThresholdDays),
       });
   }
 
@@ -74,7 +76,7 @@ export function deriveHorizonAlerts(params: {
       horizonDays: null,
       projectedQty: 0,
       projectedStockoutDate: params.stockoutDate,
-      thresholdQty: params.totalLeadDays,
+      thresholdQty: stockAlertIntegerQty(params.totalLeadDays),
     });
   }
 

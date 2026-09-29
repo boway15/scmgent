@@ -161,6 +161,17 @@ export function ProductMasterSkuTable({
                   col.id === 'category' ? 'text-text-sub' : '',
                 );
 
+                if (col.id === 'code' && sku.isAccessory) {
+                  return (
+                    <td key={col.id} className={className} style={cellStyle} title={value}>
+                      <span className="font-mono">{value}</span>
+                      <span className="ml-1.5 rounded bg-muted px-1.5 py-0.5 text-[10px] text-text-sub">
+                        配件
+                      </span>
+                    </td>
+                  );
+                }
+
                 return (
                   <td
                     key={col.id}

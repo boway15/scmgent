@@ -9,10 +9,11 @@ import {
 import {
   loadOpenLotsForNetworkTimeline,
   loadOpenLotsForTimeline,
+  type OpenTimelineLot,
 } from './inventory-supply-lot-sync.js';
 import { getForecastDailyForDate } from './forecast-demand.js';
 import { loadMergedPublishedForecastBySkuIds } from './forecast-published-resolve.js';
-import { getLatestInventorySnapshot } from './inventory-snapshot.js';
+import { getLatestInventorySnapshot, type InventorySnapshot } from './inventory-snapshot.js';
 import { addDaysIso } from './inventory-supply-lots.js';
 import {
   allocateByShare,
@@ -119,10 +120,7 @@ export async function resolveNetworkReservedQty(skuId: string): Promise<number> 
   return total;
 }
 
-function mapOpenLotsToDailyLots(
-  openLots: Awaited<ReturnType<typeof loadOpenLotsForTimeline>>,
-  todayStr: string,
-): DailyLot[] {
+function mapOpenLotsToDailyLots(openLots: OpenTimelineLot[], todayStr: string): DailyLot[] {
   const lots: DailyLot[] = [];
   for (const lot of openLots) {
     const supplyClass = classifySupplyLot({
@@ -146,96 +144,57 @@ function mapOpenLotsToDailyLots(
   return lots;
 }
 
-export async function buildSkuWarehouseTimeline(params: {
-  skuId: string;
+export function assembleWarehouseTimeline(params: {
+  today?: Date;
   warehouseCode: string;
   avgDaily: number;
-  forecastMap?: Map<string, number>;
   totalLeadDays: number;
   safetyStockDays: number;
   safetyStockQty: number;
   moq?: number;
-  today?: Date;
-  share?: ShareParseResult;
-  encodingMeta?: unknown;
+  share: ShareParseResult;
+  snapshot: InventorySnapshot;
+  overseasSnapshot: InventorySnapshot;
+  openLots: OpenTimelineLot[];
+  planningDemand: PlanningDemandResult;
   includeChampionShadow?: boolean;
-}): Promise<{
+}): {
   timeline: DailyInventoryResult;
   suggestedQty: number;
   reservedQty: number;
   planningDemand: PlanningDemandResult;
   championTimeline?: DailyInventoryResult;
-}> {
+} {
   const today = params.today ?? new Date();
   const todayStr = todayIso(today);
-  const skipSkuLookup = params.share != null || params.encodingMeta !== undefined;
-  const [snap, overseasSnap, skuRow] = await Promise.all([
-    getLatestInventorySnapshot(params.skuId, params.warehouseCode),
-    getLatestInventorySnapshot(params.skuId, 'OVERSEAS'),
-    skipSkuLookup
-      ? Promise.resolve(undefined)
-      : db
-          .select({ encodingMeta: skus.encodingMeta })
-          .from(skus)
-          .where(eq(skus.id, params.skuId))
-          .limit(1)
-          .then((rows) => rows[0]),
-  ]);
-  const share =
-    params.share ??
-    parseSharesFromSnapshot(
-      readTurnoverSnapshot(
-        params.encodingMeta !== undefined ? params.encodingMeta : skuRow?.encodingMeta,
-      ),
-    );
   const reservedQty = resolveReservedQty({
-    warehouseReserved: snap.qtyReserved,
-    overseasReserved: overseasSnap.qtyReserved,
-    share,
+    warehouseReserved: params.snapshot.qtyReserved,
+    overseasReserved: params.overseasSnapshot.qtyReserved,
+    share: params.share,
     planningWarehouse: params.warehouseCode,
   });
-
-  let forecastMap = params.forecastMap;
-  if (!forecastMap) {
-    const merged = await loadMergedPublishedForecastBySkuIds([params.skuId]);
-    forecastMap = merged.get(params.skuId)?.map;
-  }
-  const stationForecastMap = forecastMap ?? new Map<string, number>();
-
-  const planningDemand = await loadPlanningDemandForSkuWarehouse({
-    skuId: params.skuId,
-    warehouseCode: params.warehouseCode,
-    championForecastMap: stationForecastMap,
-  });
+  const planningDemand = params.planningDemand;
   const timelineMap = planningDemand.demandMap;
   const fallbackDaily = pickTimelineFallbackDaily({
     source: planningDemand.source,
     planningFallbackDaily: planningDemand.fallbackDaily,
     avgDaily: params.avgDaily,
   });
-
-  const openLots = await loadOpenLotsForTimeline({
-    skuId: params.skuId,
-    warehouseCode: params.warehouseCode,
-    today: todayStr,
-  });
-
-  const lots = mapOpenLotsToDailyLots(openLots, todayStr);
-
+  const lots = mapOpenLotsToDailyLots(params.openLots, todayStr);
   const hasConfirmedOverseas = lots.some(
     (lot) => lot.supplyClass === 'confirmed' && lot.pool === 'overseas',
   );
   if (
     shouldBackfillNativeAvailable(
       hasConfirmedOverseas,
-      snap.qtyAvailable,
+      params.snapshot.qtyAvailable,
       params.warehouseCode,
     )
   ) {
     lots.push({
       supplyClass: 'confirmed',
       pool: 'overseas',
-      qty: snap.qtyAvailable,
+      qty: params.snapshot.qtyAvailable,
       availableAt: todayStr,
     });
   }
@@ -289,6 +248,82 @@ export async function buildSkuWarehouseTimeline(params: {
     planningDemand,
     ...(championTimeline ? { championTimeline } : {}),
   };
+}
+
+export async function buildSkuWarehouseTimeline(params: {
+  skuId: string;
+  warehouseCode: string;
+  avgDaily: number;
+  forecastMap?: Map<string, number>;
+  totalLeadDays: number;
+  safetyStockDays: number;
+  safetyStockQty: number;
+  moq?: number;
+  today?: Date;
+  share?: ShareParseResult;
+  encodingMeta?: unknown;
+  includeChampionShadow?: boolean;
+}): Promise<{
+  timeline: DailyInventoryResult;
+  suggestedQty: number;
+  reservedQty: number;
+  planningDemand: PlanningDemandResult;
+  championTimeline?: DailyInventoryResult;
+}> {
+  const today = params.today ?? new Date();
+  const skipSkuLookup = params.share != null || params.encodingMeta !== undefined;
+  const [snap, overseasSnap, skuRow] = await Promise.all([
+    getLatestInventorySnapshot(params.skuId, params.warehouseCode),
+    getLatestInventorySnapshot(params.skuId, 'OVERSEAS'),
+    skipSkuLookup
+      ? Promise.resolve(undefined)
+      : db
+          .select({ encodingMeta: skus.encodingMeta })
+          .from(skus)
+          .where(eq(skus.id, params.skuId))
+          .limit(1)
+          .then((rows) => rows[0]),
+  ]);
+  const share =
+    params.share ??
+    parseSharesFromSnapshot(
+      readTurnoverSnapshot(
+        params.encodingMeta !== undefined ? params.encodingMeta : skuRow?.encodingMeta,
+      ),
+    );
+  let forecastMap = params.forecastMap;
+  if (!forecastMap) {
+    const merged = await loadMergedPublishedForecastBySkuIds([params.skuId]);
+    forecastMap = merged.get(params.skuId)?.map;
+  }
+  const stationForecastMap = forecastMap ?? new Map<string, number>();
+
+  const planningDemand = await loadPlanningDemandForSkuWarehouse({
+    skuId: params.skuId,
+    warehouseCode: params.warehouseCode,
+    championForecastMap: stationForecastMap,
+  });
+  const openLots = await loadOpenLotsForTimeline({
+    skuId: params.skuId,
+    warehouseCode: params.warehouseCode,
+    today: todayIso(today),
+  });
+
+  return assembleWarehouseTimeline({
+    today,
+    warehouseCode: params.warehouseCode,
+    avgDaily: params.avgDaily,
+    totalLeadDays: params.totalLeadDays,
+    safetyStockDays: params.safetyStockDays,
+    safetyStockQty: params.safetyStockQty,
+    moq: params.moq,
+    share,
+    snapshot: snap,
+    overseasSnapshot: overseasSnap,
+    openLots,
+    planningDemand,
+    includeChampionShadow: params.includeChampionShadow,
+  });
 }
 
 /** SKU 级网络时间轴：聚合全仓 open lots + 网络需求（warehouse=ALL），交期由调用方传纯生产段。 */

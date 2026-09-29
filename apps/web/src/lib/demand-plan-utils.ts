@@ -80,7 +80,7 @@ export function demandPlanCellTitle(row: {
 
 export const DEMAND_PLAN_SKIP_REASON_LABEL: Record<string, string> = {
   cross_group_spu: '跨项目组 SPU',
-  accessory: '配件（变化含 P）不预测',
+  accessory: '配件 SKU 不参与备货预测',
   no_share: '无仓占比',
   no_forecast: '无可用月预测形状',
   no_recent_demand: '近 90 天无销量',

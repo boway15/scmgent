@@ -1,5 +1,6 @@
 import { apiFetch, apiUrl } from './base-path';
 import type { HorizonBand } from './forecast-horizon-meta';
+import { appendProductScopeQuery, type ProductScope } from './product-scope';
 import type { SalesAnalyticsCubePayload } from './sales-analytics-types';
 
 export type MenuNode = {
@@ -522,10 +523,28 @@ export type ResolvedLeadTime = {
   warehouseCode: string;
 };
 
+export type NetworkSupplyPools = {
+  localQty: number;
+  inTransitQty: number;
+  overseasQty: number;
+  dateUnknownQty: number;
+  nearestAvailableAt: string | null;
+};
+
+export type NetworkWarehouseSummary = {
+  warehouseCode: string;
+  effectiveQty: number;
+  nearestAvailableAt: string | null;
+  stockoutDateConfirmed?: string | null;
+  coverageDays?: number | null;
+  healthStatus?: InventoryHealth | null;
+};
+
 export type SkuPlanningView = {
   skuId: string;
   skuCode: string;
   warehouseCode: string;
+  scope: 'network' | 'warehouse';
   position: InventoryPositionBreakdown;
   leadTime: ResolvedLeadTime;
   avgDaily: number;
@@ -571,6 +590,8 @@ export type SkuPlanningView = {
     shareSumWarning: boolean;
   };
   unallocatedNetworkQty?: number;
+  supplyPools?: NetworkSupplyPools;
+  warehouses?: NetworkWarehouseSummary[];
   planningDemandSource?: 'demand_plan' | 'forecast';
   planningDemandFlags?: string[];
   championStockoutDateConfirmed?: string | null;
@@ -590,6 +611,7 @@ export type SkuPlanningView = {
     qty?: number;
     days?: number;
   }>;
+  isAccessory?: boolean;
 };
 
 export type DemandPlanVersionListItem = {
@@ -814,7 +836,13 @@ export type InventoryDataIssueRow = {
   skuCode: string;
   skuName: string;
   warehouseCode: string;
-  issueType: 'missing_available_at' | 'unallocated_warehouse' | 'share_sum_mismatch';
+  issueType:
+    | 'missing_available_at'
+    | 'unallocated_warehouse'
+    | 'share_sum_mismatch'
+    | 'unmapped_warehouse'
+    | 'position_source_mismatch'
+    | 'position_share_gap';
   impactModule: string;
   example: string;
   qty: number;
@@ -876,6 +904,7 @@ export type SupplyLotSummaryFilters = {
   hasLocal?: boolean;
   hasUndatedTransit?: boolean;
   multiTransitBatch?: boolean;
+  productScope?: ProductScope;
 };
 
 export type SupplyLotBatchFilters = {
@@ -884,6 +913,7 @@ export type SupplyLotBatchFilters = {
   skuId?: string;
   q?: string;
   dateUnknown?: boolean;
+  productScope?: ProductScope;
 };
 
 export type UnallocatedSupplyRow = SupplyLotRow & {
@@ -935,6 +965,7 @@ export type SkuOverview = {
   /** 与库存总览一致：SKU / 库存 / 周转快照最晚更新时间 */
   updatedAt?: string | null;
   replenishLight?: ReplenishLight;
+  isAccessory?: boolean;
   supplierCount: number;
   isActive: boolean;
 };
@@ -965,6 +996,8 @@ export type InventoryOverview = {
   salesQty14d: number;
   salesQty30d: number;
   replenishLight: ReplenishLight;
+  /** SKU 跨仓最差健康灯；无快照时为 null */
+  healthStatus?: InventoryHealth | null;
   packDimensionsCm?: string | null;
   volumeM3?: string | null;
   grossWeightKg?: string | null;
@@ -1899,6 +1932,7 @@ export const api = {
     category?: string;
     page?: number;
     pageSize?: number;
+    productScope?: ProductScope;
   }) => {
     const qs = new URLSearchParams();
     if (params?.skuCode) qs.set('skuCode', params.skuCode);
@@ -1910,6 +1944,7 @@ export const api = {
     if (params?.category) qs.set('category', params.category);
     if (params?.page) qs.set('page', String(params.page));
     if (params?.pageSize) qs.set('pageSize', String(params.pageSize));
+    appendProductScopeQuery(qs, params?.productScope);
     const query = qs.toString();
     return request<{
       items: Array<{
@@ -1939,6 +1974,7 @@ export const api = {
     warehouse?: string;
     station?: string;
     category?: string;
+    productScope?: ProductScope;
   }) => {
     const qs = new URLSearchParams();
     if (params?.skuCode) qs.set('skuCode', params.skuCode);
@@ -1948,6 +1984,7 @@ export const api = {
     if (params?.warehouse) qs.set('warehouse', params.warehouse);
     if (params?.station) qs.set('station', params.station);
     if (params?.category) qs.set('category', params.category);
+    appendProductScopeQuery(qs, params?.productScope);
     const query = qs.toString();
     const res = await apiFetch(apiUrl(`/api/sales/history/export${query ? `?${query}` : ''}`));
     if (!res.ok) throw new Error('Export failed');
@@ -1965,6 +2002,7 @@ export const api = {
     to?: string;
     channel?: string;
     category?: string;
+    productScope?: ProductScope;
   }) => {
     const qs = new URLSearchParams();
     if (params?.skuCode) qs.set('skuCode', params.skuCode);
@@ -1972,6 +2010,7 @@ export const api = {
     if (params?.to) qs.set('to', params.to);
     if (params?.channel) qs.set('channel', params.channel);
     if (params?.category) qs.set('category', params.category);
+    appendProductScopeQuery(qs, params?.productScope);
     const query = qs.toString();
     const res = await apiFetch(apiUrl(`/api/sales/history/monthly/export${query ? `?${query}` : ''}`));
     if (!res.ok) throw new Error('Export failed');
@@ -2123,6 +2162,8 @@ export const api = {
     view?: string;
     columns?: string[];
     snapshotDate?: string;
+    productScope?: 'goods' | 'accessory';
+    healthStatuses?: InventoryHealth[];
   }) => {
     const qs = new URLSearchParams();
     if (params?.q) qs.set('q', params.q);
@@ -2136,6 +2177,10 @@ export const api = {
     if (params?.pageSize) qs.set('pageSize', String(params.pageSize));
     if (params?.view) qs.set('view', params.view);
     if (params?.snapshotDate) qs.set('snapshotDate', params.snapshotDate);
+    if (params?.productScope === 'accessory') qs.set('productScope', 'accessory');
+    if (params?.healthStatuses?.length) {
+      qs.set('healthStatuses', params.healthStatuses.join(','));
+    }
     if (params?.columns?.length) {
       qs.set('columns', params.columns.map((c) => encodeURIComponent(c)).join(','));
     }
@@ -2178,6 +2223,7 @@ export const api = {
     page?: number;
     pageSize?: number;
     snapshotDate?: string;
+    productScope?: 'goods' | 'accessory';
   }) => {
     const qs = new URLSearchParams();
     if (params?.q) qs.set('q', params.q);
@@ -2187,6 +2233,7 @@ export const api = {
     if (params?.page) qs.set('page', String(params.page));
     if (params?.pageSize) qs.set('pageSize', String(params.pageSize));
     if (params?.snapshotDate) qs.set('snapshotDate', params.snapshotDate);
+    if (params?.productScope === 'accessory') qs.set('productScope', 'accessory');
     const query = qs.toString();
     return request<{
       items: Array<{
@@ -2212,6 +2259,7 @@ export const api = {
     salesCountry?: string;
     lifecycle?: string;
     snapshotDate?: string;
+    productScope?: 'goods' | 'accessory';
     columns?: string[];
   }) => {
     const qs = new URLSearchParams();
@@ -2220,6 +2268,7 @@ export const api = {
     if (params?.salesCountry) qs.set('salesCountry', params.salesCountry);
     if (params?.lifecycle) qs.set('lifecycle', params.lifecycle);
     if (params?.snapshotDate) qs.set('snapshotDate', params.snapshotDate);
+    if (params?.productScope === 'accessory') qs.set('productScope', 'accessory');
     if (params?.columns?.length) {
       qs.set('columns', params.columns.map((c) => encodeURIComponent(c)).join(','));
     }
@@ -2228,11 +2277,85 @@ export const api = {
     if (!res.ok) throw new Error('Export failed');
     return res.blob();
   },
-  getSkuPlanning: (skuId: string, warehouseCode?: string) => {
-    const query = warehouseCode
-      ? `?warehouse=${encodeURIComponent(warehouseCode)}`
-      : '';
-    return request<SkuPlanningView>(`/api/inventory/planning/${skuId}${query}`);
+  getProcurementOpsDates: () =>
+    request<{
+      items: Array<{ snapshotDate: string; syncedAt: string; rowCount: number }>;
+    }>('/api/inventory/procurement-ops/dates'),
+  getProcurementOps: (params?: {
+    q?: string;
+    category?: string;
+    salesCountry?: string;
+    lifecycle?: string;
+    page?: number;
+    pageSize?: number;
+    snapshotDate?: string;
+    productScope?: 'goods' | 'accessory';
+  }) => {
+    const qs = new URLSearchParams();
+    if (params?.q) qs.set('q', params.q);
+    if (params?.category) qs.set('category', params.category);
+    if (params?.salesCountry) qs.set('salesCountry', params.salesCountry);
+    if (params?.lifecycle) qs.set('lifecycle', params.lifecycle);
+    if (params?.page) qs.set('page', String(params.page));
+    if (params?.pageSize) qs.set('pageSize', String(params.pageSize));
+    if (params?.snapshotDate) qs.set('snapshotDate', params.snapshotDate);
+    if (params?.productScope === 'accessory') qs.set('productScope', 'accessory');
+    const query = qs.toString();
+    return request<{
+      items: Array<{
+        skuId: string | null;
+        skuCode: string;
+        payload: Record<string, string>;
+      }>;
+      total: number;
+      page: number;
+      pageSize: number;
+      selectedSnapshotDate: string | null;
+      latestSnapshotDate: string | null;
+      isLatestSnapshot: boolean;
+      isStale: boolean;
+      syncedAt: string | null;
+      columns: string[];
+      defaultVisibleColumns: string[];
+    }>(`/api/inventory/procurement-ops${query ? `?${query}` : ''}`);
+  },
+  exportProcurementOpsCsv: async (params?: {
+    q?: string;
+    category?: string;
+    salesCountry?: string;
+    lifecycle?: string;
+    snapshotDate?: string;
+    productScope?: 'goods' | 'accessory';
+    columns?: string[];
+  }) => {
+    const qs = new URLSearchParams();
+    if (params?.q) qs.set('q', params.q);
+    if (params?.category) qs.set('category', params.category);
+    if (params?.salesCountry) qs.set('salesCountry', params.salesCountry);
+    if (params?.lifecycle) qs.set('lifecycle', params.lifecycle);
+    if (params?.snapshotDate) qs.set('snapshotDate', params.snapshotDate);
+    if (params?.productScope === 'accessory') qs.set('productScope', 'accessory');
+    if (params?.columns?.length) {
+      qs.set('columns', params.columns.map((c) => encodeURIComponent(c)).join(','));
+    }
+    const query = qs.toString();
+    const res = await apiFetch(
+      apiUrl(`/api/inventory/procurement-ops/export${query ? `?${query}` : ''}`),
+    );
+    if (!res.ok) throw new Error('Export failed');
+    return res.blob();
+  },
+  getSkuPlanning: (
+    skuId: string,
+    opts?: { warehouseCode?: string; scope?: 'network' | 'warehouse' },
+  ) => {
+    const qs = new URLSearchParams();
+    if (opts?.scope) qs.set('scope', opts.scope);
+    if (opts?.warehouseCode) qs.set('warehouse', opts.warehouseCode);
+    const query = qs.toString();
+    return request<SkuPlanningView>(
+      `/api/inventory/planning/${skuId}${query ? `?${query}` : ''}`,
+    );
   },
   getSupplyLotSummaries: (params?: SupplyLotSummaryFilters & { page?: number; pageSize?: number }) => {
     const qs = new URLSearchParams();
@@ -2245,6 +2368,7 @@ export const api = {
     if (params?.hasLocal) qs.set('hasLocal', 'true');
     if (params?.hasUndatedTransit) qs.set('hasUndatedTransit', 'true');
     if (params?.multiTransitBatch) qs.set('multiTransitBatch', 'true');
+    appendProductScopeQuery(qs, params?.productScope);
     const query = qs.toString();
     return request<PaginatedResult<SupplyLotSummaryRow>>(
       `/api/inventory/pools/summary${query ? `?${query}` : ''}`,
@@ -2259,6 +2383,7 @@ export const api = {
     if (params?.hasLocal) qs.set('hasLocal', 'true');
     if (params?.hasUndatedTransit) qs.set('hasUndatedTransit', 'true');
     if (params?.multiTransitBatch) qs.set('multiTransitBatch', 'true');
+    appendProductScopeQuery(qs, params?.productScope);
     const query = qs.toString();
     const res = await apiFetch(
       apiUrl(`/api/inventory/pools/summary/export${query ? `?${query}` : ''}`),
@@ -2277,6 +2402,7 @@ export const api = {
     if (params?.pageSize) qs.set('pageSize', String(params.pageSize));
     if (params?.q) qs.set('q', params.q);
     if (params?.dateUnknown) qs.set('dateUnknown', 'true');
+    appendProductScopeQuery(qs, params?.productScope);
     const query = qs.toString();
     return request<PaginatedResult<SupplyLotRow> & { dateUnknownCount?: number }>(
       `/api/inventory/pools${query ? `?${query}` : ''}`,
@@ -2288,6 +2414,7 @@ export const api = {
     if (params?.warehouse) qs.set('warehouse', params.warehouse);
     if (params?.q) qs.set('q', params.q);
     if (params?.dateUnknown) qs.set('dateUnknown', 'true');
+    appendProductScopeQuery(qs, params?.productScope);
     const query = qs.toString();
     const res = await apiFetch(apiUrl(`/api/inventory/pools/export${query ? `?${query}` : ''}`));
     if (!res.ok) throw new Error('Export failed');
@@ -2310,14 +2437,19 @@ export const api = {
       method: 'PATCH',
       body: JSON.stringify(data),
     }),
-  getPlanningDashboard: () =>
-    request<PlanningDashboard>('/api/planning/dashboard'),
+  getPlanningDashboard: (params?: { productScope?: ProductScope }) => {
+    const qs = new URLSearchParams();
+    appendProductScopeQuery(qs, params?.productScope);
+    const query = qs.toString();
+    return request<PlanningDashboard>(`/api/planning/dashboard${query ? `?${query}` : ''}`);
+  },
   getInventoryDataIssues: (params?: {
     status?: string;
     type?: string;
     page?: number;
     pageSize?: number;
     q?: string;
+    productScope?: ProductScope;
   }) => {
     const qs = new URLSearchParams();
     if (params?.status) qs.set('status', params.status);
@@ -2325,11 +2457,13 @@ export const api = {
     if (params?.page) qs.set('page', String(params.page));
     if (params?.pageSize) qs.set('pageSize', String(params.pageSize));
     if (params?.q) qs.set('q', params.q);
+    appendProductScopeQuery(qs, params?.productScope);
     const query = qs.toString();
     return request<
       PaginatedResult<InventoryDataIssueRow> & {
         count: number;
         openByType: Record<string, number>;
+        accessoryOpenCount?: number;
       }
     >(`/api/inventory/data-issues${query ? `?${query}` : ''}`);
   },
@@ -2354,12 +2488,28 @@ export const api = {
       refreshed: number;
       autoResolved: number;
     }>('/api/tasks/inventory-data-issue-scan', { method: 'POST' }),
+  exportInventoryDataIssues: async (params?: {
+    status?: string;
+    type?: string;
+    q?: string;
+    productScope?: ProductScope;
+  }) => {
+    const qs = new URLSearchParams();
+    if (params?.status) qs.set('status', params.status);
+    if (params?.type) qs.set('type', params.type);
+    if (params?.q) qs.set('q', params.q);
+    appendProductScopeQuery(qs, params?.productScope);
+    const query = qs.toString();
+    const res = await apiFetch(apiUrl(`/api/inventory/data-issues/export${query ? `?${query}` : ''}`));
+    await downloadAttachment(res, `inventory-data-issues-${new Date().toISOString().slice(0, 10)}.csv`);
+  },
   getUnallocatedSupply: (params?: {
     skuId?: string;
     pool?: string;
     page?: number;
     pageSize?: number;
     q?: string;
+    productScope?: ProductScope;
   }) => {
     const qs = new URLSearchParams();
     if (params?.skuId) qs.set('skuId', params.skuId);
@@ -2367,6 +2517,7 @@ export const api = {
     if (params?.page) qs.set('page', String(params.page));
     if (params?.pageSize) qs.set('pageSize', String(params.pageSize));
     if (params?.q) qs.set('q', params.q);
+    appendProductScopeQuery(qs, params?.productScope);
     const query = qs.toString();
     return request<
       PaginatedResult<UnallocatedSupplyRow> & {
@@ -2394,6 +2545,8 @@ export const api = {
     developerName?: string;
     view?: string;
     columns?: string[];
+    snapshotDate?: string;
+    productScope?: 'goods' | 'accessory';
     full?: boolean;
   }) => {
     const qs = new URLSearchParams();
@@ -2405,6 +2558,8 @@ export const api = {
     if (params?.ownerName) qs.set('ownerName', params.ownerName);
     if (params?.developerName) qs.set('developerName', params.developerName);
     if (params?.view) qs.set('view', params.view);
+    if (params?.snapshotDate) qs.set('snapshotDate', params.snapshotDate);
+    if (params?.productScope === 'accessory') qs.set('productScope', 'accessory');
     if (params?.full) qs.set('full', 'true');
     if (params?.columns?.length) {
       qs.set('columns', params.columns.map((c) => encodeURIComponent(c)).join(','));
@@ -2482,12 +2637,14 @@ export const api = {
     page?: number;
     pageSize?: number;
     q?: string;
+    skuId?: string;
   }) => {
     const qs = new URLSearchParams();
     if (params?.delayed) qs.set('delayed', '1');
     if (params?.page) qs.set('page', String(params.page));
     if (params?.pageSize) qs.set('pageSize', String(params.pageSize));
     if (params?.q?.trim()) qs.set('q', params.q.trim());
+    if (params?.skuId?.trim()) qs.set('skuId', params.skuId.trim());
     const query = qs.toString();
     return request<PaginatedResult<Shipment>>(`/api/shipments${query ? `?${query}` : ''}`);
   },
@@ -2505,12 +2662,19 @@ export const api = {
         lastMileCostIndex: string;
       }>
     >('/api/channel-warehouse-prefs'),
-  getSafetyStock: (params?: { page?: number; pageSize?: number; q?: string; warehouse?: string }) => {
+  getSafetyStock: (params?: {
+    page?: number;
+    pageSize?: number;
+    q?: string;
+    warehouse?: string;
+    productScope?: ProductScope;
+  }) => {
     const qs = new URLSearchParams();
     if (params?.page) qs.set('page', String(params.page));
     if (params?.pageSize) qs.set('pageSize', String(params.pageSize));
     if (params?.q?.trim()) qs.set('q', params.q.trim());
     if (params?.warehouse?.trim()) qs.set('warehouse', params.warehouse.trim());
+    appendProductScopeQuery(qs, params?.productScope);
     const query = qs.toString();
     return request<
       PaginatedResult<{
@@ -2583,6 +2747,7 @@ export const api = {
     horizonDays?: string;
     alertType?: string;
     resolved?: 'open' | 'done';
+    productScope?: ProductScope;
   }) => {
     const qs = new URLSearchParams();
     if (params?.page) qs.set('page', String(params.page));
@@ -2591,6 +2756,7 @@ export const api = {
     if (params?.horizonDays) qs.set('horizonDays', params.horizonDays);
     if (params?.alertType) qs.set('alertType', params.alertType);
     if (params?.resolved) qs.set('resolved', params.resolved);
+    appendProductScopeQuery(qs, params?.productScope);
     const query = qs.toString();
     return request<{
       items: Array<{
@@ -2626,6 +2792,7 @@ export const api = {
     queue?: 'auto' | 'manual' | 'all';
     page?: number;
     pageSize?: number;
+    productScope?: ProductScope;
   }) => {
     const qs = new URLSearchParams();
     if (params?.q?.trim()) qs.set('q', params.q.trim());
@@ -2635,6 +2802,7 @@ export const api = {
     if (params?.queue) qs.set('queue', params.queue);
     if (params?.page) qs.set('page', String(params.page));
     if (params?.pageSize) qs.set('pageSize', String(params.pageSize));
+    appendProductScopeQuery(qs, params?.productScope);
     const query = qs.toString();
     return request<
       PaginatedResult<{
@@ -3279,7 +3447,15 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ csv }),
     }),
-  runStockAlert: () => request('/api/tasks/stock-alert', { method: 'POST' }),
+  runStockAlert: () =>
+    request<{
+      accepted?: boolean;
+      taskRunId?: string;
+      status?: string;
+      message?: string;
+      skipped?: boolean;
+    }>('/api/tasks/stock-alert', { method: 'POST' }),
+  getTaskRun: (id: string) => request<TaskRunSummary>(`/api/tasks/runs/${id}`),
   runReplenishmentForecast: () => request('/api/tasks/replenishment-forecast', { method: 'POST' }),
   getAiConfig: () =>
     request<{
@@ -3320,8 +3496,14 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(body),
     }),
-  getFobFeeRules: (params?: { sourceBillType?: 'trucking' | 'freight' }) => {
-    const q = params?.sourceBillType ? `?sourceBillType=${params.sourceBillType}` : '';
+  getFobFeeRules: (params?: {
+    sourceBillType?: 'trucking' | 'freight';
+    portId?: string;
+  }) => {
+    const search = new URLSearchParams();
+    if (params?.sourceBillType) search.set('sourceBillType', params.sourceBillType);
+    if (params?.portId) search.set('portId', params.portId);
+    const q = search.toString() ? `?${search.toString()}` : '';
     return request<
       Array<{
         id: string;
@@ -3333,6 +3515,7 @@ export const api = {
         priority: number;
         isActive: boolean;
         remark: string | null;
+        portId: string | null;
         createdAt: string;
       }>
     >(`/api/logistics/fob-fee-rules${q}`);
@@ -3346,6 +3529,7 @@ export const api = {
     priority?: number;
     remark?: string;
     isActive?: boolean;
+    portId?: string | null;
   }) =>
     request('/api/logistics/fob-fee-rules', { method: 'POST', body: JSON.stringify(data) }),
   resetFobFeeRulePriorities: () =>
@@ -3362,9 +3546,35 @@ export const api = {
       priority?: number;
       remark?: string | null;
       isActive?: boolean;
+      portId?: string | null;
     },
   ) =>
     request(`/api/logistics/fob-fee-rules/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
+  getFobPorts: (params?: { activeOnly?: boolean }) => {
+    const q = params?.activeOnly ? '?activeOnly=1' : '';
+    return request<
+      Array<{
+        id: string;
+        name: string;
+        code: string | null;
+        isActive: boolean;
+        remark: string | null;
+        createdAt: string;
+        updatedAt: string;
+      }>
+    >(`/api/logistics/fob-ports${q}`);
+  },
+  createFobPort: (data: { name: string; code?: string; remark?: string; isActive?: boolean }) =>
+    request('/api/logistics/fob-ports', { method: 'POST', body: JSON.stringify(data) }),
+  updateFobPort: (
+    id: string,
+    data: { name?: string; code?: string | null; remark?: string | null; isActive?: boolean },
+  ) => request(`/api/logistics/fob-ports/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
+  copyFobPortRules: (targetPortId: string, sourcePortId: string) =>
+    request<{ ok: boolean; copied: number; sourcePortName: string; targetPortName: string }>(
+      `/api/logistics/fob-ports/${targetPortId}/copy-rules`,
+      { method: 'POST', body: JSON.stringify({ sourcePortId }) },
+    ),
   getFobServiceProviders: (params?: { providerType?: 'trucking' | 'freight'; activeOnly?: boolean }) => {
     const search = new URLSearchParams();
     if (params?.providerType) search.set('providerType', params.providerType);
@@ -3757,6 +3967,7 @@ export const api = {
     category?: string;
     page?: number;
     pageSize?: number;
+    productScope?: ProductScope;
   }) => {
     const qs = new URLSearchParams();
     if (params?.skuCode) qs.set('skuCode', params.skuCode);
@@ -3766,6 +3977,7 @@ export const api = {
     if (params?.category) qs.set('category', params.category);
     if (params?.page) qs.set('page', String(params.page));
     if (params?.pageSize) qs.set('pageSize', String(params.pageSize));
+    appendProductScopeQuery(qs, params?.productScope);
     const query = qs.toString();
     return request<{
       items: Array<{
@@ -3794,7 +4006,14 @@ export const api = {
       meta: SalesAnalyticsCubePayload['meta'] | null;
       errorMessage: string | null;
     }>('/api/sales-analytics/status'),
-  getSalesAnalyticsCube: () => request<SalesAnalyticsCubePayload>('/api/sales-analytics/cube'),
+  getSalesAnalyticsCube: (params?: { productScope?: ProductScope }) => {
+    const qs = new URLSearchParams();
+    appendProductScopeQuery(qs, params?.productScope);
+    const query = qs.toString();
+    return request<SalesAnalyticsCubePayload>(
+      `/api/sales-analytics/cube${query ? `?${query}` : ''}`,
+    );
+  },
   rebuildSalesAnalyticsCube: () =>
     request<{ ok: true }>('/api/sales-analytics/rebuild', { method: 'POST' }),
   getSalesForecastStations: () => request<string[]>('/api/sales-forecast/stations'),
@@ -3822,6 +4041,7 @@ export const api = {
     monthCount?: number;
     startMonth?: string;
     background?: boolean;
+    excludeAccessories?: boolean;
   }) => {
     const url = apiUrl('/api/sales-forecasts/generate-baseline');
     const res = await apiFetch(url, {
@@ -4156,6 +4376,7 @@ export const api = {
     pageSize?: number;
     monthCount?: number;
     historyMonthCount?: number;
+    productScope?: ProductScope;
   }) => {
     const qs = new URLSearchParams();
     if (params?.versionId) qs.set('versionId', params.versionId);
@@ -4170,6 +4391,7 @@ export const api = {
     if (params?.pageSize) qs.set('pageSize', String(params.pageSize));
     if (params?.monthCount != null) qs.set('monthCount', String(params.monthCount));
     if (params?.historyMonthCount != null) qs.set('historyMonthCount', String(params.historyMonthCount));
+    appendProductScopeQuery(qs, params?.productScope);
     const query = qs.toString();
     return request<{
       horizon: Array<{ forecastYear: number; month: number; monthLabel: string }>;
@@ -4230,6 +4452,8 @@ export const api = {
         status: string;
         station: string | null;
       } | null;
+      excludeAccessories?: boolean;
+      accessoryEmptyReason?: 'excluded_at_generation' | null;
     }>(`/api/sales-forecasts/horizon${query ? `?${query}` : ''}`);
   },
   exportSalesForecastHorizon: async (params: {
@@ -4243,6 +4467,7 @@ export const api = {
     pendingCalibration?: boolean;
     monthCount?: number;
     historyMonthCount?: number;
+    productScope?: ProductScope;
   }) => {
     const qs = new URLSearchParams();
     qs.set('versionId', params.versionId);
@@ -4255,6 +4480,7 @@ export const api = {
     if (params.pendingCalibration) qs.set('pendingCalibration', 'true');
     if (params.monthCount != null) qs.set('monthCount', String(params.monthCount));
     if (params.historyMonthCount != null) qs.set('historyMonthCount', String(params.historyMonthCount));
+    appendProductScopeQuery(qs, params.productScope);
     const res = await apiFetch(apiUrl(`/api/sales-forecasts/horizon/export?${qs}`));
     await downloadAttachment(
       res,

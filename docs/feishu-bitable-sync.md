@@ -25,6 +25,9 @@ FEISHU_BITABLE_TABLE_INVENTORY_POLICY=
 FEISHU_BITABLE_TABLE_SALES_FORECAST=
 FEISHU_BITABLE_TABLE_BULK_STOCK_REQUEST=   # 大件备货申请 tbl7H8F6rc2xeFGf
 FEISHU_BITABLE_TABLE_PURCHASE_FOLLOW_UP=    # 采购跟单（采购管理）tbl3m7FqgPVr4kmY
+FEISHU_BITABLE_TABLE_PROCUREMENT_OPS=       # 全链库存（库存运营只读日快照）tblWUnYLwD8UATAS
+# 规划头寸数量来源（默认 turnover_share=周转合计×占比；warehouse_facts=影子长表在库/调拨在途）
+# INVENTORY_POSITION_SOURCE=turnover_share
 FEISHU_BITABLE_TABLE_NEWS_INTEL=            # 旧跨境资讯表（仅历史，禁止新写入）
 FEISHU_BITABLE_TABLE_NEWS_INTEL_V2=         # 新「跨境资讯总表」
 # 若采购表与新闻/主数据不在同一份多维表格，可单独指定：
@@ -153,7 +156,8 @@ Bitable 列名支持中英文别名，系统会自动映射为导入字段。
 补货预测：`POST /api/tasks/replenishment-forecast`  
 采购跟进：`POST /api/tasks/purchase-follow-up`  
 大件备货从飞书拉取（建议每天 08:00）：`POST /api/tasks/procurement-bulk-stock-pull`  
-采购跟单从飞书拉取（建议每天 08:00）：`POST /api/tasks/procurement-follow-up-pull`
+采购跟单从飞书拉取（建议每天 08:00）：`POST /api/tasks/procurement-follow-up-pull`  
+全链库存从飞书拉取（建议每天 06:00）：`POST /api/tasks/procurement-ops-pull`
 
 ### 采购管理列表（全量快照）
 

@@ -1,6 +1,11 @@
 import { and, eq, isNull } from 'drizzle-orm';
 import { db } from './client';
-import { fobFeeAllocationRules } from './schema/logistics';
+import {
+  fobFeeAllocationRules,
+  fobPorts,
+  FOB_TEMPLATE_PORT_CODE,
+  FOB_TEMPLATE_PORT_NAME,
+} from './schema/logistics';
 import {
   FREIGHT_FEE_CATALOG,
   TRUCKING_FEE_CATALOG,
@@ -67,7 +72,32 @@ export const FOB_FEE_RULE_SEEDS: RuleSeed[] = [
   ...PATTERN_RULES,
 ];
 
-async function ruleExists(seed: RuleSeed): Promise<boolean> {
+export async function ensureFobTemplatePort(): Promise<{ id: string }> {
+  const [existing] = await db
+    .select({ id: fobPorts.id })
+    .from(fobPorts)
+    .where(eq(fobPorts.code, FOB_TEMPLATE_PORT_CODE))
+    .limit(1);
+  if (existing) return existing;
+
+  const [inserted] = await db
+    .insert(fobPorts)
+    .values({
+      name: FOB_TEMPLATE_PORT_NAME,
+      code: FOB_TEMPLATE_PORT_CODE,
+      isActive: true,
+      remark: '既有全局货代规则迁入此港；可复制到真实起运港',
+    })
+    .returning({ id: fobPorts.id });
+  return inserted;
+}
+
+async function ruleExists(seed: RuleSeed, templatePortId: string | null): Promise<boolean> {
+  const portCond =
+    seed.sourceBillType === 'freight'
+      ? eq(fobFeeAllocationRules.portId, templatePortId!)
+      : isNull(fobFeeAllocationRules.portId);
+
   if (seed.feeType) {
     const [row] = await db
       .select({ id: fobFeeAllocationRules.id })
@@ -77,6 +107,7 @@ async function ruleExists(seed: RuleSeed): Promise<boolean> {
           eq(fobFeeAllocationRules.sourceBillType, seed.sourceBillType),
           eq(fobFeeAllocationRules.feeType, seed.feeType),
           isNull(fobFeeAllocationRules.matchPattern),
+          portCond,
         ),
       )
       .limit(1);
@@ -91,6 +122,7 @@ async function ruleExists(seed: RuleSeed): Promise<boolean> {
           eq(fobFeeAllocationRules.sourceBillType, seed.sourceBillType),
           eq(fobFeeAllocationRules.matchPattern, seed.matchPattern),
           isNull(fobFeeAllocationRules.feeType),
+          portCond,
         ),
       )
       .limit(1);
@@ -101,9 +133,10 @@ async function ruleExists(seed: RuleSeed): Promise<boolean> {
 
 /** 补齐模板费用列规则；已有库只 insert 缺失项，不覆盖用户改过的规则 */
 export async function seedFobFeeRules() {
+  const templatePort = await ensureFobTemplatePort();
   let inserted = 0;
   for (const rule of FOB_FEE_RULE_SEEDS) {
-    if (await ruleExists(rule)) continue;
+    if (await ruleExists(rule, templatePort.id)) continue;
     await db.insert(fobFeeAllocationRules).values({
       feeType: rule.feeType,
       sourceBillType: rule.sourceBillType,
@@ -113,6 +146,7 @@ export async function seedFobFeeRules() {
       priority: rule.priority,
       remark: rule.remark,
       isActive: true,
+      portId: rule.sourceBillType === 'freight' ? templatePort.id : null,
     });
     inserted++;
   }

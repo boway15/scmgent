@@ -1,4 +1,4 @@
-import { and, desc, eq, ilike, inArray, or, sql } from 'drizzle-orm';
+import { and, eq, inArray, sql } from 'drizzle-orm';
 import { Hono } from 'hono';
 import { db, inventoryDataIssues, skus } from '@scm/db';
 import { getCurrentUser } from '../lib/auth-context.js';
@@ -6,89 +6,72 @@ import { parseListPagination } from '../lib/list-pagination.js';
 import { requireMenu } from '../lib/rbac.js';
 import { writeAuditLog } from '../lib/audit-log.js';
 import { countOpenDataIssuesByType } from '../lib/inventory-data-issue-store.js';
+import {
+  buildInventoryDataIssueExportCsv,
+  listInventoryDataIssueRows,
+  listInventoryDataIssueRowsForExport,
+  parseInventoryDataIssueListFilters,
+} from '../lib/inventory-data-issue-list.js';
+import { buildCsv, csvAttachment } from '../lib/csv-export.js';
+import { productScopeSql } from '../lib/planning-accessory-filter.js';
 
 export const inventoryDataIssueRoutes = new Hono();
 
 const MENU = 'inventory.data_issues';
+
+inventoryDataIssueRoutes.get('/inventory/data-issues/export', requireMenu(MENU), async (c) => {
+  const filters = parseInventoryDataIssueListFilters({
+    status: c.req.query('status'),
+    type: c.req.query('type'),
+    q: c.req.query('q'),
+    productScope: c.req.query('productScope'),
+  });
+  const { items, truncated } = await listInventoryDataIssueRowsForExport(filters);
+  const { headers, bodyRows } = buildInventoryDataIssueExportCsv(items);
+  const csv = buildCsv(headers, bodyRows);
+  const date = new Date().toISOString().slice(0, 10);
+  const scope = filters.productScope === 'accessory' ? 'accessory' : 'goods';
+  const suffix = truncated ? '-truncated' : '';
+  return csvAttachment(`inventory-data-issues-${date}-${scope}${suffix}.csv`, csv);
+});
 
 inventoryDataIssueRoutes.get('/inventory/data-issues', requireMenu(MENU), async (c) => {
   const { page, pageSize, offset } = parseListPagination(
     c.req.query('page')?.trim(),
     c.req.query('pageSize')?.trim(),
   );
-  const status = c.req.query('status');
-  const issueType = c.req.query('type');
-  const q = c.req.query('q')?.trim();
+  const filters = parseInventoryDataIssueListFilters({
+    status: c.req.query('status'),
+    type: c.req.query('type'),
+    q: c.req.query('q'),
+    productScope: c.req.query('productScope'),
+  });
 
-  const conditions = [];
-  if (status) {
-    conditions.push(
-      eq(
-        inventoryDataIssues.status,
-        status as 'open' | 'in_progress' | 'resolved' | 'dismissed',
-      ),
-    );
-  } else {
-    conditions.push(inArray(inventoryDataIssues.status, ['open', 'in_progress']));
-  }
-  if (issueType) {
-    conditions.push(
-      eq(
-        inventoryDataIssues.issueType,
-        issueType as 'missing_available_at' | 'unallocated_warehouse' | 'share_sum_mismatch',
-      ),
-    );
-  }
-  if (q) {
-    const pattern = `%${q}%`;
-    conditions.push(
-      or(
-        ilike(skus.code, pattern),
-        ilike(skus.name, pattern),
-        ilike(inventoryDataIssues.warehouseCode, pattern),
-        ilike(inventoryDataIssues.example, pattern),
-      )!,
-    );
-  }
+  const { items, total } = await listInventoryDataIssueRows({ filters, limit: pageSize, offset });
 
-  const where = and(...conditions);
-
-  const [rows, countRow, openByType] = await Promise.all([
-    db
-      .select({
-        id: inventoryDataIssues.id,
-        fingerprint: inventoryDataIssues.fingerprint,
-        skuId: inventoryDataIssues.skuId,
-        skuCode: skus.code,
-        skuName: skus.name,
-        warehouseCode: inventoryDataIssues.warehouseCode,
-        issueType: inventoryDataIssues.issueType,
-        impactModule: inventoryDataIssues.impactModule,
-        example: inventoryDataIssues.example,
-        qty: inventoryDataIssues.qty,
-        status: inventoryDataIssues.status,
-        ownerId: inventoryDataIssues.ownerId,
-        resolutionNote: inventoryDataIssues.resolutionNote,
-        lastSeenAt: inventoryDataIssues.lastSeenAt,
-        createdAt: inventoryDataIssues.createdAt,
-        updatedAt: inventoryDataIssues.updatedAt,
-      })
-      .from(inventoryDataIssues)
-      .innerJoin(skus, eq(skus.id, inventoryDataIssues.skuId))
-      .where(where)
-      .orderBy(desc(inventoryDataIssues.lastSeenAt))
-      .limit(pageSize)
-      .offset(offset),
+  const [openByType, accessoryCountRow] = await Promise.all([
+    countOpenDataIssuesByType(),
     db
       .select({ count: sql<number>`count(*)::int` })
       .from(inventoryDataIssues)
       .innerJoin(skus, eq(skus.id, inventoryDataIssues.skuId))
-      .where(where),
-    countOpenDataIssuesByType(),
+      .where(
+        and(
+          inArray(inventoryDataIssues.status, ['open', 'in_progress']),
+          productScopeSql('accessory'),
+        ),
+      ),
   ]);
 
-  const total = countRow[0]?.count ?? 0;
-  return c.json({ items: rows, total, page, pageSize, count: total, openByType });
+  return c.json({
+    items,
+    total,
+    page,
+    pageSize,
+    count: total,
+    openByType,
+    accessoryOpenCount: accessoryCountRow[0]?.count ?? 0,
+  });
 });
 
 inventoryDataIssueRoutes.patch('/inventory/data-issues/:id', requireMenu(MENU), async (c) => {
@@ -99,6 +82,16 @@ inventoryDataIssueRoutes.patch('/inventory/data-issues/:id', requireMenu(MENU), 
     resolutionNote?: string;
   }>();
 
+  if (body.status && body.status !== 'dismissed') {
+    return c.json(
+      {
+        message:
+          '数据问题源字段在迅捷维护，本系统仅支持标记「已知悉」。修正后由扫描自动结案。',
+      },
+      400,
+    );
+  }
+
   const [existing] = await db
     .select()
     .from(inventoryDataIssues)
@@ -107,15 +100,16 @@ inventoryDataIssueRoutes.patch('/inventory/data-issues/:id', requireMenu(MENU), 
 
   if (!existing) return c.json({ message: 'Data issue not found' }, 404);
 
-  const isResolve = body.status === 'resolved' || body.status === 'dismissed';
+  const nextStatus = body.status ?? existing.status;
+  const isDismiss = nextStatus === 'dismissed';
   const [row] = await db
     .update(inventoryDataIssues)
     .set({
-      status: body.status ?? existing.status,
+      status: nextStatus,
       ownerId: body.ownerId === undefined ? existing.ownerId : body.ownerId,
       resolutionNote: body.resolutionNote ?? existing.resolutionNote,
-      resolvedBy: isResolve ? user.id : existing.resolvedBy,
-      resolvedAt: isResolve ? new Date() : existing.resolvedAt,
+      resolvedBy: isDismiss ? user.id : existing.resolvedBy,
+      resolvedAt: isDismiss ? new Date() : existing.resolvedAt,
       updatedAt: new Date(),
     })
     .where(eq(inventoryDataIssues.id, existing.id))

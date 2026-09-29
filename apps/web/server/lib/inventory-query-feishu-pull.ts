@@ -79,6 +79,9 @@ export async function pullAndPublishInventoryQueryFromFeishu(): Promise<{
     .filter((name): name is string => Boolean(name));
 
   const mapped = mapInventoryQueryBitableRecords(records, columns);
+  console.log(
+    `[inventory-query-pull] feishuRows=${records.length} mapped=${mapped.items.length} skippedEmptySku=${mapped.skipped}`,
+  );
   if (mapped.items.length === 0) {
     throw new Error('库存查询同步没有可归档数据，本次不发布每日快照。');
   }

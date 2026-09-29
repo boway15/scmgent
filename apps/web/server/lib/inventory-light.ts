@@ -10,6 +10,23 @@ import { addDaysIso, diffDaysIso } from './inventory-iso-date.js';
 
 export type InventoryHealth = 'red' | 'yellow' | 'green' | 'blue' | 'gray';
 
+export const HEALTH_PRIORITY: Record<InventoryHealth, number> = {
+  red: 5,
+  yellow: 4,
+  green: 3,
+  blue: 2,
+  gray: 1,
+};
+
+export function pickWorstInventoryHealth(
+  statuses: readonly InventoryHealth[],
+): InventoryHealth | null {
+  if (statuses.length === 0) return null;
+  return statuses.reduce((worst, cur) =>
+    HEALTH_PRIORITY[cur] > HEALTH_PRIORITY[worst] ? cur : worst,
+  );
+}
+
 export const INVENTORY_HEALTH_LABEL: Record<InventoryHealth, string> = {
   red: '红灯',
   yellow: '黄灯',

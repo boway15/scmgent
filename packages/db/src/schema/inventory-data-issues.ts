@@ -17,6 +17,9 @@ export const inventoryDataIssueTypeEnum = pgEnum('inventory_data_issue_type', [
   'missing_available_at',
   'unallocated_warehouse',
   'share_sum_mismatch',
+  'unmapped_warehouse',
+  'position_source_mismatch',
+  'position_share_gap',
 ]);
 
 export const inventoryDataIssueStatusEnum = pgEnum('inventory_data_issue_status', [

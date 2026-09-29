@@ -22,4 +22,24 @@ describe('inventory-query-service', () => {
     assert.equal(filterInventoryQueryItems(items, { salesCountry: 'us' }).length, 1);
     assert.equal(filterInventoryQueryItems(items, { lifecycle: '导入' }).length, 1);
   });
+
+  it('filters by productScope goods vs accessory', () => {
+    const items = [
+      {
+        skuId: '1',
+        skuCode: 'DJ478585_2P02',
+        payload: { SKU: 'DJ478585_2P02', SKU名称: '配件', 品类: '家具' },
+      },
+      {
+        skuId: '2',
+        skuCode: 'DJ502313_34',
+        payload: { SKU: 'DJ502313_34', SKU名称: '椅子', 品类: '家具' },
+      },
+    ];
+    assert.equal(filterInventoryQueryItems(items, { productScope: 'goods' }).length, 1);
+    assert.equal(filterInventoryQueryItems(items, { productScope: 'goods' })[0]?.skuCode, 'DJ502313_34');
+    assert.equal(filterInventoryQueryItems(items, { productScope: 'accessory' }).length, 1);
+    assert.equal(filterInventoryQueryItems(items, { productScope: 'accessory' })[0]?.skuCode, 'DJ478585_2P02');
+    assert.equal(filterInventoryQueryItems(items, {}).length, 1);
+  });
 });

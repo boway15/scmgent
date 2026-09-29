@@ -535,19 +535,145 @@ export function buildMerchantExportFileName(
   return `${label}${period}.xlsx`;
 }
 
-export function buildTotalExportFileName(batchNo: string, settlementPeriod: string): string {
-  return `${sanitizeExportFileName(batchNo)}_分摊总账_${sanitizeExportFileName(settlementPeriod)}.xlsx`;
+export function buildTotalExportFileName(batchNo: string, batchName: string): string {
+  return `${sanitizeExportFileName(batchNo)}_${sanitizeExportFileName(batchName)}_分摊总账.xlsx`;
 }
 
-export function buildByMerchantZipFileName(batchNo: string, settlementPeriod: string): string {
-  return `${sanitizeExportFileName(batchNo)}_按工厂主体导出_${sanitizeExportFileName(settlementPeriod)}.zip`;
+export function buildByMerchantZipFileName(batchNo: string, batchName: string): string {
+  return `${sanitizeExportFileName(batchNo)}_${sanitizeExportFileName(batchName)}_按工厂主体导出.zip`;
 }
 
-export async function buildXlsxBuffer(rows: unknown[][], sheetName = '分摊平账'): Promise<Buffer> {
+export type AllocationRuleExplanationRow = {
+  originPort?: string | null;
+  feeType: string;
+  matchMode: '精确' | '包含' | '账单固化';
+  allocationMethod: string;
+  stage?: string | null;
+};
+
+const METHOD_LABEL: Record<string, string> = {
+  by_volume: '按体积',
+  by_ticket: '按票',
+  fixed: '固定',
+  manual: '需确认',
+};
+
+/** Sheet2：固定口径说明 + 本批次规则明细 */
+export function buildAllocationRulesExplanationAoa(params: {
+  settlementType: 'trucking' | 'freight';
+  rules: AllocationRuleExplanationRow[];
+}): unknown[][] {
+  const rows: unknown[][] = [
+    ['分摊规则说明'],
+    [],
+    ['一、固定口径'],
+    ['按体积', '按柜内各工厂/主体体积占比分摊该费用'],
+    ['按票', '按柜内各工厂/主体票数（SKU 数）占比分摊该费用'],
+    ['需确认', '平账时人工指定承担主体，不自动分摊'],
+    [],
+    ['二、本批次规则明细'],
+  ];
+
+  if (params.settlementType === 'freight') {
+    rows.push(['起运港', '费用类型', '匹配方式', '分摊方式', '费用阶段']);
+    for (const r of params.rules) {
+      rows.push([
+        r.originPort ?? '',
+        r.feeType,
+        r.matchMode,
+        METHOD_LABEL[r.allocationMethod] ?? r.allocationMethod,
+        r.stage ?? '',
+      ]);
+    }
+  } else {
+    rows.push(['费用类型', '匹配方式', '分摊方式', '费用阶段']);
+    for (const r of params.rules) {
+      rows.push([
+        r.feeType,
+        r.matchMode,
+        METHOD_LABEL[r.allocationMethod] ?? r.allocationMethod,
+        r.stage ?? '',
+      ]);
+    }
+  }
+
+  if (!params.rules.length) {
+    rows.push(['（本批次暂无规则明细）']);
+  }
+
+  return rows;
+}
+
+export function buildRuleExplanationRowsFromBillItems(params: {
+  settlementType: 'trucking' | 'freight';
+  truckingItems: Array<{
+    feeType: string;
+    allocationMethod?: string | null;
+    containerNo: string;
+  }>;
+  freightItems: Array<{
+    feeType: string;
+    allocationMethod?: string | null;
+    stage?: string | null;
+    containerNo: string;
+  }>;
+  originPortByContainer: Map<string, string>;
+}): AllocationRuleExplanationRow[] {
+  const seen = new Set<string>();
+  const out: AllocationRuleExplanationRow[] = [];
+
+  if (params.settlementType === 'trucking') {
+    for (const item of params.truckingItems) {
+      const method = item.allocationMethod ?? 'by_volume';
+      const key = `${item.feeType}|${method}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push({
+        feeType: item.feeType,
+        matchMode: '账单固化',
+        allocationMethod: method,
+      });
+    }
+  } else {
+    for (const item of params.freightItems) {
+      const port = params.originPortByContainer.get(item.containerNo) ?? '';
+      const method = item.allocationMethod ?? 'by_volume';
+      const key = `${port}|${item.feeType}|${method}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push({
+        originPort: port || '（未匹配港口）',
+        feeType: item.feeType,
+        matchMode: '账单固化',
+        allocationMethod: method,
+        stage: item.stage,
+      });
+    }
+  }
+
+  return out.sort((a, b) => {
+    const pa = a.originPort ?? '';
+    const pb = b.originPort ?? '';
+    if (pa !== pb) return pa.localeCompare(pb, 'zh-CN');
+    return a.feeType.localeCompare(b.feeType, 'zh-CN');
+  });
+}
+
+export async function buildXlsxBuffer(
+  rows: unknown[][],
+  sheetName = '分摊平账',
+  extraSheets?: Array<{ name: string; rows: unknown[][] }>,
+): Promise<Buffer> {
   const XLSX = await import('xlsx');
-  const ws = XLSX.utils.aoa_to_sheet(rows);
   const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, sheetName.slice(0, 31));
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(rows), sheetName.slice(0, 31));
+  for (const sheet of extraSheets ?? []) {
+    XLSX.utils.book_append_sheet(
+      wb,
+      XLSX.utils.aoa_to_sheet(sheet.rows),
+      sheet.name.slice(0, 31),
+    );
+  }
   return Buffer.from(XLSX.write(wb, { type: 'array', bookType: 'xlsx' }) as ArrayBuffer);
 }
 

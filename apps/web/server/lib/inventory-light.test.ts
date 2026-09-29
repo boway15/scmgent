@@ -9,6 +9,7 @@ import {
   isGrayLifecycle,
   isSlowMovingStock,
   normalizeInventoryHealth,
+  pickWorstInventoryHealth,
 } from './inventory-light.js';
 
 describe('inventory-light', () => {
@@ -126,5 +127,18 @@ describe('inventory-light', () => {
       }),
       'yellow',
     );
+  });
+});
+
+describe('pickWorstInventoryHealth', () => {
+  it('returns null for empty', () => {
+    assert.equal(pickWorstInventoryHealth([]), null);
+  });
+
+  it('picks red over yellow over green over blue over gray', () => {
+    assert.equal(pickWorstInventoryHealth(['gray', 'blue', 'green']), 'green');
+    assert.equal(pickWorstInventoryHealth(['blue', 'yellow', 'gray']), 'yellow');
+    assert.equal(pickWorstInventoryHealth(['green', 'red', 'yellow']), 'red');
+    assert.equal(pickWorstInventoryHealth(['gray']), 'gray');
   });
 });

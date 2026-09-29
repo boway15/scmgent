@@ -32,7 +32,9 @@ import {
   type OverviewTableDensity,
 } from '@/lib/inventory-overview-density';
 import { useResizableColumnWidths } from '@/hooks/use-resizable-column-widths';
-import { useMemo, useState, useCallback } from 'react';
+import { useEffect, useMemo, useState, useCallback } from 'react';
+import { ProductScopeSwitch } from '@/components/ProductScopeSwitch';
+import { useProductScope } from '@/lib/product-scope';
 
 const DEFAULT_PAGE_SIZE = 20;
 
@@ -40,6 +42,7 @@ const initialView = loadInitialViewState();
 
 export function InventoryOverviewPage() {
   const qc = useQueryClient();
+  const { productScope } = useProductScope();
 
   const [viewId, setViewId] = useState<OverviewViewId>(initialView.viewId);
   const [customColumnIds, setCustomColumnIds] = useState<string[]>(initialView.customColumnIds);
@@ -91,6 +94,7 @@ export function InventoryOverviewPage() {
       viewId,
       appliedColumnIds,
       snapshotDate,
+      productScope,
     ],
     queryFn: () =>
       api.getInventoryOverview({
@@ -106,8 +110,13 @@ export function InventoryOverviewPage() {
         view: apiView,
         columns: apiColumns,
         snapshotDate: snapshotDate || undefined,
+        productScope,
       }),
   });
+
+  useEffect(() => {
+    setPage(1);
+  }, [productScope]);
 
   const { data: snapshotDates } = useQuery({
     queryKey: ['inventory-overview-dates'],
@@ -325,6 +334,7 @@ export function InventoryOverviewPage() {
     view: apiView,
     columns: apiColumns,
     snapshotDate: snapshotDate || undefined,
+    productScope,
   };
 
   const applyFilters = () => {
@@ -416,6 +426,8 @@ export function InventoryOverviewPage() {
           尚无每日归档快照，当前展示实时库存数据；下一次飞书完整同步成功后开始归档。
         </div>
       )}
+
+      <ProductScopeSwitch />
 
       <Card>
         <CardHeader>

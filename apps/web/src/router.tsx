@@ -4,6 +4,7 @@ import { RequireAuth } from '@/components/RequireAuth';
 import { LoginPage } from '@/pages/LoginPage';
 import { InventoryOverviewPage } from '@/pages/InventoryOverviewPage';
 import { InventoryQueryPage } from '@/pages/InventoryQueryPage';
+import { ProcurementOpsPage } from '@/pages/ProcurementOpsPage';
 import { SkuInventoryPlanningPage } from '@/pages/SkuInventoryPlanningPage';
 import { SkuPlanningEntryPage } from '@/pages/SkuPlanningEntryPage';
 import { InventoryPoolsPage } from '@/pages/InventoryPoolsPage';
@@ -53,6 +54,7 @@ export function AppRouter() {
           <Route path="dashboard" element={<DashboardPage />} />
           <Route path="inventory/overview" element={<InventoryOverviewPage />} />
           <Route path="inventory/query" element={<InventoryQueryPage />} />
+          <Route path="inventory/procurement-ops" element={<ProcurementOpsPage />} />
           <Route path="inventory/pools" element={<InventoryPoolsPage />} />
           <Route path="inventory/data-issues" element={<InventoryDataIssuesPage />} />
           <Route path="inventory/unallocated" element={<InventoryUnallocatedPage />} />

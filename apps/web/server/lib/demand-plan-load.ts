@@ -1,4 +1,4 @@
-import { and, eq } from 'drizzle-orm';
+import { and, eq, inArray } from 'drizzle-orm';
 import {
   db,
   demandPlanVersions,
@@ -229,6 +229,159 @@ async function resolvePlanningAdoption(input: {
     }
   }
   return undefined;
+}
+
+export function planningDemandDepsFromMemory(input: {
+  skus: Array<LoadPlanningDemandSku & { skuId: string }>;
+  adoptions?: Array<
+    LoadPlanningDemandAdoption & { projectGroup: string; warehouseCode: string }
+  >;
+  demandRows?: Array<
+    LoadPublishedDemandRow & { skuId: string; warehouseCode: string; projectGroup: string }
+  >;
+}): LoadPlanningDemandDeps {
+  const skuById = new Map(input.skus.map((sku) => [sku.skuId, sku]));
+  const siblingsBySpu = new Map<string, SkuPilotInput[]>();
+  for (const sku of input.skus) {
+    if (!sku.spuId || !sku.isActive) continue;
+    const list = siblingsBySpu.get(sku.spuId) ?? [];
+    list.push({
+      skuId: sku.skuId,
+      projectGroup: sku.projectGroup,
+      spuId: sku.spuId,
+      isActive: sku.isActive,
+    });
+    siblingsBySpu.set(sku.spuId, list);
+  }
+
+  const adoptionByKey = new Map(
+    (input.adoptions ?? []).map((row) => [
+      `${row.projectGroup}::${row.warehouseCode}`,
+      {
+        source: row.source,
+        demandPlanVersionId: row.demandPlanVersionId,
+      } satisfies LoadPlanningDemandAdoption,
+    ]),
+  );
+  const demandByKey = new Map<string, LoadPublishedDemandRow[]>();
+  for (const row of input.demandRows ?? []) {
+    const key = `${row.skuId}::${row.warehouseCode}::${row.projectGroup}`;
+    const list = demandByKey.get(key) ?? [];
+    list.push({
+      period: row.period,
+      systemDailyAvg: row.systemDailyAvg,
+      manualDailyAvg: row.manualDailyAvg,
+    });
+    demandByKey.set(key, list);
+  }
+
+  return {
+    loadSku: async (skuId) => {
+      const row = skuById.get(skuId);
+      if (!row) return undefined;
+      return {
+        projectGroup: row.projectGroup,
+        spuId: row.spuId,
+        isActive: row.isActive,
+        encodingMeta: row.encodingMeta,
+      };
+    },
+    loadSiblingSkus: async (spuId) => siblingsBySpu.get(spuId) ?? [],
+    loadAdoption: async (key) =>
+      adoptionByKey.get(`${key.projectGroup}::${key.warehouseCode}`),
+    loadPublishedDemandRows: async (query) =>
+      demandByKey.get(`${query.skuId}::${query.warehouseCode}::${query.projectGroup}`) ?? [],
+  };
+}
+
+const PLANNING_SKU_CHUNK = 2000;
+
+/** 全量预警：一次装入 SKU / 采纳 / 已发布需求，避免每个 SKU×仓再查库。 */
+export async function loadPlanningDemandDepsForSkus(skuIds: string[]): Promise<{
+  deps: LoadPlanningDemandDeps;
+  encodingMetaBySku: Map<string, unknown>;
+}> {
+  const encodingMetaBySku = new Map<string, unknown>();
+  if (!skuIds.length) {
+    return { deps: planningDemandDepsFromMemory({ skus: [] }), encodingMetaBySku };
+  }
+
+  const skuRows: Array<LoadPlanningDemandSku & { skuId: string }> = [];
+  for (let offset = 0; offset < skuIds.length; offset += PLANNING_SKU_CHUNK) {
+    const chunk = skuIds.slice(offset, offset + PLANNING_SKU_CHUNK);
+    const rows = await db
+      .select({
+        skuId: skus.id,
+        projectGroup: skus.projectGroup,
+        spuId: skus.spuId,
+        isActive: skus.isActive,
+        encodingMeta: skus.encodingMeta,
+      })
+      .from(skus)
+      .where(inArray(skus.id, chunk));
+    for (const row of rows) {
+      skuRows.push(row);
+      encodingMetaBySku.set(row.skuId, row.encodingMeta);
+    }
+  }
+
+  const config = parseDemandPlanPilotConfig(process.env);
+  if (!config.enabled) {
+    return { deps: planningDemandDepsFromMemory({ skus: skuRows }), encodingMetaBySku };
+  }
+
+  const adoptionRows = await db
+    .select({
+      projectGroup: planningDemandAdoptions.projectGroup,
+      warehouseCode: planningDemandAdoptions.warehouseCode,
+      source: planningDemandAdoptions.source,
+      demandPlanVersionId: planningDemandAdoptions.demandPlanVersionId,
+    })
+    .from(planningDemandAdoptions);
+
+  const demandRows: Array<
+    LoadPublishedDemandRow & { skuId: string; warehouseCode: string; projectGroup: string }
+  > = [];
+  for (let offset = 0; offset < skuIds.length; offset += PLANNING_SKU_CHUNK) {
+    const chunk = skuIds.slice(offset, offset + PLANNING_SKU_CHUNK);
+    const rows = await db
+      .select({
+        skuId: demandPlanWeekly.skuId,
+        warehouseCode: demandPlanWeekly.warehouseCode,
+        period: demandPlanWeekly.period,
+        systemDailyAvg: demandPlanWeekly.systemDailyAvg,
+        manualDailyAvg: demandPlanWeekly.manualDailyAvg,
+        projectGroup: planningDemandAdoptions.projectGroup,
+      })
+      .from(demandPlanWeekly)
+      .innerJoin(demandPlanVersions, eq(demandPlanWeekly.versionId, demandPlanVersions.id))
+      .innerJoin(
+        planningDemandAdoptions,
+        and(
+          eq(planningDemandAdoptions.demandPlanVersionId, demandPlanWeekly.versionId),
+          eq(planningDemandAdoptions.warehouseCode, demandPlanWeekly.warehouseCode),
+          eq(planningDemandAdoptions.source, 'demand_plan'),
+        ),
+      )
+      .where(
+        and(inArray(demandPlanWeekly.skuId, chunk), eq(demandPlanVersions.status, 'pilot_published')),
+      );
+    demandRows.push(...rows);
+  }
+
+  return {
+    deps: planningDemandDepsFromMemory({
+      skus: skuRows,
+      adoptions: adoptionRows.map((row) => ({
+        projectGroup: row.projectGroup,
+        warehouseCode: row.warehouseCode,
+        source: row.source === 'demand_plan' ? 'demand_plan' : 'forecast',
+        demandPlanVersionId: row.demandPlanVersionId,
+      })),
+      demandRows,
+    }),
+    encodingMetaBySku,
+  };
 }
 
 export async function loadPlanningDemandForSkuWarehouse(

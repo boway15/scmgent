@@ -657,6 +657,7 @@ function ImportedVolumeStatsList({ stats }: { stats: FobDetail['containerStats']
           <thead>
             <tr className="border-b text-left text-text-sub">
               <th className="p-2 font-normal">柜号</th>
+              <th className="p-2 font-normal">起运港</th>
               <th className="p-2 font-normal">业务编号</th>
               <th className="p-2 font-normal">工厂/主体</th>
               <th className="p-2 font-normal">工厂类别</th>
@@ -671,6 +672,7 @@ function ImportedVolumeStatsList({ stats }: { stats: FobDetail['containerStats']
             {rows.map((s) => (
               <tr key={s.id} className="border-b border-border/40">
                 <td className="p-2 font-mono">{s.containerNo}</td>
+                <td className="p-2">{s.originPort || '—'}</td>
                 <td className="p-2 font-mono text-xs">{s.businessNos || '—'}</td>
                 <td className="p-2">
                   {s.merchantName ?? s.merchantCode}
@@ -1465,7 +1467,7 @@ export function FobSettlementDetailPage() {
           <div className={cn('grid gap-4', data.settlementType === 'trucking' ? 'md:grid-cols-2' : 'md:grid-cols-2')}>
             <ImportBlock
               label="1. 体积信息"
-              hint="支持截单清单导出（含工厂名称/类型）、汇总模板或 ED 大件调拨表；截单清单以工厂名称为分账主体，有货柜号时优先用正式柜号，按柜+工厂/主体汇总体积"
+              hint="支持截单清单导出（含工厂名称/类型/起运港）、汇总模板或 ED 大件调拨表；截单清单以工厂名称为分账主体，货代批次须填起运港且与港口主数据一致；有货柜号时优先用正式柜号，按柜+工厂/主体汇总体积"
               accept=".csv,.xlsx,.xls"
               pending={importShipments.isPending}
               templatePending={templateLoading === 'volume'}

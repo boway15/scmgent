@@ -8,6 +8,7 @@ import {
   compareSuggestionsByUrgency,
   filterSuggestionQueue,
 } from '../lib/reorder-suggestion-sort.js';
+import { parseProductScope, productScopeSql } from '../lib/planning-accessory-filter.js';
 
 export const reorderRoutes = new Hono();
 
@@ -21,7 +22,8 @@ reorderRoutes.get('/reorder/suggestions', requireMenu('pmc.suggestion'), async (
   const q = c.req.query('q')?.trim() || c.req.query('sku')?.trim();
   const warehouse = c.req.query('warehouse')?.trim();
 
-  const conditions = [isNull(reorderSuggestions.supersededAt)];
+  const productScope = parseProductScope(c.req.query('productScope'));
+  const conditions = [isNull(reorderSuggestions.supersededAt), productScopeSql(productScope)];
   if (status) {
     conditions.push(
       eq(reorderSuggestions.status, status as 'pending' | 'accepted' | 'ignored'),

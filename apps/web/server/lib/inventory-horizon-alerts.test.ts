@@ -64,6 +64,21 @@ describe('inventory-horizon-alerts', () => {
     assert.ok(alerts.some((a) => a.alertType === 'stockout_horizon' && a.horizonDays === 7));
   });
 
+  it('rounds fractional projected balance for stockout_horizon', () => {
+    const alerts = deriveHorizonAlerts({
+      points: [
+        { horizonDays: 7, projectedBalance: -14.095057425742596 },
+      ],
+      coverageDays: 5,
+      totalLeadDays: 60,
+      overstockThresholdDays: 180,
+      stockoutDate: '2026-10-01',
+    });
+    const row = alerts.find((a) => a.alertType === 'stockout_horizon' && a.horizonDays === 7);
+    assert.ok(row);
+    assert.equal(row.projectedQty, -14);
+  });
+
   it('emits uncoverable_by_new_po when uncoverableByNewPo is true', () => {
     const alerts = deriveHorizonAlerts({
       points: [

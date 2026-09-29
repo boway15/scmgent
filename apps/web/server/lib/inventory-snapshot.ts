@@ -65,6 +65,76 @@ export async function getLatestInventorySnapshot(
   };
 }
 
+export function emptyInventorySnapshot(warehouseCode: string): InventorySnapshot {
+  return {
+    warehouseCode,
+    qtyAvailable: 0,
+    qtyInTransit: 0,
+    qtyInProduction: 0,
+    qtyReserved: 0,
+  };
+}
+
+const RAW_SNAPSHOT_SKU_CHUNK = 2000;
+
+/** 各仓最新一行原始快照（不分摊）。键为 skuId::warehouseCode。 */
+export async function loadLatestRawSnapshotsBySkuIds(
+  skuIds: string[],
+): Promise<Map<string, InventorySnapshot>> {
+  const result = new Map<string, InventorySnapshot>();
+  if (!skuIds.length) return result;
+
+  for (let offset = 0; offset < skuIds.length; offset += RAW_SNAPSHOT_SKU_CHUNK) {
+    const chunk = skuIds.slice(offset, offset + RAW_SNAPSHOT_SKU_CHUNK);
+    const queryResult = await db.execute(sql`
+      WITH latest_inv AS (
+        SELECT DISTINCT ON (sku_id, warehouse)
+          sku_id,
+          warehouse,
+          qty_available,
+          qty_in_transit,
+          qty_in_production,
+          qty_reserved
+        FROM inventory_records
+        WHERE sku_id IN (${sql.join(
+          chunk.map((id) => sql`${id}::uuid`),
+          sql`, `,
+        )})
+        ORDER BY sku_id, warehouse, recorded_date DESC, created_at DESC
+      )
+      SELECT
+        sku_id AS "skuId",
+        warehouse AS "warehouseCode",
+        qty_available::int AS "qtyAvailable",
+        qty_in_transit::int AS "qtyInTransit",
+        qty_in_production::int AS "qtyInProduction",
+        COALESCE(qty_reserved, 0)::int AS "qtyReserved"
+      FROM latest_inv
+    `);
+
+    for (const row of Array.from(
+      queryResult as unknown as Array<{
+        skuId: string;
+        warehouseCode: string;
+        qtyAvailable: number;
+        qtyInTransit: number;
+        qtyInProduction: number;
+        qtyReserved: number;
+      }>,
+    )) {
+      result.set(`${row.skuId}::${row.warehouseCode}`, {
+        warehouseCode: row.warehouseCode,
+        qtyAvailable: Number(row.qtyAvailable ?? 0),
+        qtyInTransit: Number(row.qtyInTransit ?? 0),
+        qtyInProduction: Number(row.qtyInProduction ?? 0),
+        qtyReserved: Number(row.qtyReserved ?? 0),
+      });
+    }
+  }
+
+  return result;
+}
+
 export async function getRegionPoolSnapshot(
   skuId: string,
   regionGroup: string,

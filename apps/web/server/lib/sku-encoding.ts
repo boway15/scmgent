@@ -318,6 +318,31 @@ function parseInternal(raw: string): SkuParseResult | null {
     });
   }
 
+  /** 飞书/ERP 短码配件：7–8 位数字 SPU + P + 配件序号（如 1001009P01） */
+  const shortAcc = /^(\d{7,8})P(\d{2,3})$/.exec(code);
+  if (shortAcc) {
+    const [, spuNumeric, accessoryNo] = shortAcc;
+    return {
+      kind: 'accessory',
+      valid: true,
+      normalizedCode: code,
+      internalCode: code,
+      externalCode: null,
+      spuCode: spuNumeric,
+      divisionCode: null,
+      distributionNo: null,
+      spuNumericCode: spuNumeric,
+      variantNo: null,
+      brandCode: null,
+      categoryCode: null,
+      factorySuffix: null,
+      accessoryNo,
+      boxNo: null,
+      divisionName: null,
+      warnings: [],
+    };
+  }
+
   const acc = /^(\d{9})P(\d{2,3})$/.exec(code);
   if (acc) {
     const [, base9, accessoryNo] = acc;
@@ -358,7 +383,7 @@ function skuVariantContainsAccessoryP(code: string): boolean {
   if (idx >= 0) {
     return upper.slice(idx + 1).includes('P');
   }
-  return /(?:[A-Z]+\d+|\d{9})P\d+/i.test(upper);
+  return /(?:[A-Z]+\d+|\d{7,9})P\d+/i.test(upper);
 }
 
 /**

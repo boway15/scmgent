@@ -1,9 +1,12 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
+  aggregateNetworkSupplyPools,
   buildSkuPlanningView,
   estimateStockoutDate,
   pickNearestEtaAvailable,
+  resolvePlanningScope,
+  summarizeNetworkWarehouses,
 } from './inventory-planning-service.js';
 
 const position = {
@@ -60,6 +63,7 @@ describe('inventory planning view', () => {
       skuId: 'sku-1',
       skuCode: 'SKU-001',
       warehouseCode: 'US-WEST',
+      scope: 'warehouse',
       position,
       leadTime,
       avgDaily: 5,
@@ -74,6 +78,121 @@ describe('inventory planning view', () => {
       etaAvailableNearest: '2026-08-15',
       stockoutDateEstimate: '2026-08-29',
     });
+  });
+
+  it('defaults planning scope to network when warehouse omitted', () => {
+    assert.equal(resolvePlanningScope({}), 'network');
+    assert.equal(resolvePlanningScope({ scope: 'network' }), 'network');
+    assert.equal(resolvePlanningScope({ warehouseCode: 'ALL' }), 'network');
+    assert.equal(resolvePlanningScope({ warehouseCode: 'US-WEST' }), 'warehouse');
+    assert.equal(
+      resolvePlanningScope({ warehouseCode: 'US-WEST', scope: 'network' }),
+      'network',
+    );
+  });
+
+  it('aggregates network supply pools and warehouse summaries', () => {
+    const pools = aggregateNetworkSupplyPools([
+      { pool: 'local', qty: 100, availableAt: null, dateUnknown: true },
+      { pool: 'in_transit', qty: 40, availableAt: '2026-08-10', dateUnknown: false },
+      { pool: 'overseas', qty: 25, availableAt: '2026-08-05', dateUnknown: false },
+      { pool: 'in_transit', qty: 10, availableAt: null, dateUnknown: true },
+    ]);
+    assert.deepEqual(pools, {
+      localQty: 100,
+      inTransitQty: 50,
+      overseasQty: 25,
+      dateUnknownQty: 110,
+      nearestAvailableAt: '2026-08-05',
+    });
+
+    const rows = summarizeNetworkWarehouses({
+      physicalWarehouses: ['US-WEST', 'US-EAST'],
+      effectiveByWarehouse: new Map([
+        ['US-WEST', 80],
+        ['US-EAST', 20],
+      ]),
+      lotEtas: [
+        { warehouseCode: 'US-WEST', availableAt: '2026-08-20', dateUnknown: false },
+        { warehouseCode: 'US-WEST', availableAt: '2026-08-12', dateUnknown: false },
+        { warehouseCode: 'OVERSEAS', availableAt: '2026-08-01', dateUnknown: false },
+        { warehouseCode: 'US-EAST', availableAt: null, dateUnknown: true },
+      ],
+      today: '2026-07-29',
+    });
+    assert.deepEqual(rows, [
+      { warehouseCode: 'US-WEST', effectiveQty: 80, nearestAvailableAt: '2026-08-12' },
+      { warehouseCode: 'US-EAST', effectiveQty: 20, nearestAvailableAt: null },
+    ]);
+  });
+
+  it('exposes network scope and supplyPools on the planning view', () => {
+    const view = buildSkuPlanningView({
+      health: {
+        skuId: 'sku-1',
+        skuCode: 'SKU-001',
+        warehouseCode: 'ALL',
+        avgDaily: 8,
+        demandSource: 'forecast',
+        coverageDays: 20,
+        suggestedQty: 100,
+        suggestedDate: '2026-07-20',
+        healthStatus: 'yellow',
+        metrics: { reorderPoint: 200 },
+        coverage: { safetyStockDays: 14 },
+        position,
+        leadTime: { ...leadTime, warehouseCode: 'ALL' },
+      },
+      scope: 'network',
+      supplyPools: {
+        localQty: 100,
+        inTransitQty: 40,
+        overseasQty: 25,
+        dateUnknownQty: 10,
+        nearestAvailableAt: '2026-08-05',
+      },
+      warehouses: [
+        {
+          warehouseCode: 'US-WEST',
+          effectiveQty: 80,
+          nearestAvailableAt: '2026-08-12',
+          healthStatus: 'yellow',
+        },
+      ],
+      unallocatedNetworkQty: 25,
+      timeline: {
+        today: '2026-07-29',
+        windowDays: 30,
+        totalLeadDays: 30,
+        stockoutDateConfirmed: '2026-08-18',
+        stockoutDateExpected: null,
+        safetyBreachDateConfirmed: null,
+        reorderDate: '2026-07-20',
+        tooLateForNewPo: false,
+        uncoverableByNewPo: false,
+        suggestedQty: 100,
+        suggestedQtyGross: 100,
+        points: [
+          {
+            horizonDays: 0,
+            asOf: '2026-07-29',
+            confirmedEnding: 160,
+            expectedEnding: 160,
+            plannedInbound: 0,
+            cumulativeDemand: 8,
+            supplyEvents: [],
+          },
+        ],
+      },
+      timelineSuggestedQty: 100,
+    });
+    assert.equal(view.scope, 'network');
+    assert.equal(view.warehouseCode, 'ALL');
+    assert.equal(view.supplyPools?.localQty, 100);
+    assert.equal(view.warehouses?.[0]?.warehouseCode, 'US-WEST');
+    assert.equal(view.warehouses?.[0]?.healthStatus, 'yellow');
+    assert.equal(view.timeline?.points.length, 1);
+    assert.equal(view.unallocatedNetworkQty, 25);
   });
 
   it('prefers injected daily timeline fields for qty, reorder, and stockout', () => {

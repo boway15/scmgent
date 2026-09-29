@@ -840,6 +840,8 @@ export async function generateBaselineForecastVersion(input: {
   existingVersionId?: string;
   /** 柔性窗偏差校正；默认读 forecast-calibration.json */
   flexBiasShadow?: boolean;
+  /** 默认 true：生成时跳过配件 SKU */
+  excludeAccessories?: boolean;
 }) {
   assertForecastWriteAllowed();
   const result = await generateBaselineForecastVersionForStation({
@@ -869,6 +871,7 @@ async function generateBaselineForecastVersionForStation(input: {
   purgeSkuScope?: boolean;
   forceNewVersion?: boolean;
   flexBiasShadow?: boolean;
+  excludeAccessories?: boolean;
 }) {
   const platforms = resolveBaselineForecastPlatforms(input.platform);
   if (platforms.length === 1) {
@@ -944,6 +947,7 @@ async function generateBaselineForStationPlatform(input: {
   purgePlatformScope?: 'all' | 'current';
   forceNewVersion?: boolean;
   flexBiasShadow?: boolean;
+  excludeAccessories?: boolean;
 }) {
   const station = resolveForecastGenerationStation(input.station);
   const platform = normalizeSalesPlatform(input.platform);
@@ -969,6 +973,10 @@ async function generateBaselineForStationPlatform(input: {
           })
         : await findOrCreateDraftVersionForImport(input.useGlobalVersion ? undefined : station);
   }
+  const excludeAccessories =
+    input.excludeAccessories !== undefined
+      ? input.excludeAccessories !== false
+      : version.excludeAccessories !== false;
   const { startMonth, asOf: today } = resolveBaselineGenerationAsOf({
     startMonth: resolveBaselineStartMonthForVersion({
       requestedStartMonth: input.startMonth,
@@ -990,7 +998,7 @@ async function generateBaselineForStationPlatform(input: {
     const previousStartMonth = version.startMonth ?? null;
     const [updated] = await db
       .update(salesForecastVersions)
-      .set({ startMonth, updatedAt: new Date() })
+      .set({ startMonth, excludeAccessories, updatedAt: new Date() })
       .where(eq(salesForecastVersions.id, version.id))
       .returning();
     if (updated) version = updated;
@@ -1036,12 +1044,19 @@ async function generateBaselineForStationPlatform(input: {
     if (skuRows.length === 0) {
       throw new Error(`SKU ${input.skuCode?.trim()} 不存在、未启用，或与所选项目组不匹配`);
     }
-    if (skuRows.every((sku) => isAccessorySku({ code: sku.code, skuKind: sku.skuKind }))) {
-      throw new Error(`SKU ${input.skuCode?.trim()} 为配件（变化含 P），不参与销售预测`);
+    if (
+      excludeAccessories &&
+      skuRows.every((sku) => isAccessorySku({ code: sku.code, skuKind: sku.skuKind }))
+    ) {
+      throw new Error(
+        `SKU ${input.skuCode?.trim()} 为配件（编码变化段含 P，或主数据标记为配件），不参与本次销售预测`,
+      );
     }
   }
 
-  skuRows = skuRows.filter((sku) => !isAccessorySku({ code: sku.code, skuKind: sku.skuKind }));
+  if (excludeAccessories) {
+    skuRows = skuRows.filter((sku) => !isAccessorySku({ code: sku.code, skuKind: sku.skuKind }));
+  }
 
   if (!input.purgeSkuScope) {
     if (input.purgePlatformScope === 'all') {

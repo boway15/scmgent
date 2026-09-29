@@ -99,6 +99,24 @@ export function buildSkuCodesByContainerMerchant(
   return result;
 }
 
+/** 按柜聚合起运港（同柜取唯一值；多值时逗号拼接便于发现冲突） */
+export function buildOriginPortsByContainer(
+  shipments: Array<{ containerNo: string; originPort?: string | null }>,
+): Map<string, string> {
+  const byContainer = new Map<string, Set<string>>();
+  for (const shipment of shipments) {
+    const port = shipment.originPort?.trim();
+    if (!port) continue;
+    if (!byContainer.has(shipment.containerNo)) byContainer.set(shipment.containerNo, new Set());
+    byContainer.get(shipment.containerNo)!.add(port);
+  }
+  const result = new Map<string, string>();
+  for (const [containerNo, values] of byContainer) {
+    result.set(containerNo, joinUniqueSorted(values));
+  }
+  return result;
+}
+
 export function enrichContainerStats<
   T extends {
     containerNo: string;
@@ -115,9 +133,10 @@ export function enrichContainerStats<
       merchantCode: string;
       remark?: string | null;
       skuCode?: string | null;
+      originPort?: string | null;
     }>;
   },
-): Array<T & { businessNos: string; factoryType: string; skuCodes: string }> {
+): Array<T & { businessNos: string; factoryType: string; skuCodes: string; originPort: string }> {
   const businessNosByContainer = buildBusinessNosByContainer(
     params.settlementType,
     params.truckingItems,
@@ -125,11 +144,13 @@ export function enrichContainerStats<
   );
   const factoryTypesByKey = buildFactoryTypesByContainerMerchant(params.merchantShipments);
   const skuCodesByKey = buildSkuCodesByContainerMerchant(params.merchantShipments);
+  const originPortsByContainer = buildOriginPortsByContainer(params.merchantShipments);
 
   return stats.map((row) => ({
     ...row,
     businessNos: businessNosByContainer.get(row.containerNo) ?? '',
     factoryType: factoryTypesByKey.get(`${row.containerNo}|${row.merchantCode}`) ?? '',
     skuCodes: skuCodesByKey.get(`${row.containerNo}|${row.merchantCode}`) ?? '',
+    originPort: originPortsByContainer.get(row.containerNo) ?? '',
   }));
 }

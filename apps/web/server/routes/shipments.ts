@@ -173,14 +173,19 @@ async function listShipments(options?: {
   pageSize?: number;
   offset?: number;
   q?: string;
+  skuId?: string;
   delayed?: boolean;
 }) {
   const page = options?.page ?? 1;
   const pageSize = options?.pageSize ?? 500;
   const offset = options?.offset ?? (page - 1) * pageSize;
   const q = options?.q?.trim();
+  const skuId = options?.skuId?.trim();
 
   const conditions = [];
+  if (skuId) {
+    conditions.push(eq(shipments.skuId, skuId));
+  }
   if (q) {
     const pattern = `%${q}%`;
     conditions.push(
@@ -255,6 +260,7 @@ shipmentRoutes.get('/shipments', shipmentMenu, async (c) => {
     pageSize,
     offset,
     q: c.req.query('q')?.trim(),
+    skuId: c.req.query('skuId')?.trim(),
     delayed: c.req.query('delayed') === '1',
   });
   return c.json(result);
@@ -270,6 +276,7 @@ shipmentRoutes.get('/shipments/delays', shipmentMenu, async (c) => {
     pageSize,
     offset,
     q: c.req.query('q')?.trim(),
+    skuId: c.req.query('skuId')?.trim(),
     delayed: true,
   });
   return c.json(result);

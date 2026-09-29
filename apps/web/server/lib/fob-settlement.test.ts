@@ -89,6 +89,7 @@ const merchants = [
 
 // configured manual is not an import exception; allocates ¥0 rows for reconcile
 {
+  const portId = 'port-yantian';
   const rules = [
     {
       feeType: '改单费',
@@ -96,6 +97,7 @@ const merchants = [
       allocationMethod: 'manual' as const,
       defaultStage: 'other' as const,
       priority: 10,
+      portId,
     },
     {
       feeType: '其他',
@@ -103,13 +105,18 @@ const merchants = [
       allocationMethod: 'manual' as const,
       defaultStage: 'other' as const,
       priority: 10,
+      portId: null,
     },
   ];
-  const manualFreight = matchAllocationRule('改单费', 'freight', rules, null, 300);
+  const manualFreight = matchAllocationRule('改单费', 'freight', rules, null, 300, portId);
   assert.equal(manualFreight.isException, false);
   assert.equal(manualFreight.allocationMethod, 'manual');
 
-  const unconfigured = matchAllocationRule('茶水费', 'freight', rules, null, 100);
+  const noPort = matchAllocationRule('改单费', 'freight', rules, null, 300, null);
+  assert.equal(noPort.isException, true);
+  assert.equal(noPort.exceptionReason, 'unconfigured');
+
+  const unconfigured = matchAllocationRule('茶水费', 'freight', rules, null, 100, portId);
   assert.equal(unconfigured.isException, true);
   assert.equal(unconfigured.exceptionReason, 'unconfigured');
 

@@ -2,8 +2,9 @@
 # Format: standard crontab → supercronic
 # 任务错开，避免 08:00 与大体量飞书拉取挤在同一分钟
 
-# 临时停用：stock_alert 近期单次跑 2–3h，会拖垮同进程上的飞书拉取（2026-08-13）
+# 独立缺货预警保持关闭：07:50 每日流水线已包含该步骤，避免同一天跑两遍
 # 0 7 * * * /usr/local/bin/run-task.sh /api/tasks/stock-alert
+0 6 * * * /usr/local/bin/run-task.sh /api/tasks/procurement-ops-pull
 20 7 * * * /usr/local/bin/run-task.sh /api/tasks/inventory-query-pull
 40 7 * * * /usr/local/bin/run-task.sh /api/tasks/inventory-turnover-pull
 # 飞书周转拉取后：三池批次同步 + 补货/预警/异常 digest（周一补货仍走独立周任务）

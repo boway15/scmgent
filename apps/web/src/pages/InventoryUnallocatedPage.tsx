@@ -7,6 +7,8 @@ import { ListSearchBar } from '@/components/ListSearchBar';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { api, type UnallocatedSupplyRow } from '@/lib/api';
+import { ProductScopeSwitch } from '@/components/ProductScopeSwitch';
+import { useProductScope } from '@/lib/product-scope';
 
 const POOL_LABEL: Record<UnallocatedSupplyRow['pool'], string> = {
   local: '本地 / 在产',
@@ -24,6 +26,7 @@ function formatSuggestedDestinations(row: UnallocatedSupplyRow): string {
 }
 
 export function InventoryUnallocatedPage() {
+  const { productScope } = useProductScope();
   const [searchParams, setSearchParams] = useSearchParams();
   const skuId = searchParams.get('skuId')?.trim() || undefined;
   const [pool, setPool] = useState('all');
@@ -34,10 +37,10 @@ export function InventoryUnallocatedPage() {
 
   useEffect(() => {
     setPage(1);
-  }, [skuId, pool, appliedKeyword]);
+  }, [skuId, pool, appliedKeyword, productScope]);
 
   const list = useQuery({
-    queryKey: ['inventory-unallocated', skuId, pool, page, pageSize, appliedKeyword],
+    queryKey: ['inventory-unallocated', skuId, pool, page, pageSize, appliedKeyword, productScope],
     queryFn: () =>
       api.getUnallocatedSupply({
         skuId,
@@ -45,6 +48,7 @@ export function InventoryUnallocatedPage() {
         page,
         pageSize,
         q: appliedKeyword || undefined,
+        productScope,
       }),
   });
   const total = list.data?.total ?? list.data?.count ?? 0;
@@ -75,6 +79,8 @@ export function InventoryUnallocatedPage() {
       <p className="text-sm text-text-sub">
         停在 OVERSEAS 的批次不能计入某仓确定线。目的仓以迅捷同步到飞书的数据为准（周转快照物理仓列、大件备货「目的仓」）。本页只读；有销售占比时下方展示按占比的参考拆分，不代表已落仓。
       </p>
+
+      <ProductScopeSwitch />
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
         <Card className="shadow-card">
@@ -151,7 +157,7 @@ export function InventoryUnallocatedPage() {
                     <td className="py-2 pr-3">
                       <Link
                         className="text-primary hover:underline"
-                        to={`/inventory/planning/${row.skuId}?warehouse=OVERSEAS`}
+                        to={`/inventory/planning/${row.skuId}?scope=network`}
                       >
                         {row.skuCode}
                       </Link>

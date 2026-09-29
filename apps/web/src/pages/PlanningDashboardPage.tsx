@@ -5,6 +5,8 @@ import { PageHeader } from '@/components/PageHeader';
 import { QueryErrorFallback } from '@/components/QueryErrorFallback';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { api, type PlanningDashboard } from '@/lib/api';
+import { ProductScopeSwitch } from '@/components/ProductScopeSwitch';
+import { useProductScope } from '@/lib/product-scope';
 import { cn, formatDateTimeCst } from '@/lib/utils';
 
 type PlanningDashboardCard = {
@@ -161,7 +163,7 @@ export function buildPlanningDashboardCards(
 }
 
 const WORKBENCH_LINKS = [
-  { label: '数据问题', description: '无期批次、未分仓、占比偏离工单', href: '/inventory/data-issues' },
+  { label: '数据问题', description: '同步源脏数据提醒，可导出后在迅捷修正', href: '/inventory/data-issues' },
   { label: '未定仓供应', description: 'OVERSEAS 批次只读清单', href: '/inventory/unallocated' },
   { label: '库存三池', description: '本地 / 在途 / 海外批次与可出货日', href: '/inventory/pools' },
   { label: '补货建议', description: '审核并采纳待处理建议', href: '/pmc/suggestions' },
@@ -171,9 +173,10 @@ const WORKBENCH_LINKS = [
 ] as const;
 
 export function PlanningDashboardPage() {
+  const { productScope } = useProductScope();
   const dashboard = useQuery({
-    queryKey: ['planning-dashboard'],
-    queryFn: api.getPlanningDashboard,
+    queryKey: ['planning-dashboard', productScope],
+    queryFn: () => api.getPlanningDashboard({ productScope }),
   });
 
   if (dashboard.isLoading) return <p className="text-text-sub">加载规划驾驶舱中...</p>;
@@ -197,6 +200,8 @@ export function PlanningDashboardPage() {
   return (
     <div className="space-y-6">
       <PageHeader title="规划驾驶舱" description="库存风险、补货与履约关键指标" />
+
+      <ProductScopeSwitch />
 
       <p className="text-sm text-text-sub">
         统计时间：{formatDateTimeCst(dashboard.data.calculatedAt)}

@@ -1,8 +1,22 @@
-import { eq, inArray, sql } from 'drizzle-orm';
-import { db, inventoryRecords, inventorySupplyLots, skus } from '@scm/db';
-import { detectInventoryDataIssues, type DataIssueLot, type DataIssueSku } from '../lib/inventory-data-issues.js';
+import { and, eq, inArray, sql } from 'drizzle-orm';
+import {
+  db,
+  inventoryRecords,
+  inventorySupplyLots,
+  skus,
+  warehouseStockFacts,
+} from '@scm/db';
+import {
+  detectInventoryDataIssues,
+  type DataIssueLot,
+  type DataIssueShareGapSku,
+  type DataIssueSku,
+  type DataIssueWarehouseFact,
+} from '../lib/inventory-data-issues.js';
 import { applyDataIssueUpsert } from '../lib/inventory-data-issue-store.js';
 import { buildAllocationBySku } from '../lib/inventory-supply-lot-sync.js';
+import { getShanghaiBusinessDate } from '../lib/inventory-daily-snapshot.js';
+import type { WarehouseFactBucket } from '../lib/inventory-warehouse-facts.js';
 
 function asIsoDate(value: string | Date | null | undefined): string | null {
   if (value == null) return null;
@@ -50,7 +64,48 @@ export async function runInventoryDataIssueScan() {
     overseasRows as unknown as Array<{ skuId: string; qtyAvailable: number }>,
   );
 
-  const skuIds = [...new Set([...lots.map((row) => row.skuId), ...overseas.map((row) => row.skuId)])];
+  const factsDate = getShanghaiBusinessDate();
+  const factRows = await db
+    .select({
+      skuId: warehouseStockFacts.skuId,
+      skuCode: warehouseStockFacts.skuCode,
+      warehouseCode: warehouseStockFacts.warehouseCode,
+      warehouseRaw: warehouseStockFacts.warehouseRaw,
+      mapped: warehouseStockFacts.mapped,
+      bucket: warehouseStockFacts.bucket,
+      qty: warehouseStockFacts.qty,
+      source: warehouseStockFacts.source,
+      selected: warehouseStockFacts.selected,
+    })
+    .from(warehouseStockFacts)
+    .where(
+      and(
+        eq(warehouseStockFacts.snapshotDate, factsDate),
+        sql`${warehouseStockFacts.skuId} IS NOT NULL`,
+      ),
+    );
+
+  const warehouseFacts: DataIssueWarehouseFact[] = factRows
+    .filter((row): row is typeof row & { skuId: string } => Boolean(row.skuId))
+    .map((row) => ({
+      skuId: row.skuId,
+      skuCode: row.skuCode,
+      warehouseCode: row.warehouseCode,
+      warehouseRaw: row.warehouseRaw,
+      mapped: row.mapped,
+      bucket: row.bucket as WarehouseFactBucket,
+      qty: row.qty,
+      source: row.source as 'inventory_query' | 'full_chain',
+      selected: row.selected,
+    }));
+
+  const skuIds = [
+    ...new Set([
+      ...lots.map((row) => row.skuId),
+      ...overseas.map((row) => row.skuId),
+      ...warehouseFacts.map((row) => row.skuId),
+    ]),
+  ];
   const skuRows =
     skuIds.length === 0
       ? []
@@ -81,11 +136,47 @@ export async function runInventoryDataIssueScan() {
     };
   });
 
-  const detected = detectInventoryDataIssues({ lots, skus: detectSkus });
+  const onHandBySku = new Map<string, Map<string, number>>();
+  for (const fact of warehouseFacts) {
+    if (!fact.selected || fact.bucket !== 'on_hand') continue;
+    const byWh = onHandBySku.get(fact.skuId) ?? new Map<string, number>();
+    byWh.set(fact.warehouseCode, (byWh.get(fact.warehouseCode) ?? 0) + fact.qty);
+    onHandBySku.set(fact.skuId, byWh);
+  }
+
+  const shareGapSkuIds = new Set([
+    ...overseas.map((row) => row.skuId),
+    ...onHandBySku.keys(),
+  ]);
+  const shareGapSkus: DataIssueShareGapSku[] = [...shareGapSkuIds].map((skuId) => {
+    const overseasRow = overseas.find((row) => row.skuId === skuId);
+    const sku = skuById.get(skuId);
+    const share = allocationBySku.get(skuId)?.share ?? {
+      method: 'unallocated' as const,
+      shareSum: 0,
+      shareSumWarning: false,
+      weights: [],
+    };
+    return {
+      skuId,
+      skuCode: sku?.skuCode ?? '',
+      overseasAvailable: overseasRow?.qtyAvailable ?? 0,
+      share,
+      factOnHandByWarehouse: onHandBySku.get(skuId) ?? new Map(),
+    };
+  });
+
+  const detected = detectInventoryDataIssues({
+    lots,
+    skus: detectSkus,
+    warehouseFacts,
+    shareGapSkus,
+  });
   const upsert = await applyDataIssueUpsert(detected);
   return {
     scannedLots: lots.length,
     scannedSkus: detectSkus.length,
+    scannedFacts: warehouseFacts.length,
     detected: detected.length,
     ...upsert,
   };

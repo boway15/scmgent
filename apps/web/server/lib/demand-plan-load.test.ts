@@ -3,6 +3,7 @@ import { describe, it } from 'node:test';
 import {
   buildChampionWarehouseRows,
   loadPlanningDemandForSkuWarehouse,
+  planningDemandDepsFromMemory,
   scaleDemandRowsByShare,
 } from './demand-plan-load.js';
 
@@ -302,6 +303,41 @@ describe('loadPlanningDemandForSkuWarehouse', () => {
     assert.equal(publishedCalls, 1);
     assert.equal(result.source, 'demand_plan');
     assert.equal(result.demandMap.get('2026-W03'), 4);
+  });
+});
+
+describe('planningDemandDepsFromMemory', () => {
+  it('resolves forecast demand without touching the database when pilot is off', async () => {
+    const deps = planningDemandDepsFromMemory({
+      skus: [
+        {
+          skuId: 's1',
+          projectGroup: '项目6组',
+          spuId: null,
+          isActive: true,
+          encodingMeta: null,
+        },
+      ],
+    });
+    let skuLoads = 0;
+    const result = await loadPlanningDemandForSkuWarehouse(
+      {
+        skuId: 's1',
+        warehouseCode: 'US-WEST',
+        championForecastMap: stationForecastMap,
+      },
+      {
+        ...deps,
+        env: { DEMAND_PLAN_PILOT_ENABLED: 'false' },
+        loadSku: async (skuId) => {
+          skuLoads += 1;
+          return deps.loadSku!(skuId);
+        },
+      },
+    );
+    assert.equal(skuLoads, 1);
+    assert.equal(result.source, 'forecast');
+    assert.equal(result.demandMap.get('2026-09'), 10);
   });
 });
 

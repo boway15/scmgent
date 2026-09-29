@@ -14,6 +14,8 @@ export type SalesAnalyticsCubePayload = {
     depts: string[];
     categories: string[];
     platforms: string[];
+    scopePending?: boolean;
+    note?: string;
   };
   months: string[];
   weeks: string[];
@@ -35,6 +37,7 @@ export const salesAnalyticsCubeSnapshots = pgTable(
     generatedAt: timestamp('generated_at', { withTimezone: true }),
     meta: jsonb('meta').$type<SalesAnalyticsCubePayload['meta']>(),
     payload: jsonb('payload').$type<SalesAnalyticsCubePayload>(),
+    payloadAccessory: jsonb('payload_accessory').$type<SalesAnalyticsCubePayload>(),
     errorMessage: text('error_message'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     createdBy: uuid('created_by').references(() => users.id),

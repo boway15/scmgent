@@ -15,8 +15,17 @@ import {
 } from '../tasks/procurementFeishuPull.js';
 import { procurementPullTaskName } from '../lib/procurement-feishu-task-names.js';
 import { resolveRequestUser } from '../lib/rbac.js';
-import { finishTaskRun, getLatestTaskRuns, startTaskRun } from '../lib/task-runs.js';
+import {
+  countRunningTaskRuns,
+  failStaleRunningTaskRuns,
+  finishTaskRun,
+  getLatestTaskRuns,
+  getTaskRunById,
+  startTaskRun,
+} from '../lib/task-runs.js';
 import { runInventoryQueryPull } from '../tasks/inventoryQueryPull.js';
+import { runProcurementOpsPull } from '../tasks/procurementOpsPull.js';
+import { PROCUREMENT_OPS_PULL_TASK } from '../lib/procurement-ops-pull-task.js';
 import { runInventoryTurnoverPull } from '../tasks/inventoryTurnoverPull.js';
 import { INVENTORY_QUERY_PULL_TASK } from '../lib/inventory-query-pull-task.js';
 import { INVENTORY_TURNOVER_PULL_TASK } from '../lib/inventory-turnover-pull-task.js';
@@ -68,21 +77,46 @@ taskRoutes.get('/tasks/runs', requireCronSecret, async (c) => {
   });
 });
 
+taskRoutes.get('/tasks/runs/:id', requireCronSecret, async (c) => {
+  const run = await getTaskRunById(c.req.param('id'));
+  if (!run) return c.json({ message: 'Task run not found' }, 404);
+  return c.json(run);
+});
+
+const STOCK_ALERT_STALE_MS = 45 * 60 * 1000;
+
 taskRoutes.post('/tasks/stock-alert', requireCronSecret, async (c) => {
+  await failStaleRunningTaskRuns({
+    taskName: 'stock_alert',
+    maxAgeMs: STOCK_ALERT_STALE_MS,
+    errorMessage: '缺货预警超时或进程中断，已自动标记失败',
+  });
+  const running = await countRunningTaskRuns('stock_alert');
+  if (running > 0) {
+    return c.json(
+      { message: '缺货预警正在运行，请到任务记录查看，不要重复触发', skipped: true },
+      409,
+    );
+  }
+
   const triggeredBy = resolveTriggeredBy(c);
   const run = await startTaskRun('stock_alert', triggeredBy);
-  try {
-    const result = await runStockAlert();
-    await finishTaskRun(run.id, {
-      success: true,
-      resultSummary: `alerts=${result.alertCount}; engine=${result.engine}`,
-    });
-    return c.json({ ...result, taskRunId: run.id });
-  } catch (err) {
-    const message = err instanceof Error ? err.message : 'stock alert failed';
-    await finishTaskRun(run.id, { success: false, errorMessage: message });
-    return c.json({ message, taskRunId: run.id }, 500);
-  }
+  setImmediate(() => {
+    void (async () => {
+      try {
+        const result = await runStockAlert();
+        await finishTaskRun(run.id, {
+          success: true,
+          resultSummary: `alerts=${result.alertCount}; active=${result.activeCount}; resolved=${result.autoResolved}; engine=${result.engine}`,
+        });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : 'stock alert failed';
+        console.error('[stockAlert] failed:', err);
+        await finishTaskRun(run.id, { success: false, errorMessage: message });
+      }
+    })();
+  });
+  return c.json({ accepted: true, taskRunId: run.id, status: 'running' }, 202);
 });
 
 taskRoutes.post('/tasks/replenishment-forecast', requireCronSecret, async (c) => {
@@ -264,6 +298,16 @@ taskRoutes.post('/tasks/inventory-query-pull', requireCronSecret, async (c) => {
   const triggeredBy = resolveTriggeredBy(c);
   const run = await startTaskRun(INVENTORY_QUERY_PULL_TASK, triggeredBy);
   const result = await runInventoryQueryPull(run.id);
+  if (result.skipped) {
+    return c.json({ skipped: true, message: result.reason, taskRunId: run.id }, 409);
+  }
+  return c.json({ ...result, taskRunId: run.id });
+});
+
+taskRoutes.post('/tasks/procurement-ops-pull', requireCronSecret, async (c) => {
+  const triggeredBy = resolveTriggeredBy(c);
+  const run = await startTaskRun(PROCUREMENT_OPS_PULL_TASK, triggeredBy);
+  const result = await runProcurementOpsPull(run.id);
   if (result.skipped) {
     return c.json({ skipped: true, message: result.reason, taskRunId: run.id }, 409);
   }

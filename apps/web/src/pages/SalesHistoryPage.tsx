@@ -10,6 +10,8 @@ import { ImportDrawer } from '@/components/import/ImportDrawer';
 import { useImportDrawer } from '@/hooks/use-import-drawer';
 import { CategorySearchSelect } from '@/components/CategorySearchSelect';
 import { cn } from '@/lib/utils';
+import { ProductScopeSwitch } from '@/components/ProductScopeSwitch';
+import { useProductScope } from '@/lib/product-scope';
 
 const DEFAULT_PAGE_SIZE = 20;
 type SalesDimension = 'daily' | 'monthly';
@@ -50,6 +52,7 @@ function defaultMonthlyFrom() {
 }
 
 export function SalesHistoryPage() {
+  const { productScope } = useProductScope();
   const qc = useQueryClient();
   const { open: importOpen, openDrawer: openImportDrawer, closeDrawer: closeImportDrawer } = useImportDrawer();
   const [dimension, setDimension] = useState<SalesDimension>('daily');
@@ -86,7 +89,7 @@ export function SalesHistoryPage() {
   const pendingSalesImport = salesImportBatches?.find((batch) => batch.status === 'pending');
 
   const { data: dailyData, isLoading: dailyLoading } = useQuery({
-    queryKey: ['sales-history-daily', applied, page, pageSize],
+    queryKey: ['sales-history-daily', applied, page, pageSize, productScope],
     queryFn: () =>
       api.getSalesHistory({
         skuCode: applied.skuCode || undefined,
@@ -98,12 +101,13 @@ export function SalesHistoryPage() {
         category: applied.category || undefined,
         page,
         pageSize,
+        productScope,
       }),
     enabled: dimension === 'daily',
   });
 
   const { data: monthlyData, isLoading: monthlyLoading } = useQuery({
-    queryKey: ['sales-history-monthly', applied, page, pageSize],
+    queryKey: ['sales-history-monthly', applied, page, pageSize, productScope],
     queryFn: () =>
       api.getSalesHistoryMonthly({
         skuCode: applied.skuCode || undefined,
@@ -113,6 +117,7 @@ export function SalesHistoryPage() {
         category: applied.category || undefined,
         page,
         pageSize,
+        productScope,
       }),
     enabled: dimension === 'monthly',
   });
@@ -155,6 +160,7 @@ export function SalesHistoryPage() {
         warehouse: applied.warehouse || undefined,
         station: applied.station || undefined,
         category: applied.category || undefined,
+        productScope,
       });
       return;
     }
@@ -164,6 +170,7 @@ export function SalesHistoryPage() {
       to: applied.monthTo || undefined,
       channel: applied.channel || undefined,
       category: applied.category || undefined,
+      productScope,
     });
   };
 
@@ -179,6 +186,8 @@ export function SalesHistoryPage() {
           </Button>
         </div>
       </PageHeader>
+
+      <ProductScopeSwitch />
 
       <div className="flex gap-2 border-b border-border">
         <button

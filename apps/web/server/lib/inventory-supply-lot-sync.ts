@@ -20,6 +20,7 @@ import {
 } from './inventory-supply-lots.js';
 import { readTurnoverSnapshot } from './inventory-turnover-snapshot.js';
 import { buildCsv } from './csv-export.js';
+import { parseProductScope, productScopeSql, type ProductScope } from './planning-accessory-filter.js';
 import {
   buildDestWarehouseByRequestNo,
   createWarehouseLabelResolver,
@@ -326,8 +327,9 @@ function buildSupplyLotConditions(params: {
   includeCancelled?: boolean;
   q?: string;
   dateUnknown?: boolean;
+  productScope?: ProductScope;
 }) {
-  const conditions = [];
+  const conditions = [productScopeSql(params.productScope ?? 'goods')];
   if (!params.includeCancelled) {
     conditions.push(eq(inventorySupplyLots.status, 'open'));
   }
@@ -363,6 +365,7 @@ export async function countSupplyLots(params: {
   includeCancelled?: boolean;
   q?: string;
   dateUnknown?: boolean;
+  productScope?: ProductScope;
 }) {
   const where = buildSupplyLotConditions(params);
   const [row] = await db
@@ -382,6 +385,7 @@ export async function listSupplyLots(params: {
   offset?: number;
   q?: string;
   dateUnknown?: boolean;
+  productScope?: ProductScope;
 }) {
   const limit = params.limit ?? 500;
   const offset = params.offset ?? 0;
@@ -475,7 +479,7 @@ export async function updateLocalLotDates(params: {
   return updated ?? null;
 }
 
-type OpenTimelineLot = {
+export type OpenTimelineLot = {
   pool: 'overseas' | 'in_transit' | 'local';
   qty: number;
   availableAt: string | null;
@@ -485,20 +489,73 @@ type OpenTimelineLot = {
   dateUnknown: boolean;
 };
 
-function mapOpenTimelineLot(row: typeof inventorySupplyLots.$inferSelect): OpenTimelineLot {
+function isoDateOnly(value: unknown): string | null {
+  if (value == null || value === '') return null;
+  if (value instanceof Date) return value.toISOString().slice(0, 10);
+  return String(value).slice(0, 10);
+}
+
+function mapOpenTimelineLot(row: {
+  pool: string;
+  qty: number;
+  availableAt: unknown;
+  productionStatus: string | null;
+  shipReadyAt: unknown;
+  etaEstimated: boolean;
+  dateUnknown: boolean;
+}): OpenTimelineLot {
   return {
     pool: row.pool as 'overseas' | 'in_transit' | 'local',
     qty: row.qty,
-    availableAt: row.availableAt,
+    availableAt: isoDateOnly(row.availableAt),
     productionStatus: (row.productionStatus ?? null) as
       | 'in_production'
       | 'qc_pending'
       | 'completed'
       | null,
-    shipReadyAt: row.shipReadyAt,
+    shipReadyAt: isoDateOnly(row.shipReadyAt),
     etaEstimated: row.etaEstimated,
     dateUnknown: row.dateUnknown,
   };
+}
+
+const OPEN_LOT_SKU_CHUNK = 2000;
+
+/** 缺货预警等全量扫描：按 SKU 分批拉 open lots，键为 skuId::warehouseCode。 */
+export async function loadOpenLotsBySkuWarehouse(
+  skuIds: string[],
+): Promise<Map<string, OpenTimelineLot[]>> {
+  const grouped = new Map<string, OpenTimelineLot[]>();
+  if (!skuIds.length) return grouped;
+
+  for (let offset = 0; offset < skuIds.length; offset += OPEN_LOT_SKU_CHUNK) {
+    const chunk = skuIds.slice(offset, offset + OPEN_LOT_SKU_CHUNK);
+    const rows = await db
+      .select({
+        skuId: inventorySupplyLots.skuId,
+        warehouseCode: inventorySupplyLots.warehouseCode,
+        pool: inventorySupplyLots.pool,
+        qty: inventorySupplyLots.qty,
+        availableAt: inventorySupplyLots.availableAt,
+        productionStatus: inventorySupplyLots.productionStatus,
+        shipReadyAt: inventorySupplyLots.shipReadyAt,
+        etaEstimated: inventorySupplyLots.etaEstimated,
+        dateUnknown: inventorySupplyLots.dateUnknown,
+      })
+      .from(inventorySupplyLots)
+      .where(
+        and(inArray(inventorySupplyLots.skuId, chunk), eq(inventorySupplyLots.status, 'open')),
+      );
+
+    for (const row of rows) {
+      const key = `${row.skuId}::${row.warehouseCode}`;
+      const list = grouped.get(key) ?? [];
+      list.push(mapOpenTimelineLot(row));
+      grouped.set(key, list);
+    }
+  }
+
+  return grouped;
 }
 
 async function loadOpenLotsForSku(params: {
@@ -565,6 +622,7 @@ export type SupplyLotExportFilters = {
   warehouseCode?: string;
   q?: string;
   dateUnknown?: boolean;
+  productScope?: ProductScope;
 };
 
 export function parseSupplyLotExportFilters(
@@ -576,6 +634,7 @@ export function parseSupplyLotExportFilters(
     warehouseCode: query.warehouse?.trim() || undefined,
     q: query.q?.trim() || undefined,
     dateUnknown: query.dateUnknown === 'true' ? true : undefined,
+    productScope: parseProductScope(query.productScope),
   };
 }
 

@@ -9,6 +9,8 @@ import { ListPagination } from '@/components/ListPagination';
 import { ListSearchBar } from '@/components/ListSearchBar';
 import { ImportDrawer } from '@/components/import/ImportDrawer';
 import { useImportDrawer } from '@/hooks/use-import-drawer';
+import { ProductScopeSwitch } from '@/components/ProductScopeSwitch';
+import { useProductScope } from '@/lib/product-scope';
 
 function rowKey(skuId: string, warehouseCode: string) {
   return `${skuId}::${warehouseCode}`;
@@ -36,6 +38,7 @@ function formatDeltaDays(deltaDays: number | null): string {
 }
 
 export function SafetyStockPage() {
+  const { productScope } = useProductScope();
   const qc = useQueryClient();
   const { open: importOpen, openDrawer: openImportDrawer, closeDrawer: closeImportDrawer } = useImportDrawer();
   const [suggestionServiceLevel, setSuggestionServiceLevel] = useState(0.95);
@@ -45,8 +48,9 @@ export function SafetyStockPage() {
   const [appliedKeyword, setAppliedKeyword] = useState('');
 
   const { data, isLoading } = useQuery({
-    queryKey: ['safety-stock', page, pageSize, appliedKeyword],
-    queryFn: () => api.getSafetyStock({ page, pageSize, q: appliedKeyword || undefined }),
+    queryKey: ['safety-stock', page, pageSize, appliedKeyword, productScope],
+    queryFn: () =>
+      api.getSafetyStock({ page, pageSize, q: appliedKeyword || undefined, productScope }),
   });
   const items = data?.items ?? [];
 
@@ -139,6 +143,7 @@ export function SafetyStockPage() {
           导入库存策略
         </Button>
       </PageHeader>
+      <ProductScopeSwitch />
       <Card>
         <CardHeader>
           <CardTitle>安全库存参数</CardTitle>

@@ -22,6 +22,7 @@ import {
   type AllCatV41HorizonDisplay,
 } from '@/lib/forecast-horizon-display';
 import { cn } from '@/lib/utils';
+import { useProductScope } from '@/lib/product-scope';
 import { ForecastColumnHeader } from '@/components/ForecastColumnHeader';
 import {
   getForecastHorizonColumnHelp,
@@ -338,6 +339,7 @@ export function ForecastSkuDetailDrawer({
 }: Props) {
   const dialogRef = useRef<HTMLDialogElement>(null);
   const qc = useQueryClient();
+  const { productScope } = useProductScope();
   const [historyExpanded, setHistoryExpanded] = useState(false);
 
   const invalidateForecast = () => {
@@ -392,6 +394,7 @@ export function ForecastSkuDetailDrawer({
       platformScope,
       horizonMonthCount,
       DRAWER_HISTORY_MONTH_COUNT,
+      productScope,
     ],
     queryFn: () =>
       api.getSalesForecastHorizon({
@@ -404,6 +407,7 @@ export function ForecastSkuDetailDrawer({
         pageSize: 1,
         monthCount: horizonMonthCount,
         historyMonthCount: DRAWER_HISTORY_MONTH_COUNT,
+        productScope,
       }),
     enabled: Boolean(versionId && row && (resolvedSkuId || row.skuCode)),
   });

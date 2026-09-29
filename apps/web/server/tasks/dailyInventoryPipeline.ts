@@ -7,6 +7,7 @@ import { sendFeishuGroupMessage } from '../integrations/feishu.js';
 import { db, reorderSuggestions, stockAlerts, inventoryExceptions, inventoryDataIssues } from '@scm/db';
 import { eq, and, sql } from 'drizzle-orm';
 import { syncInventorySupplyLots } from '../lib/inventory-supply-lot-sync.js';
+import { buildWarehouseStockFacts } from '../lib/inventory-warehouse-facts-build.js';
 
 export type DailyPipelineStep = {
   name: string;
@@ -28,6 +29,21 @@ export async function runDailyInventoryPipeline() {
   } catch (err) {
     steps.push({
       name: 'supply_lot_sync',
+      success: false,
+      error: err instanceof Error ? err.message : 'failed',
+    });
+  }
+
+  try {
+    const facts = await buildWarehouseStockFacts();
+    steps.push({
+      name: 'warehouse_stock_facts',
+      success: true,
+      summary: `facts=${facts.factCount}; selected=${facts.selectedCount}; queryRows=${facts.queryRows}; chainRows=${facts.chainRows}; mismatches=${facts.sourceMismatchCount}; skipped=${facts.skippedSources.join(',') || 'none'}`,
+    });
+  } catch (err) {
+    steps.push({
+      name: 'warehouse_stock_facts',
       success: false,
       error: err instanceof Error ? err.message : 'failed',
     });

@@ -7,10 +7,16 @@ import {
   fobTruckingBillItems,
   fobFreightBillItems,
   fobSettlementBatches,
+  fobPorts,
 } from '@scm/db';
 import { buildContainerMerchantStats } from './fob-container-stats.js';
 import { computeContainerMatch } from './fob-container-match.js';
-import { matchAllocationRule, effectiveBillAmount, type FeeRuleRow } from './fob-fee-rules.js';
+import {
+  matchAllocationRule,
+  effectiveBillAmount,
+  buildContainerOriginPortMap,
+  type FeeRuleRow,
+} from './fob-fee-rules.js';
 
 /** 体积导入时标记「货柜内无 FOB」的占位主体编码 */
 export const FOB_NON_FOB_MARKER = '__NON_FOB__';
@@ -59,7 +65,74 @@ export async function loadActiveFeeRules(): Promise<FeeRuleRow[]> {
     allocationMethod: r.allocationMethod,
     defaultStage: r.defaultStage,
     priority: r.priority,
+    portId: r.portId,
   }));
+}
+
+/** 启用港口 name(trim) → id */
+export async function loadActivePortNameToIdMap(): Promise<Map<string, string>> {
+  const rows = await db
+    .select({ id: fobPorts.id, name: fobPorts.name })
+    .from(fobPorts)
+    .where(eq(fobPorts.isActive, true));
+  const map = new Map<string, string>();
+  for (const r of rows) map.set(r.name.trim(), r.id);
+  return map;
+}
+
+/** 批次体积 → 柜号 → portId（起运港须已登记且同柜唯一） */
+export async function loadBatchContainerPortIds(batchId: string): Promise<{
+  byContainer: Map<string, string>;
+  conflicts: string[];
+  missingPortContainers: string[];
+  unknownPortNames: string[];
+}> {
+  const shipments = await db
+    .select({
+      containerNo: fobMerchantShipments.containerNo,
+      originPort: fobMerchantShipments.originPort,
+      merchantCode: fobMerchantShipments.merchantCode,
+    })
+    .from(fobMerchantShipments)
+    .where(eq(fobMerchantShipments.batchId, batchId));
+
+  const { byContainer: nameByContainer, conflicts } = buildContainerOriginPortMap(shipments, {
+    excludeNonFobMarker: FOB_NON_FOB_MARKER,
+  });
+  const portMap = await loadActivePortNameToIdMap();
+  const byContainer = new Map<string, string>();
+  const missingPortContainers: string[] = [];
+  const unknownPortNames = new Set<string>();
+
+  const volumeContainers = [
+    ...new Set(
+      shipments
+        .filter((s) => !isNonFobMarkerShipment(s.merchantCode))
+        .map((s) => s.containerNo),
+    ),
+  ];
+
+  for (const containerNo of volumeContainers) {
+    if (conflicts.includes(containerNo)) continue;
+    const portName = nameByContainer.get(containerNo);
+    if (!portName) {
+      missingPortContainers.push(containerNo);
+      continue;
+    }
+    const portId = portMap.get(portName);
+    if (!portId) {
+      unknownPortNames.add(portName);
+      continue;
+    }
+    byContainer.set(containerNo, portId);
+  }
+
+  return {
+    byContainer,
+    conflicts,
+    missingPortContainers: missingPortContainers.sort(),
+    unknownPortNames: [...unknownPortNames].sort(),
+  };
 }
 
 export async function rebuildContainerMerchantStats(batchId: string) {
@@ -102,8 +175,16 @@ export function resolveRuleForBillItem(
   remark?: string | null,
   amountCny?: number,
   assignedMerchantCode?: string | null,
+  portId?: string | null,
 ) {
-  const matched = matchAllocationRule(feeType, sourceBillType, rules, remark, amountCny);
+  const matched = matchAllocationRule(
+    feeType,
+    sourceBillType,
+    rules,
+    remark,
+    amountCny,
+    portId,
+  );
   return {
     allocationMethod: matched.allocationMethod,
     isException: matched.isException,
@@ -135,6 +216,7 @@ export function latestRulePatchForBillItem(
   rules: FeeRuleRow[],
   item: BillItemRuleState,
   sourceBillType: 'trucking' | 'freight',
+  portId?: string | null,
 ) {
   const resolved = resolveRuleForBillItem(
     rules,
@@ -143,6 +225,7 @@ export function latestRulePatchForBillItem(
     item.remark,
     item.amountCny,
     item.assignedMerchantCode,
+    portId,
   );
   const reviewLocked = item.exceptionStatus === 'confirmed' || item.exceptionStatus === 'rejected';
   if (reviewLocked) {
@@ -198,6 +281,7 @@ export async function previewLatestFeeRulesForBatch(batchId: string): Promise<La
     db.select().from(fobTruckingBillItems).where(eq(fobTruckingBillItems.batchId, batchId)),
     db.select().from(fobFreightBillItems).where(eq(fobFreightBillItems.batchId, batchId)),
   ]);
+  const { byContainer: containerPortIds } = await loadBatchContainerPortIds(batchId);
 
   const truckingPatches = trucking.map((item) => ({
     id: item.id,
@@ -212,6 +296,7 @@ export async function previewLatestFeeRulesForBatch(batchId: string): Promise<La
         exceptionStatus: item.exceptionStatus,
       },
       'trucking',
+      null,
     ),
   }));
   const freightPatches = freight.map((item) => ({
@@ -227,6 +312,7 @@ export async function previewLatestFeeRulesForBatch(batchId: string): Promise<La
         exceptionStatus: item.exceptionStatus,
       },
       'freight',
+      containerPortIds.get(item.containerNo) ?? null,
     ),
   }));
 

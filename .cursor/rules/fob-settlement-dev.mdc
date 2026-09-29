@@ -8,14 +8,24 @@ globs:
   - apps/web/server/lib/fob-allocation-base-meta.ts
 ---
 
-# FOB 分账 v2 · 开发记忆（2026-06）
+# FOB 分账 v2 · 开发记忆（2026-06，港口规则 2026-09）
 
 ## 业务锁定（见 `docs/prd/fob-settlement-split-v2.md`）
 
 - 一批次 = 一个 `settlementType`（trucking | freight）+ 一个 `serviceProviderId`
 - 体积各批次独立；拖车/货代账单互斥导入
 - 付款三态：paid / unpaid / not_required；选「无需支付」时备注必填（可先选状态，备注失焦后保存）
-- 导出：两级行（柜汇总 + 费用明细）；无业务编号列（业务编号在分摊基数/平账展示）
+- 导出：宽表 + Sheet2 分摊规则说明
+
+## 货代按港口规则（2026-09）
+
+- `fob_ports`：起运港主数据；模板港 `code=__TEMPLATE__` / 名称「模板港口」
+- 货代规则：`fob_fee_allocation_rules.port_id` **必填**（完整规则集挂港口）
+- 拖车规则：`port_id` 必须为空（全局）
+- 体积：`fob_merchant_shipments.origin_port`；截单清单「工厂类型」后「起运港」列；与 `fob_ports.name` 精确匹配
+- 货代导入体积：缺港 / 未登记 / 同柜多港 → 行级 errors
+- 核算匹配：柜 → origin_port → port_id → 该港 freight 规则
+- UI：`FobFeeRulesPanel` 港口 CRUD + 按港筛选 +「复制规则集」
 
 ## 术语（FOB 模块内统一）
 
@@ -32,11 +42,11 @@ globs:
 
 | 格式 | 识别 | 关键列 |
 |------|------|--------|
-| **截单清单/调拨明细** | `临柜号`+`调拨单号`+`SKU编码`+`是否退税`+体积 | 柜=**货柜号优先**否则临柜号；主体=**工厂名称**（必填）；类别=**工厂类型优先**否则是否退税 |
-| **ED/汇总模板** | `工厂类别`+主体+体积+柜号 | 主体=法人主体/主体/工厂/主体；类别=工厂类别 |
+| **截单清单/调拨明细** | `临柜号`+`调拨单号`+`SKU编码`+`是否退税`+体积 | 柜=**货柜号优先**否则临柜号；主体=**工厂名称**（必填）；类别=**工厂类型优先**否则是否退税；**起运港**（工厂类型之后） |
+| **ED/汇总模板** | `工厂类别`+主体+体积+柜号 | 主体=法人主体/主体/工厂/主体；类别=工厂类别；有「起运港」则解析 |
 | **简易 CSV** | 首行表头映射 | 同汇总模板 |
 
-下载模板表头对齐 `docs/samples/import-fob/导出截单清单数据导出_*.xlsx`（首列 `货柜号`，末列 `工厂名称`/`工厂类型`；亦兼容无货柜号的旧导出）。
+下载模板表头末列：`工厂名称` / `工厂类型` / **`起运港`**。
 
 **柜参与分账**：柜内至少一行工厂类型含 FOB 关键字（`/FOB/i`，且排除「非FOB」「不做FOB」）。纯退税/非退税/非FOB 柜不参与。混柜含 FOB 时整柜（含非 FOB 行）进分摊基数。
 
@@ -46,8 +56,9 @@ globs:
 
 ## 分摊基数展示列（`ImportedVolumeStatsList`）
 
-柜号 → 业务编号 → 工厂/主体 → 工厂类别 → **SKU** → 体积 → 票数 → 占比
+柜号 → **起运港** → 业务编号 → 工厂/主体 → 工厂类别 → **SKU** → 体积 → 票数 → 占比
 
+- **起运港**：体积 `origin_port`，按柜聚合
 - **业务编号**：账单导入（拖车 internalNo / 货代 orderNo），按柜聚合逗号分隔
 - **工厂类别**：体积 remark `类别:…`，按柜+主体聚合
 - **SKU**：体积 `skuCode`，按柜+主体聚合
@@ -56,12 +67,11 @@ globs:
 
 ## 导出
 
+- 文件名：`{批次号}_{批次名称}_分摊总账.xlsx` / `{批次号}_{批次名称}_按工厂主体导出.zip`
 - **分摊总账**：单 xlsx 宽表（`buildTotalBillWideExportAoa`）= 各工厂/主体宽表行合集
 - **按工厂/主体导出（ZIP）**：每主体一个 xlsx，**宽表** = 账单导入列（拖车/货代 meta + 费用列）+ 追加列：
   `合计金额 | 承担金额 | 总体积 | 承担体积 | 体积占比 | 承担工厂/主体 | 收款公司名称`
-  - 合计金额 = 货柜账单总额（非主体承担）
-  - 承担金额 = 该主体在该柜分摊合计
-  - 收款公司名称 = 批次服务商名称
+- **Sheet2「分摊规则说明」**：固定口径（按体积/按票/需确认）+ 本批次规则明细（货代含起运港）；总账与 ZIP 内 xlsx 都带
 
 ## 平账矩阵（`FobContainerMatrixPanel`）
 
@@ -81,6 +91,7 @@ globs:
 3. **临柜号 vs 正式柜号**：截单清单若有「货柜号」列则优先用正式柜号；仅临柜号（H 开头）时与账单 WHSU… 可能不匹配，需业务确认映射。
 4. **汇总模板无 SKU 列**：分摊基数 SKU 列为空；调拨明细或 ED 带 Sku 才有值。
 5. **Docker 改代码后**：`pnpm docker:build && pnpm docker:start`，浏览器 Ctrl+F5。
+6. **货代规则无 port_id**：匹配为空 → 全部 unconfigured；新建货代规则必须选港口。
 
 ## 关键文件
 
@@ -88,11 +99,14 @@ globs:
 |------|------|
 | 体积解析 | `apps/web/server/lib/fob-bill-parsers.ts` |
 | 基数 enrich | `apps/web/server/lib/fob-allocation-base-meta.ts` |
+| 规则匹配 | `apps/web/server/lib/fob-fee-rules.ts` / `fob-batch-helpers.ts` |
 | 导出 | `apps/web/server/lib/fob-reconcile-export.ts` |
 | API | `apps/web/server/routes/logistics.ts` |
 | 详情页 | `apps/web/src/pages/FobSettlementDetailPage.tsx` |
+| 规则 UI | `apps/web/src/components/FobFeeRulesPanel.tsx` |
 | 平账矩阵 | `apps/web/src/components/FobContainerMatrixPanel.tsx` |
 | 列表/创建 | `apps/web/src/pages/FobSettlementListPage.tsx` |
+| 设计 | `docs/superpowers/specs/2026-09-29-fob-port-allocation-rules-design.md` |
 | 样例 | `docs/samples/import-fob/`（体积：`1.体积导入-导出截单清单数据导出_*.xlsx`） |
 
 ## 测试
@@ -102,4 +116,5 @@ cd apps/web
 npx tsx --test server/lib/fob-bill-parsers.test.ts
 npx tsx --test server/lib/fob-allocation-base-meta.test.ts
 npx tsx --test server/lib/fob-reconcile-export.test.ts
+npx tsx --test server/lib/fob-settlement.test.ts
 ```

@@ -14,7 +14,9 @@ import {
   fobSettlementAllocations,
   fobSettlementAdjustments,
   fobFeeAllocationRules,
+  fobPorts,
   resetFobFeeRuleDisplayPriorities,
+  FOB_TEMPLATE_PORT_CODE,
 } from '@scm/db';
 import { enrichContainerStats } from '../lib/fob-allocation-base-meta.js';
 import { getCurrentUser } from '../lib/auth-context.js';
@@ -53,11 +55,9 @@ import {
 } from '../lib/fob-container-match.js';
 import { statsByContainer } from '../lib/fob-container-stats.js';
 import {
-  EXCEPTION_REASON_LABEL,
-  storedExceptionReason,
-} from '../lib/fob-fee-rules.js';
-import {
   loadActiveFeeRules,
+  loadBatchContainerPortIds,
+  loadActivePortNameToIdMap,
   rebuildContainerMerchantStats,
   resolveRuleForBillItem,
   previewLatestFeeRulesForBatch,
@@ -70,6 +70,11 @@ import {
   partitionVolumeShipments,
   nextFobBatchNo,
 } from '../lib/fob-batch-helpers.js';
+import {
+  EXCEPTION_REASON_LABEL,
+  storedExceptionReason,
+  buildContainerOriginPortMap,
+} from '../lib/fob-fee-rules.js';
 import { requireMenu } from '../lib/rbac.js';
 import { assertRowCount, assertUploadFile } from '../lib/upload-guard.js';
 import {
@@ -84,6 +89,8 @@ import {
   buildTotalExportFileName,
   buildXlsxBuffer,
   buildZipBuffer,
+  buildAllocationRulesExplanationAoa,
+  buildRuleExplanationRowsFromBillItems,
   contentDispositionAttachment,
   listMerchantsForExport,
   sanitizeExportFileName,
@@ -747,6 +754,7 @@ logisticsRoutes.post('/logistics/fob-settlements/:id/import/freight', fobMenu, a
   }
 
   const rules = await loadActiveFeeRules();
+  const { byContainer: containerPortIds } = await loadBatchContainerPortIds(batchId);
   await db.delete(fobFreightBillItems).where(eq(fobFreightBillItems.batchId, batchId));
 
   let exceptionCount = 0;
@@ -758,6 +766,7 @@ logisticsRoutes.post('/logistics/fob-settlements/:id/import/freight', fobMenu, a
       item.remark,
       item.amountCny,
       item.assignedMerchantCode,
+      containerPortIds.get(item.containerNo) ?? null,
     );
     if (item.forceException) {
       resolved.isException = true;
@@ -865,10 +874,45 @@ logisticsRoutes.post('/logistics/fob-settlements/:id/import/shipments', fobMenu,
     return c.json({ message: '未解析到体积信息行', errors: parsed.errors }, 400);
   }
 
+  const importErrors = [...parsed.errors];
+  let itemsToInsert = parsed.items;
+
+  if (batch.settlementType === 'freight') {
+    const portNameToId = await loadActivePortNameToIdMap();
+    const { byContainer, conflicts } = buildContainerOriginPortMap(parsed.items, {
+      excludeNonFobMarker: FOB_NON_FOB_MARKER,
+    });
+    for (const containerNo of conflicts) {
+      importErrors.push(`柜号 ${containerNo}：同一柜存在多个起运港，请核对体积文件`);
+    }
+    const conflictSet = new Set(conflicts);
+    const filtered: typeof parsed.items = [];
+    for (const item of parsed.items) {
+      if (conflictSet.has(item.containerNo)) continue;
+      const portName = (item.originPort ?? '').trim() || byContainer.get(item.containerNo);
+      if (!portName) {
+        importErrors.push(`柜号 ${item.containerNo}：缺少起运港（货代批次必填）`);
+        continue;
+      }
+      if (!portNameToId.has(portName)) {
+        importErrors.push(`柜号 ${item.containerNo}：起运港「${portName}」未在港口主数据中登记或已停用`);
+        continue;
+      }
+      filtered.push({ ...item, originPort: portName });
+    }
+    itemsToInsert = filtered;
+    if (!itemsToInsert.length && !nonFobContainers.length) {
+      return c.json(
+        { message: '货代体积导入失败：起运港校验未通过', errors: importErrors },
+        400,
+      );
+    }
+  }
+
   await db.delete(fobMerchantShipments).where(eq(fobMerchantShipments.batchId, batchId));
 
   let sortOrder = 0;
-  for (const item of parsed.items) {
+  for (const item of itemsToInsert) {
     await db.insert(fobMerchantShipments).values({
       batchId,
       merchantCode: item.merchantCode,
@@ -878,6 +922,7 @@ logisticsRoutes.post('/logistics/fob-settlements/:id/import/shipments', fobMenu,
       qty: item.qty,
       volumeCbm: String(item.volumeCbm),
       weightKg: item.weightKg != null ? String(item.weightKg) : undefined,
+      originPort: item.originPort?.trim() || null,
       remark: item.remark,
       sortOrder: sortOrder++,
     });
@@ -902,15 +947,15 @@ logisticsRoutes.post('/logistics/fob-settlements/:id/import/shipments', fobMenu,
     .set({ status: 'imported', updatedAt: new Date() })
     .where(eq(fobSettlementBatches.id, batchId));
 
-  const merchants = new Set(parsed.items.map((i) => i.merchantCode)).size;
+  const merchants = new Set(itemsToInsert.map((i) => i.merchantCode)).size;
   return c.json({
-    imported: parsed.items.length,
-    containers: new Set(parsed.items.map((i) => i.containerNo)).size,
+    imported: itemsToInsert.length,
+    containers: new Set(itemsToInsert.map((i) => i.containerNo)).size,
     nonFobContainers,
     merchants,
     ticketStats: stats.length,
     skippedRows: parsed.skippedRows,
-    errors: parsed.errors,
+    errors: importErrors,
   });
 });
 
@@ -1496,6 +1541,7 @@ logisticsRoutes.patch('/logistics/fob-service-providers/:id/toggle', fobMenu, as
 
 logisticsRoutes.get('/logistics/fob-fee-rules', fobMenu, async (c) => {
   const sourceBillType = c.req.query('sourceBillType');
+  const portId = c.req.query('portId');
   const rows = await db
     .select()
     .from(fobFeeAllocationRules)
@@ -1504,11 +1550,143 @@ logisticsRoutes.get('/logistics/fob-fee-rules', fobMenu, async (c) => {
       desc(fobFeeAllocationRules.priority),
       fobFeeAllocationRules.feeType,
     );
-  const filtered =
-    sourceBillType === 'trucking' || sourceBillType === 'freight'
-      ? rows.filter((r) => r.sourceBillType === sourceBillType)
-      : rows;
+  let filtered = rows;
+  if (sourceBillType === 'trucking' || sourceBillType === 'freight') {
+    filtered = filtered.filter((r) => r.sourceBillType === sourceBillType);
+  }
+  if (portId) {
+    filtered = filtered.filter((r) => r.portId === portId);
+  } else if (sourceBillType === 'trucking') {
+    filtered = filtered.filter((r) => !r.portId);
+  }
   return c.json(filtered);
+});
+
+logisticsRoutes.get('/logistics/fob-ports', fobMenu, async (c) => {
+  const activeOnly = c.req.query('activeOnly') === '1';
+  const rows = await db.select().from(fobPorts).orderBy(asc(fobPorts.name));
+  return c.json(activeOnly ? rows.filter((r) => r.isActive) : rows);
+});
+
+logisticsRoutes.post('/logistics/fob-ports', fobMenu, async (c) => {
+  const body = await c.req.json<{
+    name: string;
+    code?: string;
+    remark?: string;
+    isActive?: boolean;
+  }>();
+  const name = body.name?.trim();
+  if (!name) return c.json({ message: 'name required' }, 400);
+  if (name === '模板港口' || body.code?.trim() === FOB_TEMPLATE_PORT_CODE) {
+    return c.json({ message: '不可手动创建模板港口' }, 400);
+  }
+  try {
+    const [row] = await db
+      .insert(fobPorts)
+      .values({
+        name,
+        code: body.code?.trim() || null,
+        remark: body.remark?.trim() || null,
+        isActive: body.isActive ?? true,
+      })
+      .returning();
+    return c.json(row, 201);
+  } catch {
+    return c.json({ message: '港口名称或编码已存在' }, 400);
+  }
+});
+
+logisticsRoutes.patch('/logistics/fob-ports/:id', fobMenu, async (c) => {
+  const id = c.req.param('id');
+  const body = await c.req.json<{
+    name?: string;
+    code?: string | null;
+    remark?: string | null;
+    isActive?: boolean;
+  }>();
+  const [existing] = await db.select().from(fobPorts).where(eq(fobPorts.id, id)).limit(1);
+  if (!existing) return c.json({ message: 'Port not found' }, 404);
+  if (
+    existing.code === FOB_TEMPLATE_PORT_CODE &&
+    body.name !== undefined &&
+    body.name.trim() !== existing.name
+  ) {
+    return c.json({ message: '模板港口名称不可修改' }, 400);
+  }
+  try {
+    const [row] = await db
+      .update(fobPorts)
+      .set({
+        name: body.name !== undefined ? body.name.trim() : existing.name,
+        code: body.code !== undefined ? body.code?.trim() || null : existing.code,
+        remark: body.remark !== undefined ? body.remark?.trim() || null : existing.remark,
+        isActive: body.isActive ?? existing.isActive,
+        updatedAt: new Date(),
+      })
+      .where(eq(fobPorts.id, id))
+      .returning();
+    return c.json(row);
+  } catch {
+    return c.json({ message: '港口名称或编码冲突' }, 400);
+  }
+});
+
+logisticsRoutes.post('/logistics/fob-ports/:id/copy-rules', fobMenu, async (c) => {
+  const targetPortId = c.req.param('id');
+  const body = await c.req.json<{ sourcePortId: string }>();
+  if (!body.sourcePortId) return c.json({ message: 'sourcePortId required' }, 400);
+  if (body.sourcePortId === targetPortId) {
+    return c.json({ message: '源港口与目标港口不能相同' }, 400);
+  }
+
+  const [target, source] = await Promise.all([
+    db.select().from(fobPorts).where(eq(fobPorts.id, targetPortId)).limit(1).then((r) => r[0]),
+    db.select().from(fobPorts).where(eq(fobPorts.id, body.sourcePortId)).limit(1).then((r) => r[0]),
+  ]);
+  if (!target || !source) return c.json({ message: '港口不存在' }, 404);
+
+  const sourceRules = await db
+    .select()
+    .from(fobFeeAllocationRules)
+    .where(
+      and(
+        eq(fobFeeAllocationRules.portId, body.sourcePortId),
+        eq(fobFeeAllocationRules.sourceBillType, 'freight'),
+      ),
+    );
+  const existingTarget = await db
+    .select()
+    .from(fobFeeAllocationRules)
+    .where(
+      and(
+        eq(fobFeeAllocationRules.portId, targetPortId),
+        eq(fobFeeAllocationRules.sourceBillType, 'freight'),
+      ),
+    );
+
+  const existingKeys = new Set(
+    existingTarget.map((r) => `${r.feeType ?? ''}|${r.matchPattern ?? ''}`),
+  );
+
+  let copied = 0;
+  for (const rule of sourceRules) {
+    const key = `${rule.feeType ?? ''}|${rule.matchPattern ?? ''}`;
+    if (existingKeys.has(key)) continue;
+    await db.insert(fobFeeAllocationRules).values({
+      feeType: rule.feeType,
+      sourceBillType: 'freight',
+      matchPattern: rule.matchPattern,
+      allocationMethod: rule.allocationMethod,
+      defaultStage: rule.defaultStage,
+      priority: rule.priority,
+      isActive: rule.isActive,
+      remark: rule.remark,
+      portId: targetPortId,
+    });
+    copied++;
+  }
+
+  return c.json({ ok: true, copied, sourcePortName: source.name, targetPortName: target.name });
 });
 
 logisticsRoutes.post('/logistics/fob-fee-rules/reset-priorities', fobMenu, async (c) => {
@@ -1526,6 +1704,7 @@ logisticsRoutes.post('/logistics/fob-fee-rules', fobMenu, async (c) => {
     priority?: number;
     remark?: string;
     isActive?: boolean;
+    portId?: string | null;
   }>();
 
   const feeType = body.feeType?.trim() || null;
@@ -1539,6 +1718,12 @@ logisticsRoutes.post('/logistics/fob-fee-rules', fobMenu, async (c) => {
   if (body.allocationMethod === 'fixed') {
     return c.json({ message: '全局规则不支持固定分摊，请使用需确认或在批次异常审核中指定归属' }, 400);
   }
+  if (body.sourceBillType === 'freight' && !body.portId) {
+    return c.json({ message: '货代规则必须指定起运港 portId' }, 400);
+  }
+  if (body.sourceBillType === 'trucking' && body.portId) {
+    return c.json({ message: '拖车规则不可绑定港口' }, 400);
+  }
 
   const [row] = await db
     .insert(fobFeeAllocationRules)
@@ -1551,6 +1736,7 @@ logisticsRoutes.post('/logistics/fob-fee-rules', fobMenu, async (c) => {
       priority: body.priority ?? 10,
       remark: body.remark?.trim() || null,
       isActive: body.isActive ?? true,
+      portId: body.sourceBillType === 'freight' ? body.portId! : null,
     })
     .returning();
 
@@ -1567,6 +1753,7 @@ logisticsRoutes.patch('/logistics/fob-fee-rules/:id', fobMenu, async (c) => {
     priority?: number;
     remark?: string | null;
     isActive?: boolean;
+    portId?: string | null;
   }>();
 
   const [existing] = await db
@@ -1586,6 +1773,14 @@ logisticsRoutes.patch('/logistics/fob-fee-rules/:id', fobMenu, async (c) => {
     return c.json({ message: '全局规则不支持固定分摊，请使用需确认或在批次异常审核中指定归属' }, 400);
   }
 
+  const nextPortId = body.portId !== undefined ? body.portId : existing.portId;
+  if (existing.sourceBillType === 'freight' && !nextPortId) {
+    return c.json({ message: '货代规则必须指定起运港 portId' }, 400);
+  }
+  if (existing.sourceBillType === 'trucking' && nextPortId) {
+    return c.json({ message: '拖车规则不可绑定港口' }, 400);
+  }
+
   const [row] = await db
     .update(fobFeeAllocationRules)
     .set({
@@ -1596,6 +1791,9 @@ logisticsRoutes.patch('/logistics/fob-fee-rules/:id', fobMenu, async (c) => {
       ...(body.priority != null ? { priority: body.priority } : {}),
       ...(body.remark !== undefined ? { remark: body.remark?.trim() || null } : {}),
       ...(body.isActive != null ? { isActive: body.isActive } : {}),
+      ...(body.portId !== undefined
+        ? { portId: existing.sourceBillType === 'freight' ? nextPortId : null }
+        : {}),
     })
     .where(eq(fobFeeAllocationRules.id, id))
     .returning();
@@ -1610,24 +1808,39 @@ async function loadReconcileExportData(batchId: string) {
   const provider = batch.serviceProvider;
   if (!provider) return null;
 
-  const [allocationRows, feeRules, paymentRows, truckingItems, freightItems, containerStats] =
-    await Promise.all([
-      db
-        .select()
-        .from(fobSettlementAllocations)
-        .where(eq(fobSettlementAllocations.batchId, batchId)),
-      loadActiveFeeRules(),
-      db
-        .select()
-        .from(fobMerchantPaymentStatus)
-        .where(eq(fobMerchantPaymentStatus.batchId, batchId)),
-      db.select().from(fobTruckingBillItems).where(eq(fobTruckingBillItems.batchId, batchId)),
-      db.select().from(fobFreightBillItems).where(eq(fobFreightBillItems.batchId, batchId)),
-      db
-        .select()
-        .from(fobContainerMerchantStats)
-        .where(eq(fobContainerMerchantStats.batchId, batchId)),
-    ]);
+  const [
+    allocationRows,
+    feeRules,
+    paymentRows,
+    truckingItems,
+    freightItems,
+    containerStats,
+    shipmentRows,
+  ] = await Promise.all([
+    db
+      .select()
+      .from(fobSettlementAllocations)
+      .where(eq(fobSettlementAllocations.batchId, batchId)),
+    loadActiveFeeRules(),
+    db
+      .select()
+      .from(fobMerchantPaymentStatus)
+      .where(eq(fobMerchantPaymentStatus.batchId, batchId)),
+    db.select().from(fobTruckingBillItems).where(eq(fobTruckingBillItems.batchId, batchId)),
+    db.select().from(fobFreightBillItems).where(eq(fobFreightBillItems.batchId, batchId)),
+    db
+      .select()
+      .from(fobContainerMerchantStats)
+      .where(eq(fobContainerMerchantStats.batchId, batchId)),
+    db
+      .select({
+        containerNo: fobMerchantShipments.containerNo,
+        originPort: fobMerchantShipments.originPort,
+        merchantCode: fobMerchantShipments.merchantCode,
+      })
+      .from(fobMerchantShipments)
+      .where(eq(fobMerchantShipments.batchId, batchId)),
+  ]);
 
   const allocations = sortAllocationRows(allocationRows.map((a) => mapAllocationRowForCalc(a)));
   const paymentByMerchant = new Map(
@@ -1640,6 +1853,20 @@ async function loadReconcileExportData(batchId: string) {
     ]),
   );
 
+  const { byContainer: originPortByContainer } = buildContainerOriginPortMap(shipmentRows, {
+    excludeNonFobMarker: FOB_NON_FOB_MARKER,
+  });
+
+  const ruleSheetRows = buildAllocationRulesExplanationAoa({
+    settlementType: batch.settlementType,
+    rules: buildRuleExplanationRowsFromBillItems({
+      settlementType: batch.settlementType,
+      truckingItems,
+      freightItems,
+      originPortByContainer,
+    }),
+  });
+
   return {
     batch,
     provider,
@@ -1649,6 +1876,7 @@ async function loadReconcileExportData(batchId: string) {
     truckingItems,
     freightItems,
     containerStats,
+    ruleSheetRows,
   };
 }
 
@@ -1668,8 +1896,10 @@ logisticsRoutes.get('/logistics/fob-settlements/:id/export/reconcile-total', fob
     freightItems: payload.freightItems,
     containerStats: payload.containerStats,
   });
-  const buffer = await buildXlsxBuffer(rows, '分摊总账');
-  const filename = buildTotalExportFileName(payload.batch.batchNo, payload.batch.settlementPeriod);
+  const buffer = await buildXlsxBuffer(rows, '分摊总账', [
+    { name: '分摊规则说明', rows: payload.ruleSheetRows },
+  ]);
+  const filename = buildTotalExportFileName(payload.batch.batchNo, payload.batch.name);
 
   return new Response(buffer, {
     headers: {
@@ -1704,7 +1934,9 @@ logisticsRoutes.get(
         freightItems: payload.freightItems,
         containerStats: payload.containerStats,
       });
-      const buffer = await buildXlsxBuffer(rows, '分摊平账');
+      const buffer = await buildXlsxBuffer(rows, '分摊平账', [
+        { name: '分摊规则说明', rows: payload.ruleSheetRows },
+      ]);
       let filename = buildMerchantExportFileName(
         merchant.merchantName,
         merchant.merchantCode,
@@ -1718,10 +1950,7 @@ logisticsRoutes.get(
     }
 
     const zipBuffer = await buildZipBuffer(files);
-    const zipName = buildByMerchantZipFileName(
-      payload.batch.batchNo,
-      payload.batch.settlementPeriod,
-    );
+    const zipName = buildByMerchantZipFileName(payload.batch.batchNo, payload.batch.name);
 
     return new Response(zipBuffer, {
       headers: {

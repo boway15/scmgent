@@ -371,7 +371,7 @@ flowchart TB
 | 日时间轴 | 逐日模拟期末库存、缺货日、建议量 | `inventory-timeline.ts`、`inventory-timeline-service.ts` |
 | 健康灯 / 决策灯 | 覆盖天数灯 + 时间轴决策灯 | `inventory-light.ts` |
 | 安全库存 / ROP / EOQ | 覆盖天数法、Z 值法、EOQ | `safety-stock-z.ts`、`replenishment.ts` |
-| 预警 | 即时 + 7/15/30 天 horizon + 超储/覆盖不足 | `stockAlert.ts`、`inventory-horizon-alerts.ts` |
+| 预警 | 即时 + 7/15/30 天 horizon；每日 upsert，未命中自动结案 | `stockAlert.ts`、`stock-alert-sync.ts` |
 | 数据问题队列 | 无上架日、无占比、占比和异常 | `inventory-data-issues.ts` |
 
 ### 3.2 核心数据表
@@ -380,7 +380,9 @@ flowchart TB
 |----|----------|------|
 | `inventory_records` | 无业务唯一键 | `qty_available`、`qty_in_transit`、`qty_in_production`、`qty_reserved`、`recorded_date`、`source`（manual/import/pmc_receipt）；规划取每个 (sku, 仓) 最新一行 |
 | `inventory_snapshot_runs` / `inventory_daily_snapshots` | 快照行 `(snapshot_date, sku_id)` | 总览日快照，`payload` 固化当天全部字段，历史不随主数据漂移 |
-| `inventory_query_snapshot_runs` / `inventory_query_daily_snapshots` | 快照行 `(snapshot_date, sku_code)` | 库存查询快照，保留飞书列原名与列顺序 |
+| `inventory_query_snapshot_runs` / `inventory_query_daily_snapshots` | 无 SKU 唯一约束（同一 SKU 可多行，如按销售国家） | 库存查询快照，保留飞书列原名与列顺序 |
+| `procurement_ops_snapshot_runs` / `procurement_ops_daily_snapshots` | 无 SKU 唯一约束 | 全链库存快照，列原名入 payload |
+| `warehouse_stock_facts` | 按日重建，无业务唯一键 | 查询+全链拆成的 SKU×仓×状态影子长表；`selected` 为择优行；默认不驱动规划 |
 | `safety_stock_config` | `(sku_id, warehouse_code)`，默认 `ALL` | `safety_stock_method`、`calc_method`（manual/eoq/dify_ai） |
 | `inventory_health_snapshots` | 索引 `(sku_id, warehouse_code, computed_at)` | 健康灯、覆盖天数、`metrics` |
 | `stock_alerts` | — | `alert_type`、`horizon_days`、`projected_stockout_date` |
@@ -394,8 +396,12 @@ flowchart TB
 
 | 任务 | 时间 | 规则 | 输出 |
 |------|------|------|------|
+| 全链库存拉取 | 每天 06:00 | `pullAndPublishProcurementOpsFromFeishu` | 全链库存日快照（飞书 `tblWUnYLwD8UATAS`） |
 | 库存查询拉取 | 每天 07:20 | `pullAndPublishInventoryQueryFromFeishu` | 查询日快照 |
 | 库存周转拉取 | 每天 07:40 | `executeBitableSync('inventory_turnover')`；有错误则**不发布**当日快照（`assertSnapshotPublishable`） | `inventory_records`、SKU `encoding_meta`、总览日快照 |
+| 影子长表构建 | 每日流水线内（数据问题扫描前） | `buildWarehouseStockFacts` | `warehouse_stock_facts`：SKU×仓×状态；**默认不写 `inventory_records`、不驱动补货** |
+
+**`warehouse_stock_facts`（影子长表）**：从库存查询 / 全链库存宽表按「状态前缀_仓库后缀」拆列。`bucket` 为 `on_hand` / `transfer_transit` / `allocated_not_shipped` / `eta_bucket`。在库优先全链、调拨在途优先查询；合计列不拆仓；未知仓保留原文并出 `unmapped_warehouse`。规划头寸默认仍用周转合计 × 销售占比；仅当环境变量 `INVENTORY_POSITION_SOURCE=warehouse_facts` 时，可售/调拨在途改读长表 `selected` 行。
 
 业务日按上海时区（`getShanghaiBusinessDate`），同一 `snapshot_date` 只有一个 published 批次。周转行通过 `parseTurnoverWarehouseBuckets`（`turnover-bucket-warehouse.ts`）拆到美东/美西等物理仓；拆不出时只记 `OVERSEAS` 合计。
 
@@ -418,6 +424,10 @@ flowchart TB
 - 在途分桶：「预计 10 天上架」→ +5 天，「10–20 天」→ +15 天，「超 20 天」→ +25 天。
 
 **④ 日粒度时间轴**（`inventory-timeline.ts`）
+
+规划页双 scope（`inventory-planning-service.ts`）：
+- **网络供应**（默认入口 / `scope=network`）：`buildSkuNetworkTimeline`，需求仓=`ALL`，交期用出货前生产段，聚合全仓 open lots；只读提示未定仓，不写 `inventory_dest_allocations`。
+- **分仓规划**（`warehouse=<物理仓>`）：现网单仓时间轴与分配口径不变。
 
 | 环节 | 规则 |
 |------|------|
@@ -458,13 +468,20 @@ flowchart TB
 
 分配方法为 `unallocated`（没有销售占比）时跳过 horizon 预警，改为生成数据问题工单。预警通过飞书群推送，可选 Dify 生成摘要。
 
+**每日覆盖（快照）**：`runStockAlert` 每轮先将全部 `is_resolved=false` 结案，再写入本轮去重后的命中行；`coverage_short` / `overstock` 等时间轴派生预警仅在**时间轴决策灯**为黄/红/蓝时落库（避免绿灯 SKU 刷量）。列表「待处理」= **本轮快照**，不是历史堆积。人工「标记已处理」仍可用；若风险未消失，下次扫描会重新出现。
+
 **⑦ 数据问题队列**（`inventory-data-issues.ts`）
 
-| 类型 | 条件 | 影响模块 |
-|------|------|----------|
-| `missing_available_at` | open 批次 `date_unknown` 或缺 `available_at` | timeline |
-| `unallocated_warehouse` | 海外在库 >0 但没有销售占比 | horizon |
-| `share_sum_mismatch` | 占比和偏差 >5% | planning |
+与 [`analysis-only` 原则](../../apps/web/server/lib/analysis-only.ts) 一致：上架时间、销售占比、目的仓等均来自迅捷→飞书同步。队列**只负责检出、提醒、可导出**，不在本系统 PATCH 源事实；修正后由每日 `inventory_data_issue_scan` 自动结案（`autoResolved`）。页面上的「处理中 / 已解决」仅作列表降噪，**不构成** SOP 业务闭环。
+
+| 类型 | 条件 | 影响模块 | 典型源系统动作 |
+|------|------|----------|----------------|
+| `missing_available_at` | open 批次 `date_unknown` 或缺 `available_at` | timeline | 迅捷跟单/备货维护 ETA、可售日 |
+| `unallocated_warehouse` | 海外在库 >0 但没有销售占比 | horizon | 迅捷维护分仓销售占比 |
+| `share_sum_mismatch` | 占比和偏差 >5% | planning | 迅捷校正各仓占比使合计 ≈100% |
+| `unmapped_warehouse` | 影子长表仓后缀不在 8 区映射 | planning | 迅捷确认仓名；系统补仓码映射 |
+| `position_source_mismatch` | 查询 vs 全链同仓同状态超 20 件或 15% | planning | 迅捷核对两表数量 |
+| `position_share_gap` | 影子在库 vs 周转合计×占比超阈值 | planning | 对照用；不自动改占比拆分 |
 
 ### 3.4 公式与参数
 
@@ -506,10 +523,11 @@ flowchart TB
 | GET | `/inventory/query`、`/dates`、`/export` | 库存查询 |
 | GET / POST | `/inventory/records` | 台账查询 / 手工录入 |
 | GET | `/warehouses`、`/channel-warehouse-prefs` | 仓网配置 |
-| GET | `/inventory/planning/:skuId?warehouse=` | SKU 分仓规划视图（时间轴 + 分配 + 需求门禁） |
+| GET | `/inventory/planning/:skuId` | SKU 规划视图。无 `warehouse` / `scope=network` / `warehouse=ALL` → **网络供应**（`buildSkuNetworkTimeline` + 三池汇总 + 分仓一览）；带物理仓码 → **分仓规划**（单仓时间轴 + 分配 + 需求门禁）。响应含 `scope: network \| warehouse` |
 | GET | `/planning/dashboard` | 规划看板 KPI |
 | GET / POST | `/inventory/health`、`/recompute`、`/history` | 健康度 |
-| GET / PATCH | `/inventory/data-issues` | 数据问题队列 |
+| GET / PATCH | `/inventory/data-issues` | 数据问题队列（PATCH 仅允许 `dismissed`） |
+| GET | `/inventory/data-issues/export` | 数据问题 CSV 导出（与列表筛选一致） |
 | GET / PATCH | `/inventory/exceptions` | 库存异常工单 |
 | GET / PUT / POST | `/safety-stock`、`/suggestions`、`/:skuId/suggestion`、`/:skuId`、`/:skuId/calculate` | 安全库存配置与建议 |
 | GET / PATCH | `/alerts`、`/alerts/:id/resolve` | 预警 |
@@ -520,11 +538,15 @@ flowchart TB
 |------|------|
 | 库存总览 `InventoryOverviewPage` | `/inventory/overview` |
 | 库存查询 `InventoryQueryPage` | `/inventory/query` |
-| SKU 规划 `SkuPlanningEntryPage` → `SkuInventoryPlanningPage` | `/inventory/planning`、`/inventory/planning/:skuId` |
+| SKU 规划 `SkuPlanningEntryPage` → `SkuInventoryPlanningPage` | `/inventory/planning`、`/inventory/planning/:skuId`（顶栏切换网络供应 / 分仓规划；三池「时间轴」链接：`OVERSEAS` / `IN-PRODUCTION` → 网络视图，物理仓 → 分仓视图） |
 | 规划看板 `PlanningDashboardPage` | `/inventory/planning-dashboard` |
 | 安全库存 `SafetyStockPage` | `/inventory/safety` |
 | 预警 `AlertsPage` | `/inventory/alerts` |
 | 数据问题 `InventoryDataIssuesPage` | `/inventory/data-issues` |
+
+#### 规划入口健康灯与供应舱（2026-09）
+
+SKU 规划入口（`SkuPlanningEntryPage`）列表列展示**库存健康灯**（蓝/绿/黄/红/灰，决策灯语义），与主数据 `replenish_light`（补货策略灯）分离。行灯 = 各 `warehouse_code` 在 `inventory_health_snapshots` 上最新一条的**最差仓**聚合（`pickWorstInventoryHealth`，优先级与 `sku-health-aggregate.ts` / overview 一致）；无快照显示「未评估」，且**不参与**健康灯多选筛选。筛选经 `healthStatuses` 传 overview/planning 列表 API，可与既有 `productScope` 等条件叠加。进入详情（`SkuInventoryPlanningPage`）默认**网络供应** scope：决策条与健康同源；分仓一览带仓级健康灯；开放批次 / 未结跟单 / 发运为只读组合块，不提供写分配入口。
 
 ---
 
@@ -550,9 +572,10 @@ flowchart TB
 
 | 时间 | 任务 | 接口 |
 |------|------|------|
+| 06:00 | 全链库存飞书拉取 | `POST /tasks/procurement-ops-pull` |
 | 07:20 | 库存查询飞书拉取 | `POST /tasks/inventory-query-pull` |
 | 07:40 | 库存周转飞书拉取 | `POST /tasks/inventory-turnover-pull` |
-| 07:50 | 每日库存流水线 | `POST /tasks/daily-inventory-pipeline` |
+| 07:50 | 每日库存流水线（含影子长表构建 → 数据问题扫描 → 补货…） | `POST /tasks/daily-inventory-pipeline` |
 | 08:00 | 大件备货飞书拉取 | `POST /tasks/procurement-bulk-stock-pull` |
 | 08:05 | 采购跟单飞书拉取 | `POST /tasks/procurement-follow-up-pull` |
 | 每周一 09:00 | 补货建议生成（独立调度） | `POST /tasks/replenishment-forecast` |
@@ -563,12 +586,13 @@ flowchart TB
 **每日库存流水线顺序**（`apps/web/server/tasks/dailyInventoryPipeline.ts`）：
 
 1. `supply_lot_sync` 三池批次同步
-2. `inventory_data_issue_scan` 数据问题扫描
-3. `replenishment_forecast` 补货建议
-4. `stock_alert` 缺货 / 时间轴预警
-5. `inventory_exception_scan` 库存异常扫描
-6. `purchase_follow_up` 跟单提醒（T-30/T-14/T-7，跟单仍为 draft 时推送）
-7. 飞书群 digest（待处理建议、开放预警、异常、数据问题统计）
+2. `warehouse_stock_facts` 分仓影子长表（查询 + 全链拆列；不写台账）
+3. `inventory_data_issue_scan` 数据问题扫描（含影子长表对账）
+4. `replenishment_forecast` 补货建议
+5. `stock_alert` 缺货 / 时间轴预警
+6. `inventory_exception_scan` 库存异常扫描
+7. `purchase_follow_up` 跟单提醒（T-30/T-14/T-7，跟单仍为 draft 时推送）
+8. 飞书群 digest（待处理建议、开放预警、异常、数据问题统计）
 
 ### 5.2 外部集成
 

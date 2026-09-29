@@ -58,12 +58,19 @@ const enriched = enrichContainerStats(
     truckingItems: [{ containerNo: 'C1', internalNo: 'B100' }],
     freightItems: [],
     merchantShipments: [
-      { containerNo: 'C1', merchantCode: 'M1', remark: '类别:FOB', skuCode: 'SKU-1' },
+      {
+        containerNo: 'C1',
+        merchantCode: 'M1',
+        remark: '类别:FOB',
+        skuCode: 'SKU-1',
+        originPort: '盐田',
+      },
     ],
   },
 );
 assert.equal(enriched[0]?.businessNos, 'B100');
 assert.equal(enriched[0]?.factoryType, 'FOB');
 assert.equal(enriched[0]?.skuCodes, 'SKU-1');
+assert.equal(enriched[0]?.originPort, '盐田');
 
 console.log('fob-allocation-base-meta.test.ts ok');

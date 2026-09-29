@@ -194,6 +194,8 @@ describe('isAccessorySku', () => {
     assert.equal(isAccessorySku({ code: 'DJ485882P01' }), true);
     assert.equal(isAccessorySku({ code: 'DJ504649_3P19' }), true);
     assert.equal(isAccessorySku({ code: '704576101P01' }), true);
+    assert.equal(isAccessorySku({ code: '1001009P01' }), true);
+    assert.equal(isAccessorySku({ code: '1001002P01' }), true);
   });
 
   it('treats skuKind accessory as accessories even when code is blank', () => {
@@ -209,6 +211,7 @@ describe('isAccessorySku', () => {
     assert.equal(isAccessorySku({ code: 'DJ502313_34' }), false);
     assert.equal(isAccessorySku({ code: 'DJ505240_2_A' }), false);
     assert.equal(isAccessorySku({ code: '704576101' }), false);
+    assert.equal(isAccessorySku({ code: '100100902' }), false);
     assert.equal(isAccessorySku({ code: '704576101B1' }), false);
     assert.equal(isAccessorySku({ code: '704576101R' }), false);
     assert.equal(isAccessorySku({ skuKind: 'standard', code: 'DJ502313_34' }), false);

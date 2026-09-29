@@ -18,6 +18,7 @@ import { buildPlanningExcludedSqlCondition } from './commercial-status.js';
 import { calcMilestoneDelayDays } from './shipment-delay.js';
 import { countOpenDataIssues } from './inventory-data-issue-store.js';
 import { countOpenUnallocatedLots } from './inventory-dest-allocation-store.js';
+import { productScopeOnSkuAlias, type ProductScope } from './planning-accessory-filter.js';
 
 /** 近 30 天周转表 或 近 90 天有销量（qty_sold > 0） */
 export const OPERATIONAL_TURNOVER_LOOKBACK_DAYS = 30;
@@ -178,7 +179,11 @@ function firstCount(rows: Array<{ count: number }>): number {
   return Number(rows[0]?.count ?? 0);
 }
 
-export async function getPlanningDashboard(today: Date = new Date()): Promise<PlanningDashboard> {
+export async function getPlanningDashboard(
+  today: Date = new Date(),
+  productScope: ProductScope = 'goods',
+): Promise<PlanningDashboard> {
+  const skuScopeSql = productScopeOnSkuAlias(productScope, 's');
   const [
     skuCompositionResult,
     healthResult,
@@ -197,11 +202,13 @@ export async function getPlanningDashboard(today: Date = new Date()): Promise<Pl
         SELECT s.id
         FROM ${skus} s
         WHERE s.is_active = true
+        ${skuScopeSql}
       ),
       operational_skus AS (
         SELECT s.id, s.lifecycle, s.commercial_status_norm
         FROM ${skus} s
         WHERE s.is_active = true
+        ${skuScopeSql}
           AND (
             EXISTS (
               SELECT 1
@@ -253,6 +260,7 @@ export async function getPlanningDashboard(today: Date = new Date()): Promise<Pl
         SELECT s.id
         FROM ${skus} s
         WHERE s.is_active = true
+        ${skuScopeSql}
           AND (
             EXISTS (
               SELECT 1

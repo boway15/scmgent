@@ -6,6 +6,7 @@ import { CategorySearchSelect } from '@/components/CategorySearchSelect';
 import { ForecastHorizonPanel } from '@/components/ForecastHorizonPanel';
 import { FORECAST_ALLCAT_V41_TIER_OPTIONS } from '@/lib/forecast-labels';
 import type { ForecastHorizonRow } from '@/components/ForecastSkuDetailDrawer';
+import { ProductScopeSwitch } from '@/components/ProductScopeSwitch';
 
 type VersionOption = {
   id: string;
@@ -112,6 +113,7 @@ export function ForecastDataExplorer({
       </CardHeader>
       <CardContent className="space-y-4">
         {topSection}
+        <ProductScopeSwitch />
         <div className="flex flex-wrap items-end gap-2">
           <label className="space-y-1 text-sm">
             <span className="text-text-sub">SKU</span>

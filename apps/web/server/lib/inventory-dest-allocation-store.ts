@@ -17,6 +17,7 @@ import {
 import { parseSharesFromSnapshot } from './inventory-share-allocation.js';
 import { readTurnoverSnapshot } from './inventory-turnover-snapshot.js';
 import type { BuiltSupplyLot } from './inventory-supply-lots.js';
+import { productScopeSql, type ProductScope } from './planning-accessory-filter.js';
 
 function asIsoDate(value: string | Date | null | undefined): string | null {
   if (value == null) return null;
@@ -75,10 +76,12 @@ function buildUnallocatedConditions(params?: {
   skuId?: string;
   pool?: 'overseas' | 'in_transit' | 'local';
   q?: string;
+  productScope?: ProductScope;
 }) {
   const conditions = [
     eq(inventorySupplyLots.status, 'open'),
     eq(inventorySupplyLots.warehouseCode, UNALLOCATED_WAREHOUSE),
+    productScopeSql(params?.productScope ?? 'goods'),
   ];
   if (params?.pool) conditions.push(eq(inventorySupplyLots.pool, params.pool));
   if (params?.skuId) conditions.push(eq(inventorySupplyLots.skuId, params.skuId));
@@ -102,6 +105,7 @@ export async function listUnallocatedSupply(params?: {
   limit?: number;
   offset?: number;
   q?: string;
+  productScope?: ProductScope;
 }) {
   const limit = params?.limit ?? 500;
   const offset = params?.offset ?? 0;
@@ -259,6 +263,7 @@ export async function countOpenUnallocatedLots(params?: {
   skuId?: string;
   pool?: 'overseas' | 'in_transit' | 'local';
   q?: string;
+  productScope?: ProductScope;
 }): Promise<number> {
   const where = buildUnallocatedConditions(params);
   const [row] = await db
@@ -273,6 +278,7 @@ export async function sumOpenUnallocatedQtyFiltered(params?: {
   skuId?: string;
   pool?: 'overseas' | 'in_transit' | 'local';
   q?: string;
+  productScope?: ProductScope;
 }): Promise<number> {
   const where = buildUnallocatedConditions(params);
   const [row] = await db

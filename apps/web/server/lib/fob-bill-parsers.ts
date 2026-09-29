@@ -430,6 +430,8 @@ export type ParsedMerchantShipment = {
   qty?: number;
   volumeCbm: number;
   weightKg?: number;
+  /** 起运港原文（截单清单「起运港」列） */
+  originPort?: string;
   remark?: string;
 };
 
@@ -591,6 +593,7 @@ export function parseTransferVolumeSheet(rows: unknown[][]): ParseResult<ParsedM
   const qtyIdx = findHeaderIndex(header, ['数量', '箱数', 'qty']);
   const weightIdx = findHeaderIndex(header, ['货物净重kg', '货物毛重kg', 'weight_kg']);
   const destWarehouseIdx = findHeaderIndex(header, ['目的仓']);
+  const originPortIdx = findHeaderIndex(header, ['起运港']);
 
   const resolveContainerNo = (row: unknown[]): string => {
     const formal =
@@ -663,6 +666,8 @@ export function parseTransferVolumeSheet(rows: unknown[][]): ParseResult<ParsedM
 
     const destWarehouse =
       destWarehouseIdx >= 0 ? String(row[destWarehouseIdx] ?? '').trim() : '';
+    const originPort =
+      originPortIdx >= 0 ? String(row[originPortIdx] ?? '').trim() || undefined : undefined;
     const remarkParts = [
       bookingNo && `业务编号:${bookingNo}`,
       transferNo && `调拨:${transferNo}`,
@@ -679,6 +684,7 @@ export function parseTransferVolumeSheet(rows: unknown[][]): ParseResult<ParsedM
       qty: qtyIdx >= 0 ? parseAmount(row[qtyIdx]) || undefined : undefined,
       volumeCbm,
       weightKg: weightIdx >= 0 ? parseAmount(row[weightIdx]) || undefined : undefined,
+      originPort,
       remark: remarkParts.length ? remarkParts.join('；') : undefined,
     });
   }
@@ -745,6 +751,7 @@ export function parseEdVolumeSheet(rows: unknown[][]): ParseResult<ParsedMerchan
   const factoryNameIdx = findHeaderIndex(header, ['工厂名称']);
   const qtyIdx = findHeaderIndex(header, ['总件数', '实发数量', '调拨数量', 'qty']);
   const weightIdx = findHeaderIndex(header, ['总净重/kg', '总净重/KG', '外箱毛重/KG', 'weight_kg']);
+  const originPortIdx = findHeaderIndex(header, ['起运港']);
 
   if (containerIdx < 0 || subjectIdx < 0 || volumeIdx < 0 || factoryTypeIdx < 0) {
     return {
@@ -806,6 +813,8 @@ export function parseEdVolumeSheet(rows: unknown[][]): ParseResult<ParsedMerchan
 
     const bizNo = bizNoIdx >= 0 ? String(row[bizNoIdx] ?? '').trim() : '';
     const factoryName = factoryNameIdx >= 0 ? String(row[factoryNameIdx] ?? '').trim() : '';
+    const originPort =
+      originPortIdx >= 0 ? String(row[originPortIdx] ?? '').trim() || undefined : undefined;
     const remarkParts = [
       bizNo && `业务编号:${bizNo}`,
       factoryName && `工厂:${factoryName}`,
@@ -820,6 +829,7 @@ export function parseEdVolumeSheet(rows: unknown[][]): ParseResult<ParsedMerchan
       qty: qtyIdx >= 0 ? parseAmount(row[qtyIdx]) || undefined : undefined,
       volumeCbm,
       weightKg: weightIdx >= 0 ? parseAmount(row[weightIdx]) || undefined : undefined,
+      originPort,
       remark: remarkParts.length ? remarkParts.join('；') : undefined,
     });
   }
@@ -922,6 +932,7 @@ export function parseMerchantShipmentRows(
       qty: parseAmount(row.qty || row['总件数'] || row['实发数量']) || undefined,
       volumeCbm: volume,
       weightKg: parseAmount(row.weight_kg || row['重量'] || row['总净重/kg']) || undefined,
+      originPort: (row['起运港'] || row.origin_port || row.originport || '').trim() || undefined,
       remark:
         row.remark ||
         row['备注'] ||

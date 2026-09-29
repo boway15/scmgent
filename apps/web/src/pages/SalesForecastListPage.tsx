@@ -22,7 +22,6 @@ import {
   sleep,
   buildForecastVersionDetailSearch,
 } from '@/lib/forecast-version-utils';
-
 type ListTab = 'versions' | 'strategy';
 type StatusFilter = 'all' | 'draft' | 'published' | 'archived';
 
@@ -47,6 +46,7 @@ export function SalesForecastListPage() {
   const startMonthOptions = useMemo(() => buildForecastStartMonthOptions(), []);
   const [baselineProgress, setBaselineProgress] = useState<string | null>(null);
   const [generationSummary, setGenerationSummary] = useState<string | null>(null);
+  const [excludeAccessories, setExcludeAccessories] = useState(true);
   const isBacktestStartMonth = generationStartMonth < formatForecastStartMonth();
 
   const { data: versions = [], isLoading } = useQuery({
@@ -135,6 +135,7 @@ export function SalesForecastListPage() {
         skuCode: generationSkuCode.trim() || undefined,
         monthCount: FORECAST_HORIZON_MONTHS,
         startMonth: generationStartMonth,
+        excludeAccessories,
       });
 
       if (!initial.async) {
@@ -388,6 +389,17 @@ export function SalesForecastListPage() {
                   </select>
                 </label>
                 <span className="text-sm text-text-sub">预测周期：固定 6 个月</span>
+                <label className="flex cursor-pointer items-center gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={excludeAccessories}
+                    onChange={(e) => {
+                      setExcludeAccessories(e.target.checked);
+                      generateBaseline.reset();
+                    }}
+                  />
+                  <span className="text-text-sub">不含配件</span>
+                </label>
                 <Button
                   disabled={generateBaseline.isPending}
                   onClick={() => {

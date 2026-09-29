@@ -2,6 +2,7 @@ import { eq, and, or, ilike, sql } from 'drizzle-orm';
 import { Hono } from 'hono';
 import { db, safetyStockConfig, skus } from '@scm/db';
 import { parseListPagination } from '../lib/list-pagination.js';
+import { parseProductScope, productScopeSql } from '../lib/planning-accessory-filter.js';
 import { calcReorderPoint, calcReplenishment, type SalesDataPoint } from '../lib/replenishment.js';
 import { requireMenu } from '../lib/rbac.js';
 import { loadDailySalesForSku } from '../lib/sales-history-query.js';
@@ -69,7 +70,8 @@ safetyStockRoutes.get('/safety-stock', async (c) => {
   const q = c.req.query('q')?.trim();
   const warehouse = c.req.query('warehouse')?.trim();
 
-  const conditions = [eq(skus.isActive, true)];
+  const productScope = parseProductScope(c.req.query('productScope'));
+  const conditions = [eq(skus.isActive, true), productScopeSql(productScope)];
   if (q) {
     const pattern = `%${q}%`;
     conditions.push(or(ilike(skus.code, pattern), ilike(skus.name, pattern))!);

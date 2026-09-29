@@ -1,11 +1,13 @@
 import { Hono } from 'hono';
 import { getPlanningDashboard } from '../lib/planning-dashboard.js';
 import { requireMenu } from '../lib/rbac.js';
+import { parseProductScope } from '../lib/planning-accessory-filter.js';
 
 export const planningDashboardRoutes = new Hono();
 
 planningDashboardRoutes.get(
   '/planning/dashboard',
   requireMenu('inventory.planning_dashboard'),
-  async (c) => c.json(await getPlanningDashboard()),
+  async (c) =>
+    c.json(await getPlanningDashboard(undefined, parseProductScope(c.req.query('productScope')))),
 );

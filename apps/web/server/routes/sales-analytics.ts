@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import { getCurrentUserOptional } from '../lib/auth-context.js';
 import { requireMenu } from '../lib/rbac.js';
+import { parseProductScope } from '../lib/planning-accessory-filter.js';
 import {
   getCubeStatus,
   getLatestReadyCube,
@@ -14,7 +15,8 @@ salesAnalyticsRoutes.get('/sales-analytics/status', requireMenu('data.sales_anal
 });
 
 salesAnalyticsRoutes.get('/sales-analytics/cube', requireMenu('data.sales_analytics'), async (c) => {
-  const cube = await getLatestReadyCube();
+  const productScope = parseProductScope(c.req.query('productScope'));
+  const cube = await getLatestReadyCube(productScope);
   if (!cube) return c.json({ error: 'NO_CUBE' }, 404);
   return c.json(cube);
 });

@@ -9,27 +9,27 @@ const LIGHT_META: Record<
   blue: {
     label: '蓝灯',
     dot: 'bg-blue-500',
-    title: '库存超多：覆盖天数超过超备阈值',
+    title: '库存超备：覆盖超过超备阈值',
   },
   green: {
     label: '绿灯',
     dot: 'bg-emerald-500',
-    title: '库存健康：覆盖天数处于安全区间',
+    title: '健康：覆盖处于安全区间',
   },
   yellow: {
     label: '黄灯',
     dot: 'bg-amber-400',
-    title: '库存有风险：进入补货计划窗口',
+    title: '风险：进入补货计划窗口',
   },
   red: {
     label: '红灯',
     dot: 'bg-red-500',
-    title: '库存很浅：覆盖低于总提前期，必须补货',
+    title: '高风险：覆盖低于总交期，必须补货',
   },
   gray: {
     label: '灰灯',
     dot: 'bg-gray-400',
-    title: '滞销或即将停售：暂停自动补货建议',
+    title: '暂停补货：滞销或即将停售',
   },
 };
 

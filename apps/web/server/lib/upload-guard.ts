@@ -8,6 +8,7 @@ const MAX_ROWS = 5000;
 const MAX_ROWS_BY_IMPORT_TYPE: Record<string, number> = {
   inventory: 25_000,
   inventory_query: 50_000,
+  procurement_ops: 50_000,
   sales: 35_000,
   'cs-reply': 20_000,
   'procurement-bulk_stock_request': 20_000,

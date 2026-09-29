@@ -99,6 +99,27 @@ export const fobSettlementBatches = pgTable(
   }),
 );
 
+/** 起运港主数据；货代分摊规则按港口挂载完整规则集 */
+export const fobPorts = pgTable(
+  'fob_ports',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    name: varchar('name', { length: 100 }).notNull().unique(),
+    code: varchar('code', { length: 50 }).unique(),
+    isActive: boolean('is_active').notNull().default(true),
+    remark: text('remark'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    activeIdx: index('fob_ports_active_idx').on(table.isActive),
+  }),
+);
+
+/** 模板港 code：既有全局货代规则迁入此港，供「复制规则集」 */
+export const FOB_TEMPLATE_PORT_CODE = '__TEMPLATE__';
+export const FOB_TEMPLATE_PORT_NAME = '模板港口';
+
 export const fobFeeAllocationRules = pgTable(
   'fob_fee_allocation_rules',
   {
@@ -110,11 +131,18 @@ export const fobFeeAllocationRules = pgTable(
     defaultStage: fobCostStageEnum('default_stage').notNull().default('other'),
     priority: integer('priority').notNull().default(0),
     isActive: boolean('is_active').notNull().default(true),
+    /** freight 必填；trucking 必须为空（全局拖车规则） */
+    portId: uuid('port_id').references(() => fobPorts.id, { onDelete: 'restrict' }),
     remark: text('remark'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => ({
     billTypeIdx: index('fob_fee_allocation_rules_bill_type_idx').on(
+      table.sourceBillType,
+      table.isActive,
+    ),
+    portBillIdx: index('fob_fee_allocation_rules_port_bill_idx').on(
+      table.portId,
       table.sourceBillType,
       table.isActive,
     ),
@@ -135,6 +163,8 @@ export const fobMerchantShipments = pgTable(
     qty: integer('qty'),
     volumeCbm: numeric('volume_cbm', { precision: 12, scale: 4 }).notNull(),
     weightKg: numeric('weight_kg', { precision: 12, scale: 3 }),
+    /** 体积导入「起运港」原文；货代核算按此匹配 fob_ports.name */
+    originPort: varchar('origin_port', { length: 100 }),
     remark: text('remark'),
     sortOrder: integer('sort_order').default(0),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
@@ -352,7 +382,16 @@ export const fobMerchantPaymentStatusRelations = relations(fobMerchantPaymentSta
   }),
 }));
 
-export const fobFeeAllocationRulesRelations = relations(fobFeeAllocationRules, () => ({}));
+export const fobPortsRelations = relations(fobPorts, ({ many }) => ({
+  feeRules: many(fobFeeAllocationRules),
+}));
+
+export const fobFeeAllocationRulesRelations = relations(fobFeeAllocationRules, ({ one }) => ({
+  port: one(fobPorts, {
+    fields: [fobFeeAllocationRules.portId],
+    references: [fobPorts.id],
+  }),
+}));
 
 export const fobMerchantShipmentsRelations = relations(fobMerchantShipments, ({ one }) => ({
   batch: one(fobSettlementBatches, {

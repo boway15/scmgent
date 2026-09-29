@@ -1,4 +1,4 @@
-import { eq, and, desc, isNull, inArray } from 'drizzle-orm';
+import { eq, and, desc, isNull, inArray, sql } from 'drizzle-orm';
 import {
   db,
   inventoryHealthSnapshots,
@@ -11,6 +11,14 @@ import {
   healthToExceptionType,
   recommendedActionForException,
 } from './inventory-health-service.js';
+import {
+  planStaleStockAlertResolve,
+  dedupeStockAlertIncoming,
+  stockAlertFingerprint,
+  stockAlertIntegerQty,
+  type StockAlertIncoming,
+  type StockAlertUpdate,
+} from './stock-alert-sync.js';
 
 /** 大批量 insert 一次 values() 会触发 Maximum call stack size exceeded（SKU×仓可达数万行） */
 export const HEALTH_SNAPSHOT_INSERT_CHUNK = 500;
@@ -220,4 +228,143 @@ export async function resolveStockAlertsForSkuWarehouse(params: {
       resolvedBy: params.resolvedBy ?? null,
     })
     .where(and(...conditions));
+}
+
+/**
+ * 扫描结束后：本轮未命中的 open 预警自动结案（每日覆盖）。
+ * 人工「标记已处理」仍走 resolve 接口；若风险仍在，下次扫描会重新插入。
+ */
+export async function autoResolveStaleStockAlerts(
+  activeFingerprints: Iterable<string>,
+): Promise<number> {
+  const openRows = await db
+    .select({
+      id: stockAlerts.id,
+      skuId: stockAlerts.skuId,
+      warehouseCode: stockAlerts.warehouseCode,
+      alertType: stockAlerts.alertType,
+      horizonDays: stockAlerts.horizonDays,
+    })
+    .from(stockAlerts)
+    .where(eq(stockAlerts.isResolved, false));
+
+  const staleIds = planStaleStockAlertResolve({
+    openAlerts: openRows.map((row) => ({
+      id: row.id,
+      fingerprint: stockAlertFingerprint({
+        skuId: row.skuId,
+        warehouseCode: row.warehouseCode,
+        alertType: row.alertType,
+        horizonDays: row.horizonDays,
+      }),
+    })),
+    activeFingerprints,
+  });
+
+  if (!staleIds.length) return 0;
+
+  const now = new Date();
+  for (const chunk of chunkRowsForInsert(staleIds, HEALTH_SNAPSHOT_INSERT_CHUNK)) {
+    await db
+      .update(stockAlerts)
+      .set({
+        isResolved: true,
+        resolvedAt: now,
+        resolvedBy: null,
+      })
+      .where(inArray(stockAlerts.id, chunk));
+  }
+  return staleIds.length;
+}
+
+const STOCK_ALERT_WRITE_CHUNK = 400;
+
+function normalizeStockAlertRow(row: StockAlertIncoming) {
+  return {
+    skuId: row.skuId,
+    warehouseCode: row.warehouseCode,
+    alertType: row.alertType as typeof stockAlerts.$inferInsert.alertType,
+    currentQty: stockAlertIntegerQty(row.currentQty),
+    safetyQty: stockAlertIntegerQty(row.safetyQty),
+    horizonDays: row.horizonDays ?? null,
+    projectedQty:
+      row.projectedQty == null ? null : stockAlertIntegerQty(row.projectedQty),
+    projectedStockoutDate: row.projectedStockoutDate ?? null,
+  };
+}
+
+function normalizeStockAlertUpdate(row: StockAlertUpdate): StockAlertUpdate {
+  return {
+    id: row.id,
+    currentQty: stockAlertIntegerQty(row.currentQty),
+    safetyQty: stockAlertIntegerQty(row.safetyQty),
+    projectedQty:
+      row.projectedQty == null ? null : stockAlertIntegerQty(row.projectedQty),
+    projectedStockoutDate: row.projectedStockoutDate,
+  };
+}
+
+/** 覆盖模式：结案全部 open → 写入本轮去重后的快照（open 行数 = 本轮 activeCount）。 */
+export async function applyStockAlertCoverageReplace(incoming: StockAlertIncoming[]): Promise<{
+  cleared: number;
+  inserted: number;
+  activeCount: number;
+}> {
+  const [openCountRow] = await db
+    .select({ count: sql<number>`count(*)::int` })
+    .from(stockAlerts)
+    .where(eq(stockAlerts.isResolved, false));
+  const cleared = Number(openCountRow?.count ?? 0);
+
+  const now = new Date();
+  await db
+    .update(stockAlerts)
+    .set({
+      isResolved: true,
+      resolvedAt: now,
+      resolvedBy: null,
+    })
+    .where(eq(stockAlerts.isResolved, false));
+
+  const deduped = dedupeStockAlertIncoming(incoming);
+  if (deduped.length) {
+    await persistStockAlertBatch({ inserts: deduped, updates: [] });
+  }
+
+  return { cleared, inserted: deduped.length, activeCount: deduped.length };
+}
+
+export async function persistStockAlertBatch(input: {
+  inserts: StockAlertIncoming[];
+  updates: StockAlertUpdate[];
+}): Promise<void> {
+  for (const chunk of chunkRowsForInsert(input.inserts, STOCK_ALERT_WRITE_CHUNK)) {
+    await db.insert(stockAlerts).values(chunk.map(normalizeStockAlertRow));
+  }
+
+  for (const chunk of chunkRowsForInsert(input.updates, STOCK_ALERT_WRITE_CHUNK)) {
+    const normalized = chunk.map(normalizeStockAlertUpdate);
+    await db.execute(sql`
+      UPDATE stock_alerts AS a
+      SET
+        current_qty = v.current_qty,
+        safety_qty = v.safety_qty,
+        projected_qty = v.projected_qty,
+        projected_stockout_date = NULLIF(v.projected_stockout_date, '')::date,
+        notified_at = NOW()
+      FROM (VALUES ${sql.join(
+        normalized.map(
+          (row) => sql`(
+            ${row.id}::uuid,
+            ${row.currentQty}::int,
+            ${row.safetyQty}::int,
+            ${row.projectedQty == null ? sql`NULL::int` : sql`${row.projectedQty}::int`},
+            ${row.projectedStockoutDate ?? ''}::text
+          )`,
+        ),
+        sql`, `,
+      )}) AS v(id, current_qty, safety_qty, projected_qty, projected_stockout_date)
+      WHERE a.id = v.id
+    `);
+  }
 }

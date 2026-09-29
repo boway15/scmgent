@@ -19,18 +19,11 @@ export type InventoryQuerySnapshotDateOption = {
   rowCount: number;
 };
 
-/** 飞书偶发重复 SKU 时，以本次拉取中最后出现的记录为准。 */
-export function dedupeQuerySnapshotItemsBySkuCode<T extends { skuCode: string }>(
+/** 飞书明细粒度为记录行（同一 SKU 可对应多销售国家），只丢掉空 SKU。 */
+export function keepInventoryQuerySnapshotItems<T extends { skuCode: string }>(
   items: T[],
 ): T[] {
-  const byCode = new Map<string, T>();
-  for (const item of items) {
-    const code = item.skuCode.trim();
-    if (!code) continue;
-    if (byCode.has(code)) byCode.delete(code);
-    byCode.set(code, item);
-  }
-  return Array.from(byCode.values());
+  return items.filter((item) => item.skuCode.trim());
 }
 
 export function assertQuerySnapshotPublishable(input: {
@@ -51,7 +44,7 @@ export async function publishInventoryQuerySnapshot(input: {
   source?: string;
   columns?: string[];
 }): Promise<{ runId: string; snapshotDate: string; rowCount: number }> {
-  const items = dedupeQuerySnapshotItemsBySkuCode(input.items);
+  const items = keepInventoryQuerySnapshotItems(input.items);
   assertQuerySnapshotPublishable({
     imported: input.imported,
     itemCount: items.length,
@@ -202,7 +195,7 @@ export async function loadInventoryQuerySnapshots(input: {
     .from(inventoryQueryDailySnapshots)
     .where(eq(inventoryQueryDailySnapshots.snapshotDate, input.snapshotDate))
     .orderBy(asc(inventoryQueryDailySnapshots.skuCode))
-    .limit(input.limit ?? 50_000)
+    .limit(input.limit ?? 100_000)
     .offset(input.offset ?? 0);
 
   return rows.map((row) => ({

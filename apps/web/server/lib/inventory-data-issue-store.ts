@@ -122,6 +122,9 @@ export async function countOpenDataIssuesByType(): Promise<Record<string, number
     missing_available_at: 0,
     unallocated_warehouse: 0,
     share_sum_mismatch: 0,
+    unmapped_warehouse: 0,
+    position_source_mismatch: 0,
+    position_share_gap: 0,
   };
   for (const row of rows) {
     result[row.issueType] = Number(row.count ?? 0);

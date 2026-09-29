@@ -17,6 +17,7 @@ import { requireMenu } from '../lib/rbac.js';
 import { normalizeReplenishLight } from '../lib/replenish-light.js';
 import { readSkuPackagingFromEncodingMeta, readTurnoverSnapshotAt } from '../lib/inventory-turnover-snapshot.js';
 import { pickLatestIso } from '../lib/pick-latest-iso.js';
+import { isAccessorySku } from '../lib/sku-encoding.js';
 
 export const productRoutes = new Hono();
 
@@ -496,6 +497,7 @@ productRoutes.get('/products/sku-overview', async (c) => {
       ),
       supplierCount: row.supplierCount,
       isActive: row.isActive,
+      isAccessory: isAccessorySku({ code: row.code, skuKind: row.skuKind }),
     })),
     total: countRow[0]?.count ?? 0,
     page,

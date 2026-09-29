@@ -1,6 +1,11 @@
 import { and, desc, eq, gt, ilike, inArray, or, sql, type SQL } from 'drizzle-orm';
 import { db, inventorySupplyLots, skus } from '@scm/db';
 import { buildCsv } from './csv-export.js';
+import {
+  parseProductScope,
+  productScopeSql,
+  type ProductScope,
+} from './planning-accessory-filter.js';
 
 export type SupplyLotSummaryFilters = {
   q?: string;
@@ -10,6 +15,7 @@ export type SupplyLotSummaryFilters = {
   hasLocal?: boolean;
   hasUndatedTransit?: boolean;
   multiTransitBatch?: boolean;
+  productScope?: ProductScope;
 };
 
 export type SupplyLotSummaryLotInput = {
@@ -129,11 +135,15 @@ export function parseSupplyLotSummaryFilters(query: Record<string, string | unde
     hasLocal: flag(query.hasLocal),
     hasUndatedTransit: flag(query.hasUndatedTransit),
     multiTransitBatch: flag(query.multiTransitBatch),
+    productScope: parseProductScope(query.productScope),
   };
 }
 
-function buildSummarySearchConditions(params: Pick<SupplyLotSummaryFilters, 'q' | 'warehouse'>) {
-  const conditions: SQL[] = [eq(inventorySupplyLots.status, 'open')];
+function buildSummarySearchConditions(params: Pick<SupplyLotSummaryFilters, 'q' | 'warehouse' | 'productScope'>) {
+  const conditions: SQL[] = [
+    eq(inventorySupplyLots.status, 'open'),
+    productScopeSql(params.productScope ?? 'goods'),
+  ];
   const q = params.q?.trim();
   if (q) {
     const pattern = `%${q}%`;

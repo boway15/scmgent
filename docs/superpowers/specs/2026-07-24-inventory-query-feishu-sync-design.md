@@ -66,7 +66,7 @@
 
 约束/索引：
 
-- 唯一：`(snapshot_date, sku_code)`
+- 索引：`(snapshot_date, sku_code)`（非唯一；飞书同一 SKU 可多行，如按销售国家拆行）
 - 查询：`(sku_code, snapshot_date)`、`run_id`
 
 ### 3.3 发布规则

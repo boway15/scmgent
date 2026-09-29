@@ -33,6 +33,9 @@ import type {
   SalesAnalyticsSelection,
 } from '@/lib/sales-analytics-types';
 import { cn, formatDateTimeCst } from '@/lib/utils';
+import { ProductScopeSwitch } from '@/components/ProductScopeSwitch';
+import { useProductScope } from '@/lib/product-scope';
+import { ANALYTICS_SCOPE_PENDING } from '@/lib/product-scope-copy';
 
 const CHART_PRIMARY = '#FF5000';
 const CHART_SECONDARY = '#D97706';
@@ -177,6 +180,7 @@ function DimMultiSelect({
 }
 
 export function SalesAnalyticsPage() {
+  const { productScope } = useProductScope();
   const qc = useQueryClient();
   const [gran, setGran] = useState<SalesAnalyticsGranularity>('month');
   const [sel, setSel] = useState<SalesAnalyticsSelection | null>(null);
@@ -200,8 +204,8 @@ export function SalesAnalyticsPage() {
   // Keep fetching/showing the latest ready cube while a rebuild runs.
   // Status polling stays independent; only the refresh button shows busy.
   const cubeQuery = useQuery({
-    queryKey: ['sales-analytics-cube', statusQuery.data?.generatedAt],
-    queryFn: () => api.getSalesAnalyticsCube(),
+    queryKey: ['sales-analytics-cube', statusQuery.data?.generatedAt, productScope],
+    queryFn: () => api.getSalesAnalyticsCube({ productScope }),
     enabled: hasReadyCube,
     retry: false,
   });
@@ -361,6 +365,15 @@ export function SalesAnalyticsPage() {
           </Button>
         </div>
       </PageHeader>
+
+      <ProductScopeSwitch
+        extra={
+          productScope === 'goods' && cube?.meta.scopePending ? ANALYTICS_SCOPE_PENDING : undefined
+        }
+      />
+      {productScope === 'accessory' && cube?.meta.note ? (
+        <p className="text-xs text-text-sub">{cube.meta.note}</p>
+      ) : null}
 
       {errorBanner && (
         <div

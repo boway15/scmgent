@@ -103,6 +103,7 @@ export const salesForecastVersions = pgTable(
     status: forecastVersionStatusEnum('status').notNull().default('draft'),
     /** 预测地平线首月 YYYY-MM；历史版本可为空 */
     startMonth: varchar('start_month', { length: 7 }),
+    excludeAccessories: boolean('exclude_accessories').notNull().default(true),
     createdBy: uuid('created_by').references(() => users.id),
     publishedBy: uuid('published_by').references(() => users.id),
     publishedAt: timestamp('published_at', { withTimezone: true }),

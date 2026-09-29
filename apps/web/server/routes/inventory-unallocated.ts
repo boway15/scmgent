@@ -7,6 +7,7 @@ import {
   sumOpenUnallocatedQtyFiltered,
 } from '../lib/inventory-dest-allocation-store.js';
 import { parseListPagination } from '../lib/list-pagination.js';
+import { parseProductScope } from '../lib/planning-accessory-filter.js';
 
 export const inventoryUnallocatedRoutes = new Hono();
 
@@ -20,7 +21,8 @@ inventoryUnallocatedRoutes.get('/inventory/unallocated', requireMenu(MENU), asyn
   const skuId = c.req.query('skuId')?.trim() || undefined;
   const pool = c.req.query('pool') as 'overseas' | 'in_transit' | 'local' | undefined;
   const q = c.req.query('q')?.trim() || undefined;
-  const filters = { skuId, pool: pool || undefined, q };
+  const productScope = parseProductScope(c.req.query('productScope'));
+  const filters = { skuId, pool: pool || undefined, q, productScope };
   const [items, total, openQty] = await Promise.all([
     listUnallocatedSupply({ ...filters, limit: pageSize, offset }),
     countOpenUnallocatedLots(filters),

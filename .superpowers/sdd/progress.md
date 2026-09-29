@@ -1,11 +1,28 @@
-﻿# SDD Progress — t4b-t99-optimistic-relax
-Branch: feat/t4b-t99-optimistic-relax (in-place)
-Plan: docs/superpowers/plans/2026-08-12-t4b-t99-optimistic-relax.md
-Spec: docs/superpowers/specs/2026-08-12-t4b-t99-optimistic-relax-design.md
-Started: 2026-08-12
+﻿# SDD Progress — sku-health-cockpit
+Branch: feat/sku-health-cockpit
+Plan: docs/superpowers/plans/2026-09-29-sku-health-cockpit.md
+Spec: docs/superpowers/specs/2026-09-29-sku-health-cockpit-design.md
+Started: 2026-09-29
+Base: 1bc76589dc8b3307713807957c76dd3c50f5bffa
 
-Task 1: complete (commits e15d6d3..8f77778, review clean; minor: recent_max06 name, UI copy Task 3)
-Task 2: complete (commits 8f77778..a362a9b, review clean after scope fix)
-Task 3: complete (commits a362a9b..2874345, review clean)
-Task 4: complete (commits 2874345..46c5f1f, review clean; minor: T99 stratified visibility)
-Final review: Important fixed in e765056 (published T99 discount freeze + July dedupe). Ready for finishing options.
+
+Task 1: complete (working tree, review clean; minor: pickWorst ! assertion / mixed-health network test)
+
+Task 2: complete (working tree, review clean; minor: loadWorstHealthBySkuIds untested vs DB)
+
+Task 3: complete (working tree, review Approved; Important rollup: mixed api.ts diff, no HTTP smoke, SQL vs normalize edge, export skip)
+
+Task 4: complete (working tree, review Approved; Important: no browser smoke, ProductScope note, Task3 dep)
+
+Task 5: complete (working tree, review Approved)
+
+Task 6: complete (working tree; decision strip + warehouse health column; no commit)
+
+Task 6: complete (working tree, review Approved; Important: no browser smoke, scope query edge)
+
+Task 7: complete (working tree, review Approved; Important shipments skuId fixed in follow-up)
+
+Task 8: complete (working tree; tests 12+6+12 fail0; docs § planning health cockpit)
+
+Final review: feature With fixes; Critical=merge hygiene (scope PR to cockpit files only). Pools switched to skuId. Tests re-run.
+

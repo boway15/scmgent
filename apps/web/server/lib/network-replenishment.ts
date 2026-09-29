@@ -1,4 +1,7 @@
-import type { InventoryHealth } from './inventory-light.js';
+import {
+  pickWorstInventoryHealth,
+  type InventoryHealth,
+} from './inventory-light.js';
 
 /** 补货建议网络口径：出货前不定目的仓，一条 SKU 一条采购建议 */
 export const NETWORK_SUGGESTION_LABEL = '网络';
@@ -18,22 +21,6 @@ export type ReplenishmentCandidate = {
   latestOrderDays: number;
   metrics: Record<string, unknown>;
 };
-
-const HEALTH_PRIORITY: Record<InventoryHealth, number> = {
-  red: 5,
-  yellow: 4,
-  green: 3,
-  blue: 2,
-  gray: 1,
-};
-
-function pickWorstHealth(items: ReplenishmentCandidate[]): InventoryHealth {
-  return items.reduce(
-    (worst, item) =>
-      HEALTH_PRIORITY[item.healthStatus] > HEALTH_PRIORITY[worst] ? item.healthStatus : worst,
-    items[0]!.healthStatus,
-  );
-}
 
 export type NetworkTimelineOverride = {
   suggestedQty: number;
@@ -87,7 +74,7 @@ export function collapseSkuReplenishmentCandidates(
     suggestedQty,
     suggestedDate,
     totalLeadDays: networkTimeline?.totalLeadDays ?? anchor.totalLeadDays,
-    healthStatus: pickWorstHealth(items),
+    healthStatus: pickWorstInventoryHealth(items.map((item) => item.healthStatus))!,
     reason: `${anchor.reason}${triggerNote}`,
     metrics: {
       ...anchor.metrics,

@@ -7,6 +7,8 @@ import { Button } from '@/components/ui/button';
 import { PageHeader } from '@/components/PageHeader';
 import { ListPagination } from '@/components/ListPagination';
 import { ListSearchBar } from '@/components/ListSearchBar';
+import { ProductScopeSwitch } from '@/components/ProductScopeSwitch';
+import { useProductScope } from '@/lib/product-scope';
 
 const TYPE_LABEL: Record<string, string> = {
   stockout: '缺货',
@@ -19,6 +21,7 @@ const TYPE_LABEL: Record<string, string> = {
 };
 
 export function AlertsPage() {
+  const { productScope } = useProductScope();
   const qc = useQueryClient();
   const [horizonFilter, setHorizonFilter] = useState<string>('all');
   const [page, setPage] = useState(1);
@@ -27,7 +30,7 @@ export function AlertsPage() {
   const [appliedKeyword, setAppliedKeyword] = useState('');
 
   const { data, isLoading } = useQuery({
-    queryKey: ['alerts', page, pageSize, appliedKeyword, horizonFilter],
+    queryKey: ['alerts', page, pageSize, appliedKeyword, horizonFilter, productScope],
     queryFn: () =>
       api.getAlerts({
         page,
@@ -35,12 +38,37 @@ export function AlertsPage() {
         q: appliedKeyword || undefined,
         horizonDays: horizonFilter,
         resolved: 'open',
+        productScope,
       }),
   });
 
+  const [detectHint, setDetectHint] = useState<string | null>(null);
+
   const runAlert = useMutation({
-    mutationFn: api.runStockAlert,
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['alerts'] }),
+    mutationFn: async () => {
+      const started = await api.runStockAlert();
+      if (!started.taskRunId) return started;
+      for (let attempt = 0; attempt < 180; attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 5000));
+        const run = await api.getTaskRun(started.taskRunId);
+        if (run.status === 'success') return run;
+        if (run.status === 'failed') {
+          throw new Error(run.errorMessage || '缺货预警失败');
+        }
+      }
+      return { status: 'running' as const, taskRunId: started.taskRunId };
+    },
+    onSuccess: (result) => {
+      if (result && 'status' in result && result.status === 'running') {
+        setDetectHint('检测仍在后台进行，完成后刷新列表即可看到结果');
+        return;
+      }
+      setDetectHint('检测完成');
+      qc.invalidateQueries({ queryKey: ['alerts'] });
+    },
+    onError: (err) => {
+      setDetectHint(err instanceof Error ? err.message : '检测失败');
+    },
   });
 
   const resolve = useMutation({
@@ -50,7 +78,7 @@ export function AlertsPage() {
 
   useEffect(() => {
     setPage(1);
-  }, [horizonFilter]);
+  }, [horizonFilter, productScope]);
 
   if (isLoading || !data) return <p className="text-text-sub">加载中...</p>;
 
@@ -74,8 +102,11 @@ export function AlertsPage() {
           <Button onClick={() => runAlert.mutate()} disabled={runAlert.isPending}>
             {runAlert.isPending ? '检测中...' : '手动触发检测'}
           </Button>
+          {detectHint ? <span className="text-xs text-text-sub">{detectHint}</span> : null}
         </div>
       </PageHeader>
+
+      <ProductScopeSwitch />
 
       <Card>
         <CardHeader>

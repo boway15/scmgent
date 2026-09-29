@@ -13,6 +13,7 @@ inventoryPlanningRoutes.get(
     const item = await getSkuPlanningView({
       skuId,
       warehouseCode: c.req.query('warehouse')?.trim() || undefined,
+      scope: c.req.query('scope')?.trim() || undefined,
     });
     if (!item) return c.json({ message: 'SKU or warehouse not found' }, 404);
     return c.json(item);

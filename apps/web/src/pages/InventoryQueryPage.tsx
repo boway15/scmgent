@@ -10,6 +10,8 @@ import {
   loadQueryVisibleColumns,
   saveQueryVisibleColumns,
 } from '@/lib/inventory-query-columns';
+import { ProductScopeSwitch } from '@/components/ProductScopeSwitch';
+import { useProductScope } from '@/lib/product-scope';
 
 const DEFAULT_PAGE_SIZE = 20;
 
@@ -23,6 +25,7 @@ function downloadBlob(blob: Blob, filename: string) {
 }
 
 export function InventoryQueryPage() {
+  const { productScope } = useProductScope();
   const [q, setQ] = useState('');
   const [category, setCategory] = useState('');
   const [salesCountry, setSalesCountry] = useState('');
@@ -75,7 +78,7 @@ export function InventoryQueryPage() {
   });
 
   const listQuery = useQuery({
-    queryKey: ['inventory-query', applied, page, pageSize, snapshotDate],
+    queryKey: ['inventory-query', applied, page, pageSize, snapshotDate, productScope],
     queryFn: () =>
       api.getInventoryQuery({
         q: applied.q || undefined,
@@ -85,8 +88,13 @@ export function InventoryQueryPage() {
         page,
         pageSize,
         snapshotDate: snapshotDate || undefined,
+        productScope,
       }),
   });
+
+  useEffect(() => {
+    setPage(1);
+  }, [productScope]);
 
   const data = listQuery.data;
   const catalog = data?.columns ?? [];
@@ -138,10 +146,11 @@ export function InventoryQueryPage() {
         salesCountry: applied.salesCountry || undefined,
         lifecycle: applied.lifecycle || undefined,
         snapshotDate: snapshotDate || undefined,
+        productScope,
         columns: appliedColumns,
       });
       const date = data?.selectedSnapshotDate ?? 'export';
-      downloadBlob(blob, `inventory-query-${date}.csv`);
+      downloadBlob(blob, `inventory-query-${date}-${productScope}.csv`);
     } finally {
       setExporting(false);
     }
@@ -168,6 +177,7 @@ export function InventoryQueryPage() {
           <CardTitle className="text-base">筛选</CardTitle>
         </CardHeader>
         <CardContent className="space-y-3">
+          <ProductScopeSwitch />
           <div className="flex flex-wrap items-end gap-3">
             <label className="space-y-1 text-sm">
               <span className="text-muted-foreground">快照日期</span>

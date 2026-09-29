@@ -8,6 +8,7 @@ import {
   INVENTORY_QUERY_DEFAULT_VISIBLE_HEADERS,
   INVENTORY_QUERY_HEADERS,
 } from './inventory-query-headers.js';
+import { matchesProductScope, type ProductScope } from './planning-accessory-filter.js';
 
 export type InventoryQueryListItem = {
   skuId: string | null;
@@ -20,6 +21,7 @@ export type InventoryQueryListFilters = {
   category?: string;
   salesCountry?: string;
   lifecycle?: string;
+  productScope?: ProductScope;
 };
 
 function payloadIncludes(
@@ -42,6 +44,8 @@ export function filterInventoryQueryItems(
       const hay = `${item.skuCode}\n${item.payload.SKU名称 ?? ''}\n${item.payload.SKU ?? ''}`;
       if (!hay.toLocaleLowerCase().includes(q.toLocaleLowerCase())) return false;
     }
+    const scope = filters.productScope ?? 'goods';
+    if (!matchesProductScope(scope, { code: item.skuCode })) return false;
     return (
       payloadIncludes(item.payload, '品类', filters.category) &&
       payloadIncludes(item.payload, '销售国家', filters.salesCountry) &&
@@ -72,6 +76,7 @@ export async function listInventoryQueryRows(input: {
   category?: string;
   salesCountry?: string;
   lifecycle?: string;
+  productScope?: ProductScope;
 }) {
   const meta = await getPublishedQuerySnapshotDate(input.snapshotDate);
   if (!meta.selectedSnapshotDate) {
@@ -104,6 +109,7 @@ export async function listInventoryQueryRows(input: {
       category: input.category,
       salesCountry: input.salesCountry,
       lifecycle: input.lifecycle,
+      productScope: input.productScope,
     },
   );
 
@@ -133,6 +139,7 @@ export async function buildInventoryQueryExportRows(input: {
   category?: string;
   salesCountry?: string;
   lifecycle?: string;
+  productScope?: ProductScope;
   columns?: string[];
 }) {
   const result = await listInventoryQueryRows({

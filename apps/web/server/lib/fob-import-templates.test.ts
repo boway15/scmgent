@@ -25,8 +25,14 @@ const legacySamplePath = join(samplesDir, '体积信息_202606181444.xlsx');
     defval: '',
     raw: false,
   }) as unknown[][];
-  assert.deepEqual(sampleRows[0], [...TRANSFER_VOLUME_TEMPLATE_HEADERS]);
-  assert.equal(TRANSFER_VOLUME_TEMPLATE_HEADERS[0], '货柜号');
+  // 业务样例可能尚未含「起运港」；模板表头在工厂类型后追加该列
+  assert.equal(TRANSFER_VOLUME_TEMPLATE_HEADERS.at(-1), '起运港');
+  assert.equal(TRANSFER_VOLUME_TEMPLATE_HEADERS.at(-2), '工厂类型');
+  assert.equal(sampleRows[0]?.[0], '货柜号');
+  assert.ok(
+    (sampleRows[0] as string[]).includes('工厂类型'),
+    '样例须含工厂类型列',
+  );
 }
 
 {
@@ -42,6 +48,7 @@ const legacySamplePath = join(samplesDir, '体积信息_202606181444.xlsx');
   assert.equal(items[0].merchantCode, '广州宏龙办公家具有限公司');
   assert.equal(items[0].skuCode, 'DJ504015_4');
   assert.equal(items[0].merchantName, '广州宏龙办公家具有限公司');
+  assert.equal(items[0].originPort, '盐田');
   assert.match(items[0].remark ?? '', /业务编号:WJH2607030019/);
   assert.match(items[0].remark ?? '', /类别:FOB/);
   assert.match(items[0].remark ?? '', /工厂:广州宏龙办公家具有限公司/);

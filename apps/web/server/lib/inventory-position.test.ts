@@ -4,6 +4,7 @@ import {
   aggregateDraftBucketsForWarehouse,
   buildInventoryPositionMetrics,
   effectiveQtyWithProductionFallback,
+  getInventoryPositionSourceMode,
   mapDraftStatusToBucket,
   mergeInventoryPosition,
   normalizeSnapshotForWarehouse,
@@ -271,9 +272,52 @@ describe('inventory-position pure', () => {
       overseasSnapshot: { qtyAvailable: 100, qtyInTransit: 0, qtyInProduction: 0, qtyReserved: 0 },
       share,
       dedupeMode: 'snapshot_only',
+      positionSource: 'turnover_share',
     });
     assert.equal(pos.qtyAvailable, 25);
     assert.equal(pos.effectiveQty, 25);
+  });
+
+  it('warehouse_facts uses fact on_hand and transit without share fallback', () => {
+    const share = parseSharesFromSnapshot({ 美东: '1' });
+    const withFacts = resolvePlanningInventoryPositionFromSnapshots({
+      warehouseCode: 'US-EAST',
+      nativeSnapshot: { qtyAvailable: 0, qtyInTransit: 0, qtyInProduction: 15, qtyReserved: 0 },
+      overseasSnapshot: { qtyAvailable: 100, qtyInTransit: 40, qtyInProduction: 0, qtyReserved: 0 },
+      share,
+      positionSource: 'warehouse_facts',
+      factSnapshot: { qtyAvailable: 33, qtyInTransit: 7 },
+      dedupeMode: 'snapshot_only',
+    });
+    assert.equal(withFacts.qtyAvailable, 33);
+    assert.equal(withFacts.qtyInTransit, 7);
+    assert.equal(withFacts.qtyInProduction, 0);
+    assert.equal(withFacts.effectiveQty, 40);
+
+    const missingFacts = resolvePlanningInventoryPositionFromSnapshots({
+      warehouseCode: 'US-EAST',
+      nativeSnapshot: null,
+      overseasSnapshot: { qtyAvailable: 100, qtyInTransit: 0, qtyInProduction: 0, qtyReserved: 0 },
+      share,
+      positionSource: 'warehouse_facts',
+      factSnapshot: null,
+      dedupeMode: 'snapshot_only',
+    });
+    assert.equal(missingFacts.qtyAvailable, 0);
+    assert.equal(missingFacts.qtyInTransit, 0);
+    assert.equal(missingFacts.effectiveQty, 0);
+  });
+
+  it('reads INVENTORY_POSITION_SOURCE env', () => {
+    assert.equal(getInventoryPositionSourceMode({}), 'turnover_share');
+    assert.equal(
+      getInventoryPositionSourceMode({ INVENTORY_POSITION_SOURCE: 'warehouse_facts' }),
+      'warehouse_facts',
+    );
+    assert.equal(
+      getInventoryPositionSourceMode({ INVENTORY_POSITION_SOURCE: 'other' }),
+      'turnover_share',
+    );
   });
 
   it('fills region production once only when warehouse positions contain none', () => {

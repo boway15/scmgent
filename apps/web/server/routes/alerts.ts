@@ -6,6 +6,7 @@ import { alertSupplyKey, loadAlertListSupply } from '../lib/alert-list-supply.js
 import { requireMenu } from '../lib/rbac.js';
 import { writeAuditLog } from '../lib/audit-log.js';
 import { parseListPagination } from '../lib/list-pagination.js';
+import { parseProductScope, productScopeSql } from '../lib/planning-accessory-filter.js';
 
 export const alertRoutes = new Hono();
 
@@ -19,7 +20,8 @@ alertRoutes.get('/alerts', requireMenu('inventory.alert'), async (c) => {
   const alertType = c.req.query('alertType')?.trim();
   const resolved = c.req.query('resolved')?.trim();
 
-  const conditions = [];
+  const productScope = parseProductScope(c.req.query('productScope'));
+  const conditions = [productScopeSql(productScope)];
   if (q) {
     const pattern = `%${q}%`;
     conditions.push(or(ilike(skus.code, pattern), ilike(skus.name, pattern))!);
@@ -72,7 +74,8 @@ alertRoutes.get('/alerts', requireMenu('inventory.alert'), async (c) => {
     db
       .select({ count: sql<number>`count(*)::int` })
       .from(stockAlerts)
-      .where(eq(stockAlerts.isResolved, false)),
+      .innerJoin(skus, eq(skus.id, stockAlerts.skuId))
+      .where(and(eq(stockAlerts.isResolved, false), productScopeSql(productScope))),
   ]);
 
   const supplyByKey = await loadAlertListSupply(

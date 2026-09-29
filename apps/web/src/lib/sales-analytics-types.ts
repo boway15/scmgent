@@ -12,6 +12,8 @@ export type SalesAnalyticsCubeMeta = {
   depts: string[];
   categories: string[];
   platforms: string[];
+  scopePending?: boolean;
+  note?: string;
 };
 
 export type SalesAnalyticsEntity = {

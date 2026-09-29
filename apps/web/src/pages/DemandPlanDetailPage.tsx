@@ -3,6 +3,7 @@ import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import { PageHeader } from '@/components/PageHeader';
+import { DEMAND_PLAN_SCOPE_NOTICE } from '@/lib/product-scope-copy';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { DemandPlanDataExplorer } from '@/components/DemandPlanDataExplorer';
@@ -160,6 +161,7 @@ export function DemandPlanDetailPage() {
 
       <Card className="border-border/80">
         <CardContent className="py-3 text-sm text-text-sub">
+          <p className="mb-2 text-text-main">{DEMAND_PLAN_SCOPE_NOTICE}</p>
           <p>
             近 90 天销量反推周需求为主，月预测仅作季节形状；与销量预测模块独立。
             {stats && stats.skuTotal > 0 ? (

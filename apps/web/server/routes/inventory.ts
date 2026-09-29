@@ -14,7 +14,6 @@ import {
   needsReplenishmentByInventory,
   type ReplenishLight,
 } from '../lib/replenish-light.js';
-import type { InventoryHealth } from '../lib/inventory-light.js';
 import { writeAuditLog } from '../lib/audit-log.js';
 import { buildInventoryOverviewRows, buildInventoryOverviewItemBySkuId, buildInventoryOverviewExportItems } from '../lib/inventory-overview-service.js';
 import { parseListPagination } from '../lib/list-pagination.js';
@@ -27,10 +26,17 @@ import {
   loadInventoryTrend,
 } from '../lib/inventory-daily-snapshot.js';
 import {
+  buildProcurementOpsExportRows,
+  listProcurementOpsRows,
+  listProcurementOpsSnapshotDates,
+} from '../lib/procurement-ops-service.js';
+import {
   buildInventoryQueryExportRows,
   listInventoryQueryRows,
   listInventoryQuerySnapshotDates,
 } from '../lib/inventory-query-service.js';
+import { parseProductScope } from '../lib/planning-accessory-filter.js';
+import { parseHealthStatusesParam } from '../lib/sku-health-aggregate.js';
 
 export const inventoryRoutes = new Hono();
 
@@ -49,7 +55,9 @@ function parseOverviewFilters(c: { req: { query: (k: string) => string | undefin
     developerName: c.req.query('developerName')?.trim() || undefined,
     view: c.req.query('view')?.trim() || undefined,
     snapshotDate: c.req.query('snapshotDate')?.trim() || undefined,
+    productScope: parseProductScope(c.req.query('productScope')),
     columns,
+    healthStatuses: parseHealthStatusesParam(c.req.query('healthStatuses')),
   };
 }
 
@@ -64,6 +72,7 @@ function parseQueryFilters(c: { req: { query: (k: string) => string | undefined 
     lifecycle: c.req.query('lifecycle')?.trim() || undefined,
     salesCountry: c.req.query('salesCountry')?.trim() || undefined,
     snapshotDate: c.req.query('snapshotDate')?.trim() || undefined,
+    productScope: parseProductScope(c.req.query('productScope')),
     columns,
   };
 }
@@ -73,7 +82,7 @@ inventoryRoutes.get('/inventory/query/export', requireMenu('inventory.query'), a
   const exported = await buildInventoryQueryExportRows(filters);
   const csv = buildCsv(exported.headers, exported.rows);
   const date = exported.selectedSnapshotDate ?? new Date().toISOString().slice(0, 10);
-  return csvAttachment(`inventory-query-${date}.csv`, csv);
+  return csvAttachment(`inventory-query-${date}-${filters.productScope}.csv`, csv);
 });
 
 inventoryRoutes.get('/inventory/query/dates', requireMenu('inventory.query'), async (c) => {
@@ -97,6 +106,47 @@ inventoryRoutes.get('/inventory/query', requireMenu('inventory.query'), async (c
   );
 });
 
+inventoryRoutes.get(
+  '/inventory/procurement-ops/export',
+  requireMenu('inventory.procurement_ops'),
+  async (c) => {
+    const filters = parseQueryFilters(c);
+    const exported = await buildProcurementOpsExportRows(filters);
+    const csv = buildCsv(exported.headers, exported.rows);
+    const date = exported.selectedSnapshotDate ?? new Date().toISOString().slice(0, 10);
+    return csvAttachment(`procurement-ops-${date}-${filters.productScope}.csv`, csv);
+  },
+);
+
+inventoryRoutes.get(
+  '/inventory/procurement-ops/dates',
+  requireMenu('inventory.procurement_ops'),
+  async (c) => {
+    return c.json({ items: await listProcurementOpsSnapshotDates() });
+  },
+);
+
+inventoryRoutes.get(
+  '/inventory/procurement-ops',
+  requireMenu('inventory.procurement_ops'),
+  async (c) => {
+    const { page, pageSize, offset } = parseListPagination(
+      c.req.query('page')?.trim(),
+      c.req.query('pageSize')?.trim(),
+      20,
+    );
+    const filters = parseQueryFilters(c);
+    return c.json(
+      await listProcurementOpsRows({
+        page,
+        pageSize,
+        offset,
+        ...filters,
+      }),
+    );
+  },
+);
+
 inventoryRoutes.get('/inventory/overview/export', requireMenu('inventory.overview'), async (c) => {
   const filters = parseOverviewFilters(c);
   const full = c.req.query('full') === 'true';
@@ -111,7 +161,8 @@ inventoryRoutes.get('/inventory/overview/export', requireMenu('inventory.overvie
   const rows = items.map((item) => columnIds.map((colId) => getOverviewCellValue(item, colId)));
 
   const csv = buildCsv(headers, rows);
-  return csvAttachment(`inventory-turnover-${new Date().toISOString().slice(0, 10)}.csv`, csv);
+  const date = new Date().toISOString().slice(0, 10);
+  return csvAttachment(`inventory-turnover-${date}-${filters.productScope}.csv`, csv);
 });
 
 inventoryRoutes.get('/inventory/overview/dates', requireMenu('inventory.overview'), async (c) => {

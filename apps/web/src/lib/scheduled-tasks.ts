@@ -10,12 +10,20 @@ export type ScheduledTask = {
 
 export const SCHEDULED_TASKS: ScheduledTask[] = [
   {
+    id: 'procurement_ops_pull',
+    name: '全链库存飞书拉取',
+    path: '/api/tasks/procurement-ops-pull',
+    cron: '0 6 * * *',
+    cronLabel: '每天 06:00',
+    description: '从飞书多维表格同步全链库存日快照（tblWUnYLwD8UATAS）',
+  },
+  {
     id: 'stock_alert',
     name: '缺货预警检测',
     path: '/api/tasks/stock-alert',
     cron: '0 7 * * *',
     cronLabel: '已停用（原每天 07:00）',
-    description: '扫描库存并生成缺货/低于 ROP 预警（定时调度已临时关闭）',
+    description: '扫描库存并生成缺货预警。手动触发后在后台执行；定时已并入每日流水线',
   },
   {
     id: 'inventory_query_pull',
@@ -85,6 +93,7 @@ export const SCHEDULED_TASKS: ScheduledTask[] = [
 
 export const TASK_NAME_LABELS: Record<string, string> = {
   stock_alert: '缺货预警检测',
+  procurement_ops_pull: '全链库存飞书拉取',
   inventory_query_pull: '库存查询飞书拉取',
   inventory_turnover_pull: '库存周转飞书拉取',
   news_ingest: '新闻情报采集',

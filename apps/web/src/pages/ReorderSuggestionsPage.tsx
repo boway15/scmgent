@@ -14,12 +14,15 @@ import {
   formatSuggestionExplain,
   isSuggestedOrderOverdue,
 } from '@/lib/reorder-suggestion-explain';
+import { ProductScopeSwitch } from '@/components/ProductScopeSwitch';
+import { useProductScope } from '@/lib/product-scope';
 
 type ReorderSuggestionRow = Awaited<
   ReturnType<typeof api.getReorderSuggestions>
 >['items'][number];
 
 export function ReorderSuggestionsPage() {
+  const { productScope } = useProductScope();
   const [searchParams, setSearchParams] = useSearchParams();
   const skuFromUrl = searchParams.get('sku')?.trim() ?? '';
   const qc = useQueryClient();
@@ -29,12 +32,13 @@ export function ReorderSuggestionsPage() {
   const [appliedKeyword, setAppliedKeyword] = useState(skuFromUrl);
 
   const { data, isLoading } = useQuery({
-    queryKey: ['reorder-suggestions', page, pageSize, appliedKeyword],
+    queryKey: ['reorder-suggestions', page, pageSize, appliedKeyword, productScope],
     queryFn: () =>
       api.getReorderSuggestions({
         q: appliedKeyword || undefined,
         page,
         pageSize,
+        productScope,
       }),
   });
   const items = data?.items ?? [];
@@ -97,6 +101,8 @@ export function ReorderSuggestionsPage() {
           </button>
         </p>
       )}
+
+      <ProductScopeSwitch />
 
       <Card className="border-primary/20 bg-primary/5">
         <CardContent className="pt-6 text-sm text-text-sub">

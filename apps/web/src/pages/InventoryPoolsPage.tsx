@@ -8,6 +8,8 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { api, type SupplyLotBatchFilters, type SupplyLotRow, type SupplyLotSummaryFilters, type SupplyLotSummaryRow } from '@/lib/api';
+import { ProductScopeSwitch } from '@/components/ProductScopeSwitch';
+import { useProductScope, type ProductScope } from '@/lib/product-scope';
 
 const VIEW_MODES = [
   { id: 'summary' as const, label: '汇总视图' },
@@ -56,6 +58,18 @@ function shareSourceLabel(sourceId: string | null): string | null {
 
 function summaryRowKey(row: Pick<SupplyLotSummaryRow, 'skuId' | 'warehouseCode'>) {
   return `${row.skuId}::${row.warehouseCode}`;
+}
+
+/** 逻辑仓进网络供应视图；物理仓进分仓规划。 */
+function planningTimelineHref(skuId: string, warehouseCode: string): string {
+  if (
+    warehouseCode === 'OVERSEAS' ||
+    warehouseCode === 'IN-PRODUCTION' ||
+    warehouseCode === 'ALL'
+  ) {
+    return `/inventory/planning/${skuId}?scope=network`;
+  }
+  return `/inventory/planning/${skuId}?scope=warehouse&warehouse=${encodeURIComponent(warehouseCode)}`;
 }
 
 function downloadBlob(blob: Blob, filename: string) {
@@ -130,6 +144,7 @@ function FilterChip({
 }
 
 export function InventoryPoolsPage() {
+  const { productScope } = useProductScope();
   const [viewMode, setViewMode] = useState<'summary' | 'batches'>('summary');
   const [pool, setPool] = useState<'local' | 'in_transit' | 'overseas'>('local');
   const [page, setPage] = useState(1);
@@ -153,13 +168,14 @@ export function InventoryPoolsPage() {
 
   useEffect(() => {
     setPage(1);
-  }, [viewMode, pool, applied]);
+  }, [viewMode, pool, applied, productScope]);
 
   const lots = useQuery({
-    queryKey: ['inventory-pools', pool, page, pageSize, applied],
+    queryKey: ['inventory-pools', pool, page, pageSize, applied, productScope],
     queryFn: () =>
       api.getSupplyLots({
         ...toBatchFilters(applied, pool),
+        productScope,
         page,
         pageSize,
       }),
@@ -167,10 +183,11 @@ export function InventoryPoolsPage() {
   });
 
   const summaries = useQuery({
-    queryKey: ['inventory-pools-summary', page, pageSize, applied],
+    queryKey: ['inventory-pools-summary', page, pageSize, applied, productScope],
     queryFn: () =>
       api.getSupplyLotSummaries({
         ...toSummaryFilters(applied),
+        productScope,
         page,
         pageSize,
       }),
@@ -241,10 +258,16 @@ export function InventoryPoolsPage() {
     try {
       const date = new Date().toISOString().slice(0, 10);
       if (viewMode === 'summary') {
-        const blob = await api.exportSupplyLotSummariesCsv(toSummaryFilters(applied));
+        const blob = await api.exportSupplyLotSummariesCsv({
+          ...toSummaryFilters(applied),
+          productScope,
+        });
         downloadBlob(blob, `inventory-pools-summary-${date}.csv`);
       } else {
-        const blob = await api.exportSupplyLotsCsv(toBatchFilters(applied, pool));
+        const blob = await api.exportSupplyLotsCsv({
+          ...toBatchFilters(applied, pool),
+          productScope,
+        });
         downloadBlob(blob, `inventory-pools-batches-${pool}-${date}.csv`);
       }
     } finally {
@@ -273,6 +296,8 @@ export function InventoryPoolsPage() {
           已同步 {sync.data.lotCount} 条批次（其中 {sync.data.eligibleCount} 条可进时间轴）。本地无跟单时会投影飞书「供应商订单」。
         </p>
       )}
+
+      <ProductScopeSwitch />
 
       <div className="flex flex-wrap gap-2">
         {VIEW_MODES.map((mode) => (
@@ -434,6 +459,7 @@ export function InventoryPoolsPage() {
                   <SummaryRow
                     key={summaryRowKey(row)}
                     row={row}
+                    productScope={productScope}
                     saving={updateLot.isPending}
                     onSave={(patch) => updateLot.mutate(patch)}
                   />
@@ -494,10 +520,12 @@ export function InventoryPoolsPage() {
 
 function SummaryRow({
   row,
+  productScope,
   onSave,
   saving,
 }: {
   row: SupplyLotSummaryRow;
+  productScope: ProductScope;
   onSave: (params: {
     id: string;
     productionStatus?: 'in_production' | 'qc_pending' | 'completed';
@@ -507,11 +535,12 @@ function SummaryRow({
 }) {
   const [open, setOpen] = useState(false);
   const lots = useQuery({
-    queryKey: ['inventory-pools-row-lots', row.skuId, row.warehouseCode],
+    queryKey: ['inventory-pools-row-lots', row.skuId, row.warehouseCode, productScope],
     queryFn: () =>
       api.getSupplyLots({
         skuId: row.skuId,
         warehouse: row.warehouseCode,
+        productScope,
         page: 1,
         pageSize: 100,
       }),
@@ -535,7 +564,7 @@ function SummaryRow({
         <td className="py-2 pr-3">
           <Link
             className="font-mono text-primary hover:underline"
-            to={`/inventory/planning/${row.skuId}?warehouse=${encodeURIComponent(row.warehouseCode)}`}
+            to={planningTimelineHref(row.skuId, row.warehouseCode)}
           >
             {row.skuCode}
           </Link>
@@ -575,7 +604,7 @@ function SummaryRow({
           </button>
           <Link
             className="ml-3 text-xs text-primary hover:underline"
-            to={`/inventory/planning/${row.skuId}?warehouse=${encodeURIComponent(row.warehouseCode)}`}
+            to={planningTimelineHref(row.skuId, row.warehouseCode)}
           >
             时间轴
           </Link>
@@ -772,7 +801,7 @@ function LotRow({
       <td className="py-2 pr-3">
         <Link
           className="font-mono text-primary hover:underline"
-          to={`/inventory/planning/${row.skuId}?warehouse=${encodeURIComponent(row.warehouseCode)}`}
+          to={planningTimelineHref(row.skuId, row.warehouseCode)}
         >
           {row.skuCode}
         </Link>
@@ -799,7 +828,7 @@ function LotRow({
       <td className="py-2 pr-3">
         <Link
           className="text-xs text-primary hover:underline"
-          to={`/inventory/planning/${row.skuId}?warehouse=${encodeURIComponent(row.warehouseCode)}`}
+          to={planningTimelineHref(row.skuId, row.warehouseCode)}
         >
           时间轴
         </Link>

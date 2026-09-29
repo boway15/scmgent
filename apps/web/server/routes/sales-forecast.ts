@@ -96,6 +96,7 @@ import {
 import { rebuildSeasonalityFromSalesHistoryMonthly } from '../lib/forecast-seasonality-rebuild.js';
 import { listSeasonalityHorizon } from '../lib/forecast-seasonality-horizon.js';
 import { listForecastHorizon } from '../lib/forecast-horizon.js';
+import { parseProductScope } from '../lib/planning-accessory-filter.js';
 import { clearAllForecastData } from '../lib/forecast-reset.js';
 import {
   buildSkuForecastContextMap,
@@ -322,6 +323,7 @@ salesForecastRoutes.post('/sales-forecasts/generate-baseline', requireMenu('data
     monthCount?: number;
     startMonth?: string;
     background?: boolean;
+    excludeAccessories?: boolean;
   }>();
 
   const monthCount = body.monthCount ?? FORECAST_HORIZON_MONTHS;
@@ -409,6 +411,7 @@ salesForecastRoutes.post('/sales-forecasts/generate-baseline', requireMenu('data
     createdBy: user.id,
     existingVersionId,
     forceNewVersion,
+    excludeAccessories: body.excludeAccessories !== false,
   };
 
   if (useBackground) {
@@ -1143,6 +1146,7 @@ salesForecastRoutes.get('/sales-forecasts/horizon', requireMenu('data.forecast')
     pageSize,
     monthCount,
     historyMonthCount,
+    productScope: parseProductScope(c.req.query('productScope')),
   });
   return c.json(result);
 });

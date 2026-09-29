@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
   detectInventoryDataIssues,
+  detectPositionShareGapIssues,
+  detectWarehouseFactDataIssues,
   planDataIssueUpsert,
   type DataIssueLot,
   type DataIssueSku,
@@ -209,5 +211,65 @@ describe('planDataIssueUpsert', () => {
     });
     assert.deepEqual(plan.insert, [candidate]);
     assert.equal(plan.refresh.length, 0);
+  });
+});
+
+describe('detectWarehouseFactDataIssues', () => {
+  it('flags unmapped warehouse and source mismatch', () => {
+    const issues = detectWarehouseFactDataIssues([
+      {
+        skuId: skuA,
+        skuCode: 'SKU-A',
+        warehouseCode: '英国',
+        warehouseRaw: '英国',
+        mapped: false,
+        bucket: 'on_hand',
+        qty: 5,
+        source: 'inventory_query',
+        selected: true,
+      },
+      {
+        skuId: skuA,
+        skuCode: 'SKU-A',
+        warehouseCode: 'US-EAST',
+        warehouseRaw: '美东',
+        mapped: true,
+        bucket: 'transfer_transit',
+        qty: 5,
+        source: 'inventory_query',
+        selected: true,
+      },
+      {
+        skuId: skuA,
+        skuCode: 'SKU-A',
+        warehouseCode: 'US-EAST',
+        warehouseRaw: '美东',
+        mapped: true,
+        bucket: 'transfer_transit',
+        qty: 50,
+        source: 'full_chain',
+        selected: false,
+      },
+    ]);
+    const types = issues.map((row) => row.issueType).sort();
+    assert.deepEqual(types, ['position_source_mismatch', 'unmapped_warehouse']);
+  });
+});
+
+describe('detectPositionShareGapIssues', () => {
+  it('flags fact on_hand vs share allocation gap', () => {
+    const share = parseSharesFromSnapshot({ 美东: '1' });
+    const issues = detectPositionShareGapIssues([
+      {
+        skuId: skuA,
+        skuCode: 'SKU-A',
+        overseasAvailable: 100,
+        share,
+        factOnHandByWarehouse: new Map([['US-EAST', 40]]),
+      },
+    ]);
+    assert.equal(issues.length, 1);
+    assert.equal(issues[0]?.issueType, 'position_share_gap');
+    assert.equal(issues[0]?.warehouseCode, 'US-EAST');
   });
 });

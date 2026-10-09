@@ -71,7 +71,7 @@ export function DashboardPage() {
               </p>
             )}
             <p>{formatTaskRun('补货预测', taskRuns?.replenishmentForecast)}</p>
-            <p>{formatTaskRun('缺货预警', taskRuns?.stockAlert)}</p>
+            <p>{formatTaskRun('库存概览更新', taskRuns?.stockAlert)}</p>
           </CardContent>
         </Card>
       )}

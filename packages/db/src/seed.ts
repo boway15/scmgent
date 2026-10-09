@@ -48,7 +48,7 @@ const MENU_SEEDS: MenuSeed[] = [
         sortOrder: 10,
         isLeaf: true,
       },
-      { code: 'inventory.alert', name: '缺货预警', path: '/inventory/alerts', sortOrder: 20, isLeaf: true },
+      { code: 'inventory.alert', name: '库存概览', path: '/inventory/alerts', sortOrder: 20, isLeaf: true },
       { code: 'inventory.overview', name: '库存周转', path: '/inventory/overview', sortOrder: 30, isLeaf: true },
       { code: 'inventory.planning', name: 'SKU 库存规划', path: '/inventory/planning', sortOrder: 40, isLeaf: true },
       { code: 'inventory.pools', name: '库存三池', path: '/inventory/pools', sortOrder: 50, isLeaf: true },

@@ -1,9 +1,17 @@
+import { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { PageHeader } from '@/components/PageHeader';
 import { InventoryHealthBadge } from '@/components/InventoryHealthBadge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { api, type ShipmentStatus, type SkuPlanningView } from '@/lib/api';
+import {
+  formatDemandGateFlags,
+  formatHealthStatusLabel,
+  formatPlanningWarehouseLabel,
+  PLANNING_FIELD_TIPS,
+  PLANNING_TERM_LEGEND,
+} from '@/lib/inventory-planning-glossary';
 
 type PlanningView = SkuPlanningView & {
   stockoutAdjusted?: boolean;
@@ -54,19 +62,33 @@ const SHIPMENT_STATUS_LABEL: Record<ShipmentStatus, string> = {
 
 const CLOSED_PURCHASE_STATUSES = new Set(['received', 'cancelled']);
 
+const FIELD_TIPS = PLANNING_FIELD_TIPS;
+
+function FieldTip({ label, tip }: { label: string; tip: string }) {
+  return (
+    <span className="cursor-help border-b border-dotted border-text-sub/50" title={tip}>
+      {label}
+    </span>
+  );
+}
+
 function MetricCard({
   label,
   value,
   hint,
+  tip,
 }: {
   label: string;
   value: string | number;
   hint?: string;
+  tip: string;
 }) {
   return (
     <Card>
       <CardContent className="pt-6">
-        <p className="text-sm text-text-sub">{label}</p>
+        <p className="text-sm text-text-sub">
+          <FieldTip label={label} tip={tip} />
+        </p>
         <p className="mt-2 font-mono text-2xl font-semibold text-text-main">{value}</p>
         {hint && <p className="mt-1 text-xs text-text-hint">{hint}</p>}
       </CardContent>
@@ -168,10 +190,18 @@ function TimelineTable({ item }: { item: PlanningView }) {
           <tr className="border-b text-left text-text-sub">
             <th className="py-2 pr-2">节点</th>
             <th className="py-2 pr-2">日期</th>
-            <th className="py-2 pr-2">确定余额</th>
-            <th className="py-2 pr-2">预计余额</th>
-            <th className="py-2 pr-2">累计需求</th>
-            <th className="py-2 pr-2">管道</th>
+            <th className="py-2 pr-2">
+              <FieldTip label="确定余额" tip={FIELD_TIPS.confirmedEnding} />
+            </th>
+            <th className="py-2 pr-2">
+              <FieldTip label="预计余额" tip={FIELD_TIPS.expectedEnding} />
+            </th>
+            <th className="py-2 pr-2">
+              <FieldTip label="累计需求" tip={FIELD_TIPS.cumulativeDemand} />
+            </th>
+            <th className="py-2 pr-2">
+              <FieldTip label="管道" tip={FIELD_TIPS.plannedInbound} />
+            </th>
           </tr>
         </thead>
         <tbody>
@@ -228,10 +258,10 @@ function TimelineTable({ item }: { item: PlanningView }) {
           <p className="font-mono text-text-main">{item.reorderPoint ?? '暂无'}</p>
         </div>
       </div>
-      <p className="text-xs text-text-hint">
+      <p className="text-xs leading-relaxed text-text-hint">
         {item.scope === 'network'
-          ? '网络确定线=全仓 open lots（含在产/海外未定仓）投影；交期用地平线为出货前生产段。未定仓不在本系统落仓。'
-          : '确定线=海外可售+真实 ETA 在途；预计线=已达出货交期的本地货（可用日=出货交期+剩余物流）；计划线（在产/估期）不填近窗、不挡建议量。'}
+          ? '数据源：三池开放批次里已到可用日的「确定档」。未完工的在产逻辑仓只在开放批次展示，不进确定线。交期只用生产天数。'
+          : '数据源：该仓三池批次。确定线=海外可售+真实预计到仓日在途；预计线=已达出货交期的本地货；计划线（在产/估期）不填近窗、不挡建议量。'}
       </p>
     </>
   );
@@ -240,13 +270,17 @@ function TimelineTable({ item }: { item: PlanningView }) {
 function DecisionMetric({
   label,
   value,
+  tip,
 }: {
   label: string;
   value: string | number;
+  tip: string;
 }) {
   return (
     <div className="min-w-[5.5rem]">
-      <p className="text-xs text-text-sub">{label}</p>
+      <p className="text-xs text-text-sub">
+        <FieldTip label={label} tip={tip} />
+      </p>
       <p className="mt-0.5 font-mono text-sm font-semibold text-text-main">{value}</p>
     </div>
   );
@@ -279,9 +313,11 @@ function SectionLink({ to, label }: { to: string; label: string }) {
 function SupplyChainReadonlySections({
   skuCode,
   skuId,
+  warehouseLabel,
 }: {
   skuCode: string;
   skuId: string;
+  warehouseLabel: (code: string) => string;
 }) {
   const pools = useQuery({
     queryKey: ['sku-cockpit-pools', skuId],
@@ -315,6 +351,9 @@ function SupplyChainReadonlySections({
           <SectionLink to={`/inventory/pools?q=${q}`} label="查看全部" />
         </CardHeader>
         <CardContent>
+          <p className="mb-3 text-xs leading-relaxed text-text-hint">
+            数据源：三池开放批次（跟单、发运、飞书库存周转残差）。可用日是预计海外可售日：海外池用周转快照日，在途用发运/跟单预计可售日或飞书「最早在途上架时间」，本地在产用飞书「采购单最早上架时间」。生产未完成的日期不进入上方时间轴。
+          </p>
           {pools.isLoading ? (
             <p className="text-sm text-text-sub">加载开放批次…</p>
           ) : pools.isError ? (
@@ -328,14 +367,18 @@ function SupplyChainReadonlySections({
                   <th className="py-1.5 pr-2">池</th>
                   <th className="py-1.5 pr-2">仓</th>
                   <th className="py-1.5 pr-2">数量</th>
-                  <th className="py-1.5 pr-2">可用日</th>
+                  <th className="py-1.5 pr-2">
+                    <FieldTip label="可用日" tip={FIELD_TIPS.availableAt} />
+                  </th>
                 </tr>
               </thead>
               <tbody>
                 {poolRows.map((row) => (
                   <tr key={row.id} className="border-b border-border/50">
                     <td className="py-1.5 pr-2">{POOL_LABEL[row.pool] ?? row.pool}</td>
-                    <td className="py-1.5 pr-2 font-mono">{row.warehouseCode}</td>
+                    <td className="py-1.5 pr-2 font-mono text-xs">
+                      {warehouseLabel(row.warehouseCode)}
+                    </td>
                     <td className="py-1.5 pr-2 font-mono">{row.qty}</td>
                     <td className="py-1.5 pr-2 font-mono">
                       {row.dateUnknown || !row.availableAt ? '—' : row.availableAt}
@@ -366,8 +409,8 @@ function SupplyChainReadonlySections({
                 <tr className="border-b text-left text-text-sub">
                   <th className="py-1.5 pr-2">单号</th>
                   <th className="py-1.5 pr-2">数量</th>
-                  <th className="py-1.5 pr-2">ETA</th>
-                </tr>
+                  <th className="py-1.5 pr-2">预计可售日</th>
+                  </tr>
               </thead>
               <tbody>
                 {purchaseRows.map((row) => (
@@ -405,7 +448,7 @@ function SupplyChainReadonlySections({
                 <tr className="border-b text-left text-text-sub">
                   <th className="py-1.5 pr-2">单号</th>
                   <th className="py-1.5 pr-2">状态</th>
-                  <th className="py-1.5 pr-2">ETA</th>
+                  <th className="py-1.5 pr-2">预计可售日</th>
                 </tr>
               </thead>
               <tbody>
@@ -469,6 +512,13 @@ export function SkuInventoryPlanningPage() {
     setSearchParams(nextParams);
   };
 
+  const warehouseNameByCode = useMemo(
+    () => new Map((warehouses.data ?? []).map((w) => [w.code, w.name])),
+    [warehouses.data],
+  );
+  const labelWarehouse = (code: string) =>
+    formatPlanningWarehouseLabel(code, warehouseNameByCode.get(code));
+
   if (planning.isLoading || (scope === 'warehouse' && warehouses.isLoading && !warehouseCode)) {
     return <p className="text-text-sub">加载库存规划中...</p>;
   }
@@ -517,6 +567,18 @@ export function SkuInventoryPlanningPage() {
         </Link>
       </PageHeader>
 
+      <details className="rounded-lg border border-border bg-muted/20 px-4 py-3 text-xs text-text-sub shadow-card">
+        <summary className="cursor-pointer text-sm font-medium text-text-main">英文术语对照</summary>
+        <dl className="mt-3 grid gap-2 sm:grid-cols-2">
+          {PLANNING_TERM_LEGEND.map((row) => (
+            <div key={row.term}>
+              <dt className="font-mono text-text-main">{row.term}</dt>
+              <dd className="mt-0.5 leading-relaxed">{row.meaning}</dd>
+            </div>
+          ))}
+        </dl>
+      </details>
+
       {/* 决策条：Scope → 健康灯 → 关键指标 → 需求口径 */}
       <Card className="shadow-card">
         <CardContent className="space-y-4 pt-6">
@@ -553,29 +615,35 @@ export function SkuInventoryPlanningPage() {
                 </select>
               </>
             ) : (
-              <span className="text-sm text-text-sub">全网络需求（warehouse=ALL）</span>
+              <span className="text-sm text-text-sub">全网络需求（汇总仓码 ALL）</span>
             )}
             <InventoryHealthBadge health={item.healthStatus} />
             {item.coverageHealthStatus && item.coverageHealthStatus !== item.healthStatus ? (
               <span className="text-xs text-text-hint">
-                覆盖天数灯（影子）：{item.coverageHealthStatus}
+                覆盖天数灯（对照，不驱动下单）：
+                {formatHealthStatusLabel(item.coverageHealthStatus)}
               </span>
             ) : null}
             {item.needsManualConfirm ? (
               <span className="rounded-md border border-amber-200 bg-amber-50 px-2 py-1 text-xs text-amber-900">
                 需人工确认
-                {item.demandGateFlags?.length ? `（${item.demandGateFlags.join(', ')}）` : ''}
+                {item.demandGateFlags?.length
+                  ? `（${formatDemandGateFlags(item.demandGateFlags)}）`
+                  : ''}
               </span>
             ) : null}
           </div>
 
           <div className="flex flex-wrap items-end gap-6 border-t border-border/60 pt-4">
-            <DecisionMetric label="有效供给" value={item.position.effectiveQty} />
-            <DecisionMetric label="覆盖天数" value={coverageLabel} />
-            <DecisionMetric label="建议补货量" value={item.suggestedQty} />
-            <DecisionMetric label="断货日" value={stockoutLabel} />
-            <DecisionMetric label="日均需求" value={item.avgDaily.toFixed(2)} />
+            <DecisionMetric label="有效供给" value={item.position.effectiveQty} tip={FIELD_TIPS.effectiveQty} />
+            <DecisionMetric label="覆盖天数" value={coverageLabel} tip={FIELD_TIPS.coverageDays} />
+            <DecisionMetric label="建议补货量" value={item.suggestedQty} tip={FIELD_TIPS.suggestedQty} />
+            <DecisionMetric label="断货日" value={stockoutLabel} tip={FIELD_TIPS.stockoutDate} />
+            <DecisionMetric label="日均需求" value={item.avgDaily.toFixed(2)} tip={FIELD_TIPS.avgDaily} />
           </div>
+          <p className="text-xs leading-relaxed text-text-hint">
+            有效供给来自飞书「库存周转」日快照；断货日、覆盖天数、建议量来自时间轴（三池里已入档的批次，不含未完工在产）。日均需求来自需求计划或已发布预测。带虚线的名称可悬停看算法。
+          </p>
 
           <div className="flex flex-wrap items-center gap-3 text-sm text-text-sub">
             <span>
@@ -591,7 +659,7 @@ export function SkuInventoryPlanningPage() {
               )}
             </span>
             {item.championStockoutDateConfirmed ? (
-              <span>若用预测缺货日：{item.championStockoutDateConfirmed}</span>
+              <span>对照用销售预测缺货日：{item.championStockoutDateConfirmed}</span>
             ) : null}
             {item.confirmedCoverageDays != null ? (
               <span className="text-xs text-text-hint">
@@ -617,7 +685,7 @@ export function SkuInventoryPlanningPage() {
 
       {!isNetwork && item.allocation?.method === 'unallocated' ? (
         <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
-          飞书无销售占比，库存记在 OVERSEAS，本仓确定线与 7/15/30 不可用。
+          飞书无销售占比，库存记在「海外未定仓合计 OVERSEAS」，本仓确定线与 7/15/30 天预警不可用。
         </p>
       ) : null}
       {(item.unallocatedNetworkQty ?? 0) > 0 ? (
@@ -644,21 +712,29 @@ export function SkuInventoryPlanningPage() {
 
       {isNetwork && item.supplyPools ? (
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-          <MetricCard label="在产（local）" value={item.supplyPools.localQty} hint="IN-PRODUCTION 池" />
+          <MetricCard
+            label="在产（本地池）"
+            value={item.supplyPools.localQty}
+            hint="数据源：三池本地批次，含在产逻辑仓，不计入有效供给"
+            tip={FIELD_TIPS.localQty}
+          />
           <MetricCard
             label="调拨在途"
             value={item.supplyPools.inTransitQty}
-            hint="各仓 + 未定仓在途"
+            hint="数据源：三池在途批次（各仓 + 未定仓）"
+            tip={FIELD_TIPS.inTransitQty}
           />
           <MetricCard
             label="海外未定仓"
             value={item.supplyPools.overseasQty}
-            hint="OVERSEAS 池"
+            hint="数据源：三池海外批次"
+            tip={FIELD_TIPS.overseasQty}
           />
           <MetricCard
             label="无可用日"
             value={item.supplyPools.dateUnknownQty}
-            hint="不进时间轴确定线"
+            hint="数据源：开放批次中没有可用日的数量，不进时间轴"
+            tip={FIELD_TIPS.dateUnknownQty}
           />
         </div>
       ) : null}
@@ -692,16 +768,26 @@ export function SkuInventoryPlanningPage() {
           <MetricCard
             label="确定缺货日"
             value={item.timeline.stockoutDateConfirmed ?? '暂无'}
+            hint="数据源：时间轴确定线（海外可售 + 真实预计到仓日在途）"
+            tip={FIELD_TIPS.stockoutDate}
           />
           <MetricCard
             label="破安全库存日"
             value={item.timeline.safetyBreachDateConfirmed ?? '暂无'}
+            hint="数据源：时间轴确定余额首次低于安全库存"
+            tip={FIELD_TIPS.safetyBreach}
           />
-          <MetricCard label="最晚下单日" value={item.timeline.reorderDate ?? '暂无'} />
+          <MetricCard
+            label="最晚下单日"
+            value={item.timeline.reorderDate ?? '暂无'}
+            hint="数据源：预计缺货日 − 总交期"
+            tip={FIELD_TIPS.reorderDate}
+          />
           <MetricCard
             label="交期地平线预计余额"
             value={leadHorizonExpectedEnding(item)}
-            hint={`交期 ${item.leadTime.totalLeadDays} 天`}
+            hint={`数据源：时间轴交期节点预计余额 · 交期 ${item.leadTime.totalLeadDays} 天`}
+            tip={FIELD_TIPS.leadHorizonBalance}
           />
         </div>
       ) : null}
@@ -712,6 +798,11 @@ export function SkuInventoryPlanningPage() {
             <CardTitle>{isNetwork ? '网络库存位置（汇总）' : '库存位置拆分'}</CardTitle>
           </CardHeader>
           <CardContent>
+            <p className="mb-3 text-xs leading-relaxed text-text-hint">
+              {isNetwork
+                ? '数据源：飞书「库存周转」日快照。可售来自各物理仓；生产中、在途改用三池批次合计。底部有效供给只加各物理仓头寸，不含在产逻辑仓。'
+                : '数据源：飞书「库存周转」该仓最新快照。本仓没有可售/在途时，按销售占比拆海外未定仓合计。不叠加采购跟单。'}
+            </p>
             <div className="space-y-3 text-sm">
               {POSITION_ROWS.map(([key, label, operator]) => (
                 <div key={key} className="flex items-center justify-between border-b border-border/60 pb-2">
@@ -720,7 +811,9 @@ export function SkuInventoryPlanningPage() {
                 </div>
               ))}
               <div className="flex items-center justify-between pt-1 font-semibold">
-                <span>有效供给</span>
+                <span>
+                  <FieldTip label="有效供给" tip={FIELD_TIPS.effectiveQty} />
+                </span>
                 <span className="font-mono text-primary">{item.position.effectiveQty}</span>
               </div>
             </div>
@@ -744,7 +837,11 @@ export function SkuInventoryPlanningPage() {
             </div>
             <div className="mt-4 flex items-center justify-between border-t border-border pt-4">
               <span className="text-sm text-text-sub">
-                {item.leadTime.profileId ? '已匹配交期 Profile' : '使用分层默认值'}
+                {isNetwork
+                  ? '数据源：供应商/SKU 生产交期，网络视图只计生产天数'
+                  : item.leadTime.profileId
+                    ? '数据源：已匹配交期模板（生产/国内/订舱/海运/清关/入仓六段相加）'
+                    : '数据源：分层默认交期'}
               </span>
               <strong className="font-mono text-primary">合计 {item.leadTime.totalLeadDays} 天</strong>
             </div>
@@ -762,17 +859,25 @@ export function SkuInventoryPlanningPage() {
               <thead>
                 <tr className="border-b text-left text-text-sub">
                   <th className="py-2 pr-2">仓码</th>
-                  <th className="py-2 pr-2">健康灯</th>
-                  <th className="py-2 pr-2">有效供给</th>
-                  <th className="py-2 pr-2">最近到货</th>
-                  <th className="py-2 pr-2">缺货日</th>
+                  <th className="py-2 pr-2">
+                    <FieldTip label="健康灯" tip={FIELD_TIPS.warehouseHealth} />
+                  </th>
+                  <th className="py-2 pr-2">
+                    <FieldTip label="有效供给" tip={FIELD_TIPS.warehouseEffective} />
+                  </th>
+                  <th className="py-2 pr-2">
+                    <FieldTip label="最近到货" tip={FIELD_TIPS.nearestArrival} />
+                  </th>
+                  <th className="py-2 pr-2">
+                    <FieldTip label="缺货日" tip={FIELD_TIPS.warehouseStockout} />
+                  </th>
                   <th className="py-2 pr-2">操作</th>
                 </tr>
               </thead>
               <tbody>
                 {item.warehouses.map((row) => (
                   <tr key={row.warehouseCode} className="border-b border-border/50">
-                    <td className="py-2 pr-2 font-mono">{row.warehouseCode}</td>
+                    <td className="py-2 pr-2 font-mono text-xs">{labelWarehouse(row.warehouseCode)}</td>
                     <td className="py-2 pr-2">
                       <InventoryHealthBadge health={row.healthStatus} />
                     </td>
@@ -795,14 +900,21 @@ export function SkuInventoryPlanningPage() {
                 ))}
               </tbody>
             </table>
-            <p className="mt-3 text-xs text-text-hint">
-              点击仓行进入该仓确定线。未定仓件数请在迅捷/飞书源修正目的仓，本系统不写落仓分配。
+            <p className="mt-3 text-xs leading-relaxed text-text-hint">
+              有效供给来自飞书「库存周转」日快照（本仓有量用本仓，否则按销售占比拆海外未定仓合计），不含在产逻辑仓 IN-PRODUCTION。
+              最近到货来自三池开放批次里该物理仓的下一笔可用日。
+              缺货日本表未按仓计算，固定为「—」；网络确定缺货日见上方四格，单仓缺货日请点「分仓时间轴」。
+              健康灯来自每日流水线快照，不是本页重算。
             </p>
           </CardContent>
         </Card>
       ) : null}
 
-      <SupplyChainReadonlySections skuCode={item.skuCode} skuId={item.skuId} />
+      <SupplyChainReadonlySections
+        skuCode={item.skuCode}
+        skuId={item.skuId}
+        warehouseLabel={labelWarehouse}
+      />
 
       <Card className="shadow-card">
         <CardHeader>

@@ -18,6 +18,7 @@ import { buildPlanningExcludedSqlCondition } from './commercial-status.js';
 import { calcMilestoneDelayDays } from './shipment-delay.js';
 import { countOpenDataIssues } from './inventory-data-issue-store.js';
 import { countOpenUnallocatedLots } from './inventory-dest-allocation-store.js';
+import { getInventoryRiskCounts, type InventoryRiskCounts } from './alert-action-index.js';
 import { productScopeOnSkuAlias, type ProductScope } from './planning-accessory-filter.js';
 
 /** 近 30 天周转表 或 近 90 天有销量（qty_sold > 0） */
@@ -50,6 +51,7 @@ export type PlanningDashboard = {
   pendingShipOut: number;
   pendingTransfer: number;
   calculatedAt: string;
+  inventoryRisk?: InventoryRiskCounts;
 };
 
 type ShipmentForDashboard = {
@@ -432,9 +434,15 @@ export async function getPlanningDashboard(
     },
     today,
   );
+  const [openDataIssueCount, openUnallocatedLotCount, inventoryRisk] = await Promise.all([
+    countOpenDataIssues(),
+    countOpenUnallocatedLots(),
+    getInventoryRiskCounts(productScope),
+  ]);
   return {
     ...dashboard,
-    openDataIssueCount: await countOpenDataIssues(),
-    openUnallocatedLotCount: await countOpenUnallocatedLots(),
+    openDataIssueCount,
+    openUnallocatedLotCount,
+    inventoryRisk,
   };
 }

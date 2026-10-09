@@ -19,7 +19,7 @@ export const SCHEDULED_TASKS: ScheduledTask[] = [
   },
   {
     id: 'stock_alert',
-    name: '缺货预警检测',
+    name: '库存概览更新',
     path: '/api/tasks/stock-alert',
     cron: '0 7 * * *',
     cronLabel: '已停用（原每天 07:00）',
@@ -92,7 +92,7 @@ export const SCHEDULED_TASKS: ScheduledTask[] = [
 ];
 
 export const TASK_NAME_LABELS: Record<string, string> = {
-  stock_alert: '缺货预警检测',
+  stock_alert: '库存概览更新',
   procurement_ops_pull: '全链库存飞书拉取',
   inventory_query_pull: '库存查询飞书拉取',
   inventory_turnover_pull: '库存周转飞书拉取',

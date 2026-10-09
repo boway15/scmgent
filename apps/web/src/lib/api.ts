@@ -827,6 +827,22 @@ export type PlanningDashboard = {
   calculatedAt: string;
   openDataIssueCount?: number;
   openUnallocatedLotCount?: number;
+  inventoryRisk?: InventoryRiskCounts;
+};
+
+export type InventoryRiskCounts = {
+  stockout_now: number;
+  stockout_imminent: number;
+  /** 已断货 + 即将断货（兼容旧汇总） */
+  price: number;
+  ship_urgent: number;
+  ship: number;
+  order_tight: number;
+  order: number;
+  healthy: number;
+  mild_overstock: number;
+  overstock: number;
+  confirmed_slow: number;
 };
 
 export type InventoryDataIssueRow = {
@@ -2748,6 +2764,10 @@ export const api = {
     alertType?: string;
     resolved?: 'open' | 'done';
     productScope?: ProductScope;
+    view?: string;
+    grain?: 'sku' | 'warehouse';
+    suggestOrder?: 'yes' | 'no';
+    suggestShip?: 'yes' | 'no';
   }) => {
     const qs = new URLSearchParams();
     if (params?.page) qs.set('page', String(params.page));
@@ -2756,6 +2776,10 @@ export const api = {
     if (params?.horizonDays) qs.set('horizonDays', params.horizonDays);
     if (params?.alertType) qs.set('alertType', params.alertType);
     if (params?.resolved) qs.set('resolved', params.resolved);
+    if (params?.view) qs.set('view', params.view);
+    if (params?.grain) qs.set('grain', params.grain);
+    if (params?.suggestOrder) qs.set('suggestOrder', params.suggestOrder);
+    if (params?.suggestShip) qs.set('suggestShip', params.suggestShip);
     appendProductScopeQuery(qs, params?.productScope);
     const query = qs.toString();
     return request<{
@@ -2775,6 +2799,47 @@ export const api = {
         overseasQty: number;
         inTransitQty: number;
         futureNeedQty: number | null;
+        networkLocalQty: number | null;
+        networkOverseasQty: number | null;
+        networkInTransitQty: number | null;
+        networkFutureNeedQty: number | null;
+        networkStockoutDate: string | null;
+        action?: string | null;
+        priceReason?: string | null;
+        level?: string | null;
+        ownerLabel?: string | null;
+        hasShippableLots?: boolean;
+        hasUnallocatedLocal?: boolean;
+        onHandCoverageDays?: number | null;
+        inTransitCoverageDays?: number | null;
+        inTransitUndatedQty?: number | null;
+        daysToStockout?: number | null;
+        coverageDays?: number | null;
+        bandDays?: number | null;
+        networkAvgDaily?: number | null;
+        turnoverSales7d?: number | null;
+        turnoverSales14d?: number | null;
+        turnoverSales30d?: number | null;
+        networkBandDays?: number | null;
+        networkOnHandTransitDays?: number | null;
+        warehouseOnHandTransitDays?: number | null;
+        demand150?: number | null;
+        demand120?: number | null;
+        demand90?: number | null;
+        gap90?: number | null;
+        gap120?: number | null;
+        gap150?: number | null;
+        orderByDate?: string | null;
+        orderQty?: number | null;
+        orderNow?: boolean;
+        orderOverseasReference?: boolean;
+        ship60?: number | null;
+        urgent45?: number | null;
+        shipByDate?: string | null;
+        shipQty?: number | null;
+        shipNow?: boolean;
+        orderWindowCovered?: boolean;
+        shipWindowCovered?: boolean;
         isResolved: boolean;
       }>;
       total: number;
@@ -2782,6 +2847,12 @@ export const api = {
       pageSize: number;
       openCount: number;
     }>(`/api/alerts${query ? `?${query}` : ''}`);
+  },
+  getAlertSummary: (params?: { productScope?: ProductScope }) => {
+    const qs = new URLSearchParams();
+    appendProductScopeQuery(qs, params?.productScope);
+    const query = qs.toString();
+    return request<InventoryRiskCounts>(`/api/alerts/summary${query ? `?${query}` : ''}`);
   },
   resolveAlert: (id: string) => request(`/api/alerts/${id}/resolve`, { method: 'PATCH' }),
   getReorderSuggestions: (params?: {

@@ -7,6 +7,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { api, type PlanningDashboard } from '@/lib/api';
 import { ProductScopeSwitch } from '@/components/ProductScopeSwitch';
 import { useProductScope } from '@/lib/product-scope';
+import { INVENTORY_RISK_SCENES } from '@/lib/inventory-risk-scenes';
 import { cn, formatDateTimeCst } from '@/lib/utils';
 
 type PlanningDashboardCard = {
@@ -245,8 +246,43 @@ export function PlanningDashboardPage() {
 
       <section className="space-y-3">
         <div>
+          <h2 className="text-sm font-medium text-text-main">库存风险</h2>
+          <p className="text-xs text-text-sub">按可规划 SKU 全网可售天数分档。日均为空按 0 计、覆盖封顶 9999 天。确定性缺货和发货不含本地库存。</p>
+        </div>
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          {INVENTORY_RISK_SCENES.map((scene) => {
+            const value = dashboard.data.inventoryRisk?.[scene.view] ?? 0;
+            return (
+              <Link key={scene.view} to={`${scene.href}&grain=sku`}>
+                <Card
+                  className={cn(
+                    'h-full shadow-card transition-shadow hover:shadow-md',
+                    value > 0 && 'border-primary/40',
+                  )}
+                >
+                  <CardContent className="pt-6">
+                    <p className="text-sm text-text-sub">{scene.label}</p>
+                    <p
+                      className={cn(
+                        'mt-2 font-mono text-2xl font-semibold',
+                        value > 0 ? 'text-primary' : 'text-text-main',
+                      )}
+                    >
+                      {value}
+                    </p>
+                    <p className="mt-2 text-xs text-text-sub">{scene.hint}</p>
+                  </CardContent>
+                </Card>
+              </Link>
+            );
+          })}
+        </div>
+      </section>
+
+      <section className="space-y-3">
+        <div>
           <h2 className="text-sm font-medium text-text-main">风险与履约</h2>
-          <p className="text-xs text-text-sub">红灯/黄灯按 SKU 去重；缺货预警仍按 SKU 计数</p>
+          <p className="text-xs text-text-sub">红灯/黄灯按 SKU 去重。7/15/30 天缺货、积压、低于补货点按预警类型计数。</p>
         </div>
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
           {riskCards.map((card) => (

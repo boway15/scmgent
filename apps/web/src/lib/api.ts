@@ -2721,20 +2721,21 @@ export const api = {
     >(`/api/safety-stock${query ? `?${query}` : ''}`);
   },
   getSafetyStockSuggestions: (params?: {
-    warehouse?: string;
+    pairs?: Array<{ skuId: string; warehouseCode: string }>;
     serviceLevel?: number;
     sort?: string;
-    limit?: number;
-    offset?: number;
   }) => {
     const qs = new URLSearchParams();
-    if (params?.warehouse) qs.set('warehouse', params.warehouse);
+    if (params?.pairs?.length) {
+      qs.set(
+        'pairs',
+        params.pairs.map((p) => `${p.skuId}:${p.warehouseCode}`).join(','),
+      );
+    }
     if (params?.serviceLevel != null) qs.set('serviceLevel', String(params.serviceLevel));
     if (params?.sort) qs.set('sort', params.sort);
-    if (params?.limit != null) qs.set('limit', String(params.limit));
-    if (params?.offset != null) qs.set('offset', String(params.offset));
     const query = qs.toString();
-    return request<{ items: SafetyStockSuggestionView[]; total: number; limit: number; offset: number }>(
+    return request<{ items: SafetyStockSuggestionView[]; total: number }>(
       `/api/safety-stock/suggestions${query ? `?${query}` : ''}`,
     );
   },

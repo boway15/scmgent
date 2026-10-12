@@ -54,13 +54,24 @@ export function SafetyStockPage() {
   });
   const items = data?.items ?? [];
 
+  const pagePairs = useMemo(
+    () =>
+      items.map((item) => ({
+        skuId: item.skuId,
+        warehouseCode: item.warehouseCode || 'ALL',
+      })),
+    [items],
+  );
+  const pairsKey = pagePairs.map((p) => `${p.skuId}:${p.warehouseCode}`).join(',');
+
   const { data: suggestionResp } = useQuery({
-    queryKey: ['safety-stock-suggestions', suggestionServiceLevel],
+    queryKey: ['safety-stock-suggestions', suggestionServiceLevel, pairsKey],
+    enabled: pagePairs.length > 0,
     queryFn: () =>
       api.getSafetyStockSuggestions({
+        pairs: pagePairs,
         serviceLevel: suggestionServiceLevel,
         sort: 'deltaDays_desc',
-        limit: 500,
       }),
   });
 

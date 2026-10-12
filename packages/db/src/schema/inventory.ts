@@ -130,22 +130,34 @@ export const bom = pgTable(
   }),
 );
 
-export const inventoryRecords = pgTable('inventory_records', {
-  id: uuid('id').primaryKey().defaultRandom(),
-  skuId: uuid('sku_id')
-    .notNull()
-    .references(() => skus.id),
-  warehouse: varchar('warehouse', { length: 100 }).notNull(),
-  qtyAvailable: integer('qty_available').notNull(),
-  qtyInTransit: integer('qty_in_transit').default(0),
-  qtyInProduction: integer('qty_in_production').default(0),
-  qtyReserved: integer('qty_reserved').default(0),
-  recordedDate: date('recorded_date').notNull(),
-  source: dataSourceEnum('source').notNull().default('manual'),
-  importBatchId: uuid('import_batch_id'),
-  createdBy: uuid('created_by').references(() => users.id),
-  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
-});
+export const inventoryRecords = pgTable(
+  'inventory_records',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    skuId: uuid('sku_id')
+      .notNull()
+      .references(() => skus.id),
+    warehouse: varchar('warehouse', { length: 100 }).notNull(),
+    qtyAvailable: integer('qty_available').notNull(),
+    qtyInTransit: integer('qty_in_transit').default(0),
+    qtyInProduction: integer('qty_in_production').default(0),
+    qtyReserved: integer('qty_reserved').default(0),
+    recordedDate: date('recorded_date').notNull(),
+    source: dataSourceEnum('source').notNull().default('manual'),
+    importBatchId: uuid('import_batch_id'),
+    createdBy: uuid('created_by').references(() => users.id),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    /** 日序列 / 最新快照：按 SKU+仓+日期；created_at DESC 与 DISTINCT ON 对齐（见 0117 迁移） */
+    skuWhDateIdx: index('inventory_records_sku_wh_date_idx').on(
+      table.skuId,
+      table.warehouse,
+      table.recordedDate,
+      table.createdAt,
+    ),
+  }),
+);
 
 /** 飞书库存周转整表每日发布批次；同一业务日期仅一个 published 批次生效 */
 export const inventorySnapshotRuns = pgTable(

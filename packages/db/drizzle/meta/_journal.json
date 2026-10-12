@@ -687,6 +687,13 @@
       "when": 1787465600000,
       "tag": "0116_inventory_overview_menu_rename",
       "breakpoints": true
+    },
+    {
+      "idx": 98,
+      "version": "6",
+      "when": 1787469200000,
+      "tag": "0117_inventory_records_sku_wh_date_idx",
+      "breakpoints": true
     }
   ]
 }

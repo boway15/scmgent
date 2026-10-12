@@ -1,15 +1,24 @@
-import { and, asc, eq, gte, lt } from 'drizzle-orm';
-import { db, inventoryRecords } from '@scm/db';
+import { inArray } from 'drizzle-orm';
+import { db, skus } from '@scm/db';
 import { calcForwardAvgDaily } from './forecast-demand.js';
 import { loadMergedPublishedForecastBySkuIds } from './forecast-published-resolve.js';
-import { loadSkuShare, resolveHistoricalDemand } from './inventory-health-service.js';
+import {
+  loadHistoricalAvailabilityBySkuIds,
+  loadLeadTimeCaches,
+  loadSkuShare,
+  resolveHistoricalDemand,
+  shareFromEncodingMeta,
+} from './inventory-health-service.js';
 import {
   resolveWarehouseDemandShare,
   scaleDailyMapByShare,
 } from './inventory-share-allocation.js';
-import { resolveLeadTimeForSkuWarehouse } from './lead-time-resolver.js';
+import {
+  resolveLeadTimeForSkuWarehouse,
+  resolveLeadTimeFromCaches,
+} from './lead-time-resolver.js';
 import { calcDailyStats } from './replenishment.js';
-import { loadDailySalesForSku } from './sales-history-query.js';
+import { loadDailySalesBySkuIds, loadDailySalesForSku } from './sales-history-query.js';
 import { replenishmentSalesLookbackDays } from './sales-history-config.js';
 import {
   calcSafetyStockSuggestion,
@@ -34,44 +43,19 @@ export type SafetyStockSuggestionRow = {
   deltaPctDays: number | null;
 };
 
-type HistoricalInventoryRow = {
-  recordedDate: string | Date;
-  qtyAvailable: number;
-  createdAt: Date;
+export type SuggestionPairInput = {
+  sku: { id: string; code?: string; merchantCode: string | null; leadTimeDays: number | null };
+  warehouseCode: string;
+  policy?: {
+    safetyStockDays: number | null;
+    safetyStockQty: number;
+    reorderPoint: number;
+    safetyStockMethod: string;
+  } | null;
 };
 
-function dateKey(value: string | Date): string {
-  return typeof value === 'string' ? value.slice(0, 10) : value.toISOString().slice(0, 10);
-}
-
-async function loadDailyAvailability(params: {
-  skuId: string;
-  warehouseCode: string;
-  windowDays: number;
-  asOf?: Date;
-}): Promise<HistoricalInventoryRow[]> {
-  const asOf = params.asOf ?? new Date();
-  const windowStart = new Date(
-    Date.UTC(asOf.getUTCFullYear(), asOf.getUTCMonth(), asOf.getUTCDate()),
-  );
-  windowStart.setUTCDate(windowStart.getUTCDate() - params.windowDays);
-
-  return db
-    .select({
-      recordedDate: inventoryRecords.recordedDate,
-      qtyAvailable: inventoryRecords.qtyAvailable,
-      createdAt: inventoryRecords.createdAt,
-    })
-    .from(inventoryRecords)
-    .where(
-      and(
-        eq(inventoryRecords.skuId, params.skuId),
-        eq(inventoryRecords.warehouse, params.warehouseCode),
-        gte(inventoryRecords.recordedDate, dateKey(windowStart)),
-        lt(inventoryRecords.recordedDate, dateKey(asOf)),
-      ),
-    )
-    .orderBy(asc(inventoryRecords.recordedDate), asc(inventoryRecords.createdAt));
+function positionKey(skuId: string, warehouseCode: string) {
+  return `${skuId}::${warehouseCode}`;
 }
 
 function filterSalesByWarehouse(
@@ -147,6 +131,137 @@ export function sortSuggestionRows(
   return copy;
 }
 
+function buildSuggestionFromCaches(params: {
+  input: SuggestionPairInput;
+  windowDays: number;
+  serviceLevel?: number;
+  sales: Array<{ qtySold: number; saleDate: string; warehouseCode: string | null }>;
+  forecastEntry?: { map: Map<string, number>; lifecycle?: string } | null;
+  share: ReturnType<typeof shareFromEncodingMeta>;
+  leadTime: { totalLeadDays: number };
+  inventoryRows: Array<{ recordedDate: string | Date; qtyAvailable: number; createdAt: Date }>;
+}): SafetyStockSuggestionRow {
+  const whSales = filterSalesByWarehouse(params.sales, params.input.warehouseCode);
+  const effectiveSalesDays = countEffectiveSalesDays(whSales, params.windowDays);
+  const hasForecast = (params.forecastEntry?.map.size ?? 0) > 0;
+
+  let avgDaily = 0;
+  let stockoutAdjusted = false;
+  let inStockDays = 0;
+  let demandSource: 'forecast' | 'historical' = 'historical';
+
+  if (hasForecast && params.forecastEntry) {
+    const stats = calcDailyStats(whSales, params.windowDays);
+    const demandShare = resolveWarehouseDemandShare(params.input.warehouseCode, params.share);
+    avgDaily = calcForwardAvgDaily(
+      scaleDailyMapByShare(params.forecastEntry.map, demandShare),
+      new Date(),
+      90,
+      stats.avgDaily,
+    );
+    demandSource = 'forecast';
+  } else {
+    const historical = resolveHistoricalDemand({
+      sales: whSales,
+      inventoryRows: params.inventoryRows,
+      windowDays: params.windowDays,
+    });
+    avgDaily = historical.avgDaily;
+    stockoutAdjusted = historical.stockoutAdjusted;
+    inStockDays = historical.inStockDays;
+  }
+
+  const stats = calcDailyStats(whSales, params.windowDays);
+  const demandStdDev =
+    stats.stdDev > 0 && whSales.length >= 2 ? stats.stdDev : avgDaily > 0 ? avgDaily * 0.3 : 0;
+
+  const configured = {
+    safetyStockDays: params.input.policy?.safetyStockDays ?? DEFAULT_CONFIGURED_SAFETY_STOCK_DAYS,
+    safetyStockQty: params.input.policy?.safetyStockQty ?? 0,
+    reorderPoint: params.input.policy?.reorderPoint ?? 0,
+    safetyStockMethod: params.input.policy?.safetyStockMethod ?? 'coverage_days',
+  };
+
+  const suggested = calcSafetyStockSuggestion({
+    avgDaily,
+    demandStdDev,
+    totalLeadDays: params.leadTime.totalLeadDays,
+    serviceLevel: params.serviceLevel,
+    inStockDays,
+    stockoutAdjusted,
+    demandSource,
+    effectiveSalesDays,
+  });
+
+  return buildSuggestionRow({
+    skuId: params.input.sku.id,
+    skuCode: params.input.sku.code ?? params.input.sku.id,
+    warehouseCode: params.input.warehouseCode,
+    configured,
+    suggested,
+  });
+}
+
+/** 当前页 pair 批量计算建议：销量/预测/交期/日序列预加载后在内存计算 */
+export async function resolveSuggestionInputsBatch(params: {
+  pairs: SuggestionPairInput[];
+  serviceLevel?: number;
+}): Promise<SafetyStockSuggestionRow[]> {
+  if (!params.pairs.length) return [];
+
+  const windowDays = replenishmentSalesLookbackDays();
+  const skuIds = [...new Set(params.pairs.map((p) => p.sku.id))];
+
+  const [salesBySkuId, forecastBySkuId, leadTimeCaches, skuShareRows] = await Promise.all([
+    loadDailySalesBySkuIds(skuIds, windowDays),
+    loadMergedPublishedForecastBySkuIds(skuIds),
+    loadLeadTimeCaches(skuIds),
+    db
+      .select({ id: skus.id, encodingMeta: skus.encodingMeta })
+      .from(skus)
+      .where(inArray(skus.id, skuIds)),
+  ]);
+
+  const shareBySku = new Map(
+    skuShareRows.map((row) => [row.id, shareFromEncodingMeta(row.encodingMeta)] as const),
+  );
+
+  const noForecastSkuIds = skuIds.filter((id) => {
+    const entry = forecastBySkuId.get(id);
+    return !entry?.map.size;
+  });
+  const availabilityByKey = await loadHistoricalAvailabilityBySkuIds({
+    skuIds: noForecastSkuIds,
+    windowDays,
+  });
+
+  return params.pairs.map((input) => {
+    const forecastEntry = forecastBySkuId.get(input.sku.id) ?? null;
+    const hasForecast = (forecastEntry?.map.size ?? 0) > 0;
+    const leadTime = resolveLeadTimeFromCaches(
+      {
+        skuId: input.sku.id,
+        merchantCode: input.sku.merchantCode,
+        warehouseCode: input.warehouseCode,
+        skuLeadTimeDays: input.sku.leadTimeDays,
+      },
+      leadTimeCaches,
+    );
+    return buildSuggestionFromCaches({
+      input,
+      windowDays,
+      serviceLevel: params.serviceLevel,
+      sales: salesBySkuId.get(input.sku.id) ?? [],
+      forecastEntry,
+      share: shareBySku.get(input.sku.id) ?? shareFromEncodingMeta(null),
+      leadTime,
+      inventoryRows: hasForecast
+        ? []
+        : (availabilityByKey.get(positionKey(input.sku.id, input.warehouseCode)) ?? []),
+    });
+  });
+}
+
 export async function resolveSuggestionInputs(params: {
   sku: { id: string; code?: string; merchantCode: string | null; leadTimeDays: number | null };
   warehouseCode: string;
@@ -160,8 +275,6 @@ export async function resolveSuggestionInputs(params: {
 }): Promise<SafetyStockSuggestionRow> {
   const windowDays = replenishmentSalesLookbackDays();
   const sales = await loadDailySalesForSku(params.sku.id, windowDays);
-  const whSales = filterSalesByWarehouse(sales, params.warehouseCode);
-  const effectiveSalesDays = countEffectiveSalesDays(whSales, windowDays);
 
   const leadTime = await resolveLeadTimeForSkuWarehouse({
     skuId: params.sku.id,
@@ -171,70 +284,30 @@ export async function resolveSuggestionInputs(params: {
   });
 
   const forecastMerged = await loadMergedPublishedForecastBySkuIds([params.sku.id]);
-  const forecastEntry = forecastMerged.get(params.sku.id);
+  const forecastEntry = forecastMerged.get(params.sku.id) ?? null;
   const hasForecast = (forecastEntry?.map.size ?? 0) > 0;
 
-  let avgDaily = 0;
-  let stockoutAdjusted = false;
-  let inStockDays = 0;
-  let demandSource: 'forecast' | 'historical' = 'historical';
+  const inventoryRows = hasForecast
+    ? []
+    : ((
+        await loadHistoricalAvailabilityBySkuIds({
+          skuIds: [params.sku.id],
+          windowDays,
+        })
+      ).get(positionKey(params.sku.id, params.warehouseCode)) ?? []);
 
-  if (hasForecast && forecastEntry) {
-    const stats = calcDailyStats(whSales, windowDays);
-    const demandShare = resolveWarehouseDemandShare(
-      params.warehouseCode,
-      await loadSkuShare(params.sku.id),
-    );
-    avgDaily = calcForwardAvgDaily(
-      scaleDailyMapByShare(forecastEntry.map, demandShare),
-      new Date(),
-      90,
-      stats.avgDaily,
-    );
-    demandSource = 'forecast';
-  } else {
-    const inventoryRows = await loadDailyAvailability({
-      skuId: params.sku.id,
+  return buildSuggestionFromCaches({
+    input: {
+      sku: params.sku,
       warehouseCode: params.warehouseCode,
-      windowDays,
-    });
-    const historical = resolveHistoricalDemand({
-      sales: whSales,
-      inventoryRows,
-      windowDays,
-    });
-    avgDaily = historical.avgDaily;
-    stockoutAdjusted = historical.stockoutAdjusted;
-    inStockDays = historical.inStockDays;
-  }
-
-  const stats = calcDailyStats(whSales, windowDays);
-  const demandStdDev =
-    stats.stdDev > 0 && whSales.length >= 2 ? stats.stdDev : avgDaily > 0 ? avgDaily * 0.3 : 0;
-
-  const configured = {
-    safetyStockDays: params.policy?.safetyStockDays ?? DEFAULT_CONFIGURED_SAFETY_STOCK_DAYS,
-    safetyStockQty: params.policy?.safetyStockQty ?? 0,
-    reorderPoint: params.policy?.reorderPoint ?? 0,
-    safetyStockMethod: params.policy?.safetyStockMethod ?? 'coverage_days',
-  };
-
-  const suggested = calcSafetyStockSuggestion({
-    avgDaily,
-    demandStdDev,
-    totalLeadDays: leadTime.totalLeadDays,
+      policy: params.policy,
+    },
+    windowDays,
     serviceLevel: params.serviceLevel,
-    inStockDays,
-    stockoutAdjusted,
-    demandSource,
-    effectiveSalesDays,
-  });
-
-  return buildSuggestionRow({
-    skuId: params.sku.id,
-    skuCode: params.sku.code ?? params.sku.id,
-    warehouseCode: params.warehouseCode,
-    configured,
-    suggested,
+    sales,
+    forecastEntry,
+    share: await loadSkuShare(params.sku.id),
+    leadTime,
+    inventoryRows,
   });
 }

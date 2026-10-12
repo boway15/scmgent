@@ -120,6 +120,26 @@ export function requireRole(user: AuthUser, ...allowed: string[]) {
   }
 }
 
+export function resolveFeishuLoginEmail(openId: string, email?: string): string {
+  return email?.trim() || `${openId}@feishu.local`;
+}
+
+/**
+ * 邮箱已存在但 feishu_user_id 未命中时的绑定策略：
+ * - `@feishu.local` 合成邮箱，或已有行未绑定飞书：允许绑定
+ * - 真实邮箱已绑其他飞书身份：拒绝
+ */
+export function resolveFeishuEmailBindAction(params: {
+  openId: string;
+  email: string;
+  existingFeishuUserId: string | null;
+}): 'bind' | 'reject_other_identity' {
+  if (params.existingFeishuUserId === params.openId) return 'bind';
+  const isSynthetic = params.email.toLowerCase().endsWith('@feishu.local');
+  if (isSynthetic || !params.existingFeishuUserId) return 'bind';
+  return 'reject_other_identity';
+}
+
 export async function findOrCreateFeishuUser(info: {
   openId: string;
   name: string;
@@ -142,8 +162,32 @@ export async function findOrCreateFeishuUser(info: {
     return toAuthUser({ ...existing, name: info.name });
   }
 
+  const email = resolveFeishuLoginEmail(info.openId, info.email);
+  const [byEmail] = await db
+    .select(userSelect)
+    .from(users)
+    .innerJoin(roles, eq(users.roleId, roles.id))
+    .where(eq(users.email, email))
+    .limit(1);
+
+  if (byEmail) {
+    if (!byEmail.isActive) throw new Error('User account is disabled');
+    const action = resolveFeishuEmailBindAction({
+      openId: info.openId,
+      email,
+      existingFeishuUserId: byEmail.feishuUserId,
+    });
+    if (action === 'reject_other_identity') {
+      throw new Error('Email already linked to another Feishu account');
+    }
+    await db
+      .update(users)
+      .set({ feishuUserId: info.openId, name: info.name })
+      .where(eq(users.id, byEmail.id));
+    return toAuthUser({ ...byEmail, feishuUserId: info.openId, name: info.name });
+  }
+
   const pendingRoleId = await getPendingRoleId();
-  const email = info.email?.trim() || `${info.openId}@feishu.local`;
 
   const [created] = await db
     .insert(users)

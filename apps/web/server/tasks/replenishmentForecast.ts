@@ -28,6 +28,10 @@ import { enhanceReplenishmentReasons } from '../integrations/dify-workflows.js';
 import { isReplenishmentWorkflowEnabled } from '../integrations/dify.js';
 import {
   computeSkuWarehouseHealth,
+  loadHistoricalAvailabilityBySkuIds,
+  loadLatestInventorySnapshotsBySkuIds,
+  loadLeadTimeCaches,
+  loadPolicyMapsBySkuIds,
   shareFromEncodingMeta,
   type SkuHealthRow,
 } from '../lib/inventory-health-service.js';
@@ -37,11 +41,20 @@ import {
 } from '../lib/inventory-health-store.js';
 import { syncReplenishLightFromHealth } from '../lib/replenish-light-sync.js';
 import { loadDailySalesBySkuIds } from '../lib/sales-history-query.js';
+import { replenishmentSalesLookbackDays } from '../lib/sales-history-config.js';
+import { loadMergedPublishedForecastBySkuIds } from '../lib/forecast-published-resolve.js';
 import {
   buildSkuNetworkTimeline,
   buildSkuWarehouseTimeline,
 } from '../lib/inventory-timeline-service.js';
-import { resolvePreShipmentLeadTimeForSku } from '../lib/lead-time-resolver.js';
+import {
+  resolveLeadTimeFromCaches,
+  resolvePreShipmentLeadTimeForSku,
+} from '../lib/lead-time-resolver.js';
+import {
+  PLANNING_INVENTORY_DEDUPE_MODE,
+  resolveInventoryPositionFromSnapshot,
+} from '../lib/inventory-position.js';
 import { syncInventorySupplyLots } from '../lib/inventory-supply-lot-sync.js';
 import {
   calcConfirmedCoverageDays,
@@ -103,12 +116,8 @@ async function upsertSafetyStock(
   }
 }
 
-async function loadPolicyMap(skuId: string) {
-  const rows = await db
-    .select()
-    .from(safetyStockConfig)
-    .where(eq(safetyStockConfig.skuId, skuId));
-  return new Map(rows.map((row) => [row.warehouseCode, row]));
+function positionKey(skuId: string, warehouseCode: string) {
+  return `${skuId}::${warehouseCode}`;
 }
 
 export async function runReplenishmentForecast() {
@@ -153,14 +162,39 @@ export async function runReplenishmentForecast() {
     return { suggestionCount: 0, snapshotCount: 0, message: 'No active SKUs or warehouses' };
   }
 
-  const salesBySkuId = await loadDailySalesBySkuIds(activeSkus.map((sku) => sku.id));
+  const skuIds = activeSkus.map((s) => s.id);
+  const physicalWarehouseCodes = whRows.map((wh) => wh.code);
+  const demandWindowDays = replenishmentSalesLookbackDays();
+
+  const [salesBySkuId, forecastBySkuId, policyBySku, positionByKey, leadTimeCaches] =
+    await Promise.all([
+      loadDailySalesBySkuIds(skuIds),
+      loadMergedPublishedForecastBySkuIds(skuIds),
+      loadPolicyMapsBySkuIds(skuIds),
+      loadLatestInventorySnapshotsBySkuIds(skuIds, physicalWarehouseCodes),
+      loadLeadTimeCaches(skuIds),
+    ]);
+
+  const noForecastSkuIds = skuIds.filter((id) => {
+    const entry = forecastBySkuId.get(id);
+    return !entry?.map.size;
+  });
+  const availabilityByKey = await loadHistoricalAvailabilityBySkuIds({
+    skuIds: noForecastSkuIds,
+    windowDays: demandWindowDays,
+  });
+
+  const emptyPosition = (warehouseCode: string) =>
+    resolveInventoryPositionFromSnapshot({
+      warehouseCode,
+      dedupeMode: PLANNING_INVENTORY_DEDUPE_MODE,
+    });
 
   const accuracyBySku = new Map<string, number>();
   const demandAuditBySkuWh = new Map<
     string,
     { unconstrainedRecentDaily: string | null; inStockDayRatio: string | null; source: string | null }
   >();
-  const skuIds = activeSkus.map((s) => s.id);
   if (skuIds.length > 0) {
     const accuracyRows = await db
       .select({
@@ -226,11 +260,17 @@ export async function runReplenishmentForecast() {
       sku.moq,
       sku.spuId ? spuMoqMap.get(sku.spuId) : null,
     );
-    const policyMap = await loadPolicyMap(sku.id);
+    const policyMap = policyBySku.get(sku.id) ?? new Map();
+    const forecastEntry = forecastBySkuId.get(sku.id) ?? {
+      map: new Map<string, number>(),
+      lifecycle: undefined,
+      versionId: null,
+    };
     const forecastByStation = new Map<
       string,
       { map: Map<string, number>; lifecycle?: string }
     >();
+    const hasForecast = forecastEntry.map.size > 0;
 
     const salesRows = salesBySkuId.get(sku.id) ?? [];
 
@@ -240,14 +280,32 @@ export async function runReplenishmentForecast() {
 
     const share = shareFromEncodingMeta(sku.encodingMeta);
     for (const wh of whRows) {
+      const key = positionKey(sku.id, wh.code);
+      const leadTime = resolveLeadTimeFromCaches(
+        {
+          skuId: sku.id,
+          merchantCode: sku.merchantCode,
+          warehouseCode: wh.code,
+          skuLeadTimeDays: sku.leadTimeDays,
+        },
+        leadTimeCaches,
+      );
       const health = await computeSkuWarehouseHealth({
         sku,
         warehouse: wh,
         salesRows,
         policyMap,
         forecastByStation,
+        forecastEntry,
         share,
         moq: effectiveMoq || undefined,
+        caches: {
+          leadTime,
+          position: positionByKey.get(key) ?? emptyPosition(wh.code),
+          ...(hasForecast
+            ? {}
+            : { availabilityRows: availabilityByKey.get(key) ?? [] }),
+        },
       });
       healthRows.push(health);
       dailyByWh[wh.code] = health.avgDaily;

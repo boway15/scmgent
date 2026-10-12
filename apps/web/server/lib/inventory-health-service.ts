@@ -1,10 +1,9 @@
 /**
  * 统一库存健康计算服务：补货任务、预警任务、SKU 规划共用 snapshot_only 口径（与库存总览分仓同源）。
  */
-import { and, asc, eq, gte, inArray, lt, sql } from 'drizzle-orm';
+import { and, eq, inArray, sql } from 'drizzle-orm';
 import {
   db,
-  inventoryRecords,
   skus,
   safetyStockConfig,
   warehouses,
@@ -115,28 +114,12 @@ async function loadDailyAvailability(params: {
   windowDays: number;
   asOf?: Date;
 }): Promise<HistoricalInventoryRow[]> {
-  const asOf = params.asOf ?? new Date();
-  const windowStart = new Date(
-    Date.UTC(asOf.getUTCFullYear(), asOf.getUTCMonth(), asOf.getUTCDate()),
-  );
-  windowStart.setUTCDate(windowStart.getUTCDate() - params.windowDays);
-
-  return db
-    .select({
-      recordedDate: inventoryRecords.recordedDate,
-      qtyAvailable: inventoryRecords.qtyAvailable,
-      createdAt: inventoryRecords.createdAt,
-    })
-    .from(inventoryRecords)
-    .where(
-      and(
-        eq(inventoryRecords.skuId, params.skuId),
-        eq(inventoryRecords.warehouse, params.warehouseCode),
-        gte(inventoryRecords.recordedDate, dateKey(windowStart)),
-        lt(inventoryRecords.recordedDate, dateKey(asOf)),
-      ),
-    )
-    .orderBy(asc(inventoryRecords.recordedDate), asc(inventoryRecords.createdAt));
+  const byKey = await loadHistoricalAvailabilityBySkuIds({
+    skuIds: [params.skuId],
+    windowDays: params.windowDays,
+    asOf: params.asOf,
+  });
+  return byKey.get(positionKey(params.skuId, params.warehouseCode)) ?? [];
 }
 
 export function shareFromEncodingMeta(encodingMeta: unknown): ShareParseResult {
@@ -152,7 +135,7 @@ export async function loadSkuShare(skuId: string): Promise<ShareParseResult> {
   return shareFromEncodingMeta(row?.encodingMeta);
 }
 
-async function loadPolicyMapsBySkuIds(
+export async function loadPolicyMapsBySkuIds(
   skuIds: string[],
 ): Promise<Map<string, Map<string, PolicyRow>>> {
   const result = new Map<string, Map<string, PolicyRow>>();
@@ -185,7 +168,7 @@ type LatestInvRow = {
   qtyReserved: number;
 };
 
-async function loadLatestInventorySnapshotsBySkuIds(
+export async function loadLatestInventorySnapshotsBySkuIds(
   skuIds: string[],
   physicalWarehouseCodes: string[],
 ): Promise<Map<string, InventoryPositionBreakdown>> {
@@ -269,7 +252,7 @@ async function loadLatestInventorySnapshotsBySkuIds(
   return result;
 }
 
-async function loadLeadTimeCaches(skuIds: string[]): Promise<LeadTimeResolveCaches> {
+export async function loadLeadTimeCaches(skuIds: string[]): Promise<LeadTimeResolveCaches> {
   const profileRows = await db
     .select({
       id: leadTimeProfiles.id,
@@ -343,7 +326,16 @@ async function loadLeadTimeCaches(skuIds: string[]): Promise<LeadTimeResolveCach
   };
 }
 
-async function loadHistoricalAvailabilityBySkuIds(params: {
+type AvailabilityQueryRow = {
+  skuId: string;
+  warehouseCode: string;
+  recordedDate: string | Date;
+  qtyAvailable: number;
+  createdAt: Date;
+};
+
+/** 按 SKU 批量加载窗口内每日最新可用库存（DISTINCT ON）；单条语句 10s 超时 */
+export async function loadHistoricalAvailabilityBySkuIds(params: {
   skuIds: string[];
   windowDays: number;
   asOf?: Date;
@@ -361,28 +353,26 @@ async function loadHistoricalAvailabilityBySkuIds(params: {
 
   for (let offset = 0; offset < params.skuIds.length; offset += SKU_IN_CHUNK) {
     const chunk = params.skuIds.slice(offset, offset + SKU_IN_CHUNK);
-    const rows = await db
-      .select({
-        skuId: inventoryRecords.skuId,
-        warehouseCode: inventoryRecords.warehouse,
-        recordedDate: inventoryRecords.recordedDate,
-        qtyAvailable: inventoryRecords.qtyAvailable,
-        createdAt: inventoryRecords.createdAt,
-      })
-      .from(inventoryRecords)
-      .where(
-        and(
-          inArray(inventoryRecords.skuId, chunk),
-          gte(inventoryRecords.recordedDate, startKey),
-          lt(inventoryRecords.recordedDate, endKey),
-        ),
-      )
-      .orderBy(
-        asc(inventoryRecords.skuId),
-        asc(inventoryRecords.warehouse),
-        asc(inventoryRecords.recordedDate),
-        asc(inventoryRecords.createdAt),
-      );
+    const rows = await db.transaction(async (tx) => {
+      await tx.execute(sql`SET LOCAL statement_timeout = '10s'`);
+      const queryResult = await tx.execute(sql`
+        SELECT DISTINCT ON (sku_id, warehouse, recorded_date)
+          sku_id AS "skuId",
+          warehouse AS "warehouseCode",
+          recorded_date AS "recordedDate",
+          qty_available::int AS "qtyAvailable",
+          created_at AS "createdAt"
+        FROM inventory_records
+        WHERE sku_id IN (${sql.join(
+          chunk.map((id) => sql`${id}::uuid`),
+          sql`, `,
+        )})
+          AND recorded_date >= ${startKey}
+          AND recorded_date < ${endKey}
+        ORDER BY sku_id, warehouse, recorded_date, created_at DESC
+      `);
+      return Array.from(queryResult as unknown as AvailabilityQueryRow[]);
+    });
 
     for (const row of rows) {
       const key = positionKey(row.skuId, row.warehouseCode);
@@ -390,7 +380,7 @@ async function loadHistoricalAvailabilityBySkuIds(params: {
       list.push({
         recordedDate: row.recordedDate,
         qtyAvailable: row.qtyAvailable,
-        createdAt: row.createdAt,
+        createdAt: row.createdAt instanceof Date ? row.createdAt : new Date(row.createdAt),
       });
       result.set(key, list);
     }

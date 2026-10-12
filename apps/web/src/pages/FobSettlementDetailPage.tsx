@@ -603,7 +603,7 @@ function ContainerMatchPanel({
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
           <ContainerList title="可分摊（两边都有）" items={match.matched} tone="ok" emptyText="无匹配柜号" />
           <ContainerList
-            title="仅体积有（账单缺）"
+            title="仅体积有（本批不用）"
             items={match.volumeOnly}
             tone="warn"
             emptyText="无"
@@ -709,6 +709,7 @@ function getCalculateReadiness(
   imports: ReturnType<typeof getImportReadiness>,
   pendingReview: number,
   containerMatch?: ContainerMatch,
+  portReadiness?: FobDetail['portReadiness'],
 ) {
   const blockers: string[] = [];
   const warnings: string[] = [];
@@ -738,8 +739,14 @@ function getCalculateReadiness(
 
   if (containerMatch?.volumeOnly.length) {
     warnings.push(
-      `体积文件中有 ${containerMatch.volumeOnly.length} 个柜号未出现在账单中，不影响核算`,
+      imports.settlementType === 'freight'
+        ? `体积文件中有 ${containerMatch.volumeOnly.length} 个柜号未出现在本批货代账单中，不参与分账，也无需为这些柜的起运港配置规则`
+        : `体积文件中有 ${containerMatch.volumeOnly.length} 个柜号未出现在账单中，不影响核算`,
     );
+  }
+
+  if (imports.settlementType === 'freight' && portReadiness && !portReadiness.ok) {
+    blockers.push(...portReadiness.blockers);
   }
 
   return { blockers, warnings, canCalculate: blockers.length === 0 };
@@ -765,13 +772,16 @@ function PrerequisiteList({
   imports,
   pendingReview,
   containerMatch,
+  portReadiness,
 }: {
   imports: ReturnType<typeof getImportReadiness>;
   pendingReview: number;
   containerMatch?: ContainerMatch;
+  portReadiness?: FobDetail['portReadiness'];
 }) {
   const billLabel = imports.settlementType === 'freight' ? '货代账单' : '拖车账单';
   const billOnlyOk = !containerMatch?.billOnly.length;
+  const portOk = !portReadiness || portReadiness.ok;
   const items = [
     { ok: imports.volume, label: '体积信息已导入' },
     { ok: imports.bill, label: `${billLabel}已导入` },
@@ -781,6 +791,14 @@ function PrerequisiteList({
         ? '账单柜号均有体积数据'
         : `账单有 ${containerMatch?.billOnly.length ?? 0} 个柜号缺少体积`,
     },
+    ...(imports.settlementType === 'freight' && imports.volume && imports.bill
+      ? [
+          {
+            ok: portOk,
+            label: portOk ? '账单柜的起运港可以分账' : '账单柜的起运港还不能分账',
+          },
+        ]
+      : []),
     { ok: pendingReview === 0, label: pendingReview > 0 ? `异常费用已处理（剩余 ${pendingReview} 条）` : '异常费用已处理' },
   ];
 
@@ -834,6 +852,8 @@ function ImportBlock({
   templatePending,
   result,
   warnings,
+  error,
+  errorDetails,
   done,
   stats,
   readOnly = false,
@@ -847,6 +867,8 @@ function ImportBlock({
   templatePending?: boolean;
   result?: string;
   warnings?: string[];
+  error?: string;
+  errorDetails?: string[];
   done: boolean;
   stats?: string;
   readOnly?: boolean;
@@ -898,6 +920,19 @@ function ImportBlock({
           </Button>
         </div>
         {result && <p className="text-xs text-emerald-700">{result}</p>}
+        {error && (
+          <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
+            <p className="font-medium">{error}</p>
+            {!!errorDetails?.length && (
+              <ul className="mt-1 list-disc pl-4">
+                {errorDetails.slice(0, 5).map((item) => (
+                  <li key={item}>{item}</li>
+                ))}
+                {errorDetails.length > 5 && <li>…还有 {errorDetails.length - 5} 条</li>}
+              </ul>
+            )}
+          </div>
+        )}
         {!!warnings?.length && (
           <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
             <p className="font-medium">导入提醒（{warnings.length}）</p>
@@ -985,6 +1020,9 @@ export function FobSettlementDetailPage() {
   const [tab, setTab] = useState<TabKey>('import');
   const [importMsg, setImportMsg] = useState<Record<string, string>>({});
   const [importWarnings, setImportWarnings] = useState<Record<string, string[]>>({});
+  const [importError, setImportError] = useState<
+    Record<string, { message: string; details?: string[] }>
+  >({});
   const [paymentRemarks, setPaymentRemarks] = useState<Record<string, string>>({});
   const [paymentStatuses, setPaymentStatuses] = useState<Record<string, PaymentStatus>>({});
   const [paymentError, setPaymentError] = useState('');
@@ -1062,8 +1100,38 @@ export function FobSettlementDetailPage() {
     return map;
   }, [data]);
 
+  const clearImportFeedback = (key: string) => {
+    setImportError((current) => {
+      const next = { ...current };
+      delete next[key];
+      return next;
+    });
+    setImportMsg((current) => {
+      const next = { ...current };
+      delete next[key];
+      return next;
+    });
+    setImportWarnings((current) => {
+      const next = { ...current };
+      delete next[key];
+      return next;
+    });
+  };
+
+  const rememberImportError = (key: string, err: unknown) => {
+    const failure = err as Error & { details?: string[] };
+    setImportError((current) => ({
+      ...current,
+      [key]: {
+        message: failure instanceof Error ? failure.message : '导入失败',
+        details: failure.details,
+      },
+    }));
+  };
+
   const importTrucking = useMutation({
     mutationFn: (file: File) => api.importFobTrucking(id, file),
+    onMutate: () => clearImportFeedback('trucking'),
     onSuccess: (r) => {
       setImportMsg((m) => ({
         ...m,
@@ -1072,10 +1140,12 @@ export function FobSettlementDetailPage() {
       setImportWarnings((m) => ({ ...m, trucking: r.warnings ?? [] }));
       qc.invalidateQueries({ queryKey: ['fob-settlement', id] });
     },
+    onError: (err: unknown) => rememberImportError('trucking', err),
   });
 
   const importFreight = useMutation({
     mutationFn: (file: File) => api.importFobFreight(id, file),
+    onMutate: () => clearImportFeedback('freight'),
     onSuccess: (r) => {
       setImportMsg((m) => ({
         ...m,
@@ -1084,17 +1154,24 @@ export function FobSettlementDetailPage() {
       setImportWarnings((m) => ({ ...m, freight: r.warnings ?? [] }));
       qc.invalidateQueries({ queryKey: ['fob-settlement', id] });
     },
+    onError: (err: unknown) => rememberImportError('freight', err),
   });
 
   const importShipments = useMutation({
     mutationFn: (file: File) => api.importFobShipments(id, file),
+    onMutate: () => clearImportFeedback('shipments'),
     onSuccess: (r) => {
       setImportMsg((m) => ({
         ...m,
         shipments: `本次导入 ${r.imported} 条、${r.containers} 柜、${r.merchants ?? '—'} 个工厂/主体，跳过 ${r.skippedRows ?? 0} 行`,
       }));
+      setImportWarnings((m) => ({
+        ...m,
+        shipments: [...(r.warnings ?? []), ...(r.errors ?? [])],
+      }));
       qc.invalidateQueries({ queryKey: ['fob-settlement', id] });
     },
+    onError: (err: unknown) => rememberImportError('shipments', err),
   });
 
   const [calcError, setCalcError] = useState('');
@@ -1299,7 +1376,7 @@ export function FobSettlementDetailPage() {
     if (!data) return;
     const imports = getImportReadiness(data);
     const pending = exceptions?.pendingCount ?? data.pendingExceptions ?? 0;
-    const readiness = getCalculateReadiness(imports, pending, data.containerMatch);
+    const readiness = getCalculateReadiness(imports, pending, data.containerMatch, data.portReadiness);
 
     if (!readiness.canCalculate) return;
 
@@ -1343,6 +1420,7 @@ export function FobSettlementDetailPage() {
     workflow.imports,
     pendingReview,
     data.containerMatch,
+    data.portReadiness,
   );
   const displayMatch = data.containerMatch;
   const displayWarnings = calcWarnings.length ? calcWarnings : undefined;
@@ -1467,11 +1545,18 @@ export function FobSettlementDetailPage() {
           <div className={cn('grid gap-4', data.settlementType === 'trucking' ? 'md:grid-cols-2' : 'md:grid-cols-2')}>
             <ImportBlock
               label="1. 体积信息"
-              hint="支持截单清单导出（含工厂名称/类型/起运港）、汇总模板或 ED 大件调拨表；截单清单以工厂名称为分账主体，货代批次须填起运港且与港口主数据一致；有货柜号时优先用正式柜号，按柜+工厂/主体汇总体积"
+              hint={
+                data.settlementType === 'freight'
+                  ? '支持截单清单、汇总模板或 ED 大件调拨表。截单清单以工厂名称为分账主体；有货柜号时优先用正式柜号。起运港须与费用规则中的港口名称完全一致，本批账单用不到的港口可以留在文件里。'
+                  : '支持截单清单导出（含工厂名称/类型）、汇总模板或 ED 大件调拨表；截单清单以工厂名称为分账主体；有货柜号时优先用正式柜号，按柜+工厂/主体汇总体积'
+              }
               accept=".csv,.xlsx,.xls"
               pending={importShipments.isPending}
               templatePending={templateLoading === 'volume'}
               result={importMsg.shipments}
+              warnings={importWarnings.shipments}
+              error={importError.shipments?.message}
+              errorDetails={importError.shipments?.details}
               done={workflow.imports.volume}
               stats={volumeStats}
               readOnly={isReadOnly}
@@ -1487,6 +1572,8 @@ export function FobSettlementDetailPage() {
                 templatePending={templateLoading === 'trucking'}
                 result={importMsg.trucking}
                 warnings={importWarnings.trucking}
+                error={importError.trucking?.message}
+                errorDetails={importError.trucking?.details}
                 done={billDone}
                 stats={billStats}
                 readOnly={isReadOnly}
@@ -1502,6 +1589,8 @@ export function FobSettlementDetailPage() {
                 templatePending={templateLoading === 'freight'}
                 result={importMsg.freight}
                 warnings={importWarnings.freight}
+                error={importError.freight?.message}
+                errorDetails={importError.freight?.details}
                 done={billDone}
                 stats={billStats}
                 readOnly={isReadOnly}
@@ -1510,6 +1599,34 @@ export function FobSettlementDetailPage() {
               />
             )}
           </div>
+
+          {data.settlementType === 'freight' && (
+            <div className="space-y-2 rounded-md border border-border bg-muted/30 px-4 py-3 text-sm text-text-sub">
+              <p>
+                体积文件可以带上本批用不到的柜和港口，这些不用建港，也不用配置规则。核算只检查出现在货代账单里的柜：起运港须与
+                <Link to="/logistics/fob-settlement?tab=rules" className="text-primary hover:underline">
+                  费用规则
+                </Link>
+                中的港口名称完全一致，且该港已经有规则。某个港口只缺个别费用项时，会进入异常审核，不会把整份体积拒掉。
+              </p>
+              {!!data.containerMatch?.volumeOnly.length && (
+                <p>
+                  当前体积里有 {data.containerMatch.volumeOnly.length}{' '}
+                  个柜不在本批货代账单中，这些柜的起运港不用处理。
+                </p>
+              )}
+              {data.portReadiness && !data.portReadiness.ok && (
+                <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-amber-900">
+                  <p className="font-medium">本批账单还不能按起运港分账</p>
+                  <ul className="mt-1 list-disc pl-4">
+                    {data.portReadiness.blockers.map((item) => (
+                      <li key={item}>{item}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </div>
+          )}
 
           {missingImports.length > 0 && (
             <AiBanner message={`请先导入：${missingImports.join('、')}`} />
@@ -1688,6 +1805,7 @@ export function FobSettlementDetailPage() {
                     imports={workflow.imports}
                     pendingReview={pendingReview}
                     containerMatch={displayMatch}
+                    portReadiness={data.portReadiness}
                   />
                 </div>
                 <div className="flex flex-col justify-center gap-3">
@@ -1701,16 +1819,6 @@ export function FobSettlementDetailPage() {
                       >
                         {calculate.isPending ? '核算中...' : '执行分摊核算'}
                       </Button>
-                      {!calculateReadiness.canCalculate && (
-                        <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
-                          <p className="font-medium">暂不可核算，请先完成：</p>
-                          <ul className="mt-1 list-disc pl-4">
-                            {calculateReadiness.blockers.map((b) => (
-                              <li key={b}>{b}</li>
-                            ))}
-                          </ul>
-                        </div>
-                      )}
                     </>
                   ) : (
                     <>
@@ -1745,6 +1853,21 @@ export function FobSettlementDetailPage() {
                       </Button>
                       <p className="text-xs text-text-hint">按点击时的最新费用规则重算，将覆盖当前分摊结果</p>
                     </>
+                  )}
+                  {workflow.imports.settlementType === 'freight' && (
+                    <p className="text-xs text-text-hint">
+                      只校验本批货代账单里的柜。体积中多出的港口不用建档；该港已有规则、只缺个别费用项时，请到异常审核处理。
+                    </p>
+                  )}
+                  {!calculateReadiness.canCalculate && (
+                    <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+                      <p className="font-medium">暂不可核算，请先完成：</p>
+                      <ul className="mt-1 list-disc pl-4">
+                        {calculateReadiness.blockers.map((b) => (
+                          <li key={b}>{b}</li>
+                        ))}
+                      </ul>
+                    </div>
                   )}
                   {calcError && <p className="text-sm text-red-600">{calcError}</p>}
                 </div>

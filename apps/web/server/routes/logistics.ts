@@ -75,6 +75,12 @@ import {
   storedExceptionReason,
   buildContainerOriginPortMap,
 } from '../lib/fob-fee-rules.js';
+import {
+  assessFreightBillPortReadiness,
+  fillFreightVolumeOriginPorts,
+  freightPortIdsWithRules,
+  summarizeFreightVolumeImport,
+} from '../lib/fob-port-readiness.js';
 import { requireMenu } from '../lib/rbac.js';
 import { assertRowCount, assertUploadFile } from '../lib/upload-guard.js';
 import {
@@ -446,6 +452,16 @@ logisticsRoutes.get('/logistics/fob-settlements/:id', async (c) => {
     (s) => !isNonFobMarkerShipment(s.merchantCode),
   );
 
+  const portReadiness =
+    batch.settlementType === 'freight'
+      ? assessFreightBillPortReadiness({
+          shipments: fobShipmentRows,
+          matchedContainers: containerMatch.matched,
+          portNameToId: await loadActivePortNameToIdMap(),
+          portIdsWithRules: freightPortIdsWithRules(await loadActiveFeeRules()),
+        })
+      : null;
+
   const merchantSummary = await mergeMerchantPaymentSummary(
     batchId,
     summarizeByMerchant(allocationRowsForCalc),
@@ -467,6 +483,7 @@ logisticsRoutes.get('/logistics/fob-settlements/:id', async (c) => {
     pendingExceptions,
     merchantSummary,
     containerMatch,
+    portReadiness,
   });
 });
 
@@ -874,39 +891,19 @@ logisticsRoutes.post('/logistics/fob-settlements/:id/import/shipments', fobMenu,
     return c.json({ message: '未解析到体积信息行', errors: parsed.errors }, 400);
   }
 
-  const importErrors = [...parsed.errors];
   let itemsToInsert = parsed.items;
+  const importWarnings: string[] = [];
 
   if (batch.settlementType === 'freight') {
     const portNameToId = await loadActivePortNameToIdMap();
-    const { byContainer, conflicts } = buildContainerOriginPortMap(parsed.items, {
-      excludeNonFobMarker: FOB_NON_FOB_MARKER,
-    });
-    for (const containerNo of conflicts) {
-      importErrors.push(`柜号 ${containerNo}：同一柜存在多个起运港，请核对体积文件`);
-    }
-    const conflictSet = new Set(conflicts);
-    const filtered: typeof parsed.items = [];
-    for (const item of parsed.items) {
-      if (conflictSet.has(item.containerNo)) continue;
-      const portName = (item.originPort ?? '').trim() || byContainer.get(item.containerNo);
-      if (!portName) {
-        importErrors.push(`柜号 ${item.containerNo}：缺少起运港（货代批次必填）`);
-        continue;
-      }
-      if (!portNameToId.has(portName)) {
-        importErrors.push(`柜号 ${item.containerNo}：起运港「${portName}」未在港口主数据中登记或已停用`);
-        continue;
-      }
-      filtered.push({ ...item, originPort: portName });
-    }
-    itemsToInsert = filtered;
-    if (!itemsToInsert.length && !nonFobContainers.length) {
-      return c.json(
-        { message: '货代体积导入失败：起运港校验未通过', errors: importErrors },
-        400,
-      );
-    }
+    itemsToInsert = fillFreightVolumeOriginPorts(parsed.items);
+    importWarnings.push(
+      ...summarizeFreightVolumeImport({
+        items: itemsToInsert,
+        originPortColumnFound: parsed.originPortColumnFound === true,
+        registeredPortNames: portNameToId.keys(),
+      }),
+    );
   }
 
   await db.delete(fobMerchantShipments).where(eq(fobMerchantShipments.batchId, batchId));
@@ -955,7 +952,8 @@ logisticsRoutes.post('/logistics/fob-settlements/:id/import/shipments', fobMenu,
     merchants,
     ticketStats: stats.length,
     skippedRows: parsed.skippedRows,
-    errors: importErrors,
+    errors: parsed.errors,
+    warnings: importWarnings,
   });
 });
 
@@ -1112,17 +1110,6 @@ logisticsRoutes.post('/logistics/fob-settlements/:id/calculate', fobMenu, async 
   if (!batch) return c.json({ message: 'Batch not found' }, 404);
   if (batch.status === 'confirmed') return c.json(confirmedBatchResponse(), 400);
 
-  const rulePreview = await previewLatestFeeRulesForBatch(batchId);
-  if (rulePreview.pendingCount > 0) {
-    return c.json(
-      {
-        message: `按当前分摊规则将产生 ${rulePreview.pendingCount} 条待审异常，本次未修改本批次数据。请先处理异常或调整规则后再核算`,
-        pendingExceptions: rulePreview.pendingCount,
-      },
-      400,
-    );
-  }
-
   const [shipments, trucking, freight] = await Promise.all([
     db.select().from(fobMerchantShipments).where(eq(fobMerchantShipments.batchId, batchId)),
     db.select().from(fobTruckingBillItems).where(eq(fobTruckingBillItems.batchId, batchId)),
@@ -1151,6 +1138,36 @@ logisticsRoutes.post('/logistics/fob-settlements/:id/calculate', fobMenu, async 
       {
         message: buildBillOnlyBlockMessage(containerMatch),
         containerMatch,
+      },
+      400,
+    );
+  }
+
+  if (batch.settlementType === 'freight') {
+    const portReadiness = assessFreightBillPortReadiness({
+      shipments: fobShipments,
+      matchedContainers: containerMatch.matched,
+      portNameToId: await loadActivePortNameToIdMap(),
+      portIdsWithRules: freightPortIdsWithRules(await loadActiveFeeRules()),
+    });
+    if (!portReadiness.ok) {
+      return c.json(
+        {
+          message: portReadiness.blockers.join(' '),
+          portReadiness,
+          containerMatch,
+        },
+        400,
+      );
+    }
+  }
+
+  const rulePreview = await previewLatestFeeRulesForBatch(batchId);
+  if (rulePreview.pendingCount > 0) {
+    return c.json(
+      {
+        message: `按当前分摊规则将产生 ${rulePreview.pendingCount} 条待审异常，本次未修改本批次数据。请先处理异常或调整规则后再核算`,
+        pendingExceptions: rulePreview.pendingCount,
       },
       400,
     );

@@ -1366,6 +1366,14 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return res.json();
 }
 
+function importRequestError(body: { message?: string; errors?: unknown }, fallback: string): Error {
+  const err = new Error(body.message ?? fallback) as Error & { details?: string[] };
+  if (Array.isArray(body.errors)) {
+    err.details = body.errors.filter((item): item is string => typeof item === 'string');
+  }
+  return err;
+}
+
 export const api = {
   getAuthConfig: () =>
     request<{
@@ -3789,6 +3797,14 @@ export const api = {
         nonFobOnly: string[];
         canAllocate: boolean;
       };
+      portReadiness?: {
+        ok: boolean;
+        blockers: string[];
+        unregistered: Array<{ portName: string; containerCount: number }>;
+        noRules: Array<{ portName: string; containerCount: number }>;
+        missingPortContainers: string[];
+        conflictContainers: string[];
+      } | null;
     }>(`/api/logistics/fob-settlements/${id}`),
   createFobSettlement: (data: {
     name: string;
@@ -3846,7 +3862,7 @@ export const api = {
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({ message: res.statusText }));
-      throw new Error(err.message ?? 'Import failed');
+      throw importRequestError(err, 'Import failed');
     }
     return res.json() as Promise<{
       imported: number;
@@ -3865,7 +3881,7 @@ export const api = {
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({ message: res.statusText }));
-      throw new Error(err.message ?? 'Import failed');
+      throw importRequestError(err, 'Import failed');
     }
     return res.json() as Promise<{
       imported: number;
@@ -3884,7 +3900,7 @@ export const api = {
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({ message: res.statusText }));
-      throw new Error(err.message ?? 'Import failed');
+      throw importRequestError(err, 'Import failed');
     }
     return res.json() as Promise<{
       imported: number;
@@ -3892,6 +3908,7 @@ export const api = {
       merchants: number;
       skippedRows: number;
       errors: string[];
+      warnings?: string[];
     }>;
   },
   getFobExceptions: (id: string) =>

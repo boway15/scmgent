@@ -38,6 +38,8 @@ export type ParseResult<T> = {
   skippedRows: number;
   /** 体积文件中出现但货柜内无 FOB 行的柜号 */
   nonFobContainers?: string[];
+  /** 表头是否有「起运港」列。缺列时货代仍可导入，核算前再检查账单柜 */
+  originPortColumnFound?: boolean;
 };
 
 function parseAmount(v: unknown): number {
@@ -693,7 +695,13 @@ export function parseTransferVolumeSheet(rows: unknown[][]): ParseResult<ParsedM
     errors.push('未解析到体积行（需有效柜号、工厂名称与体积 > 0）');
   }
 
-  return { items, errors, skippedRows, nonFobContainers };
+  return {
+    items,
+    errors,
+    skippedRows,
+    nonFobContainers,
+    originPortColumnFound: originPortIdx >= 0,
+  };
 }
 
 /** 按表头自动选择体积解析器 */
@@ -838,7 +846,13 @@ export function parseEdVolumeSheet(rows: unknown[][]): ParseResult<ParsedMerchan
     errors.push('未解析到体积行（需货柜内至少含一行 FOB，且体积 > 0）');
   }
 
-  return { items, errors, skippedRows, nonFobContainers };
+  return {
+    items,
+    errors,
+    skippedRows,
+    nonFobContainers,
+    originPortColumnFound: originPortIdx >= 0,
+  };
 }
 
 export function parseMerchantShipmentRows(
@@ -951,5 +965,9 @@ export function parseMerchantShipmentRows(
     errors.push('未解析到体积行（需货柜内至少含一行 FOB，且体积 > 0）');
   }
 
-  return { items, errors, skippedRows, nonFobContainers };
+  const originPortColumnFound = rows.some(
+    (row) => '起运港' in row || 'origin_port' in row || 'originport' in row,
+  );
+
+  return { items, errors, skippedRows, nonFobContainers, originPortColumnFound };
 }

@@ -122,8 +122,9 @@ const samplesDir = join(__dirname, '../../../../docs/samples/import-fob');
       '美西仓',
     ],
   ];
-  const { items, errors, nonFobContainers } = parseVolumeSheetRows(rows);
+  const { items, errors, nonFobContainers, originPortColumnFound } = parseVolumeSheetRows(rows);
   assert.deepEqual(errors, []);
+  assert.equal(originPortColumnFound, false);
   assert.equal(items.length, 2);
   assert.equal(items[0].containerNo, 'OOCU8469000');
   assert.equal(items[0].merchantCode, '广州宏龙办公家具有限公司');
@@ -203,6 +204,16 @@ const samplesDir = join(__dirname, '../../../../docs/samples/import-fob');
   assert.ok((nonFobContainers?.length ?? 0) >= 1);
   assert.ok(nonFobContainers?.includes('TLLU8925555'));
   assert.ok(nonFobContainers?.includes('WHSU8817230'));
+}
+
+{
+  const rows = [
+    ['临柜号', '调拨单号', '订舱编号', 'SKU编码', '体积', '是否退税', '工厂名称', '工厂类型', '起运港'],
+    ['H1', 'DB1', 'W1', 'SKU-A', '3', '退税', '工厂甲', 'FOB', '盐田'],
+  ];
+  const parsed = parseVolumeSheetRows(rows);
+  assert.equal(parsed.originPortColumnFound, true);
+  assert.equal(parsed.items[0]?.originPort, '盐田');
 }
 
 {

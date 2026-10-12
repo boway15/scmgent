@@ -23,7 +23,8 @@ globs:
 - 货代规则：`fob_fee_allocation_rules.port_id` **必填**（完整规则集挂港口）
 - 拖车规则：`port_id` 必须为空（全局）
 - 体积：`fob_merchant_shipments.origin_port`；截单清单「工厂类型」后「起运港」列；与 `fob_ports.name` 精确匹配
-- 货代导入体积：缺港 / 未登记 / 同柜多港 → 行级 errors
+- 货代导入体积：未登记港口、缺港、同柜多港都入库，只在导入结果里说明。体积里多出的柜不要求建港或规则
+- 核算前只检查账单柜：缺港 / 同柜多港 / 未登记 / 该港完全没有货代规则 → 拦住。港口已有规则但缺个别费用项 → 异常审核
 - 核算匹配：柜 → origin_port → port_id → 该港 freight 规则
 - UI：`FobFeeRulesPanel` 港口 CRUD + 按港筛选 +「复制规则集」
 
@@ -117,4 +118,5 @@ npx tsx --test server/lib/fob-bill-parsers.test.ts
 npx tsx --test server/lib/fob-allocation-base-meta.test.ts
 npx tsx --test server/lib/fob-reconcile-export.test.ts
 npx tsx --test server/lib/fob-settlement.test.ts
+npx tsx --test server/lib/fob-port-readiness.test.ts
 ```

@@ -827,7 +827,6 @@ export type PlanningDashboard = {
   calculatedAt: string;
   openDataIssueCount?: number;
   openUnallocatedLotCount?: number;
-  inventoryRisk?: InventoryRiskCounts;
 };
 
 export type InventoryRiskCounts = {
@@ -2466,6 +2465,12 @@ export const api = {
     appendProductScopeQuery(qs, params?.productScope);
     const query = qs.toString();
     return request<PlanningDashboard>(`/api/planning/dashboard${query ? `?${query}` : ''}`);
+  },
+  getPlanningDashboardRisk: (params?: { productScope?: ProductScope }) => {
+    const qs = new URLSearchParams();
+    appendProductScopeQuery(qs, params?.productScope);
+    const query = qs.toString();
+    return request<InventoryRiskCounts>(`/api/planning/dashboard/risk${query ? `?${query}` : ''}`);
   },
   getInventoryDataIssues: (params?: {
     status?: string;

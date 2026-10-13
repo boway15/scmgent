@@ -206,6 +206,8 @@ export async function runStockAlert() {
   await syncReplenishLightFromHealth(healthRows);
 
   const coverage = await applyStockAlertCoverageReplace(incoming);
+  const { invalidateAlertActionCache } = await import('../lib/alert-action-index.js');
+  invalidateAlertActionCache();
   console.info(
     `[stockAlert] coverage replace cleared=${coverage.cleared} inserted=${coverage.inserted} active=${coverage.activeCount}`,
   );

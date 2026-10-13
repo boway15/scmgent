@@ -1,4 +1,4 @@
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { keepPreviousData, useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -112,6 +112,8 @@ export function InventoryOverviewPage() {
         snapshotDate: snapshotDate || undefined,
         productScope,
       }),
+    staleTime: 60_000,
+    placeholderData: keepPreviousData,
   });
 
   useEffect(() => {

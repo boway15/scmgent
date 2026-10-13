@@ -148,4 +148,26 @@ describe('aggregatePlanningDashboard', () => {
 
     assert.equal(dashboard.delayedDraftsEtaAvailable, 2);
   });
+
+  it('uses precomputed delay counts when the query already aggregated them', () => {
+    const dashboard = aggregatePlanningDashboard(
+      {
+        ...baseSource,
+        delayedShipmentCount: 4,
+        delayedDraftCount: 1,
+        shipments: [
+          {
+            status: 'departed',
+            etaAvailable: '2026-07-28',
+            milestones: [],
+          },
+        ],
+        purchaseDrafts: [{ status: 'in_transit', etaAvailable: '2026-07-20' }],
+      },
+      today,
+    );
+
+    assert.equal(dashboard.delayedShipments, 4);
+    assert.equal(dashboard.delayedDraftsEtaAvailable, 1);
+  });
 });

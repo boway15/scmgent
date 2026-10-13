@@ -173,11 +173,19 @@ const WORKBENCH_LINKS = [
   { label: 'SKU 库存规划', description: '搜索 SKU 进入单仓规划详情', href: '/inventory/planning' },
 ] as const;
 
+const DASHBOARD_STALE_MS = 60_000;
+
 export function PlanningDashboardPage() {
   const { productScope } = useProductScope();
   const dashboard = useQuery({
     queryKey: ['planning-dashboard', productScope],
     queryFn: () => api.getPlanningDashboard({ productScope }),
+    staleTime: DASHBOARD_STALE_MS,
+  });
+  const risk = useQuery({
+    queryKey: ['inventory-risk-counts', productScope],
+    queryFn: () => api.getPlanningDashboardRisk({ productScope }),
+    staleTime: DASHBOARD_STALE_MS,
   });
 
   if (dashboard.isLoading) return <p className="text-text-sub">加载规划驾驶舱中...</p>;
@@ -249,34 +257,44 @@ export function PlanningDashboardPage() {
           <h2 className="text-sm font-medium text-text-main">库存风险</h2>
           <p className="text-xs text-text-sub">按可规划 SKU 全网可售天数分档。日均为空按 0 计、覆盖封顶 9999 天。确定性缺货和发货不含本地库存。</p>
         </div>
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {INVENTORY_RISK_SCENES.map((scene) => {
-            const value = dashboard.data.inventoryRisk?.[scene.view] ?? 0;
-            return (
-              <Link key={scene.view} to={`${scene.href}&grain=sku`}>
-                <Card
-                  className={cn(
-                    'h-full shadow-card transition-shadow hover:shadow-md',
-                    value > 0 && 'border-primary/40',
-                  )}
-                >
-                  <CardContent className="pt-6">
-                    <p className="text-sm text-text-sub">{scene.label}</p>
-                    <p
-                      className={cn(
-                        'mt-2 font-mono text-2xl font-semibold',
-                        value > 0 ? 'text-primary' : 'text-text-main',
-                      )}
-                    >
-                      {value}
-                    </p>
-                    <p className="mt-2 text-xs text-text-sub">{scene.hint}</p>
-                  </CardContent>
-                </Card>
-              </Link>
-            );
-          })}
-        </div>
+        {risk.isLoading ? <p className="text-sm text-text-sub">加载库存风险中...</p> : null}
+        {risk.isError ? (
+          <QueryErrorFallback
+            error={risk.error}
+            onRetry={() => risk.refetch()}
+            title="库存风险加载失败"
+          />
+        ) : null}
+        {risk.data ? (
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            {INVENTORY_RISK_SCENES.map((scene) => {
+              const value = risk.data?.[scene.view] ?? 0;
+              return (
+                <Link key={scene.view} to={`${scene.href}&grain=sku`}>
+                  <Card
+                    className={cn(
+                      'h-full shadow-card transition-shadow hover:shadow-md',
+                      value > 0 && 'border-primary/40',
+                    )}
+                  >
+                    <CardContent className="pt-6">
+                      <p className="text-sm text-text-sub">{scene.label}</p>
+                      <p
+                        className={cn(
+                          'mt-2 font-mono text-2xl font-semibold',
+                          value > 0 ? 'text-primary' : 'text-text-main',
+                        )}
+                      >
+                        {value}
+                      </p>
+                      <p className="mt-2 text-xs text-text-sub">{scene.hint}</p>
+                    </CardContent>
+                  </Card>
+                </Link>
+              );
+            })}
+          </div>
+        ) : null}
       </section>
 
       <section className="space-y-3">

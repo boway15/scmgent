@@ -1,5 +1,5 @@
-import { db } from '@scm/db';
-import { sql } from 'drizzle-orm';
+import { db, inventoryHealthSnapshots } from '@scm/db';
+import { eq, inArray, sql } from 'drizzle-orm';
 import {
   normalizeInventoryHealth,
   pickWorstInventoryHealth,
@@ -80,10 +80,7 @@ export async function loadWorstHealthBySkuIds(
         sku_id AS "skuId",
         health_status AS "healthStatus"
       FROM inventory_health_snapshots
-      WHERE sku_id IN (${sql.join(
-        chunk.map((id) => sql`${id}::uuid`),
-        sql`, `,
-      )})
+      WHERE ${inArray(inventoryHealthSnapshots.skuId, chunk)}
       ORDER BY sku_id, warehouse_code, computed_at DESC, id DESC
     `);
 
@@ -116,7 +113,7 @@ export async function loadLatestHealthByWarehouseForSku(
       warehouse_code AS "warehouseCode",
       health_status AS "healthStatus"
     FROM inventory_health_snapshots
-    WHERE sku_id = ${skuId}::uuid
+    WHERE ${eq(inventoryHealthSnapshots.skuId, skuId)}
     ORDER BY warehouse_code, computed_at DESC, id DESC
   `);
 

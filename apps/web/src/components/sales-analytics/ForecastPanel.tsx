@@ -73,6 +73,7 @@ export function ForecastPanel({
 }) {
   const isWeek = gran === 'week';
   const granWord = isWeek ? '周' : '月';
+  const scopeWord = scope === 'all' ? '（全量）' : '（当前筛选）';
   const horizonMin = isWeek ? 20 : 5;
   const horizonMax = isWeek ? 52 : 12;
   const horizonOptions = Array.from(

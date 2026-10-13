@@ -1,10 +1,11 @@
 import { Link, useSearchParams } from 'react-router-dom';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { keepPreviousData, useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
 import { api } from '@/lib/api';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { PageHeader } from '@/components/PageHeader';
+import { QueryErrorFallback } from '@/components/QueryErrorFallback';
 import { ListPagination } from '@/components/ListPagination';
 import { ListSearchBar } from '@/components/ListSearchBar';
 import { ProductScopeSwitch } from '@/components/ProductScopeSwitch';
@@ -201,11 +202,12 @@ export function AlertsPage() {
   const [exporting, setExporting] = useState(false);
 
   const summary = useQuery({
-    queryKey: ['alert-summary', productScope],
+    queryKey: ['inventory-risk-counts', productScope],
     queryFn: () => api.getAlertSummary({ productScope }),
+    staleTime: 60_000,
   });
 
-  const { data, isLoading } = useQuery({
+  const list = useQuery({
     queryKey: [
       'alerts',
       page,
@@ -229,6 +231,8 @@ export function AlertsPage() {
         suggestOrder: suggestOrder || undefined,
         suggestShip: suggestShip || undefined,
       }),
+    staleTime: 60_000,
+    placeholderData: keepPreviousData,
   });
 
   const [detectHint, setDetectHint] = useState<string | null>(null);
@@ -254,6 +258,7 @@ export function AlertsPage() {
       }
       setDetectHint('检测完成');
       qc.invalidateQueries({ queryKey: ['alerts'] });
+      qc.invalidateQueries({ queryKey: ['inventory-risk-counts'] });
     },
     onError: (err) => {
       setDetectHint(err instanceof Error ? err.message : '检测失败');
@@ -262,7 +267,10 @@ export function AlertsPage() {
 
   const resolve = useMutation({
     mutationFn: (id: string) => api.resolveAlert(id),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['alerts'] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['alerts'] });
+      qc.invalidateQueries({ queryKey: ['inventory-risk-counts'] });
+    },
   });
 
   useEffect(() => {
@@ -276,9 +284,8 @@ export function AlertsPage() {
     setParams(nextParams);
   };
 
-  if (isLoading || !data) return <p className="text-text-sub">加载中...</p>;
-
-  const alerts = data.items;
+  const data = list.data;
+  const alerts = data?.items ?? [];
 
   const exportCsv = async () => {
     setExporting(true);
@@ -376,13 +383,13 @@ export function AlertsPage() {
         <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-3 space-y-0">
           <CardTitle>
             库存概览
-            {data.openCount > 0 && (
+            {data && data.openCount > 0 && (
               <span className="ml-2 text-sm font-normal text-text-sub">
                 （{data.openCount.toLocaleString()} {grain === 'sku' ? '个 SKU' : '条'}待处理）
               </span>
             )}
           </CardTitle>
-          <Button type="button" variant="outline" size="sm" disabled={exporting} onClick={() => void exportCsv()}>
+          <Button type="button" variant="outline" size="sm" disabled={exporting || !data} onClick={() => void exportCsv()}>
             {exporting ? '导出中…' : '导出 CSV'}
           </Button>
         </CardHeader>
@@ -416,6 +423,12 @@ export function AlertsPage() {
                 : 'SKU × 仓库：分档按本仓确定断货日（左侧「天数」）。右侧「全网合计·在库+在途」为 SKU 汇总，可长于本仓；本仓已确定性缺货时仍可能看到全网在库+在途大于 45 天。'}
             </p>
           </details>
+          {list.isError && !data ? (
+            <QueryErrorFallback error={list.error} onRetry={() => list.refetch()} title="库存概览加载失败" />
+          ) : !data ? (
+            <p className="text-text-sub">加载列表中...</p>
+          ) : (
+            <>
           {grain === 'sku' ? (
             <SkuNetworkTable alerts={alerts} />
           ) : (
@@ -431,6 +444,8 @@ export function AlertsPage() {
               setPage(1);
             }}
           />
+            </>
+          )}
         </CardContent>
       </Card>
     </div>

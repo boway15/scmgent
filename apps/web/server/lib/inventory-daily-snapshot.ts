@@ -223,17 +223,17 @@ export async function loadInventoryTrend(
   const rows = await db
     .select({
       snapshotDate: inventoryDailySnapshots.snapshotDate,
-      payload: inventoryDailySnapshots.payload,
+      turnoverExtras: sql<Record<string, string> | null>`${inventoryDailySnapshots.payload}->'turnoverExtras'`,
     })
     .from(inventoryDailySnapshots)
     .where(eq(inventoryDailySnapshots.skuId, skuId))
     .orderBy(asc(inventoryDailySnapshots.snapshotDate));
 
   return projectInventoryTrend(
-    rows as Array<{
-      snapshotDate: string;
-      payload: { turnoverExtras?: Record<string, string> };
-    }>,
+    rows.map((row) => ({
+      snapshotDate: row.snapshotDate,
+      payload: { turnoverExtras: row.turnoverExtras ?? {} },
+    })),
     fields,
   );
 }

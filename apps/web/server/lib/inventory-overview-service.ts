@@ -20,13 +20,8 @@ import {
   getPublishedSnapshotDate,
   loadInventorySnapshots,
 } from './inventory-daily-snapshot.js';
-import { filterSnapshotItems } from './inventory-overview-history.js';
 import { productScopeOnSkuAlias, type ProductScope } from './planning-accessory-filter.js';
-import {
-  attachHealthStatusToItems,
-  filterItemsByHealthStatuses,
-  loadWorstHealthBySkuIds,
-} from './sku-health-aggregate.js';
+import { attachHealthStatusToItems, loadWorstHealthBySkuIds } from './sku-health-aggregate.js';
 
 export type InventoryOverviewQuery = {
   page: number;
@@ -123,6 +118,90 @@ type SalesVelocityRow = {
 
 function ilikePattern(raw: string): string {
   return `%${raw.trim().replace(/[%_\\]/g, (ch) => `\\${ch}`)}%`;
+}
+
+function readSnapshotPayload(value: unknown): InventoryTurnoverOverviewItem {
+  if (typeof value === 'string') return JSON.parse(value) as InventoryTurnoverOverviewItem;
+  return value as InventoryTurnoverOverviewItem;
+}
+
+function payloadContains(column: string, raw?: string) {
+  if (!raw?.trim()) return null;
+  return sql`coalesce(ids.payload->>${column}, '') ILIKE ${ilikePattern(raw)}`;
+}
+
+type SnapshotListQuery = Omit<InventoryOverviewQuery, 'page' | 'pageSize' | 'offset'>;
+
+/** 文本条件打在快照 payload 上，产品范围用当前主数据，和页面上的范围开关一致。 */
+function buildSnapshotWhere(query: SnapshotListQuery, snapshotDate: string) {
+  const parts = [
+    payloadContains('category', query.category),
+    payloadContains('lifecycle', query.lifecycle),
+    payloadContains('salesCountry', query.salesCountry),
+    payloadContains('merchantCode', query.merchantCode),
+    payloadContains('ownerName', query.ownerName),
+    payloadContains('developerName', query.developerName),
+  ].filter((part): part is ReturnType<typeof sql> => part != null);
+
+  if (query.q?.trim()) {
+    const pattern = ilikePattern(query.q);
+    parts.push(
+      sql`(coalesce(ids.payload->>'code', '') ILIKE ${pattern} OR coalesce(ids.payload->>'name', '') ILIKE ${pattern})`,
+    );
+  }
+
+  const textFilter = parts.length ? sql`AND ${sql.join(parts, sql` AND `)}` : sql``;
+  return sql`
+    FROM inventory_daily_snapshots ids
+    INNER JOIN skus s ON s.id = ids.sku_id
+    WHERE ids.snapshot_date = CAST(${snapshotDate} AS date)
+    ${productScopeOnSkuAlias(query.productScope ?? 'goods', 's')}
+    ${textFilter}
+    ${buildWorstHealthSkuFilter(query.healthStatuses)}
+  `;
+}
+
+async function loadSnapshotPayloadPage(
+  query: InventoryOverviewQuery,
+  snapshotDate: string,
+): Promise<{ total: number; items: InventoryTurnoverOverviewItem[] }> {
+  const where = buildSnapshotWhere(query, snapshotDate);
+  const [countResult, pageResult] = await Promise.all([
+    db.execute(sql`SELECT count(*)::int AS count ${where}`),
+    db.execute(sql`
+      WITH page AS (
+        SELECT ids.id, ids.sku_code
+        ${where}
+        ORDER BY ids.sku_code ASC
+        LIMIT ${query.pageSize}
+        OFFSET ${query.offset}
+      )
+      SELECT snap.payload AS payload
+      FROM page
+      INNER JOIN inventory_daily_snapshots snap ON snap.id = page.id
+      ORDER BY page.sku_code ASC
+    `),
+  ]);
+  const total = Number((countResult as unknown as Array<{ count: number }>)[0]?.count ?? 0);
+  const items = Array.from(pageResult as unknown as Array<{ payload: unknown }>).map((row) =>
+    readSnapshotPayload(row.payload),
+  );
+  return { total, items };
+}
+
+async function loadSnapshotPayloads(
+  query: SnapshotListQuery,
+  snapshotDate: string,
+): Promise<InventoryTurnoverOverviewItem[]> {
+  const where = buildSnapshotWhere(query, snapshotDate);
+  const result = await db.execute(sql`
+    SELECT ids.payload AS payload
+    ${where}
+    ORDER BY ids.sku_code ASC
+  `);
+  return Array.from(result as unknown as Array<{ payload: unknown }>).map((row) =>
+    readSnapshotPayload(row.payload),
+  );
 }
 
 function buildSkuFilters(query: InventoryOverviewQuery) {
@@ -441,32 +520,12 @@ export async function buildInventoryOverviewRows(query: InventoryOverviewQuery) 
   const snapshotSelection = await getPublishedSnapshotDate(query.snapshotDate);
 
   if (snapshotSelection.selectedSnapshotDate) {
-    const archived = await loadInventorySnapshots({
-      snapshotDate: snapshotSelection.selectedSnapshotDate,
-    });
-    const filtered = filterSnapshotItems(
-      archived.map((row) => row.payload as InventoryTurnoverOverviewItem),
+    const { total, items: pageSlice } = await loadSnapshotPayloadPage(
       query,
+      snapshotSelection.selectedSnapshotDate,
     );
-
-    const healthStatuses = query.healthStatuses ?? [];
-    let pageSource: InventoryTurnoverOverviewItem[];
-    let total: number;
-
-    if (healthStatuses.length > 0) {
-      const healthBySku = await loadWorstHealthBySkuIds(filtered.map((item) => item.skuId));
-      const withHealth = attachHealthStatusToItems(filtered, healthBySku);
-      const healthFiltered = filterItemsByHealthStatuses(withHealth, healthStatuses);
-      total = healthFiltered.length;
-      pageSource = healthFiltered.slice(query.offset, query.offset + query.pageSize);
-    } else {
-      const pageSlice = filtered.slice(query.offset, query.offset + query.pageSize);
-      const healthBySku = await loadWorstHealthBySkuIds(pageSlice.map((item) => item.skuId));
-      pageSource = attachHealthStatusToItems(pageSlice, healthBySku);
-      total = filtered.length;
-    }
-
-    const pageItems = pageSource.map((item) => ({
+    const healthBySku = await loadWorstHealthBySkuIds(pageSlice.map((item) => item.skuId));
+    const pageItems = attachHealthStatusToItems(pageSlice, healthBySku).map((item) => ({
       ...item,
       turnoverExtras: projectTurnoverExtras(item.turnoverExtras ?? {}, columnProjection),
     }));
@@ -567,13 +626,7 @@ export async function buildInventoryOverviewExportItems(
   if (!options?.forceCurrent) {
     const snapshotSelection = await getPublishedSnapshotDate(query.snapshotDate);
     if (snapshotSelection.selectedSnapshotDate) {
-      const archived = await loadInventorySnapshots({
-        snapshotDate: snapshotSelection.selectedSnapshotDate,
-      });
-      return filterSnapshotItems(
-        archived.map((row) => row.payload as InventoryTurnoverOverviewItem),
-        query,
-      );
+      return loadSnapshotPayloads(query, snapshotSelection.selectedSnapshotDate);
     }
     if (query.snapshotDate) return [];
   }

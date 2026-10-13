@@ -18,6 +18,7 @@ import {
   type AlertLevel,
   type PriceReason,
 } from './alert-action.js';
+import type { SkuNetworkClassified } from './alert-sku-network-classify.js';
 
 export type ClassifiedAlert = {
   id: string;
@@ -44,6 +45,21 @@ const CACHE_MS = 60_000;
 
 type CacheEntry = { at: number; rows: ClassifiedAlert[] };
 const cache = new Map<ProductScope, CacheEntry>();
+const classifiedInflight = new Map<ProductScope, Promise<ClassifiedAlert[]>>();
+
+type NetworkCacheEntry = { at: number; rows: SkuNetworkClassified[] };
+const networkCache = new Map<ProductScope, NetworkCacheEntry>();
+const networkInflight = new Map<ProductScope, Promise<SkuNetworkClassified[]>>();
+
+let cacheGeneration = 0;
+
+export function invalidateAlertActionCache(): void {
+  cacheGeneration += 1;
+  cache.clear();
+  networkCache.clear();
+  classifiedInflight.clear();
+  networkInflight.clear();
+}
 
 type RawRow = {
   id: string;
@@ -174,7 +190,23 @@ export async function countNetworkRiskSkus(rows: ClassifiedAlert[]): Promise<Inv
 async function loadClassifiedAlerts(productScope: ProductScope): Promise<ClassifiedAlert[]> {
   const hit = cache.get(productScope);
   if (hit && Date.now() - hit.at < CACHE_MS) return hit.rows;
+  const pending = classifiedInflight.get(productScope);
+  if (pending) return pending;
 
+  const generation = cacheGeneration;
+  const promise = queryClassifiedAlerts(productScope)
+    .then((rows) => {
+      if (generation === cacheGeneration) cache.set(productScope, { at: Date.now(), rows });
+      return rows;
+    })
+    .finally(() => {
+      if (classifiedInflight.get(productScope) === promise) classifiedInflight.delete(productScope);
+    });
+  classifiedInflight.set(productScope, promise);
+  return promise;
+}
+
+async function queryClassifiedAlerts(productScope: ProductScope): Promise<ClassifiedAlert[]> {
   const today = getShanghaiBusinessDate();
   const queryResult = await db.execute(sql`
     WITH lots AS (
@@ -251,9 +283,7 @@ async function loadClassifiedAlerts(productScope: ProductScope): Promise<Classif
     ${productScopeOnSkuAlias(productScope, 's')}
   `);
 
-  const rows = classifyAlertRows(Array.from(queryResult as unknown as RawRow[]), today);
-  cache.set(productScope, { at: Date.now(), rows });
-  return rows;
+  return classifyAlertRows(Array.from(queryResult as unknown as RawRow[]), today);
 }
 
 /** 与规划驾驶舱可规划 SKU 同口径：近 30 天周转或近 90 天有销，且非疑似停售。 */
@@ -349,9 +379,32 @@ export async function loadNetworkAlertUniverse(productScope: ProductScope): Prom
   return mergePlanningEligibleAlertRows(rows, productScope);
 }
 
+async function loadSkuNetworkClassified(productScope: ProductScope): Promise<SkuNetworkClassified[]> {
+  const hit = networkCache.get(productScope);
+  if (hit && Date.now() - hit.at < CACHE_MS) return hit.rows;
+  const pending = networkInflight.get(productScope);
+  if (pending) return pending;
+
+  const generation = cacheGeneration;
+  const promise = (async () => {
+    const { classifyAlertsBySkuNetwork } = await import('./alert-sku-network-classify.js');
+    const universe = await loadNetworkAlertUniverse(productScope);
+    return classifyAlertsBySkuNetwork(universe);
+  })()
+    .then((rows) => {
+      if (generation === cacheGeneration) networkCache.set(productScope, { at: Date.now(), rows });
+      return rows;
+    })
+    .finally(() => {
+      if (networkInflight.get(productScope) === promise) networkInflight.delete(productScope);
+    });
+  networkInflight.set(productScope, promise);
+  return promise;
+}
+
 export async function getInventoryRiskCounts(productScope: ProductScope): Promise<InventoryRiskCounts> {
-  const rows = await loadNetworkAlertUniverse(productScope);
-  return countNetworkRiskSkus(rows);
+  const { countSkuNetworkRisk } = await import('./alert-sku-network-classify.js');
+  return countSkuNetworkRisk(await loadSkuNetworkClassified(productScope));
 }
 
 const LEVEL_RANK: Record<string, number> = { l3: 0, l2: 1, l1: 2 };
@@ -400,12 +453,9 @@ export async function listSkuNetworkAlerts(input: {
   level?: AlertLevel;
   q?: string;
 }) {
-  const { classifyAlertsBySkuNetwork, filterSkuNetworkByView } = await import(
-    './alert-sku-network-classify.js'
-  );
-  const universe = await loadNetworkAlertUniverse(input.productScope);
+  const { filterSkuNetworkByView } = await import('./alert-sku-network-classify.js');
   let rows = filterSkuNetworkByView(
-    await classifyAlertsBySkuNetwork(universe),
+    await loadSkuNetworkClassified(input.productScope),
     input.action && input.action !== 'all' ? input.action : 'all',
   );
   if (input.level) rows = rows.filter((row) => row.level === input.level);

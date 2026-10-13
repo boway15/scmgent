@@ -8,7 +8,12 @@ import {
   type AlertLevel,
   type PriceReason,
 } from '../lib/alert-action.js';
-import { getInventoryRiskCounts, listClassifiedAlerts, listSkuNetworkAlerts } from '../lib/alert-action-index.js';
+import {
+  getInventoryRiskCounts,
+  invalidateAlertActionCache,
+  listClassifiedAlerts,
+  listSkuNetworkAlerts,
+} from '../lib/alert-action-index.js';
 import {
   coverageDaysFromQty,
   recommendOrderForNetworkAlert,
@@ -471,6 +476,8 @@ alertRoutes.patch('/alerts/:id/resolve', requireMenu('inventory.alert'), async (
     .returning();
 
   if (!row) return c.json({ message: 'Alert not found' }, 404);
+
+  invalidateAlertActionCache();
 
   await writeAuditLog(c, {
     action: 'stock_alert.resolve',

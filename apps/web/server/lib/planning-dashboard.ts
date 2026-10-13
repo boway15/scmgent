@@ -12,13 +12,12 @@ import {
   skus,
   stockAlerts,
 } from '@scm/db';
-import { and, eq, inArray, isNotNull, isNull, notInArray, sql } from 'drizzle-orm';
+import { and, eq, isNull, sql } from 'drizzle-orm';
 import { FORECAST_GLOBAL_STATION } from './forecast-station-scope.js';
 import { buildPlanningExcludedSqlCondition } from './commercial-status.js';
 import { calcMilestoneDelayDays } from './shipment-delay.js';
 import { countOpenDataIssues } from './inventory-data-issue-store.js';
 import { countOpenUnallocatedLots } from './inventory-dest-allocation-store.js';
-import { getInventoryRiskCounts, type InventoryRiskCounts } from './alert-action-index.js';
 import { productScopeOnSkuAlias, type ProductScope } from './planning-accessory-filter.js';
 
 /** 近 30 天周转表 或 近 90 天有销量（qty_sold > 0） */
@@ -51,7 +50,8 @@ export type PlanningDashboard = {
   pendingShipOut: number;
   pendingTransfer: number;
   calculatedAt: string;
-  inventoryRisk?: InventoryRiskCounts;
+  openDataIssueCount?: number;
+  openUnallocatedLotCount?: number;
 };
 
 type ShipmentForDashboard = {
@@ -82,6 +82,9 @@ export type PlanningDashboardSource = {
   healthYellowSkuCount: number;
   belowRopCount: number;
   pendingSuggestions: number;
+  /** 已在 SQL 中计过数时直接使用，避免把发运和跟单整表拉进内存 */
+  delayedShipmentCount?: number;
+  delayedDraftCount?: number;
   shipments: ShipmentForDashboard[];
   purchaseDrafts: PurchaseDraftForDashboard[];
   stockoutHorizon7?: number;
@@ -114,12 +117,14 @@ export function aggregatePlanningDashboard(
   today: Date = new Date(),
 ): PlanningDashboard {
   const todayDate = today.toISOString().slice(0, 10);
-  const delayedDraftsEtaAvailable = source.purchaseDrafts.filter(
-    (draft) =>
-      draft.etaAvailable != null &&
-      draft.etaAvailable < todayDate &&
-      !isTerminalDraftStatus(draft.status),
-  ).length;
+  const delayedDraftsEtaAvailable =
+    source.delayedDraftCount ??
+    source.purchaseDrafts.filter(
+      (draft) =>
+        draft.etaAvailable != null &&
+        draft.etaAvailable < todayDate &&
+        !isTerminalDraftStatus(draft.status),
+    ).length;
 
   const planningEligible = source.skuPlanningEligibleCount;
   return {
@@ -138,9 +143,9 @@ export function aggregatePlanningDashboard(
     healthYellowSkuCount: source.healthYellowSkuCount,
     belowRopCount: source.belowRopCount,
     pendingSuggestions: source.pendingSuggestions,
-    delayedShipments: source.shipments.filter((shipment) =>
-      isDelayedShipment(shipment, today),
-    ).length,
+    delayedShipments:
+      source.delayedShipmentCount ??
+      source.shipments.filter((shipment) => isDelayedShipment(shipment, today)).length,
     delayedDraftsEtaAvailable,
     stockoutRateApprox:
       planningEligible > 0 ? source.healthRedSkuCount / planningEligible : 0,
@@ -155,14 +160,7 @@ export function aggregatePlanningDashboard(
   };
 }
 
-type HealthCountRow = {
-  healthRedCount: number;
-  healthYellowCount: number;
-  healthRedSkuCount: number;
-  healthYellowSkuCount: number;
-};
-
-type SkuCompositionRow = {
+type DashboardMetricsRow = {
   skuActiveCount: number;
   skuOperationalCount: number;
   skuDormantCount: number;
@@ -170,6 +168,16 @@ type SkuCompositionRow = {
   skuPlanningEligibleCount: number;
   skuForecastCoveredCount: number;
   skuForecastGapCount: number;
+  healthRedCount: number;
+  healthYellowCount: number;
+  healthRedSkuCount: number;
+  healthYellowSkuCount: number;
+  belowRopCount: number;
+  stockoutHorizon7: number;
+  stockoutHorizon15: number;
+  stockoutHorizon30: number;
+  overstockCount: number;
+  uncoverableByNewPoCount: number;
 };
 
 const planningExcludedSql = buildPlanningExcludedSqlCondition({
@@ -186,18 +194,14 @@ export async function getPlanningDashboard(
   productScope: ProductScope = 'goods',
 ): Promise<PlanningDashboard> {
   const skuScopeSql = productScopeOnSkuAlias(productScope, 's');
+  const todayDate = today.toISOString().slice(0, 10);
   const [
-    skuCompositionResult,
-    healthResult,
-    belowRopRows,
+    metricsResult,
     pendingSuggestionRows,
-    shipmentRows,
-    draftRows,
-    horizon7Rows,
-    horizon15Rows,
-    horizon30Rows,
-    overstockRows,
-    uncoverableByNewPoRows,
+    delayedShipmentRows,
+    delayedDraftRows,
+    openDataIssueCount,
+    openUnallocatedLotCount,
   ] = await Promise.all([
     db.execute(sql`
       WITH active_skus AS (
@@ -240,44 +244,6 @@ export async function getPlanningDashboard(
         INNER JOIN ${salesForecastVersions} fv
           ON fv.id = fm.version_id AND fv.status = 'published'
         WHERE fm.station = ${FORECAST_GLOBAL_STATION}
-      )
-      SELECT
-        (SELECT count(*)::int FROM active_skus) AS "skuActiveCount",
-        (SELECT count(*)::int FROM operational_skus) AS "skuOperationalCount",
-        (
-          (SELECT count(*)::int FROM active_skus)
-          - (SELECT count(*)::int FROM operational_skus)
-        ) AS "skuDormantCount",
-        (SELECT count(*)::int FROM gray_skus) AS "skuGrayLifecycleCount",
-        (SELECT count(*)::int FROM eligible_skus) AS "skuPlanningEligibleCount",
-        (SELECT count(*)::int FROM forecast_covered) AS "skuForecastCoveredCount",
-        (
-          SELECT count(*)::int
-          FROM eligible_skus es
-          WHERE es.id NOT IN (SELECT id FROM forecast_covered)
-        ) AS "skuForecastGapCount"
-    `),
-    db.execute(sql`
-      WITH operational_skus AS (
-        SELECT s.id
-        FROM ${skus} s
-        WHERE s.is_active = true
-        ${skuScopeSql}
-          AND (
-            EXISTS (
-              SELECT 1
-              FROM ${inventoryDailySnapshots} ids
-              WHERE ids.sku_id = s.id
-                AND ids.snapshot_date >= (CURRENT_DATE - ${sql.raw(String(OPERATIONAL_TURNOVER_LOOKBACK_DAYS))} * INTERVAL '1 day')
-            )
-            OR EXISTS (
-              SELECT 1
-              FROM ${salesHistory} sh
-              WHERE sh.sku_id = s.id
-                AND sh.sale_date >= (CURRENT_DATE - ${sql.raw(String(OPERATIONAL_SALES_LOOKBACK_DAYS))} * INTERVAL '1 day')
-                AND sh.qty_sold > 0
-            )
-          )
       ),
       latest_health AS (
         SELECT DISTINCT ON (h.sku_id, h.warehouse_code)
@@ -294,155 +260,123 @@ export async function getPlanningDashboard(
           bool_or(health_status = 'yellow') AS has_yellow
         FROM latest_health
         GROUP BY sku_id
+      ),
+      alert_counts AS (
+        SELECT
+          count(*) FILTER (WHERE alert_type = 'below_rop' AND is_resolved = false)::int AS below_rop,
+          count(DISTINCT sku_id) FILTER (
+            WHERE alert_type = 'stockout_horizon' AND horizon_days = 7 AND is_resolved = false
+          )::int AS horizon7,
+          count(DISTINCT sku_id) FILTER (
+            WHERE alert_type = 'stockout_horizon' AND horizon_days = 15 AND is_resolved = false
+          )::int AS horizon15,
+          count(DISTINCT sku_id) FILTER (
+            WHERE alert_type = 'stockout_horizon' AND horizon_days = 30 AND is_resolved = false
+          )::int AS horizon30,
+          count(DISTINCT sku_id) FILTER (
+            WHERE alert_type = 'overstock' AND is_resolved = false
+          )::int AS overstock,
+          count(DISTINCT sku_id) FILTER (
+            WHERE alert_type = 'uncoverable_by_new_po' AND is_resolved = false
+          )::int AS uncoverable
+        FROM ${stockAlerts}
       )
       SELECT
-        count(*) FILTER (WHERE health_status = 'red')::int AS "healthRedCount",
-        count(*) FILTER (WHERE health_status = 'yellow')::int AS "healthYellowCount",
-        (SELECT count(*)::int FROM sku_health WHERE has_red) AS "healthRedSkuCount",
+        (SELECT count(*)::int FROM active_skus) AS "skuActiveCount",
+        (SELECT count(*)::int FROM operational_skus) AS "skuOperationalCount",
+        (
+          (SELECT count(*)::int FROM active_skus)
+          - (SELECT count(*)::int FROM operational_skus)
+        ) AS "skuDormantCount",
+        (SELECT count(*)::int FROM gray_skus) AS "skuGrayLifecycleCount",
+        (SELECT count(*)::int FROM eligible_skus) AS "skuPlanningEligibleCount",
+        (SELECT count(*)::int FROM forecast_covered) AS "skuForecastCoveredCount",
         (
           SELECT count(*)::int
-          FROM sku_health
-          WHERE has_yellow AND NOT has_red
-        ) AS "healthYellowSkuCount"
-      FROM latest_health
+          FROM eligible_skus es
+          WHERE es.id NOT IN (SELECT id FROM forecast_covered)
+        ) AS "skuForecastGapCount",
+        (SELECT count(*) FILTER (WHERE health_status = 'red')::int FROM latest_health) AS "healthRedCount",
+        (SELECT count(*) FILTER (WHERE health_status = 'yellow')::int FROM latest_health) AS "healthYellowCount",
+        (SELECT count(*)::int FROM sku_health WHERE has_red) AS "healthRedSkuCount",
+        (SELECT count(*)::int FROM sku_health WHERE has_yellow AND NOT has_red) AS "healthYellowSkuCount",
+        (SELECT below_rop FROM alert_counts) AS "belowRopCount",
+        (SELECT horizon7 FROM alert_counts) AS "stockoutHorizon7",
+        (SELECT horizon15 FROM alert_counts) AS "stockoutHorizon15",
+        (SELECT horizon30 FROM alert_counts) AS "stockoutHorizon30",
+        (SELECT overstock FROM alert_counts) AS "overstockCount",
+        (SELECT uncoverable FROM alert_counts) AS "uncoverableByNewPoCount"
     `),
-    db
-      .select({ count: sql<number>`count(*)::int` })
-      .from(stockAlerts)
-      .where(and(eq(stockAlerts.alertType, 'below_rop'), eq(stockAlerts.isResolved, false))),
     db
       .select({ count: sql<number>`count(*)::int` })
       .from(reorderSuggestions)
       .where(
         and(eq(reorderSuggestions.status, 'pending'), isNull(reorderSuggestions.supersededAt)),
       ),
-    db
-      .select({
-        id: shipments.id,
-        status: shipments.status,
-        etaAvailable: shipments.etaAvailable,
-      })
-      .from(shipments)
-      .where(notInArray(shipments.status, TERMINAL_SHIPMENT_STATUSES)),
-    db
-      .select({
-        status: purchaseDrafts.status,
-        etaAvailable: purchaseDrafts.etaAvailable,
-      })
-      .from(purchaseDrafts)
-      .where(
-        and(
-          isNotNull(purchaseDrafts.etaAvailable),
-          notInArray(purchaseDrafts.status, ['received', 'cancelled']),
-        ),
-      ),
-    db
-      .select({ count: sql<number>`count(DISTINCT sku_id)::int` })
-      .from(stockAlerts)
-      .where(
-        and(
-          eq(stockAlerts.alertType, 'stockout_horizon'),
-          eq(stockAlerts.horizonDays, 7),
-          eq(stockAlerts.isResolved, false),
-        ),
-      ),
-    db
-      .select({ count: sql<number>`count(DISTINCT sku_id)::int` })
-      .from(stockAlerts)
-      .where(
-        and(
-          eq(stockAlerts.alertType, 'stockout_horizon'),
-          eq(stockAlerts.horizonDays, 15),
-          eq(stockAlerts.isResolved, false),
-        ),
-      ),
-    db
-      .select({ count: sql<number>`count(DISTINCT sku_id)::int` })
-      .from(stockAlerts)
-      .where(
-        and(
-          eq(stockAlerts.alertType, 'stockout_horizon'),
-          eq(stockAlerts.horizonDays, 30),
-          eq(stockAlerts.isResolved, false),
-        ),
-      ),
-    db
-      .select({ count: sql<number>`count(DISTINCT sku_id)::int` })
-      .from(stockAlerts)
-      .where(and(eq(stockAlerts.alertType, 'overstock'), eq(stockAlerts.isResolved, false))),
-    db
-      .select({ count: sql<number>`count(DISTINCT sku_id)::int` })
-      .from(stockAlerts)
-      .where(
-        and(eq(stockAlerts.alertType, 'uncoverable_by_new_po'), eq(stockAlerts.isResolved, false)),
-      ),
+    db.execute(sql`
+      SELECT count(*)::int AS count
+      FROM ${shipments} s
+      WHERE s.status NOT IN ('available', 'cancelled')
+        AND (
+          (s.eta_available IS NOT NULL AND s.eta_available < CAST(${todayDate} AS date))
+          OR EXISTS (
+            SELECT 1
+            FROM ${shipmentMilestones} m
+            WHERE m.shipment_id = s.id
+              AND m.planned_at IS NOT NULL
+              AND (
+                (m.actual_at IS NULL AND m.planned_at < CAST(${todayDate} AS date))
+                OR (m.actual_at IS NOT NULL AND m.planned_at < m.actual_at)
+              )
+          )
+        )
+    `),
+    db.execute(sql`
+      SELECT count(*)::int AS count
+      FROM ${purchaseDrafts}
+      WHERE eta_available IS NOT NULL
+        AND eta_available < CAST(${todayDate} AS date)
+        AND status NOT IN ('received', 'cancelled')
+    `),
+    countOpenDataIssues(),
+    countOpenUnallocatedLots(),
   ]);
 
-  const milestones =
-    shipmentRows.length === 0
-      ? []
-      : await db
-          .select({
-            shipmentId: shipmentMilestones.shipmentId,
-            plannedAt: shipmentMilestones.plannedAt,
-            actualAt: shipmentMilestones.actualAt,
-          })
-          .from(shipmentMilestones)
-          .where(
-            inArray(
-              shipmentMilestones.shipmentId,
-              shipmentRows.map((row) => row.id),
-            ),
-          );
-  const milestonesByShipment = new Map<string, typeof milestones>();
-  for (const milestone of milestones) {
-    const rows = milestonesByShipment.get(milestone.shipmentId) ?? [];
-    rows.push(milestone);
-    milestonesByShipment.set(milestone.shipmentId, rows);
-  }
-
-  const skuCompositionRows = Array.from(skuCompositionResult as unknown as SkuCompositionRow[]);
-  const skuComposition = skuCompositionRows[0];
-  const healthRows = Array.from(healthResult as unknown as HealthCountRow[]);
-  const health = healthRows[0];
+  const metrics = Array.from(metricsResult as unknown as DashboardMetricsRow[])[0];
   const dashboard = aggregatePlanningDashboard(
     {
-      skuActiveCount: Number(skuComposition?.skuActiveCount ?? 0),
-      skuOperationalCount: Number(skuComposition?.skuOperationalCount ?? 0),
-      skuDormantCount: Number(skuComposition?.skuDormantCount ?? 0),
-      skuPlanningEligibleCount: Number(skuComposition?.skuPlanningEligibleCount ?? 0),
-      skuGrayLifecycleCount: Number(skuComposition?.skuGrayLifecycleCount ?? 0),
-      skuForecastCoveredCount: Number(skuComposition?.skuForecastCoveredCount ?? 0),
-      skuForecastGapCount: Number(skuComposition?.skuForecastGapCount ?? 0),
-      healthRedCount: Number(health?.healthRedCount ?? 0),
-      healthYellowCount: Number(health?.healthYellowCount ?? 0),
-      healthRedSkuCount: Number(health?.healthRedSkuCount ?? 0),
-      healthYellowSkuCount: Number(health?.healthYellowSkuCount ?? 0),
-      belowRopCount: firstCount(belowRopRows),
+      skuActiveCount: Number(metrics?.skuActiveCount ?? 0),
+      skuOperationalCount: Number(metrics?.skuOperationalCount ?? 0),
+      skuDormantCount: Number(metrics?.skuDormantCount ?? 0),
+      skuPlanningEligibleCount: Number(metrics?.skuPlanningEligibleCount ?? 0),
+      skuGrayLifecycleCount: Number(metrics?.skuGrayLifecycleCount ?? 0),
+      skuForecastCoveredCount: Number(metrics?.skuForecastCoveredCount ?? 0),
+      skuForecastGapCount: Number(metrics?.skuForecastGapCount ?? 0),
+      healthRedCount: Number(metrics?.healthRedCount ?? 0),
+      healthYellowCount: Number(metrics?.healthYellowCount ?? 0),
+      healthRedSkuCount: Number(metrics?.healthRedSkuCount ?? 0),
+      healthYellowSkuCount: Number(metrics?.healthYellowSkuCount ?? 0),
+      belowRopCount: Number(metrics?.belowRopCount ?? 0),
       pendingSuggestions: firstCount(pendingSuggestionRows),
-      shipments: shipmentRows.map((shipment) => ({
-        status: shipment.status,
-        etaAvailable: shipment.etaAvailable,
-        milestones: milestonesByShipment.get(shipment.id) ?? [],
-      })),
-      purchaseDrafts: draftRows,
-      stockoutHorizon7: firstCount(horizon7Rows),
-      stockoutHorizon15: firstCount(horizon15Rows),
-      stockoutHorizon30: firstCount(horizon30Rows),
-      overstockCount: firstCount(overstockRows),
-      uncoverableByNewPoCount: firstCount(uncoverableByNewPoRows),
+      delayedShipmentCount: firstCount(
+        Array.from(delayedShipmentRows as unknown as Array<{ count: number }>),
+      ),
+      delayedDraftCount: firstCount(
+        Array.from(delayedDraftRows as unknown as Array<{ count: number }>),
+      ),
+      shipments: [],
+      purchaseDrafts: [],
+      stockoutHorizon7: Number(metrics?.stockoutHorizon7 ?? 0),
+      stockoutHorizon15: Number(metrics?.stockoutHorizon15 ?? 0),
+      stockoutHorizon30: Number(metrics?.stockoutHorizon30 ?? 0),
+      overstockCount: Number(metrics?.overstockCount ?? 0),
+      uncoverableByNewPoCount: Number(metrics?.uncoverableByNewPoCount ?? 0),
     },
     today,
   );
-  const [openDataIssueCount, openUnallocatedLotCount, inventoryRisk] = await Promise.all([
-    countOpenDataIssues(),
-    countOpenUnallocatedLots(),
-    getInventoryRiskCounts(productScope),
-  ]);
   return {
     ...dashboard,
     openDataIssueCount,
     openUnallocatedLotCount,
-    inventoryRisk,
   };
 }

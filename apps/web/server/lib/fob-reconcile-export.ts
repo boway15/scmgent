@@ -525,22 +525,36 @@ export function buildReconcileTieredTableAoa(params: {
   return rows;
 }
 
+function providerFilePart(providerName?: string | null): string {
+  const trimmed = providerName?.trim();
+  return trimmed ? `_${sanitizeExportFileName(trimmed)}` : '';
+}
+
 export function buildMerchantExportFileName(
   merchantName: string | null | undefined,
   merchantCode: string,
   settlementPeriod: string,
+  providerName?: string | null,
 ): string {
   const label = sanitizeExportFileName(merchantName?.trim() || merchantCode);
   const period = sanitizeExportFileName(settlementPeriod);
-  return `${label}${period}.xlsx`;
+  return `${label}${providerFilePart(providerName)}_${period}.xlsx`;
 }
 
-export function buildTotalExportFileName(batchNo: string, batchName: string): string {
-  return `${sanitizeExportFileName(batchNo)}_${sanitizeExportFileName(batchName)}_分摊总账.xlsx`;
+export function buildTotalExportFileName(
+  batchNo: string,
+  batchName: string,
+  providerName?: string | null,
+): string {
+  return `${sanitizeExportFileName(batchNo)}_${sanitizeExportFileName(batchName)}${providerFilePart(providerName)}_分摊总账.xlsx`;
 }
 
-export function buildByMerchantZipFileName(batchNo: string, batchName: string): string {
-  return `${sanitizeExportFileName(batchNo)}_${sanitizeExportFileName(batchName)}_按工厂主体导出.zip`;
+export function buildByMerchantZipFileName(
+  batchNo: string,
+  batchName: string,
+  providerName?: string | null,
+): string {
+  return `${sanitizeExportFileName(batchNo)}_${sanitizeExportFileName(batchName)}${providerFilePart(providerName)}_按工厂主体导出.zip`;
 }
 
 export type AllocationRuleExplanationRow = {

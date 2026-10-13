@@ -1916,7 +1916,11 @@ logisticsRoutes.get('/logistics/fob-settlements/:id/export/reconcile-total', fob
   const buffer = await buildXlsxBuffer(rows, '分摊总账', [
     { name: '分摊规则说明', rows: payload.ruleSheetRows },
   ]);
-  const filename = buildTotalExportFileName(payload.batch.batchNo, payload.batch.name);
+  const filename = buildTotalExportFileName(
+    payload.batch.batchNo,
+    payload.batch.name,
+    payload.provider.name,
+  );
 
   return new Response(buffer, {
     headers: {
@@ -1958,16 +1962,21 @@ logisticsRoutes.get(
         merchant.merchantName,
         merchant.merchantCode,
         payload.batch.settlementPeriod,
+        payload.provider.name,
       );
       if (usedNames.has(filename)) {
-        filename = `${sanitizeExportFileName(merchant.merchantName ?? merchant.merchantCode)}_${sanitizeExportFileName(merchant.merchantCode)}_${sanitizeExportFileName(payload.batch.settlementPeriod)}.xlsx`;
+        filename = `${sanitizeExportFileName(merchant.merchantName ?? merchant.merchantCode)}_${sanitizeExportFileName(merchant.merchantCode)}_${sanitizeExportFileName(payload.provider.name)}_${sanitizeExportFileName(payload.batch.settlementPeriod)}.xlsx`;
       }
       usedNames.add(filename);
       files.push({ name: filename, buffer });
     }
 
     const zipBuffer = await buildZipBuffer(files);
-    const zipName = buildByMerchantZipFileName(payload.batch.batchNo, payload.batch.name);
+    const zipName = buildByMerchantZipFileName(
+      payload.batch.batchNo,
+      payload.batch.name,
+      payload.provider.name,
+    );
 
     return new Response(zipBuffer, {
       headers: {

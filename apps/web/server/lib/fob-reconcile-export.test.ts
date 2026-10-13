@@ -89,15 +89,27 @@ assert.deepEqual(table[2], ['CNTR1', '工厂B', 5, 400, 400, 0]);
 const merchantTable = buildReconcileWideTableAoa(allocations, feeRules, 'M1');
 assert.equal(merchantTable.length, 2);
 
-assert.equal(buildMerchantExportFileName('工厂 A', 'M1', '2026-06'), '工厂_A2026-06.xlsx');
+assert.equal(buildMerchantExportFileName('工厂 A', 'M1', '2026-06'), '工厂_A_2026-06.xlsx');
+assert.equal(
+  buildMerchantExportFileName('曹县海庆家具有限公司', 'M1', '2026-10', '西邮'),
+  '曹县海庆家具有限公司_西邮_2026-10.xlsx',
+);
 assert.equal(sanitizeExportFileName('a/b:c'), 'a_b_c');
 assert.equal(
   buildTotalExportFileName('FOB-2026060001', '2026年6月分账'),
   'FOB-2026060001_2026年6月分账_分摊总账.xlsx',
 );
 assert.equal(
+  buildTotalExportFileName('FOB-2026100001', '8月新增西邮账单', '西邮'),
+  'FOB-2026100001_8月新增西邮账单_西邮_分摊总账.xlsx',
+);
+assert.equal(
   buildByMerchantZipFileName('FOB-2026060001', '2026年6月分账'),
   'FOB-2026060001_2026年6月分账_按工厂主体导出.zip',
+);
+assert.equal(
+  buildByMerchantZipFileName('FOB-2026100001', '8月新增西邮账单', '西邮'),
+  'FOB-2026100001_8月新增西邮账单_西邮_按工厂主体导出.zip',
 );
 
 const explain = buildAllocationRulesExplanationAoa({

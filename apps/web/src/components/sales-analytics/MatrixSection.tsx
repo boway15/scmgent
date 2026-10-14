@@ -10,6 +10,7 @@ import {
   XAxis,
   YAxis,
 } from 'recharts';
+import { Link } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import {
@@ -49,7 +50,6 @@ export function MatrixSection({
   onModeChange,
   rows,
   histPeriods,
-  fcLabels,
   pinnedKey,
   onPin,
   onUnpin,
@@ -61,7 +61,6 @@ export function MatrixSection({
   onModeChange: (m: MatrixMode) => void;
   rows: MatrixRow[];
   histPeriods: string[];
-  fcLabels: string[];
   pinnedKey: string | null;
   onPin: (key: string) => void;
   onUnpin: () => void;
@@ -87,8 +86,6 @@ export function MatrixSection({
     const headers = [
       dimName,
       ...histPeriods,
-      ...fcLabels,
-      '预测模型',
       '区间累计',
       '最新期环比',
       '最新期同比',
@@ -98,8 +95,6 @@ export function MatrixSection({
     const body = rows.map((r) => [
       r.key,
       ...r.hist.map((x) => String(Math.round(x))),
-      ...r.fc.map((x) => String(x.val)),
-      r.modelLabel,
       String(Math.round(r.cum)),
       r.mom == null ? '' : r.mom.toFixed(1),
       r.yoy == null ? '' : r.yoy.toFixed(1),
@@ -132,9 +127,11 @@ export function MatrixSection({
             </Button>
           </div>
           <p className="text-sm text-text-sub">
-            粒度：{dimName} · 共 {rows.length} 行（点击行可锁定下方走势图）。预测列与底部预估同口径（月：趋势×季节；周：线性趋势），为
-            <span className="font-medium text-amber-700">看板粗估，非系统发布预测</span>
-            ；悬停「预测模型」可查看拟合 R² / 可信度。
+            粒度：{dimName} · 共 {rows.length} 行（点击行可锁定下方走势图）。本页只看历史销量；未来销量以
+            <Link to="/data/forecast" className="mx-0.5 text-primary hover:underline">
+              销售预测
+            </Link>
+            已发布版本为准（补货同口径）。
           </p>
         </CardHeader>
         <CardContent>
@@ -153,16 +150,6 @@ export function MatrixSection({
                         {p}
                       </th>
                     ))}
-                    {fcLabels.map((p) => (
-                      <th
-                        key={`fc-${p}`}
-                        className="bg-amber-50 px-2 py-2 text-right font-medium text-amber-800"
-                        title="看板粗估，非系统发布预测"
-                      >
-                        {p}
-                      </th>
-                    ))}
-                    <th className="px-2 py-2 text-left font-medium text-text-sub">预测模型</th>
                     <th className="px-2 py-2 text-right font-medium text-text-sub">区间累计</th>
                     <th className="px-2 py-2 text-right font-medium text-text-sub">最新期环比</th>
                     <th className="px-2 py-2 text-right font-medium text-text-sub">最新期同比</th>
@@ -179,7 +166,6 @@ export function MatrixSection({
                         pinnedKey === r.key && 'bg-amber-50',
                       )}
                       onClick={() => onPin(r.key)}
-                      title={r.reason}
                     >
                       <td className="sticky left-0 z-10 bg-card px-2 py-1.5 text-left font-medium">
                         {r.key}
@@ -189,18 +175,6 @@ export function MatrixSection({
                           {x ? fmtQty(x) : ''}
                         </td>
                       ))}
-                      {r.fc.map((x) => (
-                        <td
-                          key={`${r.key}-f-${x.ym}`}
-                          className="bg-amber-50/80 px-2 py-1.5 text-right tabular-nums text-amber-900"
-                          title={r.reason}
-                        >
-                          {fmtQty(x.val)}
-                        </td>
-                      ))}
-                      <td className="px-2 py-1.5 text-left" title={r.reason}>
-                        {r.modelLabel}
-                      </td>
                       <td className="px-2 py-1.5 text-right font-semibold tabular-nums">
                         {fmtQty(r.cum)}
                       </td>

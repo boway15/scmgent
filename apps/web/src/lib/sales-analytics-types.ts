@@ -40,32 +40,3 @@ export type SalesAnalyticsSelection = {
   c: Set<string>;
   p: Set<string>;
 };
-
-export type ForecastPoint = {
-  ym: string;
-  val: number;
-};
-
-export type ForecastModelType = 'trend' | 'seasonal' | 'avg' | 'naive';
-
-export type LinearFit = {
-  n: number;
-  a: number;
-  b: number;
-  r2: number;
-  my: number;
-};
-
-export type SeasonalParams = {
-  sIdx: Record<number, number>;
-  peakM: number;
-  troughM: number;
-  strength: number;
-};
-
-export type ChosenModel = {
-  type: ForecastModelType;
-  fit: LinearFit;
-  params: Partial<SeasonalParams> & { W?: number; base?: number };
-  last: number;
-};

@@ -15,12 +15,10 @@ import {
 } from 'recharts';
 import { api } from '@/lib/api';
 import { PageHeader } from '@/components/PageHeader';
-import { ForecastPanel, type FcScope } from '@/components/sales-analytics/ForecastPanel';
 import { MatrixSection } from '@/components/sales-analytics/MatrixSection';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { nextPeriodLabel } from '@/lib/sales-analytics-forecast';
 import {
   MATRIX_DIMS,
   breakdownKey,
@@ -189,8 +187,6 @@ export function SalesAnalyticsPage() {
   const [cubeKey, setCubeKey] = useState<string | null>(null);
   const [matrixMode, setMatrixMode] = useState<MatrixMode>('b');
   const [pinnedKey, setPinnedKey] = useState<string | null>(null);
-  const [fcScope, setFcScope] = useState<FcScope>('filter');
-  const [fcHorizon, setFcHorizon] = useState(12);
 
   const statusQuery = useQuery({
     queryKey: ['sales-analytics-status'],
@@ -228,7 +224,6 @@ export function SalesAnalyticsPage() {
     const periods = gran === 'week' ? cube.weeks : cube.months;
     setRangeStart(0);
     setRangeEnd(Math.max(0, periods.length - 1));
-    setFcHorizon(gran === 'week' ? 20 : 12);
     setPinnedKey(null);
   }, [gran, cubeQuery.data?.months.length, cubeQuery.data?.weeks.length]);
 
@@ -285,15 +280,6 @@ export function SalesAnalyticsPage() {
   const latestYoy = series.length ? yoyPct(series, periods, latestIdx) : null;
   const rangeCum = series.slice(safeStart, safeEnd + 1).reduce((a, b) => a + b, 0);
 
-  const isWeek = gran === 'week';
-  const lastLbl = periods[periods.length - 1] ?? '';
-  const fcLabels = useMemo(() => {
-    if (!lastLbl) return [];
-    return Array.from({ length: fcHorizon }, (_, i) =>
-      nextPeriodLabel(lastLbl, i + 1, isWeek),
-    );
-  }, [lastLbl, fcHorizon, isWeek]);
-
   const matrixRows = useMemo(() => {
     if (!periods.length) return [];
     return buildMatrixRows({
@@ -303,9 +289,8 @@ export function SalesAnalyticsPage() {
       gran,
       rangeStart: safeStart,
       rangeEnd: safeEnd,
-      horizon: fcHorizon,
     });
-  }, [filtered, matrixMode, periods, gran, safeStart, safeEnd, fcHorizon]);
+  }, [filtered, matrixMode, periods, gran, safeStart, safeEnd]);
 
   useEffect(() => {
     if (!pinnedKey) return;
@@ -320,13 +305,6 @@ export function SalesAnalyticsPage() {
     const ents = filtered.filter((e) => breakdownKey(e, dims) === pinnedKey);
     return sumSeries(ents, gran);
   }, [pinnedKey, series, filtered, matrixMode, gran]);
-
-  const allSeries = useMemo(() => {
-    if (!cube) return [];
-    return sumSeries(cube.data, gran);
-  }, [cube, gran]);
-
-  const fcSeries = fcScope === 'all' ? allSeries : series;
 
   const generatedAt = cube?.meta.generatedAt ?? statusQuery.data?.generatedAt ?? null;
   const subtitle = generatedAt
@@ -624,23 +602,12 @@ export function SalesAnalyticsPage() {
             }}
             rows={matrixRows}
             histPeriods={periods.slice(safeStart, safeEnd + 1)}
-            fcLabels={fcLabels}
             pinnedKey={pinnedKey}
             onPin={setPinnedKey}
             onUnpin={() => setPinnedKey(null)}
             pinSeries={pinSeries}
             rangeStart={safeStart}
             rangeEnd={safeEnd}
-          />
-
-          <ForecastPanel
-            series={fcSeries}
-            periods={periods}
-            gran={gran}
-            scope={fcScope}
-            onScopeChange={setFcScope}
-            horizon={fcHorizon}
-            onHorizonChange={setFcHorizon}
           />
         </>
       )}

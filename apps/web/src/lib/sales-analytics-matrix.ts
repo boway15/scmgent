@@ -1,17 +1,5 @@
-import {
-  nextPeriodLabel,
-  trendSeasonalForecast,
-  trendSeasonalModelLabel,
-  trendSeasonalModelReason,
-  fitConfidenceFromR2,
-  type FitConfidence,
-} from './sales-analytics-forecast.js';
 import { momPct, sumSeries, yoyPct } from './sales-analytics-metrics.js';
-import type {
-  ForecastPoint,
-  SalesAnalyticsEntity,
-  SalesAnalyticsGranularity,
-} from './sales-analytics-types.js';
+import type { SalesAnalyticsEntity, SalesAnalyticsGranularity } from './sales-analytics-types.js';
 
 export type MatrixMode = 'b' | 's' | 'sb' | 'sc' | 'sp' | 'bc' | 'bp';
 
@@ -52,11 +40,6 @@ export type MatrixRow = {
   yoy: number | null;
   peak: { period: string; qty: number };
   trough: { period: string; qty: number };
-  modelLabel: string;
-  reason: string;
-  r2: number;
-  confidence: FitConfidence;
-  fc: ForecastPoint[];
   series: number[];
 };
 
@@ -83,11 +66,9 @@ export function buildMatrixRows(args: {
   gran: SalesAnalyticsGranularity;
   rangeStart: number;
   rangeEnd: number;
-  horizon: number;
 }): MatrixRow[] {
-  const { entities, mode, periods, gran, rangeStart, rangeEnd, horizon } = args;
+  const { entities, mode, periods, gran, rangeStart, rangeEnd } = args;
   const dims = MATRIX_DIMS[mode];
-  const isWeek = gran === 'week';
   const groups = new Map<string, SalesAnalyticsEntity[]>();
   for (const e of entities) {
     const k = breakdownKey(e, dims);
@@ -96,7 +77,6 @@ export function buildMatrixRows(args: {
     else groups.set(k, [e]);
   }
 
-  const lastLbl = periods[periods.length - 1] ?? '';
   const windowPeriods = periods.slice(rangeStart, rangeEnd + 1);
 
   const rows: MatrixRow[] = [];
@@ -118,29 +98,6 @@ export function buildMatrixRows(args: {
       }
     });
 
-    // Same path as ForecastPanel: always trend × monthly seasonal (weeks: linear only).
-    let fc: ForecastPoint[];
-    let modelLabel: string;
-    let reason: string;
-    let r2 = 0;
-    let confidence: FitConfidence = '偏低';
-
-    if (series.length >= 2 && lastLbl) {
-      const panel = trendSeasonalForecast(series, periods, horizon, isWeek);
-      fc = panel.fc;
-      r2 = panel.r2;
-      confidence = fitConfidenceFromR2(panel.r2);
-      modelLabel = trendSeasonalModelLabel(isWeek, panel.r2, panel.path);
-      reason = trendSeasonalModelReason(panel, isWeek, series.length);
-    } else {
-      fc = Array.from({ length: horizon }, (_, i) => ({
-        ym: nextPeriodLabel(lastLbl, i + 1, isWeek),
-        val: 0,
-      }));
-      modelLabel = isWeek ? '线性趋势' : '趋势+季节';
-      reason = '历史期不足，无法拟合趋势；预测置 0。看板粗估，非系统发布预测。';
-    }
-
     rows.push({
       key,
       hist,
@@ -152,11 +109,6 @@ export function buildMatrixRows(args: {
         period: windowPeriods[troughI] ?? '—',
         qty: Number.isFinite(troughV) ? troughV : 0,
       },
-      modelLabel,
-      reason,
-      r2,
-      confidence,
-      fc,
       series,
     });
   }

@@ -16,55 +16,43 @@ function entity(partial: Partial<SalesAnalyticsEntity> & { v: number[] }): Sales
 }
 
 describe('buildMatrixRows', () => {
-  it('uses unified trend×seasonal forecasts (varying months, not flat avg/naive)', () => {
-    const periods = [
-      '2024-01', '2024-02', '2024-03', '2024-04', '2024-05', '2024-06',
-      '2024-07', '2024-08', '2024-09', '2024-10', '2024-11', '2024-12',
-      '2025-01', '2025-02', '2025-03', '2025-04', '2025-05', '2025-06',
-      '2025-07', '2025-08', '2025-09', '2025-10', '2025-11', '2025-12',
-    ];
-    const v = periods.map((p, i) => {
-      const mm = +p.split('-')[1]!;
-      const season = mm === 12 ? 1.4 : mm === 8 ? 0.85 : 1;
-      return Math.round((100 + i * 3) * season);
-    });
+  const periods = ['2025-01', '2025-02', '2025-03', '2025-04'];
+
+  it('groups by breakdown dims and sorts by window cumulative desc', () => {
     const rows = buildMatrixRows({
-      entities: [entity({ v })],
+      entities: [
+        entity({ s: 'US', v: [10, 20, 30, 40] }),
+        entity({ s: 'US', p: '沃尔玛', v: [1, 1, 1, 1] }),
+        entity({ s: 'UK', v: [100, 0, 0, 0] }),
+      ],
       mode: 's',
       periods,
       gran: 'month',
-      rangeStart: 0,
-      rangeEnd: periods.length - 1,
-      horizon: 5,
+      rangeStart: 1,
+      rangeEnd: 3,
     });
-    assert.equal(rows.length, 1);
-    const row = rows[0]!;
-    assert.match(row.modelLabel, /锚定\+限幅季节|锚定\+衰减趋势/);
-    assert.doesNotMatch(row.modelLabel, /朴素法/);
-    assert.equal(row.fc.length, 5);
-    const uniq = new Set(row.fc.map((x) => x.val));
-    assert.ok(uniq.size > 1, `expected varying fc months, got ${[...uniq]}`);
-    assert.ok(row.reason.includes('与底部预估同口径'));
-    assert.ok(row.r2 >= 0);
-    assert.ok(['较高', '中等', '偏低'].includes(row.confidence));
+    assert.deepEqual(
+      rows.map((r) => r.key),
+      ['US', 'UK'],
+    );
+    const us = rows[0]!;
+    assert.deepEqual(us.hist, [21, 31, 41]);
+    assert.equal(us.cum, 93);
+    assert.deepEqual(us.series, [11, 21, 31, 41]);
+    assert.deepEqual(us.peak, { period: '2025-04', qty: 41 });
+    assert.deepEqual(us.trough, { period: '2025-02', qty: 21 });
+    assert.equal(rows[1]!.cum, 0);
   });
 
-  it('labels week rows as linear trend without seasonal', () => {
-    const periods = Array.from({ length: 20 }, (_, i) => {
-      const w = i + 1;
-      return `2025-W${String(w).padStart(2, '0')}`;
-    });
-    const v = periods.map((_, i) => 50 + i * 2);
+  it('builds composite keys for two-dim modes', () => {
     const rows = buildMatrixRows({
-      entities: [entity({ v, vw: v })],
-      mode: 'b',
+      entities: [entity({ v: [5, 5, 5, 5] })],
+      mode: 'sb',
       periods,
-      gran: 'week',
+      gran: 'month',
       rangeStart: 0,
-      rangeEnd: periods.length - 1,
-      horizon: 4,
+      rangeEnd: 3,
     });
-    assert.equal(rows[0]!.modelLabel.includes('锚定'), true);
-    assert.doesNotMatch(rows[0]!.modelLabel, /限幅季节/);
+    assert.equal(rows[0]!.key, 'US / 项目1组');
   });
 });

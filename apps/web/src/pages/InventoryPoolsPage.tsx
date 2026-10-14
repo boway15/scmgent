@@ -204,20 +204,6 @@ export function InventoryPoolsPage() {
     },
   });
 
-  const updateLot = useMutation({
-    mutationFn: (params: {
-      id: string;
-      productionStatus?: 'in_production' | 'qc_pending' | 'completed';
-      shipReadyAt?: string | null;
-      latestShipDate?: string | null;
-    }) => api.updateSupplyLot(params.id, params),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['inventory-pools'] });
-      qc.invalidateQueries({ queryKey: ['inventory-pools-summary'] });
-      qc.invalidateQueries({ queryKey: ['inventory-pools-row-lots'] });
-    },
-  });
-
   const batchItems = lots.data?.items ?? [];
   const batchTotal = lots.data?.total ?? 0;
   const dateUnknownCount = lots.data?.dateUnknownCount ?? 0;
@@ -279,7 +265,7 @@ export function InventoryPoolsPage() {
     <div className="space-y-6">
       <PageHeader
         title="库存三池"
-        description="汇总视图按 SKU×目的仓展示本地 / 在库 / 在途 / 最近到货，展开可看该行批次明细。单池逐批维护请切换「批次明细」。无可用日不进时间轴。"
+        description="汇总视图按 SKU×目的仓展示本地 / 在库 / 在途 / 最近到货，展开可看该行批次明细。单池逐批查看请切换「批次明细」；批次信息以迅捷 / 飞书同步为准，本页只读。无可用日不进时间轴。"
       >
         <div className="flex flex-wrap gap-2">
           <Button variant="outline" disabled={exporting || !total} onClick={() => void onExport()}>
@@ -342,7 +328,7 @@ export function InventoryPoolsPage() {
         <Card className="border-amber-200 bg-amber-50">
           <CardContent className="pt-4 text-sm text-amber-900">
             当前池有停在 OVERSEAS 的批次，未确认目的仓前不计入某仓确定线。
-            <Link className="ml-2 text-primary underline" to="/inventory/unallocated">
+            <Link className="ml-2 text-primary underline" to="/inventory/pools?tab=unallocated">
               去未定仓供应
             </Link>
           </CardContent>
@@ -460,8 +446,6 @@ export function InventoryPoolsPage() {
                     key={summaryRowKey(row)}
                     row={row}
                     productScope={productScope}
-                    saving={updateLot.isPending}
-                    onSave={(patch) => updateLot.mutate(patch)}
                   />
                 ))}
                 {!summaryItems.length && (
@@ -493,8 +477,6 @@ export function InventoryPoolsPage() {
                     key={row.id}
                     row={row}
                     pool={pool}
-                    onSave={(patch) => updateLot.mutate({ id: row.id, ...patch })}
-                    saving={updateLot.isPending}
                   />
                 ))}
                 {!batchItems.length && (
@@ -521,17 +503,9 @@ export function InventoryPoolsPage() {
 function SummaryRow({
   row,
   productScope,
-  onSave,
-  saving,
 }: {
   row: SupplyLotSummaryRow;
   productScope: ProductScope;
-  onSave: (params: {
-    id: string;
-    productionStatus?: 'in_production' | 'qc_pending' | 'completed';
-    shipReadyAt?: string | null;
-  }) => void;
-  saving: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const lots = useQuery({
@@ -618,8 +592,6 @@ function SummaryRow({
               error={lots.isError}
               items={lots.data?.items ?? []}
               total={lots.data?.total ?? 0}
-              onSave={onSave}
-              saving={saving}
             />
           </td>
         </tr>
@@ -633,19 +605,11 @@ function SummaryLotDetails({
   error,
   items,
   total,
-  onSave,
-  saving,
 }: {
   loading: boolean;
   error: boolean;
   items: SupplyLotRow[];
   total: number;
-  onSave: (params: {
-    id: string;
-    productionStatus?: 'in_production' | 'qc_pending' | 'completed';
-    shipReadyAt?: string | null;
-  }) => void;
-  saving: boolean;
 }) {
   if (loading) return <p className="text-sm text-text-sub">加载批次明细…</p>;
   if (error) return <p className="text-sm text-amber-700">批次明细加载失败，请重试。</p>;
@@ -671,12 +635,11 @@ function SummaryLotDetails({
                 <th className="py-1 pr-3">可出货日</th>
                 <th className="py-1 pr-3">预计可售日</th>
                 <th className="py-1 pr-3">来源</th>
-                <th className="py-1 pr-3">操作</th>
               </tr>
             </thead>
             <tbody>
               {group.lots.map((lot) => (
-                <SummaryLotRow key={lot.id} lot={lot} onSave={onSave} saving={saving} />
+                <SummaryLotRow key={lot.id} lot={lot} />
               ))}
             </tbody>
           </table>
@@ -691,57 +654,17 @@ function SummaryLotDetails({
   );
 }
 
-function SummaryLotRow({
-  lot,
-  onSave,
-  saving,
-}: {
-  lot: SupplyLotRow;
-  onSave: (params: {
-    id: string;
-    productionStatus?: 'in_production' | 'qc_pending' | 'completed';
-    shipReadyAt?: string | null;
-  }) => void;
-  saving: boolean;
-}) {
-  const [shipReadyAt, setShipReadyAt] = useState(lot.shipReadyAt ?? '');
-  const [productionStatus, setProductionStatus] = useState(lot.productionStatus ?? 'completed');
+function SummaryLotRow({ lot }: { lot: SupplyLotRow }) {
   const unknown = lot.dateUnknown || !lot.availableAt;
   const shareLabel = shareSourceLabel(lot.sourceId);
-  const editable = false;
 
   return (
     <tr className={unknown ? 'bg-amber-50/80' : undefined}>
       <td className="py-1 pr-3 font-mono">{lot.qty}</td>
-      <td className="py-1 pr-3">
-        {editable ? (
-          <select
-            className="h-7 rounded border border-border bg-white px-2 text-xs"
-            value={productionStatus}
-            onChange={(e) => setProductionStatus(e.target.value as typeof productionStatus)}
-          >
-            {Object.entries(PROD_LABEL).map(([key, label]) => (
-              <option key={key} value={key}>
-                {label}
-              </option>
-            ))}
-          </select>
-        ) : (
-          '—'
-        )}
+      <td className="py-1 pr-3 text-text-sub">
+        {lot.productionStatus ? (PROD_LABEL[lot.productionStatus] ?? lot.productionStatus) : '—'}
       </td>
-      <td className="py-1 pr-3">
-        {editable ? (
-          <input
-            type="date"
-            className="h-7 rounded border border-border px-2 font-mono text-xs"
-            value={shipReadyAt}
-            onChange={(e) => setShipReadyAt(e.target.value)}
-          />
-        ) : (
-          '—'
-        )}
-      </td>
+      <td className="py-1 pr-3 font-mono text-text-sub">{lot.shipReadyAt || '—'}</td>
       <td className="py-1 pr-3 font-mono">
         {lot.availableAt ?? <span className="text-amber-700">不可计入可售</span>}
         {lot.etaEstimated ? <span className="ml-1 text-text-hint">(估)</span> : null}
@@ -750,26 +673,6 @@ function SummaryLotRow({
         {lot.source}
         {shareLabel ? <span className="ml-1 text-text-hint">{shareLabel}</span> : null}
       </td>
-      <td className="py-1 pr-3">
-        {editable ? (
-          <Button
-            size="sm"
-            variant="outline"
-            disabled={saving}
-            onClick={() =>
-              onSave({
-                id: lot.id,
-                productionStatus,
-                shipReadyAt: shipReadyAt || null,
-              })
-            }
-          >
-            保存
-          </Button>
-        ) : (
-          '—'
-        )}
-      </td>
     </tr>
   );
 }
@@ -777,22 +680,12 @@ function SummaryLotRow({
 function LotRow({
   row,
   pool,
-  onSave,
-  saving,
 }: {
   row: SupplyLotRow;
   pool: 'local' | 'in_transit' | 'overseas';
-  onSave: (patch: {
-    productionStatus?: 'in_production' | 'qc_pending' | 'completed';
-    shipReadyAt?: string | null;
-    latestShipDate?: string | null;
-  }) => void;
-  saving: boolean;
 }) {
-  const [shipReadyAt, setShipReadyAt] = useState(row.shipReadyAt ?? '');
-  const [productionStatus, setProductionStatus] = useState(
-    row.productionStatus ?? 'completed',
-  );
+  const productionStatus = row.productionStatus ?? 'completed';
+  const shipReadyAt = row.shipReadyAt ?? '';
   const unknown = row.dateUnknown || !row.availableAt;
   const shareLabel = shareSourceLabel(row.sourceId);
 

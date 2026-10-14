@@ -26,7 +26,7 @@ function todayFilenameSuffix() {
 
 inventoryPoolsRoutes.get(
   '/inventory/pools/warehouses',
-  requireMenu('inventory.pools', 'inventory.planning'),
+  requireMenu('inventory.pools', 'inventory.planning_dashboard'),
   async (c) => {
     const items = await listSupplyLotWarehouseOptions();
     return c.json({ items });
@@ -35,7 +35,7 @@ inventoryPoolsRoutes.get(
 
 inventoryPoolsRoutes.get(
   '/inventory/pools/summary/export',
-  requireMenu('inventory.pools', 'inventory.planning'),
+  requireMenu('inventory.pools', 'inventory.planning_dashboard'),
   async (c) => {
     const filters = parseSupplyLotSummaryFilters({
       q: c.req.query('q'),
@@ -57,7 +57,7 @@ inventoryPoolsRoutes.get(
 
 inventoryPoolsRoutes.get(
   '/inventory/pools/export',
-  requireMenu('inventory.pools', 'inventory.planning'),
+  requireMenu('inventory.pools', 'inventory.planning_dashboard'),
   async (c) => {
     const filters = parseSupplyLotExportFilters({
       pool: c.req.query('pool'),
@@ -77,7 +77,7 @@ inventoryPoolsRoutes.get(
 
 inventoryPoolsRoutes.get(
   '/inventory/pools/summary',
-  requireMenu('inventory.pools', 'inventory.planning'),
+  requireMenu('inventory.pools', 'inventory.planning_dashboard'),
   async (c) => {
     const { page, pageSize, offset } = parseListPagination(
       c.req.query('page')?.trim(),
@@ -101,7 +101,7 @@ inventoryPoolsRoutes.get(
   },
 );
 
-inventoryPoolsRoutes.get('/inventory/pools', requireMenu('inventory.pools', 'inventory.planning'), async (c) => {
+inventoryPoolsRoutes.get('/inventory/pools', requireMenu('inventory.pools', 'inventory.planning_dashboard'), async (c) => {
   const { page, pageSize, offset } = parseListPagination(
     c.req.query('page')?.trim(),
     c.req.query('pageSize')?.trim(),
@@ -136,7 +136,7 @@ inventoryPoolsRoutes.get('/inventory/pools', requireMenu('inventory.pools', 'inv
 
 inventoryPoolsRoutes.post(
   '/inventory/pools/sync',
-  requireMenu('inventory.pools', 'inventory.planning'),
+  requireMenu('inventory.pools', 'inventory.planning_dashboard'),
   async (c) => {
     const result = await syncInventorySupplyLots();
     return c.json(result);
@@ -145,6 +145,6 @@ inventoryPoolsRoutes.post(
 
 inventoryPoolsRoutes.patch(
   '/inventory/pools/:id',
-  requireMenu('inventory.pools', 'inventory.planning'),
+  requireMenu('inventory.pools', 'inventory.planning_dashboard'),
   async (c) => analysisOnlyResponse(c),
 );

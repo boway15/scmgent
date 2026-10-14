@@ -158,7 +158,7 @@ export function InventoryQueryPage() {
 
   return (
     <div className="space-y-4">
-      <PageHeader title="库存查询">
+      <PageHeader title="分仓明细">
         <div className="flex flex-wrap gap-2">
           <Button variant="outline" onClick={openColumnPicker}>
             列设置

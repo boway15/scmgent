@@ -691,7 +691,7 @@ export function SkuInventoryPlanningPage() {
       {(item.unallocatedNetworkQty ?? 0) > 0 ? (
         <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
           出货前未定仓 {item.unallocatedNetworkQty} 件（在产 + 海外合计），发运单确定目的仓后计入各仓确定线。
-          <Link className="ml-2 underline" to={`/inventory/unallocated?skuId=${encodeURIComponent(item.skuId)}`}>
+          <Link className="ml-2 underline" to={`/inventory/pools?tab=unallocated&skuId=${encodeURIComponent(item.skuId)}`}>
             去待分配
           </Link>
         </p>

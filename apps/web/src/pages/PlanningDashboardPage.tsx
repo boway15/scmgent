@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { ArrowRight } from 'lucide-react';
 import { Link } from 'react-router-dom';
+import { DemandSourceCard } from '@/components/DemandSourceCard';
 import { PageHeader } from '@/components/PageHeader';
 import { QueryErrorFallback } from '@/components/QueryErrorFallback';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -138,7 +139,7 @@ export function buildPlanningDashboardCards(
     {
       label: '未定仓供应',
       value: String(dashboard.openUnallocatedLotCount ?? 0),
-      href: '/inventory/unallocated',
+      href: '/inventory/pools?tab=unallocated',
       highlight: (dashboard.openUnallocatedLotCount ?? 0) > 0,
     },
     {
@@ -165,9 +166,9 @@ export function buildPlanningDashboardCards(
 
 const WORKBENCH_LINKS = [
   { label: '数据问题', description: '同步源脏数据提醒，可导出后在迅捷修正', href: '/inventory/data-issues' },
-  { label: '未定仓供应', description: 'OVERSEAS 批次只读清单', href: '/inventory/unallocated' },
-  { label: '库存三池', description: '本地 / 在途 / 海外批次与可出货日', href: '/inventory/pools' },
-  { label: '补货建议', description: '审核并采纳待处理建议', href: '/pmc/suggestions' },
+  { label: '供给池', description: '本地 / 在途 / 海外批次与未定仓供应', href: '/inventory/pools' },
+  { label: '规划参数', description: '安全库存与分段交期', href: '/inventory/safety' },
+  { label: '补货建议', description: '只读建议清单，导出供迅捷下单参考', href: '/pmc/suggestions' },
   { label: '采购跟单', description: '处理预计可用日期延期', href: '/pmc/tracking' },
   { label: '发运管理', description: '检查延期发运与节点', href: '/pmc/shipments' },
   { label: 'SKU 库存规划', description: '搜索 SKU 进入单仓规划详情', href: '/inventory/planning' },
@@ -215,6 +216,8 @@ export function PlanningDashboardPage() {
       <p className="text-sm text-text-sub">
         统计时间：{formatDateTimeCst(dashboard.data.calculatedAt)}
       </p>
+
+      <DemandSourceCard />
 
       <section className="space-y-3">
         <div>

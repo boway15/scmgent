@@ -11,7 +11,7 @@ import { parseProductScope } from '../lib/planning-accessory-filter.js';
 
 export const inventoryUnallocatedRoutes = new Hono();
 
-const MENU = 'inventory.unallocated';
+const MENU = 'inventory.pools';
 
 inventoryUnallocatedRoutes.get('/inventory/unallocated', requireMenu(MENU), async (c) => {
   const { page, pageSize, offset } = parseListPagination(

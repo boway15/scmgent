@@ -2447,19 +2447,6 @@ export const api = {
     request<{ lotCount: number; eligibleCount: number }>('/api/inventory/pools/sync', {
       method: 'POST',
     }),
-  updateSupplyLot: (
-    id: string,
-    data: {
-      productionStatus?: 'in_production' | 'qc_pending' | 'completed';
-      shipReadyAt?: string | null;
-      latestShipDate?: string | null;
-      remainingLogisticsDays?: number;
-    },
-  ) =>
-    request(`/api/inventory/pools/${id}`, {
-      method: 'PATCH',
-      body: JSON.stringify(data),
-    }),
   getPlanningDashboard: (params?: { productScope?: ProductScope }) => {
     const qs = new URLSearchParams();
     appendProductScopeQuery(qs, params?.productScope);
@@ -2472,6 +2459,35 @@ export const api = {
     const query = qs.toString();
     return request<InventoryRiskCounts>(`/api/planning/dashboard/risk${query ? `?${query}` : ''}`);
   },
+  getPlanningDemandSource: () =>
+    request<{
+      publishedForecast: {
+        versionCount: number;
+        latest: {
+          versionNo: string;
+          versionName: string;
+          station: string | null;
+          startMonth: string | null;
+          publishedAt: string | null;
+        } | null;
+      };
+      demandPlanAdoptions: Array<{
+        projectGroup: string;
+        warehouseCode: string;
+        versionNo: string | null;
+        versionName: string | null;
+        adoptedAt: string;
+      }>;
+      latestHealth: {
+        computedAt: string | null;
+        forecastRows: number;
+        historicalRows: number;
+        sellingSkus: number;
+        sellingForecastSkus: number;
+        sellingHistoricalSkus: number;
+      };
+      salesHistoryMaxDate: string | null;
+    }>('/api/planning/demand-source'),
   getInventoryDataIssues: (params?: {
     status?: string;
     type?: string;
@@ -2556,14 +2572,6 @@ export const api = {
       }
     >(`/api/inventory/unallocated${query ? `?${query}` : ''}`);
   },
-  assignUnallocatedLot: (
-    id: string,
-    data: { assignments: Array<{ warehouseCode: string; qty: number }> },
-  ) =>
-    request<{ items: Array<{ warehouseCode: string; qty: number }> }>(
-      `/api/inventory/unallocated/${id}/assign`,
-      { method: 'POST', body: JSON.stringify(data) },
-    ),
   exportInventoryOverviewCsv: async (params?: {
     q?: string;
     category?: string;
@@ -2615,14 +2623,6 @@ export const api = {
     a.click();
     URL.revokeObjectURL(url);
   },
-  createInventoryRecord: (data: {
-    skuId: string;
-    warehouse: string;
-    qtyAvailable?: number;
-    qtyInTransit?: number;
-    qtyInProduction?: number;
-    recordedDate: string;
-  }) => request('/api/inventory/records', { method: 'POST', body: JSON.stringify(data) }),
   getMerchants: () =>
     request<Array<{ merchantCode: string; merchantName?: string | null }>>('/api/merchants'),
   getWarehouses: () =>
@@ -2911,8 +2911,6 @@ export const api = {
       }>
     >(`/api/reorder/suggestions${query ? `?${query}` : ''}`);
   },
-  updateReorderSuggestion: (id: string, data: { status: 'accepted' | 'ignored'; merchantCode?: string }) =>
-    request(`/api/reorder/suggestions/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
   getPurchaseTracking: (params?: {
     status?: PurchaseDraftStatus;
     page?: number;

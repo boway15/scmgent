@@ -55,6 +55,11 @@ export function normalizePath(path: string): string {
 const RELATED_PATH_ACCESS: Record<string, string> = {
   '/logistics/fob-fee-rules': '/logistics/fob-settlement',
   '/system/menus': '/system/roles',
+  '/inventory/query': '/inventory/overview',
+  '/inventory/procurement-ops': '/inventory/overview',
+  '/inventory/unallocated': '/inventory/pools',
+  '/inventory/lead-time': '/inventory/safety',
+  '/inventory/planning': '/inventory/planning-dashboard',
 };
 
 /** 登录后默认落地页：超级管理员进看板，其余取首个可访问菜单 */

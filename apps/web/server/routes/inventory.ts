@@ -77,7 +77,7 @@ function parseQueryFilters(c: { req: { query: (k: string) => string | undefined 
   };
 }
 
-inventoryRoutes.get('/inventory/query/export', requireMenu('inventory.query'), async (c) => {
+inventoryRoutes.get('/inventory/query/export', requireMenu('inventory.overview'), async (c) => {
   const filters = parseQueryFilters(c);
   const exported = await buildInventoryQueryExportRows(filters);
   const csv = buildCsv(exported.headers, exported.rows);
@@ -85,11 +85,11 @@ inventoryRoutes.get('/inventory/query/export', requireMenu('inventory.query'), a
   return csvAttachment(`inventory-query-${date}-${filters.productScope}.csv`, csv);
 });
 
-inventoryRoutes.get('/inventory/query/dates', requireMenu('inventory.query'), async (c) => {
+inventoryRoutes.get('/inventory/query/dates', requireMenu('inventory.overview'), async (c) => {
   return c.json({ items: await listInventoryQuerySnapshotDates() });
 });
 
-inventoryRoutes.get('/inventory/query', requireMenu('inventory.query'), async (c) => {
+inventoryRoutes.get('/inventory/query', requireMenu('inventory.overview'), async (c) => {
   const { page, pageSize, offset } = parseListPagination(
     c.req.query('page')?.trim(),
     c.req.query('pageSize')?.trim(),
@@ -108,7 +108,7 @@ inventoryRoutes.get('/inventory/query', requireMenu('inventory.query'), async (c
 
 inventoryRoutes.get(
   '/inventory/procurement-ops/export',
-  requireMenu('inventory.procurement_ops'),
+  requireMenu('inventory.overview'),
   async (c) => {
     const filters = parseQueryFilters(c);
     const exported = await buildProcurementOpsExportRows(filters);
@@ -120,7 +120,7 @@ inventoryRoutes.get(
 
 inventoryRoutes.get(
   '/inventory/procurement-ops/dates',
-  requireMenu('inventory.procurement_ops'),
+  requireMenu('inventory.overview'),
   async (c) => {
     return c.json({ items: await listProcurementOpsSnapshotDates() });
   },
@@ -128,7 +128,7 @@ inventoryRoutes.get(
 
 inventoryRoutes.get(
   '/inventory/procurement-ops',
-  requireMenu('inventory.procurement_ops'),
+  requireMenu('inventory.overview'),
   async (c) => {
     const { page, pageSize, offset } = parseListPagination(
       c.req.query('page')?.trim(),

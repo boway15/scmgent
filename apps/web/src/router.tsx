@@ -2,17 +2,16 @@ import { Routes, Route, Navigate } from 'react-router-dom';
 import { AppLayout } from '@/layouts/AppLayout';
 import { RequireAuth } from '@/components/RequireAuth';
 import { LoginPage } from '@/pages/LoginPage';
-import { InventoryOverviewPage } from '@/pages/InventoryOverviewPage';
-import { InventoryQueryPage } from '@/pages/InventoryQueryPage';
-import { ProcurementOpsPage } from '@/pages/ProcurementOpsPage';
+import {
+  InventoryStockPage,
+  InventorySupplyPage,
+  PlanningParamsPage,
+} from '@/pages/InventoryMergedPages';
+import { LegacyTabRedirect } from '@/components/TabbedPage';
 import { SkuInventoryPlanningPage } from '@/pages/SkuInventoryPlanningPage';
 import { SkuPlanningEntryPage } from '@/pages/SkuPlanningEntryPage';
-import { InventoryPoolsPage } from '@/pages/InventoryPoolsPage';
 import { InventoryDataIssuesPage } from '@/pages/InventoryDataIssuesPage';
-import { InventoryUnallocatedPage } from '@/pages/InventoryUnallocatedPage';
 import { PlanningDashboardPage } from '@/pages/PlanningDashboardPage';
-import { LeadTimeProfilesPage } from '@/pages/LeadTimeProfilesPage';
-import { SafetyStockPage } from '@/pages/SafetyStockPage';
 import { AlertsPage } from '@/pages/AlertsPage';
 import { ReorderSuggestionsPage } from '@/pages/ReorderSuggestionsPage';
 import { PurchaseTrackingPage } from '@/pages/PurchaseTrackingPage';
@@ -52,17 +51,29 @@ export function AppRouter() {
         <Route path="/" element={<AppLayout />}>
           <Route index element={<HomeRedirect />} />
           <Route path="dashboard" element={<DashboardPage />} />
-          <Route path="inventory/overview" element={<InventoryOverviewPage />} />
-          <Route path="inventory/query" element={<InventoryQueryPage />} />
-          <Route path="inventory/procurement-ops" element={<ProcurementOpsPage />} />
-          <Route path="inventory/pools" element={<InventoryPoolsPage />} />
+          <Route path="inventory/overview" element={<InventoryStockPage />} />
+          <Route
+            path="inventory/query"
+            element={<LegacyTabRedirect to="/inventory/overview" tab="query" />}
+          />
+          <Route
+            path="inventory/procurement-ops"
+            element={<LegacyTabRedirect to="/inventory/overview" tab="procurement-ops" />}
+          />
+          <Route path="inventory/pools" element={<InventorySupplyPage />} />
           <Route path="inventory/data-issues" element={<InventoryDataIssuesPage />} />
-          <Route path="inventory/unallocated" element={<InventoryUnallocatedPage />} />
+          <Route
+            path="inventory/unallocated"
+            element={<LegacyTabRedirect to="/inventory/pools" tab="unallocated" />}
+          />
           <Route path="inventory/planning-dashboard" element={<PlanningDashboardPage />} />
           <Route path="inventory/planning" element={<SkuPlanningEntryPage />} />
           <Route path="inventory/planning/:skuId" element={<SkuInventoryPlanningPage />} />
-          <Route path="inventory/lead-time" element={<LeadTimeProfilesPage />} />
-          <Route path="inventory/safety" element={<SafetyStockPage />} />
+          <Route
+            path="inventory/lead-time"
+            element={<LegacyTabRedirect to="/inventory/safety" tab="lead-time" />}
+          />
+          <Route path="inventory/safety" element={<PlanningParamsPage />} />
           <Route path="inventory/alerts" element={<AlertsPage />} />
           <Route path="pmc/suggestions" element={<ReorderSuggestionsPage />} />
           <Route path="pmc/list" element={<PmcListPage />} />

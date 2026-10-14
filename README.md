@@ -68,13 +68,16 @@ pnpm dev
 |------|------|------|
 | 经营看板 | `/dashboard` | KPI + 今日待办（登录默认首页） |
 | 角色 + 自定义菜单 | `/system/roles` | 按角色配置可见菜单 |
+| 规划驾驶舱 | `/inventory/planning-dashboard` | 库存健康 / 断货 horizon / 预测覆盖 KPI |
+| 库存概览 | `/inventory/alerts` | 按场景（已断货 / 该发货 / 该下单 / 超备）的行动队列 |
+| 库存查询 | `/inventory/overview` | 页签：库存周转（健康灯）/ 分仓明细 / 全链库存，均为飞书日快照 |
+| 供给池 | `/inventory/pools` | 页签：库存三池批次 / 未定仓供应（只读） |
+| 数据问题 | `/inventory/data-issues` | 同步源数据一致性问题队列 |
+| 规划参数 | `/inventory/safety` | 页签：安全库存（手动 / EOQ）/ 分段交期 |
 | 商品主数据 | `/data/products` | SPU / SKU / 商家 |
-| 销量历史 | `/data/sales` | 查询导入的销量，核对算法输入 |
-| 数据导入 | `/data/import` | 家居品类 Demo CSV（厨房/客厅/卧室等） |
-| 库存总览 | `/inventory/overview` | 多仓库存 + 问 AI |
-| 安全库存 | `/inventory/safety` | 手动 / EOQ 计算 |
-| 缺货预警 | `/inventory/alerts` | 摘要 + 跳转补货建议 |
-| 补货建议 | `/pmc/suggestions` | 本地预测 + 合并 PMC 计划 |
+| 销量历史 | `/data/sales` | 销量查询 + CSV 导入 |
+| 销售预测 | `/data/forecast` | 基线生成、复核、发布（补货主口径） |
+| 补货建议 | `/pmc/suggestions` | 只读建议清单，导出供迅捷下单参考 |
 | PMC 需求计划 | `/pmc/list` | 导出 CSV 下发商家 |
 | 采购跟单 | `/pmc/tracking` | 内部履约台账（非采购单） |
 | 合规管理 | `/compliance/overview` | 完整性看板 + SKU 维护 |

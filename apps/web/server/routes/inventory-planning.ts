@@ -6,7 +6,7 @@ export const inventoryPlanningRoutes = new Hono();
 
 inventoryPlanningRoutes.get(
   '/inventory/planning/:skuId',
-  requireMenu('inventory.planning'),
+  requireMenu('inventory.planning_dashboard'),
   async (c) => {
     const skuId = c.req.param('skuId');
     if (!skuId) return c.json({ message: 'skuId required' }, 400);

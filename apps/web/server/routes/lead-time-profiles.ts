@@ -107,7 +107,7 @@ export function parseLeadTimeProfileInput(
 }
 
 export const leadTimeProfileRoutes = new Hono();
-const leadTimeMenu = requireMenu('inventory.lead_time');
+const leadTimeMenu = requireMenu('inventory.safety');
 
 leadTimeProfileRoutes.get('/lead-time-profiles', leadTimeMenu, async (c) => {
   const { page, pageSize, offset } = parseListPagination(

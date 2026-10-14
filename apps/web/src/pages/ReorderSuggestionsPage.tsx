@@ -4,7 +4,6 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
 import { PageHeader } from '@/components/PageHeader';
 import { ListPagination } from '@/components/ListPagination';
 import { ListSearchBar } from '@/components/ListSearchBar';
@@ -44,9 +43,6 @@ export function ReorderSuggestionsPage() {
   const items = data?.items ?? [];
 
   const [expandedReason, setExpandedReason] = useState<Record<string, boolean>>({});
-  const { data: merchants = [] } = useQuery({ queryKey: ['merchants'], queryFn: api.getMerchants });
-
-  const [merchantOverride, setMerchantOverride] = useState<Record<string, string>>({});
 
   useEffect(() => {
     setKeyword(skuFromUrl);
@@ -60,20 +56,6 @@ export function ReorderSuggestionsPage() {
       qc.invalidateQueries({ queryKey: ['reorder-suggestions'] });
       qc.invalidateQueries({ queryKey: ['safety-stock'] });
     },
-  });
-
-  const acceptSuggestion = useMutation({
-    mutationFn: ({ id, merchantCode }: { id: string; merchantCode?: string }) =>
-      api.updateReorderSuggestion(id, { status: 'accepted', merchantCode }),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['reorder-suggestions'] });
-      qc.invalidateQueries({ queryKey: ['pmc-plans'] });
-    },
-  });
-
-  const ignoreSuggestion = useMutation({
-    mutationFn: (id: string) => api.updateReorderSuggestion(id, { status: 'ignored' }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['reorder-suggestions'] }),
   });
 
   const clearSkuFilter = () => {
@@ -147,7 +129,6 @@ export function ReorderSuggestionsPage() {
                 <th className="p-2 font-normal">需求口径</th>
                 <th className="p-2 font-normal">口径</th>
                 <th className="p-2 font-normal">状态</th>
-                <th className="p-2 font-normal">操作</th>
               </tr>
             </thead>
             <tbody>
@@ -182,15 +163,7 @@ export function ReorderSuggestionsPage() {
                     {item.merchantCode ? (
                       <span className="font-mono">{item.merchantName ?? item.merchantCode}</span>
                     ) : (
-                      <Input
-                        className="h-8 w-28"
-                        placeholder="商家编号"
-                        list="suggestion-merchants"
-                        value={merchantOverride[item.id] ?? ''}
-                        onChange={(e) =>
-                          setMerchantOverride({ ...merchantOverride, [item.id]: e.target.value })
-                        }
-                      />
+                      <span className="text-text-hint">—</span>
                     )}
                   </td>
                   <td className="p-2">
@@ -241,24 +214,18 @@ export function ReorderSuggestionsPage() {
                       </>
                     )}
                   </td>
-                  <td className="p-2 text-xs text-text-sub">—</td>
                 </tr>
               );
               })}
               {!items.length && (
                 <tr>
-                  <td colSpan={12} className="p-4 text-center text-text-hint">
+                  <td colSpan={10} className="p-4 text-center text-text-hint">
                     暂无建议，点击上方「运行补货预测」生成
                   </td>
                 </tr>
               )}
             </tbody>
           </table>
-          <datalist id="suggestion-merchants">
-            {merchants.map((m) => (
-              <option key={m.merchantCode} value={m.merchantCode} />
-            ))}
-          </datalist>
           <ListPagination
             page={page}
             pageSize={pageSize}

@@ -5,6 +5,7 @@ import { api, type ForecastVersionListItem } from '@/lib/api';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { DemandSourceCard } from '@/components/DemandSourceCard';
 import { PageHeader } from '@/components/PageHeader';
 import { ListPagination } from '@/components/ListPagination';
 import { ListSearchBar } from '@/components/ListSearchBar';
@@ -53,15 +54,6 @@ export function SalesForecastListPage() {
     queryKey: ['sales-forecast-versions', 'stats'],
     queryFn: () => api.getSalesForecastVersions({ includeStats: true }),
   });
-
-  const demandPlansQuery = useQuery({
-    queryKey: ['demand-plan-versions', 'pilot-check'],
-    queryFn: () => api.listDemandPlanVersions({ pageSize: 100 }),
-    retry: false,
-  });
-  const hasPublishedDemandPlanPilot = (demandPlansQuery.data?.items ?? []).some(
-    (row) => row.status === 'pilot_published',
-  );
 
   const publishedVersions = useMemo(
     () =>
@@ -258,13 +250,7 @@ export function SalesForecastListPage() {
         </div>
       </PageHeader>
 
-      {hasPublishedDemandPlanPilot ? (
-        <Card className="border-primary/20 bg-primary/5">
-          <CardContent className="py-3 text-sm text-text-sub">
-            采用周计划后：改月预测不改补货建议（仓库在出货/调拨时选择）
-          </CardContent>
-        </Card>
-      ) : null}
+      <DemandSourceCard />
 
       <div className="flex flex-wrap gap-2">
         {(['versions', 'strategy'] as ListTab[]).map((tab) => (

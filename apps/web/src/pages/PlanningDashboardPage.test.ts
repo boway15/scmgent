@@ -53,7 +53,7 @@ describe('PlanningDashboardPage helpers', () => {
     assert.equal(byLabel['待处理补货建议']?.href, '/pmc/suggestions');
     assert.equal(byLabel['数据问题']?.href, '/inventory/data-issues');
     assert.equal(byLabel['数据问题']?.value, '0');
-    assert.equal(byLabel['未定仓供应']?.href, '/inventory/unallocated');
+    assert.equal(byLabel['未定仓供应']?.href, '/inventory/pools?tab=unallocated');
     assert.equal(byLabel['未定仓供应']?.value, '0');
     assert.equal(byLabel['断货风险率（近似）']?.value, '10.0%');
   });

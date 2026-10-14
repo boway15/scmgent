@@ -451,7 +451,7 @@ export function InventoryDataIssuesPage() {
 
                             className="text-xs text-primary hover:underline"
 
-                            to={`/inventory/unallocated?skuId=${encodeURIComponent(row.skuId)}`}
+                            to={`/inventory/pools?tab=unallocated&skuId=${encodeURIComponent(row.skuId)}`}
 
                           >
 

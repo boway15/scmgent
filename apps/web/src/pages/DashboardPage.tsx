@@ -4,6 +4,8 @@ import { api } from '@/lib/api';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { PageHeader } from '@/components/PageHeader';
 import { QueryErrorFallback } from '@/components/QueryErrorFallback';
+import { useCurrentUser, useMyMenus } from '@/hooks/useAuth';
+import { canAccessPath, flattenMenuPaths } from '@/lib/menu-utils';
 import { cn, formatDateTimeCst } from '@/lib/utils';
 
 const PRIORITY_STYLE = {
@@ -17,6 +19,11 @@ export function DashboardPage() {
     queryKey: ['dashboard'],
     queryFn: api.getDashboard,
   });
+  const { data: user } = useCurrentUser();
+  const { data: menus = [] } = useMyMenus();
+  const canOpenPlanningDashboard = user
+    ? canAccessPath('/inventory/planning-dashboard', flattenMenuPaths(menus), user.role.code)
+    : false;
 
   if (isLoading) return <p className="text-text-sub">加载中...</p>;
 
@@ -31,7 +38,7 @@ export function DashboardPage() {
 
   if (!data) return <p className="text-text-sub">加载中...</p>;
 
-  const { kpis, todos, trends, dataFreshness, taskRuns, loopFunnel, forecastContext } = data;
+  const { kpis, todos, trends, dataFreshness, taskRuns, loopFunnel } = data;
   const maxQty = Math.max(...(trends?.salesLast7Days.map((d) => d.qty) ?? [1]), 1);
 
   const formatTaskRun = (label: string, run?: { finishedAt?: string | null; startedAt: string; status: string; resultSummary?: string | null; errorMessage?: string | null } | null) => {
@@ -42,34 +49,34 @@ export function DashboardPage() {
   };
 
   const kpiCards = [
-    { label: '待处理预警', value: kpis.openAlerts, href: '/inventory/alerts', highlight: kpis.openAlerts > 0 },
-    { label: '待采纳补货建议', value: kpis.pendingReorderSuggestions, href: '/pmc/suggestions', highlight: kpis.pendingReorderSuggestions > 0 },
     { label: 'PMC 草稿计划', value: kpis.draftPmcPlans, href: '/pmc/list', highlight: kpis.draftPmcPlans > 0 },
     { label: '进行中计划', value: kpis.activePmcPlans, href: '/pmc/list' },
     { label: '待供应商确认', value: kpis.purchaseTrackingPending, href: '/pmc/tracking' },
     { label: '近 7 天销量', value: kpis.salesQtyLast7Days, href: '/data/sales' },
-    { label: '启用 SKU 数', value: kpis.activeSkus, href: '/data/products' },
   ];
 
   return (
     <div className="space-y-6">
       <PageHeader title="经营看板" description="今日待办与关键指标一览" />
 
-      {(dataFreshness?.latestInventoryDate || dataFreshness?.latestSalesDate || taskRuns || forecastContext) && (
+      {canOpenPlanningDashboard && (
+        <Link to="/inventory/planning-dashboard" className="block">
+          <Card className="border-primary/30 bg-primary/5 transition-shadow hover:shadow-md">
+            <CardContent className="flex flex-wrap items-center justify-between gap-2 py-4 text-sm">
+              <span className="font-medium text-text-main">
+                库存风险、补货建议、预测覆盖与补货口径
+              </span>
+              <span className="text-primary">进入规划驾驶舱 →</span>
+            </CardContent>
+          </Card>
+        </Link>
+      )}
+
+      {(dataFreshness?.latestInventoryDate || dataFreshness?.latestSalesDate || taskRuns) && (
         <Card>
           <CardContent className="grid gap-2 pt-6 text-sm text-text-sub md:grid-cols-2">
             <p>库存最新日期：{dataFreshness?.latestInventoryDate ?? '暂无'}</p>
             <p>销量最新日期：{dataFreshness?.latestSalesDate ?? '暂无'}</p>
-            {forecastContext && (
-              <p className="md:col-span-2">
-                补货口径：{forecastContext.versionNo}
-                {forecastContext.highMapeSkuCount > 0 && (
-                  <span className="ml-2 text-amber-700">
-                    · {forecastContext.highMapeSkuCount} 个 SKU 预测偏差偏高
-                  </span>
-                )}
-              </p>
-            )}
             <p>{formatTaskRun('补货预测', taskRuns?.replenishmentForecast)}</p>
             <p>{formatTaskRun('库存概览更新', taskRuns?.stockAlert)}</p>
           </CardContent>
@@ -84,7 +91,7 @@ export function DashboardPage() {
           </CardHeader>
           <CardContent className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
             {[
-              { label: '待采纳补货', value: loopFunnel.pendingReorderSuggestions, href: '/pmc/suggestions' },
+              { label: '待处理补货建议', value: loopFunnel.pendingReorderSuggestions, href: '/pmc/suggestions' },
               { label: 'PMC 草稿', value: loopFunnel.draftPmcPlans, href: '/pmc/list' },
               { label: '进行中计划', value: loopFunnel.activePmcPlans, href: '/pmc/list' },
               { label: '待供应商确认', value: loopFunnel.trackingPendingConfirm, href: '/pmc/tracking' },
@@ -122,7 +129,7 @@ export function DashboardPage() {
           <CardHeader>
             <CardTitle>近 7 天销量趋势</CardTitle>
             <p className="text-sm text-text-sub">
-              近 7 天未处理预警 {kpis.openAlertsLast7Days} 条 · 30 天共 {trends.salesLast30Days.reduce((s, d) => s + d.qty, 0)} 件
+              近 30 天共 {trends.salesLast30Days.reduce((s, d) => s + d.qty, 0)} 件
             </p>
           </CardHeader>
           <CardContent className="space-y-2">

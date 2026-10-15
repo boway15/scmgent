@@ -31,8 +31,9 @@ import {
 } from './forecast-profile-class.js';
 import {
   buildCompletedCalendarMonths,
-  resolveActualMonthlyDailyAvg,
+  loadActualMonthlyDailyAvgForPairs,
 } from './sales-history-monthly.js';
+import { yieldToEventLoop } from './yield-event-loop.js';
 import { listVersionCompletedBacktestMonths } from './forecast-qty-totals.js';
 import {
   buildReviewItemIdentity,
@@ -57,6 +58,13 @@ export type ForecastAccuracySummary = AccuracyTierSummary & {
 
 type ReviewStatus = 'pending' | 'reviewed' | 'ignored';
 type ReviewItemWriter = Pick<typeof db, 'insert' | 'update'>;
+
+/** 准确率落库批大小，避免单事务过大 */
+const ACCURACY_UPSERT_CHUNK = 250;
+
+function actualDailyLookupKey(skuId: string, channel: string): string {
+  return `${skuId}|${channel}`;
+}
 
 export function shouldRefreshLowAccuracyReviewItem(status: ReviewStatus): boolean {
   return status === 'pending';
@@ -117,7 +125,114 @@ export const FORECAST_ACCURACY_MISS_DETAIL_CSV_HEADERS = [
   '月份',
   '预测日均',
   '实际日均',
+  '原因',
 ] as const;
+
+export type MissReasonInput = {
+  profileSegment?: string | null;
+  hasForecastMatrixRow?: boolean;
+  skuActive?: boolean | null;
+  reviewMessage?: string | null;
+  horizonFactors?: unknown;
+};
+
+function asHorizonFactorRecord(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  return value as Record<string, unknown>;
+}
+
+function horizonFactorText(factors: Record<string, unknown> | null, key: string): string {
+  const value = factors?.[key];
+  return typeof value === 'string' ? value : '';
+}
+
+function horizonFactorNumber(factors: Record<string, unknown> | null, key: string): number | null {
+  const value = factors?.[key];
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value === 'string' && value.trim()) {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+}
+
+function pickMostCommonReason(reasons: string[]): string {
+  const counts = new Map<string, number>();
+  for (const reason of reasons) {
+    counts.set(reason, (counts.get(reason) ?? 0) + 1);
+  }
+  let best = reasons[0] ?? '未匹配到具体跳过原因';
+  let bestCount = 0;
+  for (const [reason, count] of counts) {
+    if (count > bestCount) {
+      best = reason;
+      bestCount = count;
+    }
+  }
+  return best;
+}
+
+/** 漏报行「为何预测为 0」：优先矩阵因子，其次跳过复核项，最后分层兜底 */
+export function classifyMissReason(input: MissReasonInput): string {
+  if (input.skuActive === false) return 'SKU 已停用，未生成有效预测';
+
+  const factors = asHorizonFactorRecord(input.horizonFactors);
+  const segment = input.profileSegment?.trim() || '';
+  const reviewMessage = input.reviewMessage?.trim() || '';
+  const t99FloorMode = horizonFactorText(factors, 't99FloorMode');
+  const t99FloorDaily = horizonFactorNumber(factors, 't99FloorDaily');
+  const ghostGated =
+    factors?.zeroSalesGhostGate === true ||
+    horizonFactorText(factors, 'model') === 'zero_sales_ghost_gate';
+
+  if (ghostGated) {
+    if (segment === 'T4A' || segment === 'T4B') {
+      return `${segment} 近端弱销/走弱，ghost 防控跳过保底`;
+    }
+    if (segment === 'D') return 'D 类近 90 天无销，ghost 防控跳过保底';
+    return '近端弱销/无销，ghost 防控跳过保底';
+  }
+
+  if (
+    t99FloorMode === 'zero_gate_recent30' ||
+    (segment === 'T99' && t99FloorDaily != null && t99FloorDaily <= 0)
+  ) {
+    return 'T99 近30天断销闸，系统保底归零';
+  }
+
+  if (/ghost|跳过保底预测/i.test(reviewMessage)) {
+    if (segment === 'T4A' || segment === 'T4B' || reviewMessage.includes('T4A') || reviewMessage.includes('T4B')) {
+      const tier = segment === 'T4A' || segment === 'T4B'
+        ? segment
+        : reviewMessage.includes('T4A')
+          ? 'T4A'
+          : 'T4B';
+      return `${tier} 近端弱销/走弱，ghost 防控跳过保底`;
+    }
+    if (segment === 'D' || reviewMessage.includes('D 类')) {
+      return 'D 类近 90 天无销，ghost 防控跳过保底';
+    }
+    return '近端弱销/无销，ghost 防控跳过保底';
+  }
+
+  if (reviewMessage.includes('历史不足') || reviewMessage.includes('90 天无销量')) {
+    return '准入未通过：近90天无销或历史不足';
+  }
+  if (reviewMessage.includes('主攻阶段')) {
+    return '主攻阶段：非 T1 跳过预测';
+  }
+  if (reviewMessage.includes('近30天断销')) {
+    return 'T99 近30天断销闸，系统保底归零';
+  }
+  if (reviewMessage.includes('T99') || segment === 'T99') {
+    return 'T99 保守层未出正预测';
+  }
+  if (input.hasForecastMatrixRow === false) {
+    return '未生成该月预测行，复盘月有实销';
+  }
+  if (reviewMessage) return '其他跳过原因，见预测复核项';
+  return '未匹配到具体跳过原因';
+}
 
 export function formatAccuracyDailyDisplay(value: number): string {
   return value.toFixed(2);
@@ -282,47 +397,88 @@ export async function computeForecastAccuracyForMonth(
   let upserted = 0;
   let highMapeCount = 0;
 
-  for (const row of forecastRows) {
-    const forecastDaily = Number(row.forecastDailyAvg);
+  const actualDailyMap = await loadActualMonthlyDailyAvgForPairs({
+    pairs: forecastRows.map((row) => ({ skuId: row.skuId, channel: row.platform })),
+    year: targetYear,
+    month: targetMonth,
+  });
 
-    const { actualDaily } = await resolveActualMonthlyDailyAvg({
-      skuId: row.skuId,
-      channel: row.platform,
-      year: targetYear,
-      month: targetMonth,
-    });
+  const computedAt = new Date();
 
-    if (!shouldPersistAccuracyRow({ forecastDaily, actualDaily })) {
+  for (let offset = 0; offset < forecastRows.length; offset += ACCURACY_UPSERT_CHUNK) {
+    const chunk = forecastRows.slice(offset, offset + ACCURACY_UPSERT_CHUNK);
+    type AccuracyUpsertRow = {
+      skuId: string;
+      station: string;
+      platform: string;
+      forecastYear: number;
+      month: number;
+      versionId: string;
+      forecastDailyAvg: string;
+      actualDailyAvg: string;
+      biasRate: string | null;
+      mape: string | null;
+      computedAt: Date;
+    };
+    const accuracyRows: AccuracyUpsertRow[] = [];
+    const reviewDrafts: ReviewItemDraft[] = [];
+
+    for (const row of chunk) {
+      const forecastDaily = Number(row.forecastDailyAvg);
+      const actualDaily =
+        actualDailyMap.get(actualDailyLookupKey(row.skuId, row.platform)) ?? 0;
+
+      if (!shouldPersistAccuracyRow({ forecastDaily, actualDaily })) {
+        continue;
+      }
+
+      const profileClass = (row.forecastProfileClass as ProfileClass | null) ?? null;
+      const { biasRate, mape } = computeAccuracyRowMetrics({ forecastDaily, actualDaily });
+
+      if (shouldCreateLowAccuracyReviewItem({ mape, actualDaily, forecastDaily })) {
+        highMapeCount++;
+        if (options?.createReviewItems !== false) {
+          reviewDrafts.push(
+            buildLowAccuracyReviewItem({
+              skuId: row.skuId,
+              skuCode: row.skuCode,
+              station: row.station,
+              platform: row.platform,
+              targetYear,
+              targetMonth,
+              mape,
+              actualDaily,
+              forecastDaily,
+              profileClass,
+            }),
+          );
+        }
+      }
+
+      accuracyRows.push({
+        skuId: row.skuId,
+        station: row.station,
+        platform: row.platform,
+        forecastYear: targetYear,
+        month: targetMonth,
+        versionId,
+        forecastDailyAvg: String(forecastDaily),
+        actualDailyAvg: String(actualDaily),
+        biasRate: biasRate != null ? String(biasRate) : null,
+        mape: mape != null ? String(mape) : null,
+        computedAt,
+      });
+    }
+
+    if (accuracyRows.length === 0) {
+      await yieldToEventLoop();
       continue;
     }
-
-    const profileClass = (row.forecastProfileClass as ProfileClass | null) ?? null;
-    const { biasRate, mape } = computeAccuracyRowMetrics({ forecastDaily, actualDaily });
-
-    if (shouldCreateLowAccuracyReviewItem({ mape, actualDaily, forecastDaily })) {
-      highMapeCount++;
-    }
-
-    const values = {
-      forecastDailyAvg: String(forecastDaily),
-      actualDailyAvg: String(actualDaily),
-      biasRate: biasRate != null ? String(biasRate) : null,
-      mape: mape != null ? String(mape) : null,
-      computedAt: new Date(),
-    };
 
     await db.transaction(async (tx) => {
       await tx
         .insert(forecastAccuracyMonthly)
-        .values({
-          skuId: row.skuId,
-          station: row.station,
-          platform: row.platform,
-          forecastYear: targetYear,
-          month: targetMonth,
-          versionId,
-          ...values,
-        })
+        .values(accuracyRows)
         .onConflictDoUpdate({
           target: [
             forecastAccuracyMonthly.skuId,
@@ -332,32 +488,22 @@ export async function computeForecastAccuracyForMonth(
             forecastAccuracyMonthly.month,
             forecastAccuracyMonthly.versionId,
           ],
-          set: values,
+          set: {
+            forecastDailyAvg: sql`excluded.forecast_daily_avg`,
+            actualDailyAvg: sql`excluded.actual_daily_avg`,
+            biasRate: sql`excluded.bias_rate`,
+            mape: sql`excluded.mape`,
+            computedAt: sql`excluded.computed_at`,
+          },
         });
 
-      if (
-        options?.createReviewItems !== false &&
-        shouldCreateLowAccuracyReviewItem({ mape, actualDaily, forecastDaily })
-      ) {
-        await upsertLowAccuracyReviewItem(
-          tx,
-          versionId,
-          buildLowAccuracyReviewItem({
-            skuId: row.skuId,
-            skuCode: row.skuCode,
-            station: row.station,
-            platform: row.platform,
-            targetYear,
-            targetMonth,
-            mape,
-            actualDaily,
-            forecastDaily,
-            profileClass,
-          }),
-        );
+      for (const item of reviewDrafts) {
+        await upsertLowAccuracyReviewItem(tx, versionId, item);
       }
     });
-    upserted++;
+
+    upserted += accuracyRows.length;
+    await yieldToEventLoop();
   }
 
   return {
@@ -580,6 +726,10 @@ export async function listForecastAccuracy(params?: {
       mape: forecastAccuracyMonthly.mape,
       computedAt: forecastAccuracyMonthly.computedAt,
       profileSegment: salesForecastMonthly.profileSegment,
+      horizonFactors: salesForecastMonthly.horizonFactors,
+      skuActive: skus.isActive,
+      forecastMatrixId: salesForecastMonthly.id,
+      skipReviewMessage: salesForecastReviewItems.message,
     })
     .from(forecastAccuracyMonthly)
     .innerJoin(skus, eq(skus.id, forecastAccuracyMonthly.skuId))
@@ -592,6 +742,16 @@ export async function listForecastAccuracy(params?: {
         eq(salesForecastMonthly.platform, forecastAccuracyMonthly.platform),
         eq(salesForecastMonthly.forecastYear, forecastAccuracyMonthly.forecastYear),
         eq(salesForecastMonthly.month, forecastAccuracyMonthly.month),
+      ),
+    )
+    .leftJoin(
+      salesForecastReviewItems,
+      and(
+        eq(salesForecastReviewItems.versionId, forecastAccuracyMonthly.versionId),
+        eq(salesForecastReviewItems.skuId, forecastAccuracyMonthly.skuId),
+        eq(salesForecastReviewItems.station, forecastAccuracyMonthly.station),
+        eq(salesForecastReviewItems.platform, forecastAccuracyMonthly.platform),
+        eq(salesForecastReviewItems.issueType, 'forecast_skipped'),
       ),
     )
     .$dynamic();
@@ -610,6 +770,13 @@ export async function listForecastAccuracy(params?: {
 
   return {
     items: rows.map((r) => {
+      const {
+        horizonFactors,
+        skuActive,
+        forecastMatrixId,
+        skipReviewMessage,
+        ...rest
+      } = r;
       const forecastDailyAvg = Number(r.forecastDailyAvg);
       const actualDailyAvg = Number(r.actualDailyAvg);
       const metrics = computeAccuracyRowMetrics({
@@ -618,8 +785,17 @@ export async function listForecastAccuracy(params?: {
       });
       const profileSegment = r.profileSegment?.trim() || null;
       const projectGroup = r.projectGroup?.trim() || null;
+      const missReason = metrics.isZeroForecastMiss
+        ? classifyMissReason({
+            profileSegment,
+            hasForecastMatrixRow: Boolean(forecastMatrixId),
+            skuActive,
+            reviewMessage: skipReviewMessage,
+            horizonFactors,
+          })
+        : null;
       return {
-        ...r,
+        ...rest,
         forecastMonth: formatForecastMonth(r.forecastYear, r.month),
         forecastDailyAvg,
         actualDailyAvg,
@@ -630,6 +806,7 @@ export async function listForecastAccuracy(params?: {
         profileSegment,
         profileSegmentLabel: profileSegment ? segmentLabel(profileSegment) : null,
         isZeroForecastMiss: metrics.isZeroForecastMiss,
+        missReason,
       };
     }),
     total: countRow[0]?.count ?? 0,
@@ -673,6 +850,10 @@ export async function buildForecastAccuracyExportCsv(params: {
       actualDailyAvg: forecastAccuracyMonthly.actualDailyAvg,
       mape: forecastAccuracyMonthly.mape,
       profileSegment: salesForecastMonthly.profileSegment,
+      horizonFactors: salesForecastMonthly.horizonFactors,
+      skuActive: skus.isActive,
+      forecastMatrixId: salesForecastMonthly.id,
+      skipReviewMessage: salesForecastReviewItems.message,
     })
     .from(forecastAccuracyMonthly)
     .innerJoin(skus, eq(skus.id, forecastAccuracyMonthly.skuId))
@@ -685,6 +866,16 @@ export async function buildForecastAccuracyExportCsv(params: {
         eq(salesForecastMonthly.platform, forecastAccuracyMonthly.platform),
         eq(salesForecastMonthly.forecastYear, forecastAccuracyMonthly.forecastYear),
         eq(salesForecastMonthly.month, forecastAccuracyMonthly.month),
+      ),
+    )
+    .leftJoin(
+      salesForecastReviewItems,
+      and(
+        eq(salesForecastReviewItems.versionId, forecastAccuracyMonthly.versionId),
+        eq(salesForecastReviewItems.skuId, forecastAccuracyMonthly.skuId),
+        eq(salesForecastReviewItems.station, forecastAccuracyMonthly.station),
+        eq(salesForecastReviewItems.platform, forecastAccuracyMonthly.platform),
+        eq(salesForecastReviewItems.issueType, 'forecast_skipped'),
       ),
     )
     .where(where)
@@ -716,7 +907,18 @@ export async function buildForecastAccuracyExportCsv(params: {
         formatAccuracyDailyDisplay(forecastDailyAvg),
         formatAccuracyDailyDisplay(actualDailyAvg),
       ];
-      if (rowKind === 'miss') return base;
+      if (rowKind === 'miss') {
+        return [
+          ...base,
+          classifyMissReason({
+            profileSegment,
+            hasForecastMatrixRow: Boolean(r.forecastMatrixId),
+            skuActive: r.skuActive,
+            reviewMessage: r.skipReviewMessage,
+            horizonFactors: r.horizonFactors,
+          }),
+        ];
+      }
       return [...base, formatAccuracyBiasVsActualDisplay(biasVsActual)];
     }),
   );
@@ -756,6 +958,10 @@ export async function buildForecastAccuracySkuExportCsv(params: {
       forecastDailyAvg: forecastAccuracyMonthly.forecastDailyAvg,
       actualDailyAvg: forecastAccuracyMonthly.actualDailyAvg,
       profileSegment: salesForecastMonthly.profileSegment,
+      horizonFactors: salesForecastMonthly.horizonFactors,
+      skuActive: skus.isActive,
+      forecastMatrixId: salesForecastMonthly.id,
+      skipReviewMessage: salesForecastReviewItems.message,
     })
     .from(forecastAccuracyMonthly)
     .innerJoin(skus, eq(skus.id, forecastAccuracyMonthly.skuId))
@@ -768,6 +974,16 @@ export async function buildForecastAccuracySkuExportCsv(params: {
         eq(salesForecastMonthly.platform, forecastAccuracyMonthly.platform),
         eq(salesForecastMonthly.forecastYear, forecastAccuracyMonthly.forecastYear),
         eq(salesForecastMonthly.month, forecastAccuracyMonthly.month),
+      ),
+    )
+    .leftJoin(
+      salesForecastReviewItems,
+      and(
+        eq(salesForecastReviewItems.versionId, forecastAccuracyMonthly.versionId),
+        eq(salesForecastReviewItems.skuId, forecastAccuracyMonthly.skuId),
+        eq(salesForecastReviewItems.station, forecastAccuracyMonthly.station),
+        eq(salesForecastReviewItems.platform, forecastAccuracyMonthly.platform),
+        eq(salesForecastReviewItems.issueType, 'forecast_skipped'),
       ),
     )
     .where(where)
@@ -783,11 +999,20 @@ export async function buildForecastAccuracySkuExportCsv(params: {
       profileSegment: string;
       missRows: number;
       actualSum: number;
+      reasons: string[];
     };
     const byKey = new Map<string, MissSkuAgg>();
     for (const row of rows) {
       const key = `${row.skuCode}|${row.station}|${row.platform}`;
       const actualDaily = Number(row.actualDailyAvg);
+      const profileSegment = row.profileSegment?.trim() || '';
+      const missReason = classifyMissReason({
+        profileSegment,
+        hasForecastMatrixRow: Boolean(row.forecastMatrixId),
+        skuActive: row.skuActive,
+        reviewMessage: row.skipReviewMessage,
+        horizonFactors: row.horizonFactors,
+      });
       let agg = byKey.get(key);
       if (!agg) {
         agg = {
@@ -796,20 +1021,22 @@ export async function buildForecastAccuracySkuExportCsv(params: {
           projectGroup: row.projectGroup?.trim() || '',
           station: row.station,
           platform: row.platform,
-          profileSegment: row.profileSegment?.trim() || '',
+          profileSegment,
           missRows: 0,
           actualSum: 0,
+          reasons: [],
         };
         byKey.set(key, agg);
       }
       if (!agg.projectGroup && row.projectGroup?.trim()) {
         agg.projectGroup = row.projectGroup.trim();
       }
-      if (!agg.profileSegment && row.profileSegment?.trim()) {
-        agg.profileSegment = row.profileSegment.trim();
+      if (!agg.profileSegment && profileSegment) {
+        agg.profileSegment = profileSegment;
       }
       agg.missRows += 1;
       agg.actualSum += actualDaily;
+      agg.reasons.push(missReason);
     }
 
     const skuRows = [...byKey.values()]
@@ -817,7 +1044,7 @@ export async function buildForecastAccuracySkuExportCsv(params: {
       .slice(0, limit);
 
     const csv = buildCsv(
-      ['商品编码', '项目组', '商品分层', '渠道', '漏报行数', '实际日均合计'],
+      ['商品编码', '项目组', '商品分层', '渠道', '漏报行数', '实际日均合计', '原因'],
       skuRows.map((r) => [
         r.skuCode,
         r.projectGroup || '-',
@@ -825,6 +1052,7 @@ export async function buildForecastAccuracySkuExportCsv(params: {
         r.platform,
         r.missRows,
         formatAccuracyDailyDisplay(r.actualSum),
+        pickMostCommonReason(r.reasons),
       ]),
     );
     return { csv, rowCount: skuRows.length };

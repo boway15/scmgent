@@ -4847,6 +4847,7 @@ export const api = {
         profileSegment: string | null;
         profileSegmentLabel: string | null;
         isZeroForecastMiss?: boolean;
+        missReason?: string | null;
       }>;
       summary: string;
       total: number;
@@ -4988,12 +4989,12 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(body ?? {}),
     }),
-  backtestSalesForecastAccuracy: (body?: {
+  backtestSalesForecastAccuracy: async (body?: {
     monthCount?: number;
     versionId?: string;
     createReviewItems?: boolean;
-  }) =>
-    request<{
+  }) => {
+    type BacktestResult = {
       monthCount: number;
       monthResults: Array<{
         year: number;
@@ -5005,10 +5006,59 @@ export const api = {
       totalUpserted: number;
       totalHighMapeCount: number;
       summary: string;
+    };
+
+    const started = await request<{
+      async: true;
+      taskRunId: string;
+      status: 'running';
     }>('/api/sales-forecasts/accuracy/backtest', {
       method: 'POST',
       body: JSON.stringify(body ?? {}),
-    }),
+    });
+
+    const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+    for (let attempt = 0; attempt < 600; attempt++) {
+      await sleep(attempt < 5 ? 2000 : 5000);
+      const task = await request<{
+        taskRunId: string;
+        status: 'running' | 'success' | 'failed';
+        errorMessage: string | null;
+        result: BacktestResult | null;
+      }>(`/api/sales-forecasts/accuracy/backtest/tasks/${encodeURIComponent(started.taskRunId)}`);
+
+      if (task.status === 'running') continue;
+      if (task.status === 'failed') {
+        throw new Error(task.errorMessage ?? '准确率回测失败');
+      }
+      if (task.result) return task.result;
+      throw new Error('回测任务已完成但未返回结果');
+    }
+
+    throw new Error('准确率回测超时，请稍后在系统任务中查看是否已完成');
+  },
+  getSalesForecastAccuracyBacktestTask: (taskRunId: string) =>
+    request<{
+      taskRunId: string;
+      status: 'running' | 'success' | 'failed';
+      startedAt: string;
+      finishedAt: string | null;
+      errorMessage: string | null;
+      result: {
+        monthCount: number;
+        monthResults: Array<{
+          year: number;
+          month: number;
+          upserted: number;
+          highMapeCount: number;
+          skipped?: boolean;
+        }>;
+        totalUpserted: number;
+        totalHighMapeCount: number;
+        summary: string;
+      } | null;
+    }>(`/api/sales-forecasts/accuracy/backtest/tasks/${encodeURIComponent(taskRunId)}`),
   walkForwardSalesForecastAccuracy: (body?: {
     asOf?: string;
     monthCount?: number;
@@ -5124,6 +5174,7 @@ export const api = {
           profileSegment: string | null;
           profileSegmentLabel: string | null;
           isZeroForecastMiss?: boolean;
+          missReason?: string | null;
         }>;
         total: number;
         page: number;

@@ -8,6 +8,7 @@ export type TaskName =
   | 'inventory_exception_scan'
   | 'daily_inventory_pipeline'
   | 'forecast_accuracy'
+  | 'forecast_accuracy_backtest'
   | 'forecast_baseline'
   | 'news_ingest'
   | 'procurement_bulk_stock_push'

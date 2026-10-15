@@ -10,6 +10,13 @@ import { yieldToEventLoop } from './yield-event-loop.js';
 /** 月表批量 upsert 时 SKU IN 列表上限，避免超长 SQL */
 const MONTHLY_UPSERT_SKU_CHUNK = 2000;
 
+/** 批量解析实际日均时 SKU IN 列表上限 */
+const ACTUAL_DAILY_SKU_CHUNK = 2000;
+
+function actualDailyPairKey(skuId: string, channel: string): string {
+  return `${skuId}|${channel}`;
+}
+
 export const DEFAULT_MONTHLY_HISTORY_LOOKBACK_MONTHS = 36;
 
 export type MonthlySalesQtyRow = {
@@ -304,6 +311,179 @@ export async function loadSkuMonthlySalesRows(
     month: row.month,
     qtySold: Number(row.qtySold),
   }));
+}
+
+/**
+ * 批量解析指定自然月的实际日均（与 resolveActualMonthlyDailyAvg 同源：日表优先，否则月表）。
+ * channel 为 ALL 时不按渠道过滤，与日表 sum 全渠道一致。
+ */
+export async function loadActualMonthlyDailyAvgForPairs(input: {
+  pairs: Array<{ skuId: string; channel: string }>;
+  year: number;
+  month: number;
+}): Promise<Map<string, number>> {
+  const result = new Map<string, number>();
+  if (input.pairs.length === 0) return result;
+
+  const dim = daysInCalendarMonth(input.year, input.month);
+  const monthStart = monthStartDate(input.year, input.month);
+  const monthEnd = new Date(input.year, input.month, 0).toISOString().slice(0, 10);
+
+  const uniquePairs = new Map<string, { skuId: string; channel: string }>();
+  for (const pair of input.pairs) {
+    uniquePairs.set(actualDailyPairKey(pair.skuId, pair.channel), pair);
+  }
+
+  const allPlatformSkuIds = new Set<string>();
+  const channelPairsBySku = new Map<string, Set<string>>();
+  for (const pair of uniquePairs.values()) {
+    if (pair.channel === 'ALL') {
+      allPlatformSkuIds.add(pair.skuId);
+      continue;
+    }
+    const channels = channelPairsBySku.get(pair.skuId) ?? new Set<string>();
+    channels.add(pair.channel);
+    channelPairsBySku.set(pair.skuId, channels);
+  }
+
+  const dailyTotals = new Map<string, number>();
+
+  const skuIdsForChannelDaily = [...channelPairsBySku.keys()];
+  for (let i = 0; i < skuIdsForChannelDaily.length; i += ACTUAL_DAILY_SKU_CHUNK) {
+    const chunk = skuIdsForChannelDaily.slice(i, i + ACTUAL_DAILY_SKU_CHUNK);
+    const channelFilter = [...new Set(chunk.flatMap((skuId) => [...(channelPairsBySku.get(skuId) ?? [])]))];
+    if (channelFilter.length === 0) continue;
+
+    const rows = await db
+      .select({
+        skuId: salesHistory.skuId,
+        channel: salesHistory.channel,
+        totalQty: sql<number>`coalesce(sum(${salesHistory.qtySold}), 0)::int`,
+      })
+      .from(salesHistory)
+      .where(
+        and(
+          inArray(salesHistory.skuId, chunk),
+          inArray(salesHistory.channel, channelFilter),
+          gte(salesHistory.saleDate, monthStart),
+          lte(salesHistory.saleDate, monthEnd),
+        ),
+      )
+      .groupBy(salesHistory.skuId, salesHistory.channel);
+
+    for (const row of rows) {
+      dailyTotals.set(actualDailyPairKey(row.skuId, row.channel), Number(row.totalQty) || 0);
+    }
+  }
+
+  const allSkuList = [...allPlatformSkuIds];
+  for (let i = 0; i < allSkuList.length; i += ACTUAL_DAILY_SKU_CHUNK) {
+    const chunk = allSkuList.slice(i, i + ACTUAL_DAILY_SKU_CHUNK);
+    const rows = await db
+      .select({
+        skuId: salesHistory.skuId,
+        totalQty: sql<number>`coalesce(sum(${salesHistory.qtySold}), 0)::int`,
+      })
+      .from(salesHistory)
+      .where(
+        and(
+          inArray(salesHistory.skuId, chunk),
+          gte(salesHistory.saleDate, monthStart),
+          lte(salesHistory.saleDate, monthEnd),
+        ),
+      )
+      .groupBy(salesHistory.skuId);
+
+    for (const row of rows) {
+      dailyTotals.set(actualDailyPairKey(row.skuId, 'ALL'), Number(row.totalQty) || 0);
+    }
+  }
+
+  const needsMonthly: Array<{ skuId: string; channel: string }> = [];
+  for (const pair of uniquePairs.values()) {
+    const dailyTotal = dailyTotals.get(actualDailyPairKey(pair.skuId, pair.channel)) ?? 0;
+    if (dailyTotal > 0) {
+      result.set(actualDailyPairKey(pair.skuId, pair.channel), dailyTotal / dim);
+    } else {
+      needsMonthly.push(pair);
+    }
+  }
+
+  if (needsMonthly.length === 0) return result;
+
+  const monthlyTotals = new Map<string, number>();
+  const monthlyAllSkuIds = new Set<string>();
+  const monthlyChannelPairsBySku = new Map<string, Set<string>>();
+  for (const pair of needsMonthly) {
+    if (pair.channel === 'ALL') {
+      monthlyAllSkuIds.add(pair.skuId);
+      continue;
+    }
+    const channels = monthlyChannelPairsBySku.get(pair.skuId) ?? new Set<string>();
+    channels.add(pair.channel);
+    monthlyChannelPairsBySku.set(pair.skuId, channels);
+  }
+
+  const monthlySkuIdsForChannel = [...monthlyChannelPairsBySku.keys()];
+  for (let i = 0; i < monthlySkuIdsForChannel.length; i += ACTUAL_DAILY_SKU_CHUNK) {
+    const chunk = monthlySkuIdsForChannel.slice(i, i + ACTUAL_DAILY_SKU_CHUNK);
+    const channelFilter = [...new Set(chunk.flatMap((skuId) => [...(monthlyChannelPairsBySku.get(skuId) ?? [])]))];
+    if (channelFilter.length === 0) continue;
+
+    const rows = await db
+      .select({
+        skuId: salesHistoryMonthly.skuId,
+        channel: salesHistoryMonthly.channel,
+        qtySold: sql<number>`coalesce(sum(${salesHistoryMonthly.qtySold}::float8), 0)`,
+      })
+      .from(salesHistoryMonthly)
+      .where(
+        and(
+          inArray(salesHistoryMonthly.skuId, chunk),
+          inArray(salesHistoryMonthly.channel, channelFilter),
+          eq(salesHistoryMonthly.saleYear, input.year),
+          eq(salesHistoryMonthly.month, input.month),
+        ),
+      )
+      .groupBy(salesHistoryMonthly.skuId, salesHistoryMonthly.channel);
+
+    for (const row of rows) {
+      monthlyTotals.set(actualDailyPairKey(row.skuId, row.channel), Number(row.qtySold) || 0);
+    }
+  }
+
+  const monthlyAllSkuList = [...monthlyAllSkuIds];
+  for (let i = 0; i < monthlyAllSkuList.length; i += ACTUAL_DAILY_SKU_CHUNK) {
+    const chunk = monthlyAllSkuList.slice(i, i + ACTUAL_DAILY_SKU_CHUNK);
+    const rows = await db
+      .select({
+        skuId: salesHistoryMonthly.skuId,
+        qtySold: sql<number>`coalesce(sum(${salesHistoryMonthly.qtySold}::float8), 0)`,
+      })
+      .from(salesHistoryMonthly)
+      .where(
+        and(
+          inArray(salesHistoryMonthly.skuId, chunk),
+          eq(salesHistoryMonthly.saleYear, input.year),
+          eq(salesHistoryMonthly.month, input.month),
+        ),
+      )
+      .groupBy(salesHistoryMonthly.skuId);
+
+    for (const row of rows) {
+      monthlyTotals.set(actualDailyPairKey(row.skuId, 'ALL'), Number(row.qtySold) || 0);
+    }
+  }
+
+  for (const pair of needsMonthly) {
+    const monthlyTotal = monthlyTotals.get(actualDailyPairKey(pair.skuId, pair.channel)) ?? 0;
+    result.set(
+      actualDailyPairKey(pair.skuId, pair.channel),
+      monthlyTotal > 0 ? monthlyTotal / dim : 0,
+    );
+  }
+
+  return result;
 }
 
 export async function resolveActualMonthlyDailyAvg(input: {

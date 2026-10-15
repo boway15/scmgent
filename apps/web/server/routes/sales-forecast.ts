@@ -46,7 +46,6 @@ import {
 } from '../lib/forecast-validation.js';
 import {
   listForecastAccuracy,
-  computeForecastAccuracyBacktest,
   summarizeForecastAccuracy,
   buildForecastAccuracyExportCsv,
   buildForecastAccuracySkuExportCsv,
@@ -80,6 +79,10 @@ import {
   runBaselineForecastTask,
   parseBaselineTaskResult,
 } from '../lib/forecast-baseline-task.js';
+import {
+  parseAccuracyBacktestTaskResult,
+  runForecastAccuracyBacktestTask,
+} from '../lib/forecast-accuracy-backtest-task.js';
 import { getTaskRunById, startTaskRun } from '../lib/task-runs.js';
 import {
   countActiveSkusForForecast,
@@ -1449,25 +1452,51 @@ salesForecastRoutes.post(
       }
     }
 
-    const result = await computeForecastAccuracyBacktest({
+    const run = await startTaskRun('forecast_accuracy_backtest', user.id);
+    void runForecastAccuracyBacktestTask(run.id, {
       monthCount: body.monthCount,
       versionId: body.versionId,
       createReviewItems: body.createReviewItems ?? true,
+      triggeredByUserId: user.id,
+    }).catch((err) => {
+      console.error('[forecast] background accuracy backtest task error:', err);
     });
 
-    await writeAuditLog(c, {
-      action: 'sales_forecast.accuracy_backtest',
-      resourceType: 'forecast_accuracy_monthly',
-      resourceId: body.versionId,
-      detail: {
-        monthCount: result.monthCount,
-        totalUpserted: result.totalUpserted,
-        totalHighMapeCount: result.totalHighMapeCount,
+    return c.json(
+      {
+        async: true,
+        taskRunId: run.id,
+        status: 'running' as const,
       },
-      user,
-    });
+      202,
+    );
+  },
+);
 
-    return c.json(result);
+salesForecastRoutes.get(
+  '/sales-forecasts/accuracy/backtest/tasks/:taskRunId',
+  requireMenu('data.forecast'),
+  async (c) => {
+    const taskRunId = c.req.param('taskRunId')?.trim();
+    if (!taskRunId) {
+      return c.json({ message: 'taskRunId is required' }, 400);
+    }
+
+    const run = await getTaskRunById(taskRunId);
+    if (!run || run.taskName !== 'forecast_accuracy_backtest') {
+      return c.json({ message: 'Task run not found' }, 404);
+    }
+
+    const result =
+      run.status === 'success' ? parseAccuracyBacktestTaskResult(run.resultSummary) : null;
+    return c.json({
+      taskRunId: run.id,
+      status: run.status,
+      startedAt: run.startedAt,
+      finishedAt: run.finishedAt,
+      errorMessage: run.errorMessage,
+      result,
+    });
   },
 );
 

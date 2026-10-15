@@ -449,7 +449,7 @@ export function SalesForecastVersionDetailPage() {
               )}
               {accuracyListTab === 'miss' && (
                 <p className="text-sm text-text-sub">
-                  漏报：预测日均=0 且实际日均&gt;0。不计入上方「预测值 / 实际值」与主 KPI。
+                  漏报：预测日均=0 且实际日均&gt;0。不计入上方「预测值 / 实际值」与主 KPI。原因列说明系统为何给出 0 预测。
                 </p>
               )}
               <table className="min-w-full text-sm">
@@ -464,14 +464,16 @@ export function SalesForecastVersionDetailPage() {
                     <th className="p-2 font-normal">实际日均</th>
                     {accuracyListTab === 'detail' ? (
                       <th className="p-2 font-normal">偏差</th>
-                    ) : null}
+                    ) : (
+                      <th className="p-2 font-normal">原因</th>
+                    )}
                   </tr>
                 </thead>
                 <tbody>
                   {accuracyListItems.length === 0 ? (
                     <tr>
                       <td
-                        colSpan={accuracyListTab === 'detail' ? 8 : 7}
+                        colSpan={8}
                         className="p-4 text-center text-text-sub"
                       >
                         {accuracyListTab === 'miss'
@@ -497,7 +499,9 @@ export function SalesForecastVersionDetailPage() {
                               ? `${row.biasVsActual >= 0 ? '+' : ''}${(row.biasVsActual * 100).toFixed(1)}%`
                               : '-'}
                           </td>
-                        ) : null}
+                        ) : (
+                          <td className="max-w-[22rem] p-2 text-text-sub">{row.missReason || '-'}</td>
+                        )}
                       </tr>
                     ))
                   )}

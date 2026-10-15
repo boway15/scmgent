@@ -106,6 +106,7 @@ export const TASK_NAME_LABELS: Record<string, string> = {
   daily_inventory_pipeline: '每日库存流水线',
   supply_lot_sync: '三池批次同步',
   forecast_accuracy: '预测准确率计算',
+  forecast_accuracy_backtest: '预测准确率批量回测',
   forecast_baseline: '预测基线生成',
   sales_history_maintenance: '销售历史维护',
   procurement_bulk_stock_push: '备货需求飞书推送',

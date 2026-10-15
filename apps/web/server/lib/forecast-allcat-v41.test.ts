@@ -959,10 +959,43 @@ describe('forecast-allcat-v41', () => {
     );
     assert.equal(
       isAllCatV41RecentSalesAbsent({
-        recent30DailyAvg: 0.8,
+        recent30DailyAvg: 0.25,
         recent90DailyAvg: 1.4,
         metrics: { q1: 30, active2: 2, trendRatio: 0.6 },
         tier: 'T4B',
+      }),
+      true,
+    );
+  });
+
+  it('T4 declining ghost does not skip when recent30 still has meaningful volume', () => {
+    // DJ478585_2 类：近30≈1.7、近90≈3.5，走弱比 <0.65，但近端不低 → 不漏预测
+    assert.equal(
+      isAllCatV41RecentSalesAbsent({
+        recent30DailyAvg: 1.7,
+        recent90DailyAvg: 3.48,
+        metrics: { q1: 51, active2: 2, trendRatio: 0.5 },
+        tier: 'T4B',
+      }),
+      false,
+    );
+    // DJ503624_1 类：Amazon 近30≈0.67 ≥ 0.3 门槛，走弱但不整单跳过
+    assert.equal(
+      isAllCatV41RecentSalesAbsent({
+        recent30DailyAvg: 0.67,
+        recent90DailyAvg: 1.58,
+        metrics: { q1: 20, active2: 2, trendRatio: 0.42 },
+        tier: 'T4B',
+      }),
+      false,
+    );
+    // 近端绝对量仍低于放宽门槛时，走弱比仍可 ghost（仅 T4）
+    assert.equal(
+      isAllCatV41RecentSalesAbsent({
+        recent30DailyAvg: 0.25,
+        recent90DailyAvg: 1.2,
+        metrics: { q1: 12, active2: 2, trendRatio: 1 },
+        tier: 'T4A',
       }),
       true,
     );

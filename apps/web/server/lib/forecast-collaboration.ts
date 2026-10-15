@@ -1344,7 +1344,7 @@ async function generateBaselineForStationPlatform(input: {
           platform,
           issueType: 'forecast_skipped',
           severity: 'info',
-          message: `${sku.code} ${anchorTier} 近端零销，已跳过保底预测（ghost 防控）`,
+          message: `${sku.code} ${anchorTier} 近端弱销/走弱，已跳过保底预测（ghost 防控）`,
           suggestedDailyAvg: 0,
         });
         continue;
@@ -1405,7 +1405,7 @@ async function generateBaselineForStationPlatform(input: {
               platform,
               issueType: 'forecast_skipped',
               severity: 'info',
-              message: `${sku.code} ${anchorTier} 近端零销，已跳过保底预测（ghost 防控）`,
+              message: `${sku.code} ${anchorTier} 近端弱销/走弱，已跳过保底预测（ghost 防控）`,
               suggestedDailyAvg: 0,
             });
           }

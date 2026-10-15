@@ -273,6 +273,13 @@ export const V41_T4_WEAK_Q1_DAILY_MIN = 0.3;
 export const V41_T4_DECLINING_RECENT_RATIO_MAX = 0.65;
 /** 日历趋势低于此值时 T4 直接 ghost */
 export const V41_T4_GHOST_TREND_RATIO_MAX = 0.65;
+/**
+ * T4 走弱 / 趋势 ghost 的近端绝对量门槛（仅 T4A/T4B）。
+ * 近 30 日均 ≥ 此值时：仍有实质销量，不因「走弱比」整单跳过（避免漏预测）；
+ * 零销 / 双弱门槛仍独立生效。不作用于 T2 及更早分层。
+ * 0.3 ≈ 近月约 9 件；略宽于弱销门槛，减少有量尾部因走弱漏预测。
+ */
+export const V41_T4_DECLINING_GHOST_RECENT30_MAX = 0.3;
 
 /** 低量 SKU（d6/近端偏低）预测上界，抑制极低分母导致 WMAPE 爆表 */
 export const V41_MICRO_D6_MAX = 0.5;
@@ -339,10 +346,21 @@ export function isAllCatV41RecentSalesAbsent(input: {
     if (q1Daily > 0 && q1Daily < V41_T4_WEAK_Q1_DAILY_MIN && recent30 < V41_T4_WEAK_RECENT30_MIN) {
       return true;
     }
-    if (recent90 > 0 && recent30 > 0 && recent30 / recent90 < V41_T4_DECLINING_RECENT_RATIO_MAX) {
+    // 近端仍有实质销量时，不因走弱比 / trendRatio 整单跳过（修漏预测；T2 及更早不受影响）
+    const decliningMayGhost = recent30 < V41_T4_DECLINING_GHOST_RECENT30_MAX;
+    if (
+      decliningMayGhost &&
+      recent90 > 0 &&
+      recent30 > 0 &&
+      recent30 / recent90 < V41_T4_DECLINING_RECENT_RATIO_MAX
+    ) {
       return true;
     }
-    if (input.metrics?.trendRatio != null && input.metrics.trendRatio < V41_T4_GHOST_TREND_RATIO_MAX) {
+    if (
+      decliningMayGhost &&
+      input.metrics?.trendRatio != null &&
+      input.metrics.trendRatio < V41_T4_GHOST_TREND_RATIO_MAX
+    ) {
       return true;
     }
   }

@@ -74,17 +74,24 @@ const SHARE_COLUMN_WAREHOUSES = new Set(
   ),
 );
 
+/** 网络池和未拆分池仍回退全站；有占比列的物理仓按份额拆。 */
+const SHARE_STATION_FALLBACK_WAREHOUSES = new Set(['ALL', 'OVERSEAS', 'IN-PRODUCTION']);
+
 /**
  * 分仓需求占比（全站预测 → 目的仓）。
  * - 有占比列的仓：取归一化占比；该 SKU 在此仓无份额 → 0
- * - SKU 无任何占比，或仓本身无占比列（如 UK）→ null，调用方回退全站需求并标 no_share
+ * - SKU 已有其他仓占比，但本仓没有占比列（如 UK）→ 0，不再把全站需求记到这个仓
+ * - SKU 无任何占比，或网络池 / OVERSEAS → null，调用方回退全站需求并标 no_share
  */
 export function resolveWarehouseDemandShare(
   warehouseCode: string,
   parsed: ShareParseResult,
 ): number | null {
   if (parsed.method !== 'sales_share') return null;
-  if (!SHARE_COLUMN_WAREHOUSES.has(warehouseCode)) return null;
+  if (!SHARE_COLUMN_WAREHOUSES.has(warehouseCode)) {
+    if (SHARE_STATION_FALLBACK_WAREHOUSES.has(warehouseCode)) return null;
+    return 0;
+  }
   return parsed.weights.find((row) => row.warehouse === warehouseCode)?.weight ?? 0;
 }
 

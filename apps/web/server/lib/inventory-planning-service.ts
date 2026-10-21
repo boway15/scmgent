@@ -22,6 +22,8 @@ import {
   type InventoryPositionBreakdown,
 } from './inventory-position.js';
 import {
+  resolveLeadTimeForSkuWarehouse,
+  resolveNetworkOrderLeadDays,
   resolvePreShipmentLeadTimeForSku,
   type ResolvedLeadTime,
 } from './lead-time-resolver.js';
@@ -62,11 +64,12 @@ import {
   DEFAULT_SAFETY_STOCK_DAYS,
 } from './replenishment-coverage.js';
 import {
-  computeRecentSkuWmape,
   evaluateDemandGate,
   isDemandReconstructCapHit,
   stockoutDaysFromInStockRatio,
+  summarizePrecisionWindow,
 } from './planning-demand-gate.js';
+import { parseProfileSegment, profileClassFromSegment } from './forecast-profile-class.js';
 import { buildLatePoActions, type LatePoAction } from './planning-late-po-actions.js';
 import { isAccessorySku } from './sku-encoding.js';
 import {
@@ -74,6 +77,7 @@ import {
   UNALLOCATED_TRANSIT_WAREHOUSE,
 } from './inventory-constants.js';
 import { DEMAND_PLAN_WAREHOUSE_ALL } from './demand-plan-config.js';
+import { poolNetworkSafetyStockQty } from './network-replenishment.js';
 import { loadPlanningDemandForSkuWarehouse } from './demand-plan-load.js';
 
 export type NetworkSupplyPools = {
@@ -467,6 +471,9 @@ export async function getSkuNetworkPlanningView(params: {
     map: new Map<string, number>(),
     lifecycle: undefined,
     versionId: null,
+    profileSegment: undefined,
+    profileClass: null,
+    p90Map: undefined,
   };
   const planningDemand = await loadPlanningDemandForSkuWarehouse({
     skuId: sku.id,
@@ -479,23 +486,52 @@ export async function getSkuNetworkPlanningView(params: {
       ? 'forecast'
       : 'historical';
 
-  const networkSafety = policies
+  const safetyStockDays = policies
     .filter((row) => !NETWORK_VIEW_EXCLUDED_WAREHOUSES.has(row.warehouseCode))
     .reduce(
-      (acc, row) => ({
-        safetyStockDays: Math.max(
-          acc.safetyStockDays,
-          row.safetyStockDays ?? DEFAULT_SAFETY_STOCK_DAYS,
-        ),
-        safetyStockQty: acc.safetyStockQty + (row.safetyStockQty ?? 0),
-      }),
-      { safetyStockDays: DEFAULT_SAFETY_STOCK_DAYS, safetyStockQty: 0 },
+      (max, row) => Math.max(max, row.safetyStockDays ?? DEFAULT_SAFETY_STOCK_DAYS),
+      DEFAULT_SAFETY_STOCK_DAYS,
     );
-
-  const leadTime: ResolvedLeadTime = {
-    ...lead,
-    warehouseCode: DEMAND_PLAN_WAREHOUSE_ALL,
+  const networkSafety = {
+    safetyStockDays,
+    safetyStockQty: poolNetworkSafetyStockQty({
+      networkAvgDaily: avgDaily,
+      safetyStockDays,
+    }),
   };
+
+  const shareParsed = parseSharesFromSnapshot(readTurnoverSnapshot(sku.encodingMeta));
+  const leadWarehouses = physicalCodes.filter((code) => {
+    const weight = shareParsed.weights.find((row) => row.warehouse === code)?.weight ?? 0;
+    const hasLot = openLotRows.some((lot) => lot.warehouseCode === code && Number(lot.qty) > 0);
+    return weight > 0 || hasLot;
+  });
+  const fullLeads = await Promise.all(
+    leadWarehouses.map((warehouseCode) =>
+      resolveLeadTimeForSkuWarehouse({
+        skuId: sku.id,
+        merchantCode: sku.merchantCode,
+        warehouseCode,
+        skuLeadTimeDays: sku.leadTimeDays,
+      }),
+    ),
+  );
+  const networkLeadDays = resolveNetworkOrderLeadDays({
+    productionDays: lead.totalLeadDays,
+    warehouseLeadDays: fullLeads.map((row) => row.totalLeadDays),
+  });
+  const longest = fullLeads.reduce<ResolvedLeadTime | null>(
+    (best, row) => (!best || row.totalLeadDays > best.totalLeadDays ? row : best),
+    null,
+  );
+  const leadTime: ResolvedLeadTime =
+    longest && longest.totalLeadDays >= lead.totalLeadDays
+      ? { ...longest, warehouseCode: DEMAND_PLAN_WAREHOUSE_ALL }
+      : {
+          ...lead,
+          totalLeadDays: networkLeadDays,
+          warehouseCode: DEMAND_PLAN_WAREHOUSE_ALL,
+        };
 
   const supplyPools = aggregateNetworkSupplyPools(openLots);
   const [positions, healthByWarehouse] = await Promise.all([
@@ -534,6 +570,11 @@ export async function getSkuNetworkPlanningView(params: {
       skuId: sku.id,
       avgDaily,
       forecastMap: forecastEntry.map,
+      farHorizon: {
+        profileClass:
+          forecastEntry.profileClass ?? profileClassFromSegment(forecastEntry.profileSegment),
+        p90: forecastEntry.p90Map,
+      },
       totalLeadDays: leadTime.totalLeadDays,
       safetyStockDays: networkSafety.safetyStockDays,
       safetyStockQty: networkSafety.safetyStockQty,
@@ -700,6 +741,24 @@ export async function getSkuPlanningView(params: {
     versionId: null,
   };
   const share = parseSharesFromSnapshot(readTurnoverSnapshot(sku.encodingMeta));
+  const planningDemand = await loadPlanningDemandForSkuWarehouse({
+    skuId: sku.id,
+    warehouseCode: warehouse.code,
+    championForecastMap: forecastEntry.map,
+  });
+  const accuracyRows = await db
+    .select({
+      station: forecastAccuracyMonthly.station,
+      platform: forecastAccuracyMonthly.platform,
+      forecastYear: forecastAccuracyMonthly.forecastYear,
+      month: forecastAccuracyMonthly.month,
+      forecastDailyAvg: forecastAccuracyMonthly.forecastDailyAvg,
+      actualDailyAvg: forecastAccuracyMonthly.actualDailyAvg,
+      computedAt: forecastAccuracyMonthly.computedAt,
+    })
+    .from(forecastAccuracyMonthly)
+    .where(eq(forecastAccuracyMonthly.skuId, sku.id));
+  const accuracySummary = summarizePrecisionWindow(accuracyRows);
   const health = await computeSkuWarehouseHealth({
     sku: {
       id: sku.id,
@@ -714,6 +773,8 @@ export async function getSkuPlanningView(params: {
     policyMap: new Map(policies.map((policy) => [policy.warehouseCode, policy])),
     forecastByStation: new Map(),
     forecastEntry,
+    planningDemand,
+    forecastErrorStdDev: accuracySummary.errorStdDev,
     share,
     moq: sku.skuMoq || sku.spuMoq || undefined,
   });
@@ -782,19 +843,6 @@ export async function getSkuPlanningView(params: {
     snapshotDate,
   });
 
-  const accuracyRows = await db
-    .select({
-      station: forecastAccuracyMonthly.station,
-      platform: forecastAccuracyMonthly.platform,
-      forecastYear: forecastAccuracyMonthly.forecastYear,
-      month: forecastAccuracyMonthly.month,
-      forecastDailyAvg: forecastAccuracyMonthly.forecastDailyAvg,
-      actualDailyAvg: forecastAccuracyMonthly.actualDailyAvg,
-      computedAt: forecastAccuracyMonthly.computedAt,
-    })
-    .from(forecastAccuracyMonthly)
-    .where(eq(forecastAccuracyMonthly.skuId, sku.id));
-
   const [demandAudit] = await db
     .select({
       unconstrainedRecentDaily: demandPlanMonthly.unconstrainedRecentDaily,
@@ -825,7 +873,8 @@ export async function getSkuPlanningView(params: {
     }),
     unconstrainedDaily: unconstrained,
     stockoutDays: stockoutDaysFromInStockRatio(demandAudit?.inStockDayRatio),
-    recentWmape: computeRecentSkuWmape(accuracyRows),
+    recentWmape: accuracySummary.wmape,
+    segment: parseProfileSegment(forecastEntry.profileSegment),
   });
 
   let latePoActions: LatePoAction[] | undefined;

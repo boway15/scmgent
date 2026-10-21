@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { resolveNetworkSkuAlertAction } from './alert-sku-network-classify.js';
+import {
+  networkShippingLeadDays,
+  resolveNetworkSkuAlertAction,
+} from './alert-sku-network-classify.js';
 import type { AlertListSupply } from './alert-list-supply.js';
 
 function supply(partial: Partial<AlertListSupply>): AlertListSupply {
@@ -30,6 +33,19 @@ function supply(partial: Partial<AlertListSupply>): AlertListSupply {
     ...partial,
   };
 }
+
+describe('networkShippingLeadDays', () => {
+  it('uses the longest shipping lead among the SKU warehouses', () => {
+    assert.equal(
+      networkShippingLeadDays(['US-WEST', 'DE'], new Map([['DE', 90]])),
+      90,
+    );
+    assert.equal(
+      networkShippingLeadDays(['US-WEST', 'DE'], new Map([['US-WEST', 20]])),
+      80,
+    );
+  });
+});
 
 describe('resolveNetworkSkuAlertAction', () => {
   it('does not mark a SKU as order when network full coverage is far beyond 120 days', () => {

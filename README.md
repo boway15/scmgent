@@ -97,6 +97,7 @@ Header：`X-Cron-Secret`（与 `CRON_SECRET` 一致）。时区：`Asia/Shanghai
 |------|------|-----|
 | 缺货预警 | `0 7 * * *` | `POST /api/tasks/stock-alert` |
 | 库存周转拉取 | `30 7 * * *` | `POST /api/tasks/inventory-turnover-pull` |
+| 销量飞书拉取 | `0 5 * * *` | `POST /api/tasks/sales-daily-feishu-pull` |
 | 跨境资讯 | `0 8 * * *` | `POST /api/tasks/news-ingest` |
 | 大件备货拉取 | `0 8 * * *` | `POST /api/tasks/procurement-bulk-stock-pull` |
 | 采购跟单拉取 | `5 8 * * *` | `POST /api/tasks/procurement-follow-up-pull` |

@@ -16,6 +16,8 @@ import { getRegionPoolSnapshot } from '../lib/inventory-snapshot.js';
 import { shouldDeferReplenishment, US_WAREHOUSE_CODES } from '../lib/warehouse-domain.js';
 import {
   collapseSkuReplenishmentCandidates,
+  poolNetworkSafetyStockQty,
+  sumNetworkAvgDaily,
   type NetworkTimelineOverride,
   type ReplenishmentCandidate,
 } from '../lib/network-replenishment.js';
@@ -38,10 +40,14 @@ import {
 import {
   saveHealthSnapshots,
   supersedeAllPendingSuggestionsForSku,
+  supersedePendingSuggestionsForSkus,
 } from '../lib/inventory-health-store.js';
+import { parseProfileSegment, profileClassFromSegment } from '../lib/forecast-profile-class.js';
+import { pendingSkuIdsToExpire } from '../lib/suggestion-expiry.js';
 import { syncReplenishLightFromHealth } from '../lib/replenish-light-sync.js';
 import { loadDailySalesBySkuIds } from '../lib/sales-history-query.js';
 import { replenishmentSalesLookbackDays } from '../lib/sales-history-config.js';
+import { calcForwardAvgDaily } from '../lib/forecast-demand.js';
 import { loadMergedPublishedForecastBySkuIds } from '../lib/forecast-published-resolve.js';
 import {
   buildSkuNetworkTimeline,
@@ -49,6 +55,7 @@ import {
 } from '../lib/inventory-timeline-service.js';
 import {
   resolveLeadTimeFromCaches,
+  resolveNetworkOrderLeadDays,
   resolvePreShipmentLeadTimeForSku,
 } from '../lib/lead-time-resolver.js';
 import {
@@ -68,8 +75,12 @@ import {
 import { IN_PRODUCTION_WAREHOUSE } from '../lib/inventory-constants.js';
 import { DEMAND_PLAN_WAREHOUSE_ALL } from '../lib/demand-plan-config.js';
 import {
-  computeRecentSkuWmape,
+  loadPlanningDemandDepsForSkus,
+  loadPlanningDemandForSkuWarehouse,
+} from '../lib/demand-plan-load.js';
+import {
   evaluateDemandGate,
+  summarizePrecisionWindow,
   isDemandReconstructCapHit,
   stockoutDaysFromInStockRatio,
 } from '../lib/planning-demand-gate.js';
@@ -166,13 +177,14 @@ export async function runReplenishmentForecast() {
   const physicalWarehouseCodes = whRows.map((wh) => wh.code);
   const demandWindowDays = replenishmentSalesLookbackDays();
 
-  const [salesBySkuId, forecastBySkuId, policyBySku, positionByKey, leadTimeCaches] =
+  const [salesBySkuId, forecastBySkuId, policyBySku, positionByKey, leadTimeCaches, planningBundle] =
     await Promise.all([
       loadDailySalesBySkuIds(skuIds),
       loadMergedPublishedForecastBySkuIds(skuIds),
       loadPolicyMapsBySkuIds(skuIds),
       loadLatestInventorySnapshotsBySkuIds(skuIds, physicalWarehouseCodes),
       loadLeadTimeCaches(skuIds),
+      loadPlanningDemandDepsForSkus(skuIds),
     ]);
 
   const noForecastSkuIds = skuIds.filter((id) => {
@@ -191,6 +203,7 @@ export async function runReplenishmentForecast() {
     });
 
   const accuracyBySku = new Map<string, number>();
+  const errorStdDevBySku = new Map<string, number>();
   const demandAuditBySkuWh = new Map<
     string,
     { unconstrainedRecentDaily: string | null; inStockDayRatio: string | null; source: string | null }
@@ -216,8 +229,11 @@ export async function runReplenishmentForecast() {
       accuracyRowsBySku.set(row.skuId, list);
     }
     for (const [skuId, rows] of accuracyRowsBySku) {
-      const wmape = computeRecentSkuWmape(rows);
-      if (wmape != null) accuracyBySku.set(skuId, wmape);
+      const summary = summarizePrecisionWindow(rows);
+      if (summary.wmape != null) accuracyBySku.set(skuId, summary.wmape);
+      if (summary.errorStdDev != null && summary.errorStdDev > 0) {
+        errorStdDevBySku.set(skuId, summary.errorStdDev);
+      }
     }
 
     const auditRows = await db
@@ -265,6 +281,9 @@ export async function runReplenishmentForecast() {
       map: new Map<string, number>(),
       lifecycle: undefined,
       versionId: null,
+      profileSegment: undefined,
+      profileClass: null,
+      p90Map: undefined,
     };
     const forecastByStation = new Map<
       string,
@@ -290,6 +309,14 @@ export async function runReplenishmentForecast() {
         },
         leadTimeCaches,
       );
+      const planningDemand = await loadPlanningDemandForSkuWarehouse(
+        {
+          skuId: sku.id,
+          warehouseCode: wh.code,
+          championForecastMap: forecastEntry.map,
+        },
+        planningBundle.deps,
+      );
       const health = await computeSkuWarehouseHealth({
         sku,
         warehouse: wh,
@@ -297,6 +324,8 @@ export async function runReplenishmentForecast() {
         policyMap,
         forecastByStation,
         forecastEntry,
+        planningDemand,
+        forecastErrorStdDev: errorStdDevBySku.get(sku.id) ?? null,
         share,
         moq: effectiveMoq || undefined,
         caches: {
@@ -472,6 +501,7 @@ export async function runReplenishmentForecast() {
           : null;
       const demandGate = evaluateDemandGate({
         recentWmape: accuracyBySku.get(sku.id) ?? null,
+        segment: parseProfileSegment(forecastEntry.profileSegment),
         reconstructCapHit: isDemandReconstructCapHit({
           source: demandAudit?.source,
           unconstrainedDaily: unconstrained,
@@ -544,24 +574,68 @@ export async function runReplenishmentForecast() {
             row.warehouseCode !== IN_PRODUCTION_WAREHOUSE &&
             row.warehouseCode !== 'OVERSEAS',
         );
-        const safetyStockQty = policyRows.reduce(
-          (sum, row) => sum + (row.safetyStockQty ?? 0),
-          0,
-        );
         const safetyStockDays = policyRows.reduce(
           (max, row) => Math.max(max, row.safetyStockDays ?? DEFAULT_SAFETY_STOCK_DAYS),
           DEFAULT_SAFETY_STOCK_DAYS,
         );
-        const networkAvgDaily = Object.values(dailyByWh).reduce((sum, daily) => sum + daily, 0);
+        const networkPlanning = await loadPlanningDemandForSkuWarehouse(
+          {
+            skuId: sku.id,
+            warehouseCode: DEMAND_PLAN_WAREHOUSE_ALL,
+            championForecastMap: forecastEntry.map,
+          },
+          planningBundle.deps,
+        );
+        const planForward =
+          networkPlanning.source === 'demand_plan'
+            ? calcForwardAvgDaily(networkPlanning.demandMap, new Date(), 90, 0)
+            : 0;
+        const forecastForward =
+          planForward > 0
+            ? planForward
+            : hasForecast
+              ? calcForwardAvgDaily(forecastEntry.map, new Date(), 90, 0)
+              : 0;
+        const networkDemand = sumNetworkAvgDaily({
+          rows: whRows.map((wh) => {
+            const row = healthRows.find(
+              (health) => health.skuId === sku.id && health.warehouseCode === wh.code,
+            );
+            return {
+              warehouseCode: wh.code,
+              avgDaily: dailyByWh[wh.code] ?? 0,
+              demandShareFallback: row?.metrics.demandShareFallback === true,
+            };
+          }),
+          forecastForwardAvg: forecastForward > 0 ? forecastForward : null,
+        });
+        const networkAvgDaily = networkDemand.avgDaily;
+        const safetyStockQty = poolNetworkSafetyStockQty({
+          networkAvgDaily,
+          safetyStockDays,
+        });
         const lead = await resolvePreShipmentLeadTimeForSku({
           skuId: sku.id,
           merchantCode: sku.merchantCode,
           skuLeadTimeDays: sku.leadTimeDays,
         });
+        const networkLeadDays = resolveNetworkOrderLeadDays({
+          productionDays: lead.totalLeadDays,
+          warehouseLeadDays: skuCandidates.map((candidate) => candidate.totalLeadDays),
+        });
         const networkTimeline = await buildSkuNetworkTimeline({
           skuId: sku.id,
           avgDaily: networkAvgDaily,
-          totalLeadDays: lead.totalLeadDays,
+          forecastMap:
+            networkPlanning.source === 'demand_plan'
+              ? networkPlanning.demandMap
+              : forecastEntry.map,
+          farHorizon: {
+            profileClass:
+              forecastEntry.profileClass ?? profileClassFromSegment(forecastEntry.profileSegment),
+            p90: forecastEntry.p90Map,
+          },
+          totalLeadDays: networkLeadDays,
           safetyStockDays,
           safetyStockQty,
           moq: effectiveMoq || undefined,
@@ -570,7 +644,7 @@ export async function runReplenishmentForecast() {
           suggestedQty: networkTimeline.suggestedQty,
           suggestedDate:
             networkTimeline.timeline.reorderDate ?? networkTimeline.timeline.today,
-          totalLeadDays: lead.totalLeadDays,
+          totalLeadDays: networkLeadDays,
           stockoutDate: networkTimeline.timeline.stockoutDateConfirmed,
           metrics: {
             timelineSuggestedQty: networkTimeline.suggestedQty,
@@ -578,6 +652,7 @@ export async function runReplenishmentForecast() {
             timelineReorderDate: networkTimeline.timeline.reorderDate,
             timelineToday: networkTimeline.timeline.today,
             uncoverableByNewPo: networkTimeline.timeline.uncoverableByNewPo,
+            networkExcludedFallbackWarehouses: networkDemand.excludedWarehouses,
           },
         };
       } catch (err) {
@@ -635,6 +710,12 @@ export async function runReplenishmentForecast() {
       console.warn('[replenishmentForecast] enhancement skipped:', err);
     }
   }
+
+  const expireSkuIds = pendingSkuIdsToExpire({
+    processedSkuIds: activeSkus.map((sku) => sku.id),
+    keptSkuIds: eligibleItems.map((item) => item.skuId),
+  });
+  await supersedePendingSuggestionsForSkus(expireSkuIds);
 
   for (const item of eligibleItems) {
     await supersedeAllPendingSuggestionsForSku(item.skuId);

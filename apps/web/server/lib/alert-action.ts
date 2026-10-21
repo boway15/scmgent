@@ -9,6 +9,42 @@ export const ORDER_TIGHT_MAX_DAYS = 90;
 export const ORDER_MAX_DAYS = 120;
 export const HEALTHY_MAX_DAYS = 150;
 export const MILD_OVERSTOCK_MAX_DAYS = 180;
+const DEFAULT_ALERT_SAFETY_DAYS = 14;
+
+export type AlertCoverageBands = {
+  orderTightMax: number;
+  orderMax: number;
+  healthyMax: number;
+  mildOverstockMax: number;
+};
+
+/** 未传总提前期时保持 90/120/150/180。传入后按下单窗口上移，避免长交期仓在交期内仍显示健康。 */
+export function alertCoverageBands(input?: {
+  totalLeadDays?: number | null;
+  safetyStockDays?: number | null;
+}): AlertCoverageBands {
+  const total =
+    input?.totalLeadDays != null && Number.isFinite(input.totalLeadDays) && input.totalLeadDays > 0
+      ? input.totalLeadDays
+      : null;
+  if (total == null) {
+    return {
+      orderTightMax: ORDER_TIGHT_MAX_DAYS,
+      orderMax: ORDER_MAX_DAYS,
+      healthyMax: HEALTHY_MAX_DAYS,
+      mildOverstockMax: MILD_OVERSTOCK_MAX_DAYS,
+    };
+  }
+  const safety =
+    input?.safetyStockDays != null && input.safetyStockDays > 0
+      ? input.safetyStockDays
+      : DEFAULT_ALERT_SAFETY_DAYS;
+  const orderTightMax = Math.max(ORDER_TIGHT_MAX_DAYS, total);
+  const orderMax = Math.max(ORDER_MAX_DAYS, total + safety);
+  const healthyMax = Math.max(HEALTHY_MAX_DAYS, orderMax + 30);
+  const mildOverstockMax = Math.max(MILD_OVERSTOCK_MAX_DAYS, healthyMax + 30);
+  return { orderTightMax, orderMax, healthyMax, mildOverstockMax };
+}
 export const OVERSTOCK_MAX_DAYS = 300;
 export const NEAR_STOCKOUT_GUARD_DAYS = 120;
 
@@ -120,6 +156,8 @@ export function resolveAlertAction(input: {
   shippingLeadDays: number;
   hasShippableLots: boolean;
   noise: boolean;
+  totalLeadDays?: number | null;
+  safetyStockDays?: number | null;
 }): { action: AlertAction; priceReason: PriceReason | null } {
   if (input.noise) return { action: 'none', priceReason: null };
 
@@ -145,25 +183,32 @@ export function resolveAlertAction(input: {
 
   if (full == null) return { action: 'none', priceReason: null };
 
+  const bands = alertCoverageBands({
+    totalLeadDays: input.totalLeadDays,
+    safetyStockDays: input.safetyStockDays,
+  });
   const nearStockout = ship != null && ship <= NEAR_STOCKOUT_GUARD_DAYS;
   if (full > OVERSTOCK_MAX_DAYS && !nearStockout) {
     return { action: 'confirmed_slow', priceReason: null };
   }
-  if (full > MILD_OVERSTOCK_MAX_DAYS && !nearStockout) {
+  if (full > bands.mildOverstockMax && !nearStockout) {
     return { action: 'overstock', priceReason: null };
   }
-  if (nearStockout && full > MILD_OVERSTOCK_MAX_DAYS) {
-    return orderBand(ship ?? full);
+  if (nearStockout && full > bands.mildOverstockMax) {
+    return orderBand(ship ?? full, bands.orderTightMax);
   }
-  if (full <= ORDER_TIGHT_MAX_DAYS) return { action: 'order_tight', priceReason: null };
-  if (full <= ORDER_MAX_DAYS) return { action: 'order', priceReason: null };
-  if (full <= HEALTHY_MAX_DAYS) return { action: 'healthy', priceReason: null };
-  if (full <= MILD_OVERSTOCK_MAX_DAYS) return { action: 'mild_overstock', priceReason: null };
+  if (full <= bands.orderTightMax) return { action: 'order_tight', priceReason: null };
+  if (full <= bands.orderMax) return { action: 'order', priceReason: null };
+  if (full <= bands.healthyMax) return { action: 'healthy', priceReason: null };
+  if (full <= bands.mildOverstockMax) return { action: 'mild_overstock', priceReason: null };
   return { action: 'healthy', priceReason: null };
 }
 
-function orderBand(days: number): { action: AlertAction; priceReason: null } {
-  if (days <= ORDER_TIGHT_MAX_DAYS) return { action: 'order_tight', priceReason: null };
+function orderBand(
+  days: number,
+  orderTightMax: number,
+): { action: AlertAction; priceReason: null } {
+  if (days <= orderTightMax) return { action: 'order_tight', priceReason: null };
   return { action: 'order', priceReason: null };
 }
 
@@ -176,6 +221,8 @@ export function resolveAlertLevel(input: {
   action: AlertAction;
   shipDays: number | null;
   profileClass: string | null;
+  fullDays?: number | null;
+  totalLeadDays?: number | null;
 }): AlertLevel | null {
   if (input.action === 'none' || input.action === 'healthy') return null;
   const klass = input.profileClass?.trim().toUpperCase() ?? '';
@@ -191,6 +238,16 @@ export function resolveAlertLevel(input: {
     input.action === 'price' ||
     input.action === 'ship_urgent' ||
     (ship != null && ship <= 7)
+  ) {
+    return 'l2';
+  }
+  const cover = finiteDays(input.fullDays ?? null) ?? ship;
+  if (
+    input.action === 'order_tight' &&
+    input.totalLeadDays != null &&
+    input.totalLeadDays > 0 &&
+    cover != null &&
+    cover <= input.totalLeadDays
   ) {
     return 'l2';
   }

@@ -9,7 +9,9 @@ import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { api, type SupplyLotBatchFilters, type SupplyLotRow, type SupplyLotSummaryFilters, type SupplyLotSummaryRow } from '@/lib/api';
 import { ProductScopeSwitch } from '@/components/ProductScopeSwitch';
+import { SegmentedControl } from '@/components/SegmentedControl';
 import { useProductScope, type ProductScope } from '@/lib/product-scope';
+import { cn } from '@/lib/utils';
 
 const VIEW_MODES = [
   { id: 'summary' as const, label: '汇总视图' },
@@ -137,9 +139,19 @@ function FilterChip({
   onClick: () => void;
 }) {
   return (
-    <Button type="button" size="sm" variant={active ? 'default' : 'outline'} onClick={onClick}>
+    <button
+      type="button"
+      aria-pressed={active}
+      onClick={onClick}
+      className={cn(
+        'h-8 rounded-md border px-3 text-sm transition-colors',
+        active
+          ? 'border-primary bg-accent text-accent-foreground'
+          : 'border-border bg-card text-text-sub hover:bg-muted hover:text-text-main',
+      )}
+    >
       {label}
-    </Button>
+    </button>
   );
 }
 
@@ -265,7 +277,7 @@ export function InventoryPoolsPage() {
     <div className="space-y-6">
       <PageHeader
         title="库存三池"
-        description="汇总视图按 SKU×目的仓展示本地 / 在库 / 在途 / 最近到货，展开可看该行批次明细。单池逐批查看请切换「批次明细」；批次信息以迅捷 / 飞书同步为准，本页只读。无可用日不进时间轴。"
+        description="按 SKU × 目的仓查看本地、在库、在途和最近到货，展开行可看批次。数据以迅捷 / 飞书为准，本页只读。"
       >
         <div className="flex flex-wrap gap-2">
           <Button variant="outline" disabled={exporting || !total} onClick={() => void onExport()}>
@@ -283,36 +295,28 @@ export function InventoryPoolsPage() {
         </p>
       )}
 
-      <ProductScopeSwitch />
-
-      <div className="flex flex-wrap gap-2">
-        {VIEW_MODES.map((mode) => (
-          <Button
-            key={mode.id}
-            variant={viewMode === mode.id ? 'default' : 'outline'}
-            onClick={() => setViewMode(mode.id)}
-          >
-            {mode.label}
-          </Button>
-        ))}
-      </div>
-
-      {viewMode === 'batches' && (
-        <div className="flex flex-wrap gap-2">
-          {POOL_TABS.map((tab) => (
-            <Button
-              key={tab.id}
-              variant={pool === tab.id ? 'default' : 'outline'}
-              onClick={() => {
-                setPool(tab.id);
+      <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
+        <ProductScopeSwitch />
+        <div className="flex flex-wrap items-center gap-2">
+          <SegmentedControl
+            aria-label="视图"
+            value={viewMode}
+            options={VIEW_MODES}
+            onChange={setViewMode}
+          />
+          {viewMode === 'batches' ? (
+            <SegmentedControl
+              aria-label="库存池"
+              value={pool}
+              options={POOL_TABS}
+              onChange={(id) => {
+                setPool(id);
                 setPage(1);
               }}
-            >
-              {tab.label}
-            </Button>
-          ))}
+            />
+          ) : null}
         </div>
-      )}
+      </div>
 
       {viewMode === 'batches' && dateUnknownCount > 0 && (
         <Card className="border-amber-200 bg-amber-50">
@@ -376,7 +380,7 @@ export function InventoryPoolsPage() {
               重置
             </Button>
           </div>
-          <div className="flex flex-wrap gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             {viewMode === 'summary' ? (
               <>
                 <FilterChip
@@ -408,10 +412,10 @@ export function InventoryPoolsPage() {
                 onClick={() => setDateUnknownOnly((v) => !v)}
               />
             )}
+            <span className="text-xs text-text-hint">
+              快捷条件需点「应用筛选」后生效，导出按已应用的条件导出全部匹配行。
+            </span>
           </div>
-          <p className="text-xs text-text-hint">
-            快捷筛选需点击「应用筛选」生效；导出 CSV 会按当前已应用的筛选条件导出全部匹配行。
-          </p>
         </CardContent>
       </Card>
 

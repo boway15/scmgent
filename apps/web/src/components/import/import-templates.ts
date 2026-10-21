@@ -7,6 +7,7 @@ export type ImportResultSummary = {
   updatedSkus?: number;
   enrichedSkus?: number;
   insertedDailyRows?: number;
+  updatedDailyRows?: number;
   skippedDailyRows?: number;
   upsertedMonthlyRows?: number;
   batchStatus?: string;
@@ -15,6 +16,7 @@ export type ImportResultSummary = {
 export function formatImportResult(r: ImportResultSummary): string {
   if (r.insertedDailyRows != null) {
     const parts = [`日销量新增 ${r.insertedDailyRows.toLocaleString()} 条`];
+    if (r.updatedDailyRows) parts.push(`覆盖已有 ${r.updatedDailyRows.toLocaleString()}`);
     if (r.skippedDailyRows) parts.push(`跳过已有 ${r.skippedDailyRows.toLocaleString()}`);
     if (r.upsertedMonthlyRows != null) parts.push(`月表聚合 ${r.upsertedMonthlyRows.toLocaleString()}`);
     if (r.createdSkus) parts.push(`新建 SKU ${r.createdSkus}`);

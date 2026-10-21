@@ -5,6 +5,7 @@ import {
   coverageDaysFromQty,
   horizonDemand,
   recommendOrder,
+  orderCoverDays,
   recommendOrderForNetworkAlert,
   recommendShip,
 } from './alert-horizon-demand.js';
@@ -31,6 +32,9 @@ describe('horizonDemand', () => {
       shipWindowCovered: false,
       gap90Overseas: 130,
       gap150Overseas: 250,
+      demandCover: 300,
+      gapCover: 250,
+      gapCoverOverseas: 250,
     });
   });
 
@@ -62,6 +66,9 @@ describe('horizonDemand', () => {
         shipWindowCovered: false,
         gap90Overseas: 170,
         gap150Overseas: 290,
+        demandCover: 300,
+        gapCover: 0,
+        gapCoverOverseas: 290,
       },
     );
   });
@@ -149,6 +156,62 @@ describe('horizonDemand', () => {
         shippingLeadDays: 45,
       }),
       { shipByDate: '2026-10-15', shipQty: 18, shipNow: false },
+    );
+  });
+
+  it('orders the lead-plus-safety gap instead of the 150-day gap', () => {
+    assert.equal(orderCoverDays(102, 14), 116);
+    assert.equal(orderCoverDays(null, 14), 104);
+    const horizons = horizonDemand({
+      coverageDays: 80,
+      avgDaily: 2,
+      overseasQty: 20,
+      localQty: 0,
+      inTransitQty: 0,
+      coverDays: 84,
+    });
+    assert.equal(horizons?.demandCover, 168);
+    assert.equal(horizons?.gapCover, 148);
+    assert.equal(horizons?.gap150, 280);
+    assert.deepEqual(
+      recommendOrder({
+        today: '2026-09-30',
+        coverageDays: 80,
+        totalLeadDays: 70,
+        safetyStockDays: 14,
+        gap90: 30,
+        gap150: horizons?.gap150 ?? 0,
+        gapCover: horizons?.gapCover,
+        windowCovered: false,
+      }),
+      { orderByDate: '2026-09-30', orderQty: 148, orderNow: true },
+    );
+  });
+
+  it('keeps the lead-plus-safety gap when coverage is already past 150 days', () => {
+    const horizons = horizonDemand({
+      coverageDays: 150,
+      avgDaily: 2,
+      overseasQty: 0,
+      localQty: 0,
+      inTransitQty: 0,
+      coverDays: 151,
+    });
+    assert.equal(horizons?.windowCovered, true);
+    assert.equal(horizons?.gap150, 0);
+    assert.equal(horizons?.gapCover, 302);
+    assert.deepEqual(
+      recommendOrder({
+        today: '2026-10-21',
+        coverageDays: 150,
+        totalLeadDays: 137,
+        safetyStockDays: 14,
+        gap90: 0,
+        gap150: horizons?.gap150 ?? 0,
+        gapCover: horizons?.gapCover,
+        windowCovered: true,
+      }),
+      { orderByDate: '2026-10-21', orderQty: 302, orderNow: true },
     );
   });
 

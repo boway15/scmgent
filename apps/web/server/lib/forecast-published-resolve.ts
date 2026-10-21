@@ -1,17 +1,25 @@
 import { and, eq, inArray } from 'drizzle-orm';
 import { db, salesForecastMonthly, salesForecastVersions } from '@scm/db';
 import {
+  aggregateForecastP90Rows,
   aggregateForecastRows,
   mapForecastDailyFields,
   resolveT99ReplenishmentFallbackDaily,
   type HorizonDemandSource,
 } from './forecast-demand.js';
+import { profileClassFromSegment } from './forecast-profile-class.js';
 import { FORECAST_GLOBAL_STATION } from './forecast-station-scope.js';
 
 export type PublishedForecastEntry = {
   map: Map<string, number>;
   lifecycle?: string;
   versionId: string | null;
+  profileSegment?: string;
+  /** 分层字母，供第 3–6 月远月缓冲使用。 */
+  profileClass?: string | null;
+  /** 全站 P90 日均，月 key 与 map 相同。 */
+  p90Map?: Map<string, number>;
+
   /** 若任一 T99 月用了近期动销兜底，标记便于补货审计 */
   demandSource?: HorizonDemandSource;
 };
@@ -147,6 +155,7 @@ export async function loadMergedPublishedForecastBySkuIds(
         platform: string | null;
         profileSegment: string | null;
         horizonFactors: unknown;
+        forecastDailyP90: string | null;
       }>
     >();
 
@@ -163,6 +172,7 @@ export async function loadMergedPublishedForecastBySkuIds(
           platform: salesForecastMonthly.platform,
           profileSegment: salesForecastMonthly.profileSegment,
           horizonFactors: salesForecastMonthly.horizonFactors,
+          forecastDailyP90: salesForecastMonthly.forecastDailyP90,
         })
         .from(salesForecastMonthly)
         .where(
@@ -182,6 +192,10 @@ export async function loadMergedPublishedForecastBySkuIds(
     for (const skuId of ids) {
       const skuRows = rowsBySku.get(skuId) ?? [];
       const lifecycle = skuRows.find((r) => r.lifecycle)?.lifecycle ?? undefined;
+      const profileSegment = [...skuRows]
+        .sort((left, right) => right.forecastYear * 100 + right.month - (left.forecastYear * 100 + left.month))
+        .map((row) => row.profileSegment?.trim())
+        .find((segment) => segment);
       let usedT99Fallback = false;
       const map = aggregateForecastRows(
         skuRows.map((r) => {
@@ -208,9 +222,20 @@ export async function loadMergedPublishedForecastBySkuIds(
           };
         }),
       );
+      const p90Map = aggregateForecastP90Rows(
+        skuRows.map((row) => ({
+          forecastYear: row.forecastYear,
+          month: row.month,
+          forecastDailyP90: Number(row.forecastDailyP90),
+          platform: row.platform,
+        })),
+      );
       result.set(skuId, {
         map,
         lifecycle,
+        profileSegment,
+        profileClass: profileClassFromSegment(profileSegment),
+        p90Map,
         versionId,
         demandSource: usedT99Fallback ? 't99_fallback' : 'forecast',
       });

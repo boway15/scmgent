@@ -156,6 +156,30 @@ export async function supersedePendingSuggestions(skuId: string, warehouseCode: 
     );
 }
 
+const SUPERSEDE_SKU_CHUNK = 500;
+
+/** 本轮不再下单的 SKU，整批作废仍 pending 的建议。 */
+export async function supersedePendingSuggestionsForSkus(skuIds: string[]): Promise<number> {
+  if (!skuIds.length) return 0;
+  let count = 0;
+  for (let offset = 0; offset < skuIds.length; offset += SUPERSEDE_SKU_CHUNK) {
+    const chunk = skuIds.slice(offset, offset + SUPERSEDE_SKU_CHUNK);
+    const updated = await db
+      .update(reorderSuggestions)
+      .set({ supersededAt: new Date() })
+      .where(
+        and(
+          inArray(reorderSuggestions.skuId, chunk),
+          eq(reorderSuggestions.status, 'pending'),
+          isNull(reorderSuggestions.supersededAt),
+        ),
+      )
+      .returning({ id: reorderSuggestions.id });
+    count += updated.length;
+  }
+  return count;
+}
+
 /** 网络级补货：同一 SKU 只保留一条 pending 建议 */
 export async function supersedeAllPendingSuggestionsForSku(skuId: string) {
   await db

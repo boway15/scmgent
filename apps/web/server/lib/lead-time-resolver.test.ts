@@ -3,6 +3,7 @@ import { describe, it } from 'node:test';
 import * as leadTimeResolver from './lead-time-resolver.js';
 import {
   resolveLeadTimeFromCaches,
+  resolveNetworkOrderLeadDays,
   resolvePreShipmentLeadTimeFromCaches,
   type LeadTimeResolveCaches,
 } from './lead-time-resolver.js';
@@ -234,6 +235,20 @@ describe('lead-time-resolver', () => {
     assert.equal(resolved.shippingDays, 15);
     assert.equal(resolved.inboundBufferDays, 3);
     assert.equal(resolved.totalLeadDays, 25 + 15 + 3);
+  });
+
+  it('resolveNetworkOrderLeadDays takes the longer of production and warehouse full lead', () => {
+    assert.equal(
+      resolveNetworkOrderLeadDays({
+        productionDays: 50,
+        warehouseLeadDays: [102, 80, null],
+      }),
+      102,
+    );
+    assert.equal(
+      resolveNetworkOrderLeadDays({ productionDays: 50, warehouseLeadDays: [] }),
+      50,
+    );
   });
 
   it('resolvePreShipmentLeadTimeFromCaches uses pure production only', () => {

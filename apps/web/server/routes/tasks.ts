@@ -30,6 +30,8 @@ import { runInventoryTurnoverPull } from '../tasks/inventoryTurnoverPull.js';
 import { INVENTORY_QUERY_PULL_TASK } from '../lib/inventory-query-pull-task.js';
 import { INVENTORY_TURNOVER_PULL_TASK } from '../lib/inventory-turnover-pull-task.js';
 import { runCommercialStatusReconcile } from '../tasks/commercialStatusReconcile.js';
+import { runSalesDailyFeishuPull } from '../tasks/salesDailyFeishuPull.js';
+import { SALES_DAILY_FEISHU_PULL_TASK } from '../lib/feishu-sales-daily-pull-task.js';
 
 export const taskRoutes = new Hono();
 
@@ -339,6 +341,16 @@ taskRoutes.post('/tasks/inventory-turnover-pull', requireCronSecret, async (c) =
   const triggeredBy = resolveTriggeredBy(c);
   const run = await startTaskRun(INVENTORY_TURNOVER_PULL_TASK, triggeredBy);
   const result = await runInventoryTurnoverPull(run.id);
+  if (result.skipped) {
+    return c.json({ skipped: true, message: result.reason, taskRunId: run.id }, 409);
+  }
+  return c.json({ ...result, taskRunId: run.id });
+});
+
+taskRoutes.post('/tasks/sales-daily-feishu-pull', requireCronSecret, async (c) => {
+  const triggeredBy = resolveTriggeredBy(c);
+  const run = await startTaskRun(SALES_DAILY_FEISHU_PULL_TASK, triggeredBy);
+  const result = await runSalesDailyFeishuPull(run.id);
   if (result.skipped) {
     return c.json({ skipped: true, message: result.reason, taskRunId: run.id }, 409);
   }

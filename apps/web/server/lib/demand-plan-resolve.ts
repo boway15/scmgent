@@ -55,7 +55,34 @@ function championMapFromRows(rows: ChampionRow[]): Map<string, number> {
   return new Map(rows.map((row) => [row.period, row.daily]));
 }
 
-function meanOfLastThreePositive(map: Map<string, number>): number {
+/** 按周期 key 排序后，最近 3 个正值的均值；没有正值时为 0。 */
+/** 全网看板曲线：已采纳需求计划优先，否则保持已发布预测。 */
+export function networkConsensusForecastRecord(input: {
+  source: 'demand_plan' | 'forecast';
+  demandMap: Map<string, number>;
+  published: Record<string, number> | null;
+}): Record<string, number> | null {
+  if (input.source !== 'demand_plan') return input.published;
+  const record: Record<string, number> = {};
+  for (const [key, value] of input.demandMap) {
+    if (Number.isFinite(value) && value > 0) record[key] = value;
+  }
+  return Object.keys(record).length ? record : input.published;
+}
+
+/** 分仓健康度：已采纳需求计划已是该仓曲线，不再按销售占比缩放预测。 */
+export function warehouseConsensusForecastMap(input: {
+  source: 'demand_plan' | 'forecast' | null | undefined;
+  demandMap: Map<string, number> | null | undefined;
+  shareScaledForecast: Map<string, number>;
+}): Map<string, number> {
+  if (input.source === 'demand_plan' && input.demandMap && input.demandMap.size > 0) {
+    return input.demandMap;
+  }
+  return input.shareScaledForecast;
+}
+
+export function meanOfLastThreePositive(map: Map<string, number>): number {
   const positives = [...map.entries()]
     .sort(([left], [right]) => left.localeCompare(right))
     .map(([, value]) => value)

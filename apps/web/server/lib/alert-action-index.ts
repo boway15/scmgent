@@ -3,7 +3,11 @@ import { db, inventoryDailySnapshots, inventoryHealthSnapshots, salesHistory, sk
 import { getShanghaiBusinessDate } from './inventory-daily-snapshot.js';
 import { IN_PRODUCTION_WAREHOUSE } from './inventory-constants.js';
 import { productScopeOnSkuAlias, type ProductScope } from './planning-accessory-filter.js';
-import { resolveShippingLeadDays } from './replenishment-coverage.js';
+import {
+  clearWarehouseShippingLeadCache,
+  loadWarehouseShippingLeadMap,
+  shippingLeadFor,
+} from './alert-ship-lead.js';
 import { buildPlanningExcludedSqlCondition } from './commercial-status.js';
 import {
   alertOwnerLabel,
@@ -59,6 +63,7 @@ export function invalidateAlertActionCache(): void {
   networkCache.clear();
   classifiedInflight.clear();
   networkInflight.clear();
+  clearWarehouseShippingLeadCache();
 }
 
 type RawRow = {
@@ -77,6 +82,7 @@ type RawRow = {
   hasOpen: boolean | null;
   shippable: boolean | null;
   unallocatedLocalQty: number | string | null;
+  totalLeadDays: number | string | null;
 };
 
 function asBool(value: unknown): boolean {
@@ -89,7 +95,11 @@ function finite(value: number | string | null | undefined): number | null {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
-export function classifyAlertRows(rows: RawRow[], today: string): ClassifiedAlert[] {
+export function classifyAlertRows(
+  rows: RawRow[],
+  today: string,
+  shippingLead?: Map<string, number | null>,
+): ClassifiedAlert[] {
   return rows.map((row) => {
     const avgDaily = finite(row.avgDaily);
     const demandShare = finite(row.demandShare);
@@ -100,6 +110,7 @@ export function classifyAlertRows(rows: RawRow[], today: string): ClassifiedAler
     const hasUnallocatedLocal = unallocatedLocalQty > 0 && (demandShare ?? 0) > 0;
     const shipDays = daysUntilDate(today, row.stockout);
     const localQty = finite(row.localQty) ?? 0;
+    const totalLeadDays = finite(row.totalLeadDays);
     const fullDays = fullCoverageDays({
       shipDays,
       confirmedCoverageDays: confirmedCoverage,
@@ -110,14 +121,17 @@ export function classifyAlertRows(rows: RawRow[], today: string): ClassifiedAler
     const resolved = resolveAlertAction({
       shipDays,
       fullDays,
-      shippingLeadDays: resolveShippingLeadDays(warehouseCode),
+      shippingLeadDays: shippingLeadFor(warehouseCode, shippingLead),
       hasShippableLots: shippable,
       noise: isAlertNoise({ avgDaily, demandShare, hasOpenLots }),
+      totalLeadDays,
     });
     const level = resolveAlertLevel({
       action: resolved.action,
       shipDays,
       profileClass: row.profileClass,
+      fullDays,
+      totalLeadDays,
     });
     const usesShipDays = resolved.action === 'price' || resolved.action === 'ship_urgent' || resolved.action === 'ship';
     return {
@@ -238,6 +252,7 @@ async function queryClassifiedAlerts(productScope: ProductScope): Promise<Classi
       h.avg_daily AS "avgDaily",
       h.j->>'timelineStockoutDate' AS stockout,
       h.j->>'demandShare' AS "demandShare",
+      h.total_lead_days AS "totalLeadDays",
       COALESCE(h.j->>'confirmedCoverageDays', h.coverage_days::text) AS coverage,
       l.local_qty AS "localQty",
       fc.profile_class AS "profileClass",
@@ -250,6 +265,7 @@ async function queryClassifiedAlerts(productScope: ProductScope): Promise<Classi
       SELECT
         avg_daily,
         coverage_days,
+        total_lead_days,
         CASE
           WHEN jsonb_typeof(metrics) = 'string' THEN (metrics #>> '{}')::jsonb
           WHEN jsonb_typeof(metrics) = 'object' THEN metrics
@@ -283,7 +299,8 @@ async function queryClassifiedAlerts(productScope: ProductScope): Promise<Classi
     ${productScopeOnSkuAlias(productScope, 's')}
   `);
 
-  return classifyAlertRows(Array.from(queryResult as unknown as RawRow[]), today);
+  const shippingLead = await loadWarehouseShippingLeadMap();
+  return classifyAlertRows(Array.from(queryResult as unknown as RawRow[]), today, shippingLead);
 }
 
 /** 与规划驾驶舱可规划 SKU 同口径：近 30 天周转或近 90 天有销，且非疑似停售。 */

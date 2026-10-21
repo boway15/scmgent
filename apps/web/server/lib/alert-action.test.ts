@@ -80,6 +80,26 @@ describe('resolveAlertAction', () => {
     );
   });
 
+  it('shifts order bands out with a long total lead time', () => {
+    const de = {
+      ...base,
+      shippingLeadDays: 80,
+      hasShippableLots: false,
+      totalLeadDays: 137,
+      safetyStockDays: 14,
+    };
+    assert.equal(resolveAlertAction({ ...de, shipDays: 100, fullDays: 100 }).action, 'order_tight');
+    assert.equal(resolveAlertAction({ ...de, shipDays: 125, fullDays: 125 }).action, 'order_tight');
+    assert.equal(resolveAlertAction({ ...de, shipDays: 145, fullDays: 145 }).action, 'order');
+  });
+
+  it('keeps the old order band above a US-West lead of about 102 days', () => {
+    const west = { ...base, shippingLeadDays: 45, totalLeadDays: 102, safetyStockDays: 14 };
+    assert.equal(resolveAlertAction({ ...west, shipDays: 100, fullDays: 100 }).action, 'order_tight');
+    assert.equal(resolveAlertAction({ ...west, shipDays: 110, fullDays: 110 }).action, 'order');
+    assert.equal(resolveAlertAction({ ...west, shipDays: 130, fullDays: 130 }).action, 'healthy');
+  });
+
   it('orders from full days when shipping cannot take the row', () => {
     assert.equal(resolveAlertAction({ ...base, shipDays: 80, fullDays: 80 }).action, 'order_tight');
     assert.equal(resolveAlertAction({ ...base, shipDays: 100, fullDays: 100 }).action, 'order');
@@ -138,6 +158,29 @@ describe('resolveAlertLevel', () => {
   it('keeps mild overstock and orders at L1', () => {
     assert.equal(resolveAlertLevel({ action: 'mild_overstock', shipDays: 160, profileClass: 'A' }), 'l1');
     assert.equal(resolveAlertLevel({ action: 'order_tight', shipDays: 80, profileClass: null }), 'l1');
+  });
+
+  it('raises order_tight to L2 when coverage is inside the total lead time', () => {
+    assert.equal(
+      resolveAlertLevel({
+        action: 'order_tight',
+        shipDays: 100,
+        fullDays: 100,
+        profileClass: null,
+        totalLeadDays: 137,
+      }),
+      'l2',
+    );
+    assert.equal(
+      resolveAlertLevel({
+        action: 'order_tight',
+        shipDays: 100,
+        fullDays: 100,
+        profileClass: null,
+        totalLeadDays: 80,
+      }),
+      'l1',
+    );
   });
 });
 

@@ -7,7 +7,7 @@ export type SafetyStockSuggestion = {
   safetyStockQty: number | null;
   safetyStockDays: number | null;
   reorderPoint: number | null;
-  method: 'z_demand';
+  method: 'z_demand' | 'z_demand_leadtime';
   serviceLevel: number;
   avgDaily: number;
   demandStdDev: number;
@@ -26,11 +26,9 @@ function resolveConfidence(params: {
   inStockDays: number;
   effectiveSalesDays: number;
   stockoutAdjusted: boolean;
-  demandSource?: 'forecast' | 'historical';
   daysCapped: boolean;
 }): SuggestionConfidence {
   if (params.avgDaily <= 0) return 'low';
-  if (params.demandSource === 'forecast') return 'high';
   if (params.stockoutAdjusted) return 'medium';
   if (params.inStockDays >= 30 && !params.daysCapped) return 'high';
   if (params.effectiveSalesDays >= LOW_SAMPLE_DAYS) return 'medium';
@@ -46,6 +44,8 @@ export function calcSafetyStockSuggestion(params: {
   stockoutAdjusted?: boolean;
   demandSource?: 'forecast' | 'historical';
   effectiveSalesDays?: number;
+  /** 已维护的交期标准差（天）。大于 0 时按需求+交期波动计算。 */
+  leadTimeStdDev?: number | null;
 }): SafetyStockSuggestion {
   const flags: string[] = [];
   const serviceLevel = params.serviceLevel ?? DEFAULT_SERVICE_LEVEL;
@@ -84,11 +84,19 @@ export function calcSafetyStockSuggestion(params: {
     };
   }
 
+  const leadTimeStdDev =
+    params.leadTimeStdDev != null && Number.isFinite(params.leadTimeStdDev) && params.leadTimeStdDev > 0
+      ? params.leadTimeStdDev
+      : 0;
+  const method = leadTimeStdDev > 0 ? 'z_demand_leadtime' : 'z_demand';
+  if (method === 'z_demand_leadtime') flags.push('lead_time_uncertainty');
   const { safetyStockQty } = calcSafetyStockQty({
-    method: 'z_demand',
+    method,
     serviceLevel,
     demandStdDev,
     totalLeadDays,
+    avgDaily,
+    leadTimeStdDev,
   });
 
   let safetyStockDays = Math.ceil(safetyStockQty / avgDaily);
@@ -105,7 +113,6 @@ export function calcSafetyStockSuggestion(params: {
     inStockDays: params.inStockDays ?? 0,
     effectiveSalesDays,
     stockoutAdjusted: params.stockoutAdjusted === true,
-    demandSource: params.demandSource,
     daysCapped,
   });
 
@@ -113,7 +120,7 @@ export function calcSafetyStockSuggestion(params: {
     safetyStockQty,
     safetyStockDays,
     reorderPoint,
-    method: 'z_demand',
+    method,
     serviceLevel,
     avgDaily,
     demandStdDev,

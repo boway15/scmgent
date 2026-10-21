@@ -2107,6 +2107,7 @@ export const api = {
       createdSkus?: number;
       enrichedSkus?: number;
       insertedDailyRows?: number;
+      updatedDailyRows?: number;
       skippedDailyRows?: number;
       upsertedMonthlyRows?: number;
       batchId?: string;

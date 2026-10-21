@@ -3,7 +3,9 @@ import { describe, it } from 'node:test';
 import {
   effectiveDemandDaily,
   monthMapFromRows,
+  networkConsensusForecastRecord,
   resolvePlanningDemandFromInputs,
+  warehouseConsensusForecastMap,
 } from './demand-plan-resolve.js';
 
 const stationForecastMap = new Map<string, number>([
@@ -234,5 +236,64 @@ describe('resolvePlanningDemandFromInputs', () => {
     );
     assert.equal(result.source, 'forecast');
     assert.equal(result.fallbackDaily, 0);
+  });
+});
+
+describe('consensus demand series', () => {
+  const published = { '2026-10': 10, '2026-11': 12 };
+  const plan = new Map<string, number>([
+    ['2026-W43', 4],
+    ['2026-W44', 0],
+    ['2026-W45', 6],
+  ]);
+
+  it('keeps the published forecast until a demand plan is adopted', () => {
+    assert.deepEqual(
+      networkConsensusForecastRecord({
+        source: 'forecast',
+        demandMap: plan,
+        published,
+      }),
+      published,
+    );
+    const forecast = new Map<string, number>([['2026-10', 10]]);
+    assert.equal(
+      warehouseConsensusForecastMap({
+        source: 'forecast',
+        demandMap: plan,
+        shareScaledForecast: forecast,
+      }),
+      forecast,
+    );
+  });
+
+  it('uses the adopted demand plan and drops non-positive periods', () => {
+    assert.deepEqual(
+      networkConsensusForecastRecord({
+        source: 'demand_plan',
+        demandMap: plan,
+        published,
+      }),
+      { '2026-W43': 4, '2026-W45': 6 },
+    );
+    assert.equal(
+      warehouseConsensusForecastMap({
+        source: 'demand_plan',
+        demandMap: plan,
+        shareScaledForecast: new Map([['2026-10', 10]]),
+      }),
+      plan,
+    );
+  });
+
+  it('falls back to the published forecast when the adopted plan has no positive days', () => {
+    assert.equal(
+      networkConsensusForecastRecord({
+        source: 'demand_plan',
+        demandMap: new Map([['2026-W43', 0]]),
+        published,
+      }),
+      published,
+    );
   });
 });

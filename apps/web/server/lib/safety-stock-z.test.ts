@@ -2,7 +2,9 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
   calcSafetyStockQty,
+  coalesceLeadTimeStdDev,
   resolvePlanningSafetyStock,
+  selectDemandStdDev,
   zFromServiceLevel,
 } from './safety-stock-z.js';
 
@@ -126,6 +128,25 @@ describe('calcSafetyStockQty', () => {
     assert.equal(result.method, 'z_demand_leadtime');
     assert.equal(result.z, 1.65);
     assert.equal(result.safetyStockQty, 56);
+  });
+
+  it('prefers forecast error deviation and then a maintained lead-time deviation', () => {
+    const selected = selectDemandStdDev({ forecastErrorStdDev: 6, historicalStdDev: 2 });
+    assert.equal(selected.source, 'forecast_error');
+    assert.equal(selected.stdDev, 6);
+    assert.equal(selectDemandStdDev({ forecastErrorStdDev: null, historicalStdDev: 2 }).source, 'historical');
+    assert.equal(coalesceLeadTimeStdDev(null, 4), 4);
+    assert.equal(coalesceLeadTimeStdDev(0, 4), 0);
+    const planned = resolvePlanningSafetyStock({
+      avgDaily: 10,
+      demandStdDev: 4,
+      totalLeadDays: 25,
+      policy: { safetyStockMethod: 'z_demand_leadtime', leadTimeStdDev: null },
+      forecastErrorStdDev: 6,
+      profileLeadTimeStdDev: 3,
+    });
+    assert.equal(planned.demandStdDevSource, 'forecast_error');
+    assert.ok(planned.safetyStockQty > 0);
   });
 
   it('treats missing leadTimeStdDev as zero in z_demand_leadtime', () => {

@@ -1,6 +1,43 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { collapseSkuReplenishmentCandidates } from './network-replenishment.js';
+import {
+  collapseSkuReplenishmentCandidates,
+  poolNetworkSafetyStockQty,
+  sumNetworkAvgDaily,
+} from './network-replenishment.js';
+
+describe('sumNetworkAvgDaily', () => {
+  it('uses the station forecast instead of summing warehouse dailies', () => {
+    const result = sumNetworkAvgDaily({
+      rows: [
+        { warehouseCode: 'US-WEST', avgDaily: 4 },
+        { warehouseCode: 'UK', avgDaily: 10, demandShareFallback: true },
+      ],
+      forecastForwardAvg: 10,
+    });
+    assert.equal(result.avgDaily, 10);
+    assert.deepEqual(result.excludedWarehouses, ['UK']);
+  });
+
+  it('skips warehouses that fell back to station demand when there is no forecast', () => {
+    const result = sumNetworkAvgDaily({
+      rows: [
+        { warehouseCode: 'US-WEST', avgDaily: 4 },
+        { warehouseCode: 'UK', avgDaily: 10, demandShareFallback: true },
+      ],
+      forecastForwardAvg: null,
+    });
+    assert.equal(result.avgDaily, 4);
+    assert.deepEqual(result.excludedWarehouses, ['UK']);
+  });
+});
+
+describe('poolNetworkSafetyStockQty', () => {
+  it('uses network daily times the longest safety days, not the sum of warehouse qtys', () => {
+    assert.equal(poolNetworkSafetyStockQty({ networkAvgDaily: 10, safetyStockDays: 14 }), 140);
+    assert.equal(poolNetworkSafetyStockQty({ networkAvgDaily: 0, safetyStockDays: 14 }), 0);
+  });
+});
 
 describe('collapseSkuReplenishmentCandidates', () => {
   it('returns null for empty input', () => {
@@ -68,6 +105,36 @@ describe('collapseSkuReplenishmentCandidates', () => {
     assert.equal(collapsed!.totalLeadDays, 55);
     assert.equal(collapsed!.metrics.networkTimeline, true);
     assert.match(String(collapsed!.reason), /网络时间轴/);
+  });
+
+  it('keeps a warehouse suggestion when the network timeline quantity is zero', () => {
+    const base = {
+      skuId: 'sku-4',
+      skuCode: 'SKU-4',
+      spuId: null,
+      replenishLight: 'green',
+      reason: '缺口',
+      healthStatus: 'red' as const,
+      coverageDays: 5,
+      totalLeadDays: 102,
+      latestOrderDays: 0,
+      metrics: {},
+    };
+    const collapsed = collapseSkuReplenishmentCandidates(
+      [
+        { ...base, warehouseCode: 'US-WEST', suggestedQty: 500, suggestedDate: '2026-10-01' },
+        { ...base, warehouseCode: 'DE', suggestedQty: 480, suggestedDate: '2026-09-28' },
+      ],
+      {
+        suggestedQty: 0,
+        suggestedDate: '2026-10-21',
+        totalLeadDays: 102,
+      },
+    );
+    assert.ok(collapsed);
+    assert.equal(collapsed!.suggestedQty, 500);
+    assert.equal(collapsed!.metrics.networkQtyFallback, true);
+    assert.equal(collapsed!.metrics.networkTimeline, false);
   });
 
   it('keeps single-warehouse candidate as network row', () => {

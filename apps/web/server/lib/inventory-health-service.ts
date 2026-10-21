@@ -11,7 +11,15 @@ import {
   leadTimeProfiles,
   merchants,
   skuSuppliers,
+  forecastAccuracyMonthly,
 } from '@scm/db';
+import { summarizePrecisionWindow } from './planning-demand-gate.js';
+import type { PlanningDemandResult } from './demand-plan-resolve.js';
+import { warehouseConsensusForecastMap } from './demand-plan-resolve.js';
+import {
+  loadPlanningDemandDepsForSkus,
+  loadPlanningDemandForSkuWarehouse,
+} from './demand-plan-load.js';
 import { calcReplenishment } from './replenishment.js';
 import { resolvePlanningSafetyStock } from './safety-stock-z.js';
 import {
@@ -265,6 +273,7 @@ export async function loadLeadTimeCaches(skuIds: string[]): Promise<LeadTimeReso
       transitDays: leadTimeProfiles.transitDays,
       customsDays: leadTimeProfiles.customsDays,
       inboundDays: leadTimeProfiles.inboundDays,
+      leadTimeStdDev: leadTimeProfiles.leadTimeStdDev,
     })
     .from(leadTimeProfiles)
     .where(eq(leadTimeProfiles.isDefault, true));
@@ -429,6 +438,10 @@ export async function computeSkuWarehouseHealth(params: {
   policyMap: Map<string, PolicyRow | undefined>;
   forecastByStation: Map<string, { map: Map<string, number>; lifecycle?: string }>;
   forecastEntry?: { map: Map<string, number>; lifecycle?: string };
+  /** 已采纳需求计划。有值且 source 为 demand_plan 时，分仓曲线不再用预测×占比。 */
+  planningDemand?: PlanningDemandResult | null;
+  /** 近 3 个月预测误差标准差。有值时 Z 法安全库存用它，不再用历史销量标准差。 */
+  forecastErrorStdDev?: number | null;
   /** SKU 销售占比（周转快照）；缺省时按需查库 */
   share?: ShareParseResult;
   moq?: number;
@@ -491,7 +504,14 @@ export async function computeSkuWarehouseHealth(params: {
         params.share ?? (await loadSkuShare(params.sku.id)),
       )
     : null;
-  const warehouseForecastMap = scaleDailyMapByShare(forecastEntry.map, demandShare);
+  const shareScaledForecast = scaleDailyMapByShare(forecastEntry.map, demandShare);
+  const consensusSource =
+    params.planningDemand?.source === 'demand_plan' ? 'demand_plan' : 'forecast';
+  const warehouseForecastMap = warehouseConsensusForecastMap({
+    source: params.planningDemand?.source,
+    demandMap: params.planningDemand?.demandMap,
+    shareScaledForecast,
+  });
 
   const demandWindowDays = replenishmentSalesLookbackDays();
   let historicalDemand = {
@@ -500,7 +520,7 @@ export async function computeSkuWarehouseHealth(params: {
     inStockDays: 0,
     demandWindowDays,
   };
-  if (!forecastEntry.map.size) {
+  if (!forecastEntry.map.size && consensusSource !== 'demand_plan') {
     const inventoryRows =
       params.caches && 'availabilityRows' in params.caches
         ? (params.caches.availabilityRows ?? [])
@@ -541,6 +561,8 @@ export async function computeSkuWarehouseHealth(params: {
     avgDaily,
     demandStdDev: eoqCalc.stdDev,
     totalLeadDays: leadTime.totalLeadDays,
+    forecastErrorStdDev: params.forecastErrorStdDev,
+    profileLeadTimeStdDev: leadTime.leadTimeStdDev,
   });
 
   const lifecycleLabel = forecastEntry.lifecycle ?? params.sku.lifecycle ?? null;
@@ -570,7 +592,7 @@ export async function computeSkuWarehouseHealth(params: {
     coverageDays: coverage.coverageDays,
     totalLeadDays: coverage.leadTime.totalLeadDays,
     latestOrderDays: coverage.latestOrderDays,
-    lifecycle: lifecycleLabel,
+    lifecycle: lifecycleLabel ?? undefined,
     needsReplenishment: coverage.needsReplenishment,
     suggestedQty: coverage.suggestedQty,
     suggestedDate: coverage.suggestedDate,
@@ -585,11 +607,16 @@ export async function computeSkuWarehouseHealth(params: {
       safetyStockMethod: safetyStock.method,
       eoqQty: eoqCalc.reorderQty,
       demandStdDev: eoqCalc.stdDev,
+      demandStdDevSource: safetyStock.demandStdDevSource,
       stockoutAdjusted: historicalDemand.stockoutAdjusted,
       inStockDays: historicalDemand.inStockDays,
       demandWindowDays: historicalDemand.demandWindowDays,
       demandShare,
-      demandShareFallback: coverage.demandSource === 'forecast' && demandShare == null,
+      demandConsensusSource: consensusSource,
+      demandShareFallback:
+        consensusSource !== 'demand_plan' &&
+        coverage.demandSource === 'forecast' &&
+        demandShare == null,
       ...buildInventoryPositionMetrics(position),
     },
     coverage,
@@ -637,18 +664,45 @@ export async function computeAllInventoryHealth(): Promise<SkuHealthRow[]> {
   );
 
   const tSales = Date.now();
-  const [salesBySkuId, forecastBySkuId] = await Promise.all([
+  const [salesBySkuId, forecastBySkuId, accuracyRows] = await Promise.all([
     loadDailySalesBySkuIds(skuIds),
     loadMergedPublishedForecastBySkuIds(skuIds),
+    skuIds.length
+      ? db
+          .select({
+            skuId: forecastAccuracyMonthly.skuId,
+            station: forecastAccuracyMonthly.station,
+            platform: forecastAccuracyMonthly.platform,
+            forecastYear: forecastAccuracyMonthly.forecastYear,
+            month: forecastAccuracyMonthly.month,
+            forecastDailyAvg: forecastAccuracyMonthly.forecastDailyAvg,
+            actualDailyAvg: forecastAccuracyMonthly.actualDailyAvg,
+            computedAt: forecastAccuracyMonthly.computedAt,
+          })
+          .from(forecastAccuracyMonthly)
+          .where(inArray(forecastAccuracyMonthly.skuId, skuIds))
+      : Promise.resolve([]),
   ]);
+  const errorStdDevBySku = new Map<string, number>();
+  const accuracyBySku = new Map<string, typeof accuracyRows>();
+  for (const row of accuracyRows) {
+    const list = accuracyBySku.get(row.skuId) ?? [];
+    list.push(row);
+    accuracyBySku.set(row.skuId, list);
+  }
+  for (const [skuId, rows] of accuracyBySku) {
+    const errorStdDev = summarizePrecisionWindow(rows).errorStdDev;
+    if (errorStdDev != null && errorStdDev > 0) errorStdDevBySku.set(skuId, errorStdDev);
+  }
   console.info(`[inventory-health] sales+forecast ${Date.now() - tSales}ms`);
 
   const tPreload = Date.now();
   const physicalWarehouseCodes = whRows.map((wh) => wh.code);
-  const [policyBySku, positionByKey, leadTimeCaches] = await Promise.all([
+  const [policyBySku, positionByKey, leadTimeCaches, planningBundle] = await Promise.all([
     loadPolicyMapsBySkuIds(skuIds),
     loadLatestInventorySnapshotsBySkuIds(skuIds, physicalWarehouseCodes),
     loadLeadTimeCaches(skuIds),
+    loadPlanningDemandDepsForSkus(skuIds),
   ]);
 
   const demandWindowDays = replenishmentSalesLookbackDays();
@@ -703,6 +757,14 @@ export async function computeAllInventoryHealth(): Promise<SkuHealthRow[]> {
         },
         leadTimeCaches,
       );
+      const planningDemand = await loadPlanningDemandForSkuWarehouse(
+        {
+          skuId: sku.id,
+          warehouseCode: wh.code,
+          championForecastMap: forecastEntry.map,
+        },
+        planningBundle.deps,
+      );
       const health = await computeSkuWarehouseHealth({
         sku,
         warehouse: wh,
@@ -710,6 +772,8 @@ export async function computeAllInventoryHealth(): Promise<SkuHealthRow[]> {
         policyMap,
         forecastByStation,
         forecastEntry,
+        planningDemand,
+        forecastErrorStdDev: errorStdDevBySku.get(sku.id) ?? null,
         share,
         moq: effectiveMoq || undefined,
         caches: {

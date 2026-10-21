@@ -72,7 +72,7 @@ describe('calcSafetyStockSuggestion', () => {
     assert.ok(result.flags.includes('stockout_adjusted'));
   });
 
-  it('gives high confidence for forecast demand', () => {
+  it('does not treat forecast demand as high confidence by itself', () => {
     const result = calcSafetyStockSuggestion({
       avgDaily: 12,
       demandStdDev: 4,
@@ -80,7 +80,28 @@ describe('calcSafetyStockSuggestion', () => {
       demandSource: 'forecast',
       effectiveSalesDays: 45,
     });
-    assert.equal(result.confidence, 'high');
+    assert.equal(result.confidence, 'medium');
     assert.ok(result.flags.includes('forecast_demand'));
+  });
+
+  it('uses maintained lead-time deviation in the z formula', () => {
+    const withoutLeadNoise = calcSafetyStockSuggestion({
+      avgDaily: 10,
+      demandStdDev: 4,
+      totalLeadDays: 90,
+      inStockDays: 40,
+      effectiveSalesDays: 40,
+    });
+    const withLeadNoise = calcSafetyStockSuggestion({
+      avgDaily: 10,
+      demandStdDev: 4,
+      totalLeadDays: 90,
+      leadTimeStdDev: 5,
+      inStockDays: 40,
+      effectiveSalesDays: 40,
+    });
+    assert.equal(withLeadNoise.method, 'z_demand_leadtime');
+    assert.ok((withLeadNoise.safetyStockQty ?? 0) > (withoutLeadNoise.safetyStockQty ?? 0));
+    assert.ok(withLeadNoise.flags.includes('lead_time_uncertainty'));
   });
 });

@@ -40,6 +40,7 @@ export type SalesXiaoshouImportResult = ImportResult & {
   createdSkus?: number;
   enrichedSkus?: number;
   insertedDailyRows?: number;
+  updatedDailyRows?: number;
   skippedDailyRows?: number;
   upsertedMonthlyRows?: number;
   expandedDailyRows?: number;
@@ -207,6 +208,7 @@ async function processWideChunk(
     errors: string[];
     imported: number;
     insertedDailyRows: number;
+    updatedDailyRows: number;
     skippedDailyRows: number;
     createdSkus: number;
     enrichedSkus: number;
@@ -239,6 +241,7 @@ async function processWideChunk(
     skipMonthlyAggregate: true,
   });
   state.insertedDailyRows += stats.insertedSalesRows;
+  state.updatedDailyRows += stats.updatedSalesRows;
   state.skippedDailyRows += stats.skippedExistingSalesRows;
   state.createdSkus += stats.createdSkuCount;
   state.enrichedSkus += stats.enrichedSkuCount;
@@ -248,7 +251,7 @@ async function processWideChunk(
   if (stats.errors.length && state.errors.length < state.maxPersistErrors) {
     state.errors.push(...stats.errors.slice(0, state.maxPersistErrors - state.errors.length));
   }
-  state.imported += stats.insertedSalesRows;
+  state.imported += stats.insertedSalesRows + stats.updatedSalesRows;
 
   if (input.batchId) {
     await updateImportBatchProgress(input.batchId, {
@@ -268,6 +271,7 @@ export async function importXiaoshouSalesHistory(
   let createdSkus = 0;
   let enrichedSkus = 0;
   let insertedDailyRows = 0;
+  let updatedDailyRows = 0;
   let skippedDailyRows = 0;
   let upsertedMonthlyRows = 0;
   let expandedDailyRows = 0;
@@ -321,6 +325,7 @@ export async function importXiaoshouSalesHistory(
       errors,
       imported,
       insertedDailyRows,
+      updatedDailyRows,
       skippedDailyRows,
       createdSkus,
       enrichedSkus,
@@ -351,6 +356,7 @@ export async function importXiaoshouSalesHistory(
 
     imported = state.imported;
     insertedDailyRows = state.insertedDailyRows;
+    updatedDailyRows = state.updatedDailyRows;
     skippedDailyRows = state.skippedDailyRows;
     createdSkus = state.createdSkus;
     enrichedSkus = state.enrichedSkus;
@@ -400,6 +406,7 @@ export async function importXiaoshouSalesHistory(
       createdSkus: createdSkus || undefined,
       enrichedSkus: enrichedSkus || undefined,
       insertedDailyRows,
+      updatedDailyRows,
       skippedDailyRows,
       upsertedMonthlyRows,
       expandedDailyRows,

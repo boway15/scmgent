@@ -11,7 +11,7 @@ import {
   loadOpenLotsForTimeline,
   type OpenTimelineLot,
 } from './inventory-supply-lot-sync.js';
-import { getForecastDailyForDate } from './forecast-demand.js';
+import { getForecastDailyForDate, type ForecastHorizonContext } from './forecast-demand.js';
 import { loadMergedPublishedForecastBySkuIds } from './forecast-published-resolve.js';
 import { getLatestInventorySnapshot, type InventorySnapshot } from './inventory-snapshot.js';
 import { addDaysIso } from './inventory-supply-lots.js';
@@ -40,7 +40,9 @@ export function pickTimelineFallbackDaily(input: {
   planningFallbackDaily: number;
   avgDaily: number;
 }): number {
-  return input.source === 'demand_plan' ? input.planningFallbackDaily : input.avgDaily;
+  if (input.source === 'demand_plan') return input.planningFallbackDaily;
+  if (input.planningFallbackDaily > 0) return input.planningFallbackDaily;
+  return input.avgDaily;
 }
 
 export function resolveReservedQty(params: {
@@ -158,6 +160,8 @@ export function assembleWarehouseTimeline(params: {
   openLots: OpenTimelineLot[];
   planningDemand: PlanningDemandResult;
   includeChampionShadow?: boolean;
+  /** 仅销售预测曲线使用。需求计划周曲线不传。 */
+  farHorizon?: ForecastHorizonContext | null;
 }): {
   timeline: DailyInventoryResult;
   suggestedQty: number;
@@ -206,6 +210,11 @@ export function assembleWarehouseTimeline(params: {
       timelineMap,
       new Date(`${asOf}T00:00:00.000Z`),
       fallbackDaily,
+      planningDemand.source === 'forecast'
+        ? params.farHorizon
+          ? { ...params.farHorizon, asOf: params.farHorizon.asOf ?? today }
+          : null
+        : null,
     );
   };
 
@@ -338,6 +347,7 @@ export async function buildSkuNetworkTimeline(params: {
   today?: Date;
   encodingMeta?: unknown;
   includeChampionShadow?: boolean;
+  farHorizon?: ForecastHorizonContext | null;
 }): Promise<{
   timeline: DailyInventoryResult;
   suggestedQty: number;
@@ -403,6 +413,11 @@ export async function buildSkuNetworkTimeline(params: {
       timelineMap,
       new Date(`${asOf}T00:00:00.000Z`),
       fallbackDaily,
+      planningDemand.source === 'forecast'
+        ? params.farHorizon
+          ? { ...params.farHorizon, asOf: params.farHorizon.asOf ?? today }
+          : null
+        : null,
     );
   };
 

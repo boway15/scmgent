@@ -5,6 +5,20 @@ import { SHIP_SLACK_URGENT_DAYS, type AlertAction, type PriceReason } from './al
 
 export const HORIZON_DETAIL_MAX_DAYS = 150;
 
+/** 看板建议件数要盖住的天数：总提前期 + 安全库存。缺省交期 90、安全库存 14。 */
+export function orderCoverDays(
+  totalLeadDays: number | null | undefined,
+  safetyStockDays = 14,
+): number {
+  const lead =
+    totalLeadDays != null && Number.isFinite(totalLeadDays) && totalLeadDays > 0
+      ? Math.ceil(totalLeadDays)
+      : 90;
+  const safety =
+    Number.isFinite(safetyStockDays) && safetyStockDays > 0 ? Math.ceil(safetyStockDays) : 14;
+  return lead + safety;
+}
+
 export type HorizonDemand = {
   demand150: number;
   demand120: number;
@@ -22,6 +36,10 @@ export type HorizonDemand = {
   /** 不含本地的下单缺口（windowCovered 时仍计算，供「货还不能发」补单）。 */
   gap90Overseas: number;
   gap150Overseas: number;
+  /** 补到总提前期 + 安全库存的需求与缺口。未传 coverDays 时与 150 天窗口相同。 */
+  demandCover: number;
+  gapCover: number;
+  gapCoverOverseas: number;
 };
 
 export type InTransitWindowQty = {
@@ -92,8 +110,17 @@ export function horizonDemand(input: {
   inTransitWithin45?: number;
   /** 60 天内能上架的确定在途。 */
   inTransitWithin60?: number;
+  /** 建议件数要覆盖的天数。缺省 150，与旧窗口一致。 */
+  coverDays?: number;
   /** 已按月/周日均逐日累加的窗口需求；有值时不再用单一日均乘天数。 */
-  demandQty?: { d150: number; d120: number; d90: number; d60: number; d45: number };
+  demandQty?: {
+    d150: number;
+    d120: number;
+    d90: number;
+    d60: number;
+    d45: number;
+    dCover?: number;
+  };
 }): HorizonDemand | null {
   const days = input.coverageDays;
   const covered =
@@ -107,10 +134,23 @@ export function horizonDemand(input: {
   const windows = demandWindows(input.avgDaily, input.demandQty);
   if (!windows && !covered) return null;
   const demand = windows ?? { d150: 0, d120: 0, d90: 0, d60: 0, d45: 0 };
+  const coverDays =
+    input.coverDays != null && input.coverDays > 0
+      ? Math.ceil(input.coverDays)
+      : HORIZON_DETAIL_MAX_DAYS;
+  const demandCover =
+    input.demandQty?.dCover != null
+      ? input.demandQty.dCover
+      : coverDays === HORIZON_DETAIL_MAX_DAYS
+        ? demand.d150
+        : Math.round((input.avgDaily ?? 0) * coverDays);
   const inTransitAll = Math.max(0, input.inTransitQty ?? 0);
   const overseasPipeline = overseas + inTransitAll;
   const overseasGap = (need: number) => Math.max(0, need - overseasPipeline);
   const orderGap = (need: number) => (covered ? 0 : Math.max(0, need - pipeline));
+  const coverReached =
+    days === Number.POSITIVE_INFINITY ||
+    (days != null && Number.isFinite(days) && days >= coverDays);
   const ship60 = Math.max(0, demand.d60 - overseas - within60);
   const urgent45 = Math.max(0, demand.d45 - overseas - within45);
   return {
@@ -126,6 +166,9 @@ export function horizonDemand(input: {
     shipWindowCovered: ship60 <= 0 && urgent45 <= 0,
     gap90Overseas: overseasGap(demand.d90),
     gap150Overseas: overseasGap(demand.d150),
+    demandCover,
+    gapCover: coverReached ? 0 : Math.max(0, Math.round(demandCover) - pipeline),
+    gapCoverOverseas: overseasGap(demandCover),
   };
 }
 
@@ -154,7 +197,7 @@ export type OrderRecommendation = {
   orderOverseasReference?: boolean;
 };
 
-/** 数量补到 150 天。90 天已经不够，或可售短于交期加安全库存，则今天就下。 */
+/** 数量补到总提前期 + 安全库存。90 天已经不够，或可售短于交期加安全库存，则今天就下。 */
 export function recommendOrder(input: {
   today: string;
   coverageDays: number | null;
@@ -162,22 +205,30 @@ export function recommendOrder(input: {
   safetyStockDays?: number;
   gap90: number;
   gap150: number;
+  /** 补到总提前期 + 安全库存的缺口。缺省时仍用 150 天缺口。 */
+  gapCover?: number;
   windowCovered: boolean;
 }): OrderRecommendation {
-  const gap150 = Math.max(0, Math.round(input.gap150) || 0);
+  const orderGapQty = Math.max(0, Math.round(input.gapCover ?? input.gap150) || 0);
   const gap90 = Math.max(0, Math.round(input.gap90) || 0);
-  if (input.windowCovered || gap150 <= 0) {
-    return { orderByDate: null, orderQty: 0, orderNow: false };
-  }
   const lead = input.totalLeadDays != null && input.totalLeadDays > 0 ? input.totalLeadDays : 90;
   const safety = input.safetyStockDays ?? 14;
+  const targetDays = orderCoverDays(input.totalLeadDays, safety);
   const coverage = input.coverageDays;
+  const targetCovered =
+    input.gapCover == null
+      ? input.windowCovered
+      : coverage === Number.POSITIVE_INFINITY ||
+        (coverage != null && Number.isFinite(coverage) && coverage >= targetDays);
+  if (targetCovered || orderGapQty <= 0) {
+    return { orderByDate: null, orderQty: 0, orderNow: false };
+  }
   const slack =
     coverage != null && Number.isFinite(coverage) ? Math.floor(coverage - lead - safety) : 0;
   const orderNow = gap90 > 0 || slack <= 0;
   return {
     orderNow,
-    orderQty: gap150,
+    orderQty: orderGapQty,
     orderByDate: orderNow ? input.today : addDaysIso(input.today, slack),
   };
 }
@@ -200,6 +251,7 @@ export function recommendOrderForNetworkAlert(input: {
     safetyStockDays: input.safetyStockDays,
     gap90: h?.gap90 ?? 0,
     gap150: h?.gap150 ?? 0,
+    gapCover: h?.gapCover,
     windowCovered: h?.windowCovered ?? false,
   });
   if (base.orderQty > 0) return base;
@@ -208,14 +260,17 @@ export function recommendOrderForNetworkAlert(input: {
     (input.priceReason === 'not_ready' || input.priceReason === 'ship_late');
   if (!useOverseasGap) return base;
   const gap150 = h?.gap150Overseas ?? 0;
-  if (gap150 <= 0) return base;
+  const gapCover = h?.gapCoverOverseas ?? gap150;
+  if (gapCover <= 0 && gap150 <= 0) return base;
   const overseas = recommendOrder({
     today: input.today,
-    coverageDays: input.coverageDays,
+    // 全网可售含本地，不能用来判断海外侧是否已经盖住交期。
+    coverageDays: null,
     totalLeadDays: input.totalLeadDays,
     safetyStockDays: input.safetyStockDays,
     gap90: h?.gap90Overseas ?? 0,
     gap150,
+    gapCover,
     windowCovered: false,
   });
   return { ...overseas, orderOverseasReference: true };

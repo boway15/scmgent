@@ -204,6 +204,23 @@ describe('projectDailyInventory', () => {
     assert.equal(p45.expectedEnding, -300);
   });
 
+  it('orders a larger quantity when lead time includes freight, not only production', () => {
+    const lots: DailyLot[] = [
+      { supplyClass: 'confirmed', pool: 'overseas', qty: 500, availableAt: '2026-10-21' },
+    ];
+    const shared = {
+      lots,
+      today: '2026-10-21',
+      safetyStockDays: 14,
+      safetyStockQty: 140,
+      dailyDemandFn: () => 10,
+    };
+    const productionOnly = projectDailyInventory({ ...shared, totalLeadDays: 50 });
+    const fullChain = projectDailyInventory({ ...shared, totalLeadDays: 102 });
+    assert.equal(productionOnly.suggestedQty, 150);
+    assert.equal(fullChain.suggestedQty, 670);
+  });
+
   it('projects long-lead balances; net suggestedQty deducts dated planned, gross does not', () => {
     const lots: DailyLot[] = [
       { supplyClass: 'confirmed', pool: 'overseas', qty: 1000, availableAt: today },

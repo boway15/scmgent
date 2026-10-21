@@ -114,7 +114,7 @@ flowchart LR
 
 | 步骤 | 输入 | 规则 | 输出 |
 |------|------|------|------|
-| ① 销量导入 | 每日宽表 CSV，`POST /import/sales`（`import.ts` + `sales-xiaoshou.ts`） | 平台归一、station 分桶、已存在行跳过；导入后刷新 SKU 生命周期并异步重建销售分析立方 | `sales_history` |
+| ① 销量导入 | 每日宽表 CSV，`POST /import/sales`（`import.ts` + `sales-xiaoshou.ts`）；飞书长表每天 05:00 拉取 | 平台归一、station 分桶；新行插入，同一 SKU + 日期 + 渠道 + 站点覆盖销量；导入后刷新 SKU 生命周期并异步重建销售分析立方 | `sales_history` |
 | ② 清洗与聚合 | 日表 | 日表默认保留 365 天（`sales-history-config.ts`）；训练用月序列剔除缺货/大促（`forecast-monthly-clean.ts`） | 月度干净序列 |
 | ③ 分层 | 近 12 个月销量 | ABCD：连续性/CV 阈值（`forecast-profile-config.ts`）；默认算法模式 `allcat_v41`（`forecast-algo-mode.ts`）→ T1–T99 | `forecast_profile_class`、`profile_segment` |
 | ④ 基线预测 | 日/月销量、季节因子、准入 | 异步任务 `forecast_baseline`（`forecast-baseline-task.ts`）；monthly_abcd 模式下用 T1/T2/T3 核 | 草稿版本的 `sales_forecast_monthly` |
@@ -427,7 +427,7 @@ flowchart TB
 **④ 日粒度时间轴**（`inventory-timeline.ts`）
 
 规划页双 scope（`inventory-planning-service.ts`）：
-- **网络供应**（默认入口 / `scope=network`）：`buildSkuNetworkTimeline`，需求仓=`ALL`，交期用出货前生产段，聚合全仓 open lots；只读提示未定仓，不写 `inventory_dest_allocations`。
+- **网络供应**（默认入口 / `scope=network`）：`buildSkuNetworkTimeline`，需求仓=`ALL`，下单交期取相关物理仓全链路的最大值（没有这类仓时回退生产段），聚合全仓 open lots；只读提示未定仓，不写 `inventory_dest_allocations`。
 - **分仓规划**（`warehouse=<物理仓>`）：现网单仓时间轴与分配口径不变。
 
 | 环节 | 规则 |
@@ -446,7 +446,9 @@ flowchart TB
 |------|----------|------|
 | 仓有占比列且该 SKU 有份额 | 全站 × 占比 | — |
 | 仓有占比列但该 SKU 份额为 0 | 0 | — |
-| SKU 无任何占比，或仓无占比列（如 UK） | 全站（回退） | `no_share` / `metrics.demandShareFallback` |
+| SKU 无任何占比 | 全站（回退） | `no_share` / `metrics.demandShareFallback` |
+| 其他仓已有占比，但本仓没有占比列（如 UK） | 0 | — |
+| 网络池、`OVERSEAS` | 全站 | — |
 | 网络级 `ALL` | 全站 | — |
 
 **⑤ 健康度**（`inventory-health-service.ts`）
@@ -471,7 +473,7 @@ flowchart TB
 
 **每日覆盖（快照）**：`runStockAlert` 每轮先将全部 `is_resolved=false` 结案，再写入本轮去重后的命中行；`coverage_short` / `overstock` 等时间轴派生预警仅在**时间轴决策灯**为黄/红/蓝时落库（避免绿灯 SKU 刷量）。列表「待处理」= **本轮快照**，不是历史堆积。人工「标记已处理」仍可用；若风险未消失，下次扫描会重新出现。
 
-**库存风险看板（规划）**：驾驶舱按可规划 SKU 全网可售天数出概览——已断货、即将断货（原调价档拆分）、紧急发货、发货、90/120 天下单、健康 120–150、轻度超备 151–180、超备 181–300、确定性滞销 >300。点卡片进 **SKU 全网** 明细。同一 SKU 只进最紧急的一档。绿灯安全覆盖进入 151–180；灰灯滞销按可售天数进 181–300 或 >300。没有已发布预测且周转日均为空时按日均 0 计，有库存则覆盖封顶 9999 天（进确定性滞销）。无周转头寸、算不出库存数量的行仍不进档。详见 [`docs/prd/inventory-alerts-dual-view.md`](../prd/inventory-alerts-dual-view.md)。
+**库存风险看板（规划）**：驾驶舱按可规划 SKU 全网可售天数出概览——已断货、即将断货（原调价档拆分）、紧急发货、发货、90/120 天下单、健康 120–150、轻度超备 151–180、超备 181–300、确定性滞销 >300。点卡片进 **SKU 全网** 明细。同一 SKU 只进最紧急的一档。全网需求曲线与规划页、补货任务相同：已采纳需求计划优先，否则用已发布预测。建议件数补到该行总提前期加安全库存，不再固定补满 150 天。全网可售到达 150 天只清掉 90/120/150 天对照缺口；只要可售还没盖住交期加安全库存，建议件数仍按该目标计算。绿灯安全覆盖进入 151–180；灰灯滞销按可售天数进 181–300 或 >300。没有已发布预测且周转日均为空时按日均 0 计，有库存则覆盖封顶 9999 天（进确定性滞销）。无周转头寸、算不出库存数量的行仍不进档。详见 [`docs/prd/inventory-alerts-dual-view.md`](../prd/inventory-alerts-dual-view.md)。
 
 **⑦ 数据问题队列**（`inventory-data-issues.ts`）
 
@@ -501,7 +503,7 @@ flowchart TB
 | Z 值表 | 0.90→1.28、0.95→1.65、0.975→1.96、0.99→2.33 | 同上 |
 | σ_d（日需求标准差） | 回看窗口内逐日计算，**零销量日按 0 计入**，与 avgDaily 同分母 | `replenishment.ts` `calcDailyStats` |
 | Z 值建议 API | 固定 `z_demand`，默认服务水平 0.95，天数封顶 180 | `safety-stock-suggestion.ts` |
-| 规划安全库存 | 按 `safety_stock_config` 生效：`calcMethod=manual` 且件数 >0 用人工件数；否则按 `safety_stock_method`（默认 `coverage_days` × 14 天）计算 | `resolvePlanningSafetyStock`（`safety-stock-z.ts`） |
+| 规划安全库存 | 按 `safety_stock_config` 生效：`calcMethod=manual` 且件数 >0 用人工件数；否则按 `safety_stock_method`（默认 `coverage_days` × 14 天）计算。Z 法的需求标准差优先用近 3 个月预测误差，交期标准差用配置值，没有时用交期 Profile | `resolvePlanningSafetyStock`（`safety-stock-z.ts`） |
 | ROP | `ceil(avgDaily × L + 规划安全库存)` | 同上 |
 | EOQ | `ceil(√(2DS / h))`，S = 50，h = 单位成本 × 0.2 | 同上 |
 | 滞销灰灯 | 日均 ≤0.1 且覆盖 ≥90 天 | `inventory-light.ts` |
@@ -591,7 +593,7 @@ SKU 规划入口（`SkuPlanningEntryPage`）列表列展示**库存健康灯**�
 
 | 视图 | 入口 | 需求 | 有效供给 | 时间轴批次 | 交期 |
 |------|------|------|----------|------------|------|
-| 网络供应（默认） | 不带仓 / `scope=network` | 仓码 `ALL` 的全网络需求 | 各物理仓有效供给相加 | 全网 open lots | **只计生产天数**（国内运输、订舱、海运、清关、入仓置 0） |
+| 网络供应（默认） | 不带仓 / `scope=network` | 仓码 `ALL` 的全网络需求 | 各物理仓有效供给相加 | 全网 open lots | **全链路**：有销售占比或有开放批次的物理仓，取各仓六段合计的最大值；都没有时回退生产天数 |
 | 分仓规划 | `scope=warehouse&warehouse=US-WEST` 等 | 全站预测或需求计划 × 该仓销售占比 | 该仓一条 `resolveInventoryPosition` | 该仓 lots | 交期 Profile 六段合计 |
 
 顶栏「断货日」读的是当前视图的时间轴，不是分仓一览每一行的「缺货日」。
@@ -636,7 +638,7 @@ SKU 规划入口（`SkuPlanningEntryPage`）列表列展示**库存健康灯**�
 
 #### 3.8.4 决策条
 
-有时间轴时，这些数来自 `projectDailyInventory`（窗口 `W = min(180, max(90, ceil(总交期) + ceil(安全库存天数)))`，当天需求计入累计）。日需求：有采纳的需求计划用周 Map，否则用已发布预测月 Map，再否则用 `avgDaily` 常数；分仓再乘销售占比（§3.3「分仓需求」）。
+有时间轴时，这些数来自 `projectDailyInventory`（窗口 `W = min(180, max(90, ceil(总交期) + ceil(安全库存天数)))`，当天需求计入累计）。日需求：有采纳的需求计划用周 Map，否则用已发布预测月 Map，再否则用 `avgDaily` 常数；分仓再乘销售占比（§3.3「分仓需求」）。网络时间轴和预警可售在使用已发布预测时，从今天起第 3–6 个月 A 类按点预测 ×1.1、B 类改用 P90；近月保持点预测。已采纳的需求计划不再加这层缓冲。分仓时间轴仍用占比拆分后的点预测。
 
 | 字段 | 定义 | 算法 |
 |------|------|------|
@@ -656,7 +658,7 @@ SKU 规划入口（`SkuPlanningEntryPage`）列表列展示**库存健康灯**�
 | 日需求已按有库存天数修正 | 仅历史回退且 `stockoutAdjusted` |
 | 若用预测缺货日 | 同一供给下，把需求换成 Champion 预测再跑一遍时间轴的确定缺货日，供对照 |
 | 确定线 N 天 | 与「覆盖天数」同一 `calcConfirmedCoverageDays` |
-| 安全库存 N 天 | 网络取各仓配置天数的最大值，缺省 14。分仓取该仓 `safety_stock_config`，缺省 14。件数见 §3.4「规划安全库存」 |
+| 安全库存 N 天 | 网络取各仓配置天数的最大值，缺省 14；件数是 `ceil(网络日均 × 该天数)`，不把各仓件数相加。分仓取该仓 `safety_stock_config`，缺省 14。分仓件数见 §3.4「规划安全库存」 |
 | 建议下单 | 时间轴 `reorderDate`：预计缺货日 − 总交期；早于今天则钳为今天，并标「已过最晚下单日」 |
 
 #### 3.8.5 四格、位置拆分、交期
@@ -676,7 +678,7 @@ SKU 规划入口（`SkuPlanningEntryPage`）列表列展示**库存健康灯**�
 
 「网络库存位置」在网络视图下**不是**五桶都按仓相加：可售、已确认开放、已分配、欠单来自各物理仓头寸之和；「生产中」改用在产 lot 合计；「在途库存」改用在途 lot 合计。底部「有效供给」仍是各仓头寸之和，所以可以小于「生产中」。分仓视图五桶都来自该仓 `resolveInventoryPosition`。欠单现网恒为 0。
 
-供应链提前期六段相加得合计（`calcTotalLeadTime`）。网络视图调用 `resolvePreShipmentLeadTimeForSku`，只保留生产天数，其余五段为 0，合计等于生产交期。生产天数优先级：默认供应商交期 → 商家生产天数 → Profile / SKU `lead_time_days`，缺省 `DEFAULT_PRODUCTION_LEAD_DAYS`（50）。分仓视图用目的仓 Profile 的六段。有 `profileId` 显示「已匹配交期 Profile」，否则「使用分层默认值」。
+供应链提前期六段相加得合计（`calcTotalLeadTime`）。网络视图的下单窗口用 `resolveNetworkOrderLeadDays`：在有销售占比或有开放批次的物理仓上取 `resolveLeadTimeForSkuWarehouse` 的最大 `totalLeadDays`，并与生产段比较后取较大值（新采购要经过生产再加物流才能可售）。没有这类仓时回退 `resolvePreShipmentLeadTimeForSku`（只计生产天数，缺省 50）。展示的六段取合计最长的那一仓；生产段仍长于所有仓时，其余五段为 0。分仓视图用目的仓 Profile 的六段。有 `profileId` 显示「已匹配交期 Profile」，否则「使用分层默认值」。
 
 #### 3.8.6 时间轴表
 
@@ -733,6 +735,7 @@ SKU 规划入口（`SkuPlanningEntryPage`）列表列展示**库存健康灯**�
 | 07:50 | 每日库存流水线（含影子长表构建 → 数据问题扫描 → 补货…） | `POST /tasks/daily-inventory-pipeline` |
 | 08:00 | 大件备货飞书拉取 | `POST /tasks/procurement-bulk-stock-pull` |
 | 08:05 | 采购跟单飞书拉取 | `POST /tasks/procurement-follow-up-pull` |
+| 05:00 | 销量飞书拉取（近 3 日长表，新行插入、已有行覆盖，先于当天预测） | `POST /tasks/sales-daily-feishu-pull` |
 | 每周一 09:00 | 补货建议生成（独立调度） | `POST /tasks/replenishment-forecast` |
 | 已停用 | 独立缺货预警（已并入流水线） | `POST /tasks/stock-alert` |
 

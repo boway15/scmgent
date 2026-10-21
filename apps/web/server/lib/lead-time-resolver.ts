@@ -11,6 +11,7 @@ import {
 export type ResolvedLeadTime = LeadTimeBreakdown & {
   merchantCode?: string | null;
   warehouseCode: string;
+  leadTimeStdDev?: number | null;
 };
 
 export type LeadTimeProfileRow = {
@@ -24,6 +25,7 @@ export type LeadTimeProfileRow = {
   transitDays: number;
   customsDays: number;
   inboundDays: number;
+  leadTimeStdDev?: number | null;
 };
 
 export type LeadTimeResolveCaches = {
@@ -93,6 +95,7 @@ export function resolveLeadTimeFromCaches(
       profileId: profile.id,
       merchantCode: params.merchantCode,
       warehouseCode: params.warehouseCode,
+      leadTimeStdDev: profile.leadTimeStdDev ?? null,
     };
   }
 
@@ -149,6 +152,23 @@ function findMerchantLeadProfile(
     }
   }
   return undefined;
+}
+
+/**
+ * 网络下单交期：新采购要走到可售，取生产段与各相关仓全链路提前期的较大值。
+ * 没有仓交期时回退生产段。
+ */
+export function resolveNetworkOrderLeadDays(input: {
+  productionDays: number;
+  warehouseLeadDays: Array<number | null | undefined>;
+}): number {
+  const production = Math.max(0, input.productionDays);
+  let warehouseMax = 0;
+  for (const days of input.warehouseLeadDays) {
+    if (days == null || !Number.isFinite(days) || days <= 0) continue;
+    warehouseMax = Math.max(warehouseMax, days);
+  }
+  return Math.max(production, warehouseMax);
 }
 
 /** 出货前纯生产交期：仅 productionDays，不含国内段/订舱/目的仓海运/清关/上架。 */
@@ -213,6 +233,7 @@ export async function resolvePreShipmentLeadTimeForSku(params: {
           transitDays: leadTimeProfiles.transitDays,
           customsDays: leadTimeProfiles.customsDays,
           inboundDays: leadTimeProfiles.inboundDays,
+          leadTimeStdDev: leadTimeProfiles.leadTimeStdDev,
         })
         .from(leadTimeProfiles)
         .where(
@@ -273,6 +294,7 @@ export async function resolveLeadTimeForSkuWarehouse(params: {
       transitDays: leadTimeProfiles.transitDays,
       customsDays: leadTimeProfiles.customsDays,
       inboundDays: leadTimeProfiles.inboundDays,
+      leadTimeStdDev: leadTimeProfiles.leadTimeStdDev,
     })
     .from(leadTimeProfiles)
     .where(

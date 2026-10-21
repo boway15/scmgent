@@ -61,11 +61,22 @@ describe('pickTimelineFallbackDaily', () => {
     );
   });
 
-  it('uses avgDaily when source is forecast', () => {
+  it('prefers the planning fallback over the caller daily when source is forecast', () => {
     assert.equal(
       pickTimelineFallbackDaily({
         source: 'forecast',
         planningFallbackDaily: 8,
+        avgDaily: 3,
+      }),
+      8,
+    );
+  });
+
+  it('uses avgDaily when the forecast source has no planning fallback', () => {
+    assert.equal(
+      pickTimelineFallbackDaily({
+        source: 'forecast',
+        planningFallbackDaily: 0,
         avgDaily: 3,
       }),
       3,

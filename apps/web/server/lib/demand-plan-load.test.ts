@@ -171,13 +171,14 @@ describe('loadPlanningDemandForSkuWarehouse', () => {
     assert.equal(south.fallbackDaily, 0);
   });
 
-  it('falls back to station forecast with no_share for warehouses without a share column', async () => {
+  it('zeros a warehouse without a share column when other warehouses already have shares', async () => {
     const result = await loadPlanningDemandForSkuWarehouse(
       { skuId: 'sku-1', warehouseCode: 'UK', championForecastMap: stationForecastMap },
       disabledDeps({ turnoverSnapshot: { 美西: '1' } }),
     );
-    assert.equal(result.demandMap, stationForecastMap);
-    assert.deepEqual(result.flags, ['no_share']);
+    assert.equal(result.demandMap.get('2026-10'), 0);
+    assert.equal(result.fallbackDaily, 0);
+    assert.deepEqual(result.flags, []);
   });
 
   it('keeps station forecast without flags for network ALL', async () => {

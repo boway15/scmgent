@@ -1,16 +1,20 @@
 import {
   daysUntilDate,
   resolveAlertAction,
+  resolveAlertLevel,
   type AlertAction,
   type AlertActionView,
   type AlertLevel,
   type PriceReason,
   matchesInventoryRiskView,
 } from './alert-action.js';
+import {
+  loadWarehouseShippingLeadMap,
+  shippingLeadAcrossWarehouses,
+} from './alert-ship-lead.js';
 import { alertSupplyKey, loadAlertListSupply, type AlertListSupply } from './alert-list-supply.js';
 import { finiteCoverageDays, resolveNetworkForecastCoverage } from './alert-network-coverage.js';
 import { getShanghaiBusinessDate } from './inventory-daily-snapshot.js';
-import { resolveShippingLeadDays } from './replenishment-coverage.js';
 
 const LEVEL_RANK: Record<string, number> = { l3: 0, l2: 1, l1: 2 };
 
@@ -38,6 +42,19 @@ function skuHasShippableLots(rows: SkuClassifyWarehouseRow[]): boolean {
   return rows.some((row) => row.hasShippableLots);
 }
 
+export function networkShippingLeadDays(
+  warehouseCodes: Array<string | null | undefined>,
+  configured: Map<string, number | null>,
+): number {
+  return shippingLeadAcrossWarehouses(warehouseCodes, configured);
+}
+
+function moreSevereLevel(current: AlertLevel | null, next: AlertLevel | null): AlertLevel | null {
+  if (!next) return current;
+  if (!current) return next;
+  return (LEVEL_RANK[next] ?? 3) < (LEVEL_RANK[current] ?? 3) ? next : current;
+}
+
 function resolveNetworkCoverageForSupply(input: { today: string; supply: AlertListSupply }) {
   return resolveNetworkForecastCoverage({
     today: input.today,
@@ -46,6 +63,8 @@ function resolveNetworkCoverageForSupply(input: { today: string; supply: AlertLi
     inTransitQty: input.supply.networkInTransitQty,
     forecastDaily: input.supply.networkForecastDaily,
     flatDaily: input.supply.networkForecastDaily ? null : input.supply.networkAvgDaily,
+    profileClass: input.supply.forecastProfileClass,
+    forecastP90Daily: input.supply.forecastP90Daily,
     inTransitWithin45: input.supply.networkInTransitWithin45 ?? 0,
     inTransitWithin60: input.supply.networkInTransitWithin60 ?? 0,
   });
@@ -88,12 +107,14 @@ export function resolveNetworkSkuAlertAction(input: {
     shippingLeadDays: input.shippingLeadDays,
     hasShippableLots: input.hasShippableLots,
     noise: input.noise,
+    totalLeadDays: input.supply.totalLeadDays,
   });
 }
 
 export type SkuNetworkClassified = SkuClassifyWarehouseRow & {
   networkAction: AlertAction;
   networkPriceReason: PriceReason | null;
+  shippingLeadDays: number;
 };
 
 /** 按 SKU 聚合后做全网分档；用于 SKU 全网列表与概览卡片计数。 */
@@ -116,7 +137,10 @@ export async function classifyAlertsBySkuNetwork(
       projectedStockoutDate: null as string | null,
     };
   });
-  const supplyByKey = await loadAlertListSupply(supplyRows);
+  const [supplyByKey, shippingLead] = await Promise.all([
+    loadAlertListSupply(supplyRows),
+    loadWarehouseShippingLeadMap(),
+  ]);
   const today = getShanghaiBusinessDate();
 
   const out: SkuNetworkClassified[] = [];
@@ -124,15 +148,36 @@ export async function classifyAlertsBySkuNetwork(
     const rep = pickRepresentativeRow(rows);
     const supply = supplyByKey.get(alertSupplyKey(skuId, rep.warehouseCode));
     if (!supply) continue;
+    const shippingLeadDays = networkShippingLeadDays(
+      rows.map((row) => row.warehouseCode),
+      shippingLead,
+    );
     const resolved = resolveNetworkSkuAlertAction({
       today,
       supply,
-      shippingLeadDays: resolveShippingLeadDays(rep.warehouseCode ?? ''),
+      shippingLeadDays,
       hasShippableLots: skuHasShippableLots(rows),
       noise: false,
     });
     if (resolved.action === 'none') continue;
-    out.push({ ...rep, networkAction: resolved.action, networkPriceReason: resolved.priceReason });
+    const { shipDays } = networkOnHandTransitShipDays({ today, supply });
+    const level = moreSevereLevel(
+      rep.level,
+      resolveAlertLevel({
+        action: resolved.action,
+        shipDays,
+        fullDays: finiteCoverageDays(resolveNetworkCoverageForSupply({ today, supply }).coverageDays),
+        profileClass: null,
+        totalLeadDays: supply.totalLeadDays,
+      }),
+    );
+    out.push({
+      ...rep,
+      level,
+      networkAction: resolved.action,
+      networkPriceReason: resolved.priceReason,
+      shippingLeadDays,
+    });
   }
 
   return out.sort((a, b) => {

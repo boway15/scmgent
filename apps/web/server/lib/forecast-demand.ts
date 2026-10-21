@@ -96,6 +96,53 @@ export function aggregateForecastRows(
   return map;
 }
 
+/** 与点预测同一套平台过滤，把各平台 P90 加总成全站月曲线。 */
+export function aggregateForecastP90Rows(
+  rows: Array<{
+    forecastYear: number;
+    month: number;
+    forecastDailyP90: number;
+    platform?: string | null;
+  }>,
+): Map<string, number> {
+  const specific = rows.filter((row) => normalizeSalesPlatform(row.platform) !== 'ALL');
+  const source = specific.length ? specific : rows;
+  const map = new Map<string, number>();
+  for (const row of source) {
+    if (!(row.forecastDailyP90 > 0)) continue;
+    const key = forecastMonthKey(row.forecastYear, row.month);
+    map.set(key, (map.get(key) ?? 0) + row.forecastDailyP90);
+  }
+  return map;
+}
+
+/**
+ * 预测发布月起第 3–6 个月（下标 3、4、5）：A 类点预测 ×1.1，B 类取 P90。
+ * 近月和更远的月份保持点预测。已采纳的需求计划不要走这条。
+ */
+export function resolveFarHorizonForecastDaily(input: {
+  forecastDailyAvg: number;
+  forecastDailyP90?: number | null;
+  horizonMonthIndex: number;
+  profileClass?: string | null;
+}): number {
+  const k = Math.max(0, Math.floor(input.horizonMonthIndex));
+  if (k < 3 || k > 5) return input.forecastDailyAvg;
+  const klass = input.profileClass?.trim().toUpperCase() ?? '';
+  if (klass === 'B' && input.forecastDailyP90 != null && input.forecastDailyP90 > 0) {
+    return input.forecastDailyP90;
+  }
+  if (klass === 'A') {
+    return Math.round(input.forecastDailyAvg * 1.1 * 10_000) / 10_000;
+  }
+  return resolveHorizonConsumptionDaily({
+    forecastDailyAvg: input.forecastDailyAvg,
+    forecastDailyP90: input.forecastDailyP90,
+    horizonMonthIndex: k,
+    profileClass: input.profileClass,
+  });
+}
+
 export function stationForWarehouse(regionGroup: string, countryCode?: string | null): string {
   const cc = countryCode?.toUpperCase();
   if (cc === 'DE') return 'DE';
@@ -338,10 +385,31 @@ export function buildForecastMap(rows: MonthlyForecastRow[]): Map<string, number
   return map;
 }
 
+export type ForecastHorizonContext = {
+  profileClass?: string | null;
+  p90?: Map<string, number> | null;
+  asOf?: Date;
+};
+
+function positiveMonthDaily(map: Map<string, number> | null | undefined, key: string): number | null {
+  const value = map?.get(key);
+  return value != null && value > 0 ? value : null;
+}
+
+function seasonalMonthDaily(map: Map<string, number> | null | undefined, month: number): number | null {
+  if (!map) return null;
+  const monthSuffix = `-${String(month).padStart(2, '0')}`;
+  for (const [key, value] of map) {
+    if (key.endsWith(monthSuffix) && value > 0) return value;
+  }
+  return null;
+}
+
 export function getForecastDailyForDate(
   forecasts: Map<string, number>,
   date: Date,
   fallbackDaily = 0,
+  horizon?: ForecastHorizonContext | null,
 ): number {
   const firstKey = forecasts.keys().next().value as string | undefined;
   if (firstKey && isIsoWeekPeriod(firstKey)) {
@@ -351,22 +419,20 @@ export function getForecastDailyForDate(
   }
 
   const key = forecastMonthKey(date.getFullYear(), date.getMonth() + 1);
-  const value = forecasts.get(key);
-  if (value != null && value > 0) return value;
-
-  // 跨年兜底：若未维护下一年同月预测，复用已有年份的同月日均（季节性近似）
   const month = date.getMonth() + 1;
-  const monthSuffix = `-${String(month).padStart(2, '0')}`;
-  let seasonalFallback: number | null = null;
-  for (const [k, v] of forecasts) {
-    if (k.endsWith(monthSuffix) && v > 0) {
-      seasonalFallback = v;
-      break;
-    }
-  }
-  if (seasonalFallback != null) return seasonalFallback;
+  const onCurve = positiveMonthDaily(forecasts, key) ?? seasonalMonthDaily(forecasts, month);
+  const point = onCurve ?? fallbackDaily;
+  if (onCurve == null || !horizon?.profileClass) return point;
 
-  return fallbackDaily;
+  const asOf = horizon.asOf ?? new Date();
+  const horizonMonthIndex =
+    (date.getFullYear() - asOf.getFullYear()) * 12 + (date.getMonth() - asOf.getMonth());
+  return resolveFarHorizonForecastDaily({
+    forecastDailyAvg: point,
+    forecastDailyP90: positiveMonthDaily(horizon.p90, key) ?? seasonalMonthDaily(horizon.p90, month),
+    horizonMonthIndex,
+    profileClass: horizon.profileClass,
+  });
 }
 
 /** 未来 N 天按月度预测日均的加权平均 */

@@ -6,6 +6,7 @@ import {
   calcCoverageDaysWithForecast,
   calcCoverageReplenishmentFromForecast,
   getForecastDailyForDate,
+  resolveFarHorizonForecastDaily,
   normalizeSalesPlatform,
   parseMonthlyForecastFromRow,
   sumForecastDemand,
@@ -102,6 +103,31 @@ describe('forecast-demand', () => {
       { forecastDailyAvg: 1.0, manualDailyAvg: null },
     ]);
     assert.equal(mixed, 5);
+  });
+
+  it('lifts A class months 3 to 5 and keeps nearer months on the point forecast', () => {
+    const forecasts = new Map<string, number>([
+      ['2026-11', 10],
+      ['2027-02', 10],
+    ]);
+    const horizon = {
+      profileClass: 'A',
+      asOf: new Date('2026-10-21T00:00:00.000Z'),
+    };
+    assert.equal(
+      getForecastDailyForDate(forecasts, new Date('2026-11-15T00:00:00.000Z'), 0, horizon),
+      10,
+    );
+    assert.equal(
+      getForecastDailyForDate(forecasts, new Date('2027-02-15T00:00:00.000Z'), 0, horizon),
+      11,
+    );
+    assert.equal(resolveFarHorizonForecastDaily({
+      forecastDailyAvg: 10,
+      horizonMonthIndex: 4,
+      profileClass: 'B',
+      forecastDailyP90: 15,
+    }), 15);
   });
 
   it('falls back to same calendar month across years when next year missing', () => {

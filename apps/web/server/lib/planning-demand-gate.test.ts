@@ -3,6 +3,7 @@ import { describe, it } from 'node:test';
 import {
   computeRecentSkuWmape,
   evaluateDemandGate,
+  summarizePrecisionWindow,
   isAutoAdoptableSuggestion,
   isDemandReconstructCapHit,
   stockoutDaysFromInStockRatio,
@@ -101,6 +102,42 @@ describe('planning-demand-gate', () => {
     });
     assert.equal(result.needsManualConfirm, true);
     assert.ok(result.flags.includes('wmape_fail'));
+  });
+
+  it('uses the latest three settled months instead of only the last month', () => {
+    const sample = (month: number, forecast: number, actual: number) => ({
+      station: 'US',
+      platform: 'ALL',
+      forecastYear: 2026,
+      month,
+      forecastDailyAvg: String(forecast),
+      actualDailyAvg: String(actual),
+      computedAt: '2026-09-01T00:00:00Z',
+    });
+    const summary = summarizePrecisionWindow([
+      sample(6, 10, 10),
+      sample(7, 20, 10),
+      sample(8, 12, 10),
+      sample(5, 100, 10),
+    ]);
+    assert.ok(summary.wmape != null);
+    assert.ok(Math.abs(summary.wmape - 12 / 30) < 1e-9);
+    assert.ok(summary.errorStdDev != null && summary.errorStdDev > 0);
+  });
+
+  it('asks for manual confirm when the segment or accuracy sample is missing', () => {
+    const missingSegment = evaluateDemandGate({ recentWmape: 0.1 });
+    assert.equal(missingSegment.needsManualConfirm, true);
+    assert.ok(missingSegment.flags.includes('segment_missing'));
+    assert.equal(missingSegment.flags.includes('wmape_fail'), false);
+
+    const missingAccuracy = evaluateDemandGate({
+      recentWmape: null,
+      segment: 'A:core',
+      band: 'precision',
+    });
+    assert.equal(missingAccuracy.needsManualConfirm, true);
+    assert.ok(missingAccuracy.flags.includes('accuracy_missing'));
   });
 
   it('passes when accuracy is under target and not capped', () => {

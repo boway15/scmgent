@@ -240,6 +240,18 @@ export function profileClassLabel(cls: ProfileClass): string {
   return PROFILE_CLASS_META[cls].label;
 }
 
+export function parseProfileSegment(value: string | null | undefined): ProfileSegment | null {
+  const text = value?.trim();
+  if (!text) return null;
+  return text in PROFILE_SEGMENT_META ? (text as ProfileSegment) : null;
+}
+
+export function profileClassFromSegment(value: string | null | undefined): ProfileClass | null {
+  const segment = parseProfileSegment(value);
+  if (!segment) return null;
+  return PROFILE_SEGMENT_META[segment].parentClass;
+}
+
 export function segmentLabel(segment: ProfileSegment | string): string {
   const meta = PROFILE_SEGMENT_META[segment as ProfileSegment];
   if (meta) return meta.label;

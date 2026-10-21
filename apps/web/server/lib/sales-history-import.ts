@@ -1,4 +1,4 @@
-import { inArray } from 'drizzle-orm';
+import { inArray, sql } from 'drizzle-orm';
 import { db, salesHistory, skus } from '@scm/db';
 import type { DailySalesRow } from './sales-report-parser.js';
 import {
@@ -34,7 +34,7 @@ export type SalesHistoryImportPlan = {
 export type SalesHistoryImportStats = SalesHistoryImportPlan & {
   importedSalesRows: number;
   insertedSalesRows: number;
-  /** @deprecated 销售历史导入不再更新存量，恒为 0 */
+  /** 同一 SKU + 日期 + 渠道 + 站点已存在时覆盖销量 */
   updatedSalesRows: number;
   skippedExistingSalesRows: number;
   createdSkuCount: number;
@@ -46,6 +46,10 @@ export type SalesHistoryImportStats = SalesHistoryImportPlan & {
     cutoffDate: string;
   };
 };
+
+function isInsertedReturningFlag(value: unknown): boolean {
+  return value === true || value === 't' || value === 'true';
+}
 
 function resolveSkuIdForDailySalesRow(
   rawSkuCode: string,
@@ -180,14 +184,18 @@ export async function persistDailySalesRowsAsHistory(
   const planRows = dedupeSalesHistoryPlanRows(plan.rows);
 
   let insertedSalesRows = 0;
-  let skippedExistingSalesRows = 0;
+  let updatedSalesRows = 0;
+
+  const qtySold = importBatchId
+    ? sql`case when ${salesHistory.importBatchId}::text = ${importBatchId} then ${salesHistory.qtySold} + excluded.qty_sold else excluded.qty_sold end`
+    : sql`excluded.qty_sold`;
 
   const INSERT_CHUNK = 1000;
   for (let offset = 0; offset < planRows.length; offset += INSERT_CHUNK) {
     const chunk = planRows.slice(offset, offset + INSERT_CHUNK);
     if (!chunk.length) continue;
 
-    const inserted = await db
+    const written = await db
       .insert(salesHistory)
       .values(
         chunk.map((row) => ({
@@ -201,18 +209,28 @@ export async function persistDailySalesRowsAsHistory(
           importBatchId: importBatchId || undefined,
         })),
       )
-      .onConflictDoNothing({
+      .onConflictDoUpdate({
         target: [
           salesHistory.skuId,
           salesHistory.saleDate,
           salesHistory.channel,
           salesHistory.station,
         ],
+        set: {
+          qtySold,
+          category: sql`coalesce(excluded.category, ${salesHistory.category})`,
+          importBatchId: sql`excluded.import_batch_id`,
+        },
       })
-      .returning({ id: salesHistory.id });
+      .returning({
+        id: salesHistory.id,
+        inserted: sql<boolean>`(xmax = 0)`,
+      });
 
-    insertedSalesRows += inserted.length;
-    skippedExistingSalesRows += chunk.length - inserted.length;
+    for (const row of written) {
+      if (isInsertedReturningFlag(row.inserted)) insertedSalesRows += 1;
+      else updatedSalesRows += 1;
+    }
     await yieldToEventLoop();
   }
 
@@ -222,17 +240,18 @@ export async function persistDailySalesRowsAsHistory(
         skuIds: Array.from(new Set(planRows.map((row) => row.skuId))),
       });
 
-  if (insertedSalesRows > 0 && !options?.skipMonthlyAggregate) {
+  const writtenSalesRows = insertedSalesRows + updatedSalesRows;
+  if (writtenSalesRows > 0 && !options?.skipMonthlyAggregate) {
     schedulePostImportSalesAnalyticsCubeRebuild();
   }
 
   return {
     ...plan,
     rows: planRows,
-    importedSalesRows: insertedSalesRows,
+    importedSalesRows: writtenSalesRows,
     insertedSalesRows,
-    updatedSalesRows: 0,
-    skippedExistingSalesRows,
+    updatedSalesRows,
+    skippedExistingSalesRows: 0,
     createdSkuCount,
     enrichedSkuCount,
     skippedExistingCount,

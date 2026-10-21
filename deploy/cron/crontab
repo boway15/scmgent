@@ -4,6 +4,8 @@
 
 # 独立缺货预警保持关闭：07:50 每日流水线已包含该步骤，避免同一天跑两遍
 # 0 7 * * * /usr/local/bin/run-task.sh /api/tasks/stock-alert
+# 销量长表先于 06:00 库存拉取和 07:50 预测流水线，供当天预测使用
+0 5 * * * /usr/local/bin/run-task.sh /api/tasks/sales-daily-feishu-pull
 0 6 * * * /usr/local/bin/run-task.sh /api/tasks/procurement-ops-pull
 20 7 * * * /usr/local/bin/run-task.sh /api/tasks/inventory-query-pull
 40 7 * * * /usr/local/bin/run-task.sh /api/tasks/inventory-turnover-pull

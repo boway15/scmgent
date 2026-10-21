@@ -48,6 +48,55 @@ export function computeRecentSkuWmape(rows: SkuAccuracySampleRow[]): number | nu
   return actualSum > 0 ? absErrorSum / actualSum : null;
 }
 
+const PRECISION_WINDOW_MONTHS = 3;
+
+function monthKeyOf(row: SkuAccuracySampleRow): number {
+  return row.forecastYear * 100 + row.month;
+}
+
+/** 最近 3 个已结算月的加权 WMAPE，以及这些月的预测误差标准差。 */
+export function summarizePrecisionWindow(rows: SkuAccuracySampleRow[]): {
+  wmape: number | null;
+  errorStdDev: number | null;
+} {
+  if (rows.length === 0) return { wmape: null, errorStdDev: null };
+  const months = [...new Set(rows.map(monthKeyOf))].sort((a, b) => b - a).slice(0, PRECISION_WINDOW_MONTHS);
+  const monthSet = new Set(months);
+  const latestByScope = new Map<string, SkuAccuracySampleRow>();
+  for (const row of rows) {
+    if (!monthSet.has(monthKeyOf(row))) continue;
+    const scope = `${row.station}|${row.platform}|${monthKeyOf(row)}`;
+    const prev = latestByScope.get(scope);
+    const ts = row.computedAt ? new Date(row.computedAt).getTime() : 0;
+    const prevTs = prev?.computedAt ? new Date(prev.computedAt).getTime() : 0;
+    if (!prev || ts > prevTs) latestByScope.set(scope, row);
+  }
+
+  let absErrorSum = 0;
+  let actualSum = 0;
+  const errors: number[] = [];
+  for (const row of latestByScope.values()) {
+    const forecast = Number(row.forecastDailyAvg);
+    const actual = Number(row.actualDailyAvg);
+    if (!Number.isFinite(forecast) || !Number.isFinite(actual)) continue;
+    if (actual <= 0 || forecast <= 0) continue;
+    absErrorSum += Math.abs(forecast - actual);
+    actualSum += actual;
+    errors.push(forecast - actual);
+  }
+  let errorStdDev: number | null = null;
+  if (errors.length >= 2) {
+    const mean = errors.reduce((sum, value) => sum + value, 0) / errors.length;
+    const variance =
+      errors.reduce((sum, value) => sum + (value - mean) ** 2, 0) / (errors.length - 1);
+    errorStdDev = Math.sqrt(variance);
+  }
+  return {
+    wmape: actualSum > 0 ? absErrorSum / actualSum : null,
+    errorStdDev,
+  };
+}
+
 /** 还原日均触及封顶（UNCONSTRAIN_CAP_RATIO × 当前日均，留 1% 容差）视为需人工确认 */
 export function isDemandReconstructCapHit(input: {
   source?: string | null;
@@ -90,15 +139,22 @@ export function evaluateDemandGate(input: DemandGateInput): DemandGateResult {
   const demandCapped = input.reconstructCapHit === true;
   if (demandCapped) flags.push('reconstruct_capped');
 
-  const segment = input.segment ?? 'A:mid';
   const band = input.band ?? 'precision';
-  if (input.recentWmape != null) {
-    const status = isKpiMet(segment, band, input.recentWmape);
+  if (input.segment == null) {
+    flags.push('segment_missing');
+  } else if (input.recentWmape == null) {
+    flags.push('accuracy_missing');
+  } else {
+    const status = isKpiMet(input.segment, band, input.recentWmape);
     if (status === 'fail') flags.push('wmape_fail');
     else if (status === 'warn') flags.push('wmape_warn');
   }
 
-  const needsManualConfirm = flags.includes('reconstruct_capped') || flags.includes('wmape_fail');
+  const needsManualConfirm =
+    flags.includes('reconstruct_capped') ||
+    flags.includes('wmape_fail') ||
+    flags.includes('segment_missing') ||
+    flags.includes('accuracy_missing');
 
   return {
     needsManualConfirm,

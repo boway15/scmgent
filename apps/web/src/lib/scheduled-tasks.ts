@@ -42,6 +42,14 @@ export const SCHEDULED_TASKS: ScheduledTask[] = [
     description: '从飞书同步 SKU 周转相关信息，供库存总览使用',
   },
   {
+    id: 'sales_daily_feishu_pull',
+    name: '销量飞书拉取',
+    path: '/api/tasks/sales-daily-feishu-pull',
+    cron: '0 5 * * *',
+    cronLabel: '每天 05:00',
+    description: '从飞书产品销售报表-长表同步近 3 日销量：新行插入，已有行覆盖，供当天预测使用',
+  },
+  {
     id: 'daily_inventory_pipeline',
     name: '每日库存流水线',
     path: '/api/tasks/daily-inventory-pipeline',
@@ -109,6 +117,7 @@ export const TASK_NAME_LABELS: Record<string, string> = {
   forecast_accuracy_backtest: '预测准确率批量回测',
   forecast_baseline: '预测基线生成',
   sales_history_maintenance: '销售历史维护',
+  sales_daily_feishu_pull: '销量飞书拉取',
   procurement_bulk_stock_push: '备货需求飞书推送',
   procurement_follow_up_push: '采购跟单飞书推送',
 };

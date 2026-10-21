@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 import { Navigate, useLocation, useSearchParams } from 'react-router-dom';
-import { Button } from '@/components/ui/button';
+import { cn } from '@/lib/utils';
 
 export type PageTab = {
   id: string;
@@ -21,17 +21,27 @@ export function TabbedPage({ tabs }: { tabs: PageTab[] }) {
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap gap-2">
-        {tabs.map((tab) => (
-          <Button
-            key={tab.id}
-            size="sm"
-            variant={tab.id === active.id ? 'default' : 'outline'}
-            onClick={() => selectTab(tab.id)}
-          >
-            {tab.label}
-          </Button>
-        ))}
+      <div className="flex flex-wrap gap-1 border-b border-border" role="tablist">
+        {tabs.map((tab) => {
+          const selected = tab.id === active.id;
+          return (
+            <button
+              key={tab.id}
+              type="button"
+              role="tab"
+              aria-selected={selected}
+              className={cn(
+                '-mb-px border-b-2 px-3 py-2 text-sm transition-colors',
+                selected
+                  ? 'border-primary font-medium text-primary'
+                  : 'border-transparent text-text-sub hover:text-text-main',
+              )}
+              onClick={() => selectTab(tab.id)}
+            >
+              {tab.label}
+            </button>
+          );
+        })}
       </div>
       <div key={active.id}>{active.render()}</div>
     </div>

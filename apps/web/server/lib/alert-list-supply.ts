@@ -1,6 +1,16 @@
 import { and, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
 import { db, inventorySupplyLots, reorderSuggestions, skus } from '@scm/db';
-import { publishedForecastDailyRecord, publishedNetworkAvgDaily } from './alert-network-coverage.js';
+import {
+  forecastDailyOnDate,
+  publishedForecastDailyRecord,
+  publishedNetworkAvgDaily,
+} from './alert-network-coverage.js';
+import { DEMAND_PLAN_WAREHOUSE_ALL } from './demand-plan-config.js';
+import {
+  loadPlanningDemandDepsForSkus,
+  loadPlanningDemandForSkuWarehouse,
+} from './demand-plan-load.js';
+import { networkConsensusForecastRecord } from './demand-plan-resolve.js';
 import {
   addInTransitWindow,
   classifyInTransitArrival,
@@ -44,6 +54,9 @@ export type AlertListSupply = {
   networkInTransitWithin45: number;
   networkInTransitWithin60: number;
   networkInTransitUndatedQty: number;
+  /** 已发布预测分层。已采纳需求计划时为空，避免在共识需求上再乘远月缓冲。 */
+  forecastProfileClass: string | null;
+  forecastP90Daily: Record<string, number> | null;
 };
 
 type PoolQtys = {
@@ -53,6 +66,11 @@ type PoolQtys = {
 };
 
 const EMPTY_POOLS: PoolQtys = { local: 0, overseas: 0, inTransit: 0 };
+
+function p90Record(map: Map<string, number> | undefined): Record<string, number> | null {
+  if (!map?.size) return null;
+  return Object.fromEntries(map);
+}
 
 export function alertSupplyKey(skuId: string, warehouseCode: string | null | undefined) {
   return `${skuId}::${warehouseCode ?? ''}`;
@@ -185,6 +203,8 @@ export function resolveAlertListSupply(input: {
   totalLeadDays?: number | null;
   publishedNetworkAvgDaily?: number | null;
   publishedForecastDaily?: Record<string, number> | null;
+  forecastProfileClass?: string | null;
+  forecastP90Daily?: Record<string, number> | null;
   inTransitWindow?: InTransitWindowQty;
   networkInTransitWindow?: InTransitWindowQty;
 }): AlertListSupply {
@@ -229,6 +249,8 @@ export function resolveAlertListSupply(input: {
     networkInTransitWithin45: networkTransit.within45,
     networkInTransitWithin60: networkTransit.within60,
     networkInTransitUndatedQty: networkTransit.undated,
+    forecastProfileClass: input.forecastProfileClass ?? null,
+    forecastP90Daily: input.forecastP90Daily ?? null,
   };
 }
 
@@ -335,6 +357,32 @@ export async function loadAlertListSupply(rows: SupplyRow[]): Promise<Map<string
       .where(inArray(skus.id, skuIds)),
     loadMergedPublishedForecastBySkuIds(skuIds),
   ]);
+  const planningBundle = await loadPlanningDemandDepsForSkus(skuIds);
+  const consensusBySku = new Map<
+    string,
+    { record: Record<string, number> | null; fromPlan: boolean }
+  >();
+  for (const skuId of skuIds) {
+    const published = forecastBySku.get(skuId);
+    const publishedRecord = publishedForecastDailyRecord(published);
+    const planning = await loadPlanningDemandForSkuWarehouse(
+      {
+        skuId,
+        warehouseCode: DEMAND_PLAN_WAREHOUSE_ALL,
+        championForecastMap: published?.map ?? new Map(),
+      },
+      planningBundle.deps,
+    );
+    const record = networkConsensusForecastRecord({
+      source: planning.source,
+      demandMap: planning.demandMap,
+      published: publishedRecord,
+    });
+    consensusBySku.set(skuId, {
+      record,
+      fromPlan: planning.source === 'demand_plan' && record !== publishedRecord,
+    });
+  }
 
   const emptyWindow: InTransitWindowQty = { within45: 0, within60: 0, undated: 0 };
   const transitByKey = new Map<string, InTransitWindowQty>();
@@ -387,8 +435,14 @@ export async function loadAlertListSupply(rows: SupplyRow[]): Promise<Map<string
     const avgDaily = snapshot?.avgDaily == null ? null : Number(snapshot.avgDaily);
     const leadDays = snapshot?.totalLeadDays == null ? null : Number(snapshot.totalLeadDays);
     const published = forecastBySku.get(row.skuId);
-    const publishedDaily = publishedNetworkAvgDaily(published, businessDate);
-    const publishedForecastDaily = publishedForecastDailyRecord(published);
+    const consensus = consensusBySku.get(row.skuId);
+    const publishedForecastDaily = consensus?.record ?? publishedForecastDailyRecord(published);
+    const planDaily =
+      consensus?.fromPlan && consensus.record
+        ? forecastDailyOnDate(new Map(Object.entries(consensus.record)), businessDate)
+        : 0;
+    const publishedDaily =
+      planDaily > 0 ? planDaily : publishedNetworkAvgDaily(published, businessDate);
     result.set(
       key,
       resolveAlertListSupply({
@@ -402,6 +456,10 @@ export async function loadAlertListSupply(rows: SupplyRow[]): Promise<Map<string
         totalLeadDays: leadDays != null && Number.isFinite(leadDays) ? leadDays : null,
         publishedNetworkAvgDaily: publishedDaily,
         publishedForecastDaily,
+        forecastProfileClass: consensus?.fromPlan
+          ? null
+          : (published?.profileClass ?? null),
+        forecastP90Daily: consensus?.fromPlan ? null : p90Record(published?.p90Map),
         inTransitWindow: transitByKey.get(key),
         networkInTransitWindow: transitBySku.get(row.skuId),
       }),

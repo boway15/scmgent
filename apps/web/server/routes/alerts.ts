@@ -16,10 +16,11 @@ import {
 } from '../lib/alert-action-index.js';
 import {
   coverageDaysFromQty,
+  orderCoverDays,
   recommendOrderForNetworkAlert,
   recommendShip,
 } from '../lib/alert-horizon-demand.js';
-import { resolveShippingLeadDays } from '../lib/replenishment-coverage.js';
+import { loadWarehouseShippingLeadMap, shippingLeadFor } from '../lib/alert-ship-lead.js';
 import { resolveNetworkForecastCoverage } from '../lib/alert-network-coverage.js';
 import { DEFAULT_SAFETY_STOCK_DAYS } from '../lib/replenishment-coverage.js';
 import { getShanghaiBusinessDate } from '../lib/inventory-daily-snapshot.js';
@@ -124,13 +125,16 @@ alertRoutes.get('/alerts', requireMenu('inventory.alert'), async (c) => {
         );
       }
       const pageRows = listed.slice(offset, offset + pageSize);
-      const supplyByKey = await loadAlertListSupply(
-        pageRows.map((row) => ({
-          skuId: row.skuId,
-          warehouseCode: row.warehouseCode,
-          projectedStockoutDate: null,
-        })),
-      );
+      const [supplyByKey, shippingLead] = await Promise.all([
+        loadAlertListSupply(
+          pageRows.map((row) => ({
+            skuId: row.skuId,
+            warehouseCode: row.warehouseCode,
+            projectedStockoutDate: null,
+          })),
+        ),
+        loadWarehouseShippingLeadMap(),
+      ]);
       const items = pageRows.map((row) => {
         const supply = supplyByKey.get(alertSupplyKey(row.skuId, row.warehouseCode));
         const network = resolveNetworkForecastCoverage({
@@ -140,8 +144,11 @@ alertRoutes.get('/alerts', requireMenu('inventory.alert'), async (c) => {
           inTransitQty: supply?.networkInTransitQty,
           forecastDaily: supply?.networkForecastDaily,
           flatDaily: supply?.networkForecastDaily ? null : supply?.networkAvgDaily,
+          profileClass: supply?.forecastProfileClass,
+          forecastP90Daily: supply?.forecastP90Daily,
           inTransitWithin45: supply?.networkInTransitWithin45 ?? 0,
           inTransitWithin60: supply?.networkInTransitWithin60 ?? 0,
+          coverDays: orderCoverDays(supply?.totalLeadDays, DEFAULT_SAFETY_STOCK_DAYS),
         });
         const networkAction = row.networkAction === 'none' ? null : row.networkAction;
         const order = recommendOrderForNetworkAlert({
@@ -160,7 +167,8 @@ alertRoutes.get('/alerts', requireMenu('inventory.alert'), async (c) => {
           ship60: network.horizons?.ship60 ?? 0,
           action: networkAction,
           daysToStockout: finiteDays(network.onHandTransitCoverageDays),
-          shippingLeadDays: resolveShippingLeadDays(row.warehouseCode ?? ''),
+          shippingLeadDays:
+            row.shippingLeadDays ?? shippingLeadFor(row.warehouseCode ?? '', shippingLead),
         });
         const displayView =
           inventoryRiskViewLabel({
@@ -268,13 +276,16 @@ alertRoutes.get('/alerts', requireMenu('inventory.alert'), async (c) => {
       return found ? [found] : [];
     });
     const classById = new Map(pageRows.map((row) => [row.id, row]));
-    const supplyByKey = await loadAlertListSupply(
-      ordered.map((row) => ({
-        skuId: row.skuId,
-        warehouseCode: row.warehouseCode,
-        projectedStockoutDate: row.projectedStockoutDate,
-      })),
-    );
+    const [supplyByKey, warehouseShippingLead] = await Promise.all([
+      loadAlertListSupply(
+        ordered.map((row) => ({
+          skuId: row.skuId,
+          warehouseCode: row.warehouseCode,
+          projectedStockoutDate: row.projectedStockoutDate,
+        })),
+      ),
+      loadWarehouseShippingLeadMap(),
+    ]);
     const items = ordered.map((row) => {
       const supply = supplyByKey.get(alertSupplyKey(row.skuId, row.warehouseCode));
       const classifiedRow = classById.get(row.id);
@@ -293,8 +304,11 @@ alertRoutes.get('/alerts', requireMenu('inventory.alert'), async (c) => {
         inTransitQty: supply?.networkInTransitQty,
         forecastDaily: supply?.networkForecastDaily,
         flatDaily: supply?.networkForecastDaily ? null : supply?.networkAvgDaily,
+        profileClass: supply?.forecastProfileClass,
+        forecastP90Daily: supply?.forecastP90Daily,
         inTransitWithin45: supply?.networkInTransitWithin45 ?? 0,
         inTransitWithin60: supply?.networkInTransitWithin60 ?? 0,
+        coverDays: orderCoverDays(supply?.totalLeadDays, DEFAULT_SAFETY_STOCK_DAYS),
       });
       const inTransitCoverageDays = coverageDaysFromQty(
         supply?.inTransitQty ?? 0,
@@ -322,7 +336,7 @@ alertRoutes.get('/alerts', requireMenu('inventory.alert'), async (c) => {
         ship60: network.horizons?.ship60 ?? 0,
         action: shipAction,
         daysToStockout: classifiedRow?.daysToStockout ?? null,
-        shippingLeadDays: resolveShippingLeadDays(row.warehouseCode ?? ''),
+        shippingLeadDays: shippingLeadFor(row.warehouseCode ?? '', warehouseShippingLead),
       });
       return {
         ...row,
@@ -454,6 +468,8 @@ function dedupeAlertsBySku<T extends { skuId: string; level: string | null }>(ro
         inTransitQty: supply?.networkInTransitQty,
         forecastDaily: supply?.networkForecastDaily,
         flatDaily: supply?.networkForecastDaily ? null : supply?.networkAvgDaily,
+        profileClass: supply?.forecastProfileClass,
+        forecastP90Daily: supply?.forecastP90Daily,
       }).stockoutDate,
     };
   });

@@ -1,5 +1,5 @@
 import { inArray } from 'drizzle-orm';
-import { db, skus } from '@scm/db';
+import { db, forecastAccuracyMonthly, skus } from '@scm/db';
 import { calcForwardAvgDaily } from './forecast-demand.js';
 import { loadMergedPublishedForecastBySkuIds } from './forecast-published-resolve.js';
 import {
@@ -24,6 +24,8 @@ import {
   calcSafetyStockSuggestion,
   type SafetyStockSuggestion,
 } from './safety-stock-suggestion.js';
+import { coalesceLeadTimeStdDev, selectDemandStdDev } from './safety-stock-z.js';
+import { summarizePrecisionWindow } from './planning-demand-gate.js';
 
 export const DEFAULT_CONFIGURED_SAFETY_STOCK_DAYS = 14;
 
@@ -138,7 +140,8 @@ function buildSuggestionFromCaches(params: {
   sales: Array<{ qtySold: number; saleDate: string; warehouseCode: string | null }>;
   forecastEntry?: { map: Map<string, number>; lifecycle?: string } | null;
   share: ReturnType<typeof shareFromEncodingMeta>;
-  leadTime: { totalLeadDays: number };
+  leadTime: { totalLeadDays: number; leadTimeStdDev?: number | null };
+  forecastErrorStdDev?: number | null;
   inventoryRows: Array<{ recordedDate: string | Date; qtyAvailable: number; createdAt: Date }>;
 }): SafetyStockSuggestionRow {
   const whSales = filterSalesByWarehouse(params.sales, params.input.warehouseCode);
@@ -172,8 +175,12 @@ function buildSuggestionFromCaches(params: {
   }
 
   const stats = calcDailyStats(whSales, params.windowDays);
-  const demandStdDev =
+  const historicalStdDev =
     stats.stdDev > 0 && whSales.length >= 2 ? stats.stdDev : avgDaily > 0 ? avgDaily * 0.3 : 0;
+  const demandStdDev = selectDemandStdDev({
+    forecastErrorStdDev: params.forecastErrorStdDev,
+    historicalStdDev,
+  }).stdDev;
 
   const configured = {
     safetyStockDays: params.input.policy?.safetyStockDays ?? DEFAULT_CONFIGURED_SAFETY_STOCK_DAYS,
@@ -191,6 +198,7 @@ function buildSuggestionFromCaches(params: {
     stockoutAdjusted,
     demandSource,
     effectiveSalesDays,
+    leadTimeStdDev: coalesceLeadTimeStdDev(params.leadTime.leadTimeStdDev),
   });
 
   return buildSuggestionRow({
@@ -212,7 +220,7 @@ export async function resolveSuggestionInputsBatch(params: {
   const windowDays = replenishmentSalesLookbackDays();
   const skuIds = [...new Set(params.pairs.map((p) => p.sku.id))];
 
-  const [salesBySkuId, forecastBySkuId, leadTimeCaches, skuShareRows] = await Promise.all([
+  const [salesBySkuId, forecastBySkuId, leadTimeCaches, skuShareRows, accuracyRows] = await Promise.all([
     loadDailySalesBySkuIds(skuIds, windowDays),
     loadMergedPublishedForecastBySkuIds(skuIds),
     loadLeadTimeCaches(skuIds),
@@ -220,7 +228,31 @@ export async function resolveSuggestionInputsBatch(params: {
       .select({ id: skus.id, encodingMeta: skus.encodingMeta })
       .from(skus)
       .where(inArray(skus.id, skuIds)),
+    db
+      .select({
+        skuId: forecastAccuracyMonthly.skuId,
+        station: forecastAccuracyMonthly.station,
+        platform: forecastAccuracyMonthly.platform,
+        forecastYear: forecastAccuracyMonthly.forecastYear,
+        month: forecastAccuracyMonthly.month,
+        forecastDailyAvg: forecastAccuracyMonthly.forecastDailyAvg,
+        actualDailyAvg: forecastAccuracyMonthly.actualDailyAvg,
+        computedAt: forecastAccuracyMonthly.computedAt,
+      })
+      .from(forecastAccuracyMonthly)
+      .where(inArray(forecastAccuracyMonthly.skuId, skuIds)),
   ]);
+  const errorStdDevBySku = new Map<string, number>();
+  const accuracyBySku = new Map<string, typeof accuracyRows>();
+  for (const row of accuracyRows) {
+    const list = accuracyBySku.get(row.skuId) ?? [];
+    list.push(row);
+    accuracyBySku.set(row.skuId, list);
+  }
+  for (const [skuId, rows] of accuracyBySku) {
+    const errorStdDev = summarizePrecisionWindow(rows).errorStdDev;
+    if (errorStdDev != null && errorStdDev > 0) errorStdDevBySku.set(skuId, errorStdDev);
+  }
 
   const shareBySku = new Map(
     skuShareRows.map((row) => [row.id, shareFromEncodingMeta(row.encodingMeta)] as const),
@@ -255,6 +287,7 @@ export async function resolveSuggestionInputsBatch(params: {
       forecastEntry,
       share: shareBySku.get(input.sku.id) ?? shareFromEncodingMeta(null),
       leadTime,
+      forecastErrorStdDev: errorStdDevBySku.get(input.sku.id) ?? null,
       inventoryRows: hasForecast
         ? []
         : (availabilityByKey.get(positionKey(input.sku.id, input.warehouseCode)) ?? []),

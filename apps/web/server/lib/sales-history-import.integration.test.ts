@@ -53,14 +53,33 @@ async function main(): Promise<void> {
   });
 
   assert.equal(second.createdSkuCount, 0, 're-import must not create duplicate SKU');
-  assert.equal(second.insertedSalesRows, 0, 're-import should skip existing daily rows');
-  assert.equal(second.skippedExistingSalesRows, 1);
+  assert.equal(second.insertedSalesRows, 0, 're-import should update the existing daily row');
+  assert.equal(second.updatedSalesRows, 1);
+  assert.equal(second.skippedExistingSalesRows, 0);
 
   const skuRows = await db
-    .select({ code: skus.code })
+    .select({ id: skus.id, code: skus.code })
     .from(skus)
     .where(eq(skus.code, TEST_NORMALIZED));
   assert.equal(skuRows.length, 1, 'database should contain single normalized SKU');
+
+  const [stored] = await db
+    .select({ qtySold: salesHistory.qtySold })
+    .from(salesHistory)
+    .where(eq(salesHistory.skuId, skuRows[0]!.id));
+  assert.equal(stored?.qtySold, 5, 're-import replaces qty with the new total');
+
+  const revised = await persistDailySalesRowsAsHistory([dailyRow('DJ999888_01', 9)], undefined, {
+    skipMonthlyAggregate: true,
+  });
+  assert.equal(revised.updatedSalesRows, 1);
+  assert.equal(revised.insertedSalesRows, 0);
+
+  const [revisedRow] = await db
+    .select({ qtySold: salesHistory.qtySold })
+    .from(salesHistory)
+    .where(eq(salesHistory.skuId, skuRows[0]!.id));
+  assert.equal(revisedRow?.qtySold, 9, 'a later import overwrites the stored qty');
 
   await cleanup();
   console.log('sales-history-import integration: PASS');

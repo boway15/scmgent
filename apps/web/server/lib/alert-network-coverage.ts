@@ -6,9 +6,11 @@ import {
   type HorizonDemand,
   horizonDemand,
 } from './alert-horizon-demand.js';
-import { getForecastDailyForDate } from './forecast-demand.js';
+import { meanOfLastThreePositive } from './demand-plan-resolve.js';
+import { getForecastDailyForDate, type ForecastHorizonContext } from './forecast-demand.js';
 import type { PublishedForecastEntry } from './forecast-published-resolve.js';
 import { addDaysIso } from './inventory-iso-date.js';
+import { isIsoWeekPeriod, isoWeekMondayUtc } from './planning-calendar.js';
 
 const COVERAGE_WALK_MAX_DAYS = 1095;
 
@@ -23,17 +25,63 @@ function utcDateFromYmd(ymd: string): Date | null {
 }
 
 /** 业务日当天的预测日均：月表按所在月，周表按 ISO 周；跨月周内各天分属不同月份。 */
-export function forecastDailyOnDate(forecast: Map<string, number>, ymd: string): number {
+export function forecastDailyOnDate(
+  forecast: Map<string, number>,
+  ymd: string,
+  horizon?: ForecastHorizonContext | null,
+): number {
   const date = utcDateFromYmd(ymd);
   if (!date || !forecast.size) return 0;
-  const daily = getForecastDailyForDate(forecast, date, 0);
+  const daily = getForecastDailyForDate(forecast, date, 0, horizon);
   return Number.isFinite(daily) && daily > 0 ? daily : 0;
 }
 
-export function sumForecastDemand(forecast: Map<string, number>, startYmd: string, days: number): number {
+/** 预测曲线最后一个有值周期的结束日。月 key 取月末，ISO 周取周日。 */
+export function forecastHorizonEndYmd(forecast: Map<string, number>): string | null {
+  let end: string | null = null;
+  for (const key of forecast.keys()) {
+    let keyEnd: string | null = null;
+    if (isIsoWeekPeriod(key)) {
+      keyEnd = addDaysIso(isoWeekMondayUtc(key).toISOString().slice(0, 10), 6);
+    } else {
+      const match = /^(\d{4})-(\d{2})$/.exec(key);
+      if (!match) continue;
+      const year = Number(match[1]);
+      const month = Number(match[2]);
+      if (month < 1 || month > 12) continue;
+      keyEnd = new Date(Date.UTC(year, month, 0)).toISOString().slice(0, 10);
+    }
+    if (keyEnd && (end == null || keyEnd > end)) end = keyEnd;
+  }
+  return end;
+}
+
+/** 预测期之外的日均：最近 3 个正值周期的均值。全部为 0 时返回 0，调用方保持「零消耗封顶」。 */
+export function horizonFallbackDaily(forecast: Map<string, number>): number {
+  return meanOfLastThreePositive(forecast);
+}
+
+function demandDailyOnDate(
+  forecast: Map<string, number>,
+  ymd: string,
+  horizon?: ForecastHorizonContext | null,
+): number {
+  const horizonEnd = forecastHorizonEndYmd(forecast);
+  if (horizonEnd != null && ymd > horizonEnd) {
+    return horizonFallbackDaily(forecast);
+  }
+  return forecastDailyOnDate(forecast, ymd, horizon);
+}
+
+export function sumForecastDemand(
+  forecast: Map<string, number>,
+  startYmd: string,
+  days: number,
+  horizon?: ForecastHorizonContext | null,
+): number {
   let sum = 0;
   for (let offset = 0; offset < days; offset += 1) {
-    sum += forecastDailyOnDate(forecast, addDaysIso(startYmd, offset));
+    sum += demandDailyOnDate(forecast, addDaysIso(startYmd, offset), horizon);
   }
   return Math.round(sum);
 }
@@ -41,12 +89,15 @@ export function sumForecastDemand(forecast: Map<string, number>, startYmd: strin
 /**
  * 从业务日起逐日扣减预测。日均随月份变化；跨月的周按每一天所属月份（或 ISO 周）取值，
  * 不用「当月一个日均」覆盖整段可售期。
+ * 晚于预测期末的日子用最近 3 个正值周期的均值继续扣，避免期外零消耗把可售天数放大。
+ * 预测期内日均为 0 的周期仍跳过，不扣库存。
  */
 export function coverageAlongForecast(input: {
   qty: number;
   startYmd: string;
   forecast: Map<string, number>;
   maxDays?: number;
+  horizon?: ForecastHorizonContext | null;
 }): { coverageDays: number | null; stockoutDate: string | null } {
   if (input.qty <= 0) {
     return { coverageDays: 0, stockoutDate: input.startYmd.slice(0, 10) };
@@ -57,7 +108,11 @@ export function coverageAlongForecast(input: {
   let remaining = input.qty;
   let consumed = false;
   for (let dayIndex = 0; dayIndex < maxDays; dayIndex += 1) {
-    const daily = forecastDailyOnDate(input.forecast, addDaysIso(input.startYmd, dayIndex));
+    const daily = demandDailyOnDate(
+      input.forecast,
+      addDaysIso(input.startYmd, dayIndex),
+      input.horizon,
+    );
     if (daily <= 0) continue;
     consumed = true;
     if (remaining <= daily) {
@@ -122,6 +177,11 @@ export function resolveNetworkForecastCoverage(input: {
   flatDaily: number | null | undefined;
   inTransitWithin45?: number;
   inTransitWithin60?: number;
+  /** 建议件数覆盖天数。缺省 150。 */
+  coverDays?: number;
+  /** 已发布预测的分层。需求计划曲线不要传，避免在共识需求上再乘缓冲。 */
+  profileClass?: string | null;
+  forecastP90Daily?: Record<string, number> | null;
 }): {
   coverageDays: number | null;
   stockoutDate: string | null;
@@ -145,8 +205,11 @@ export function resolveNetworkForecastCoverage(input: {
 
   const series = input.forecastDaily ?? null;
   const forecast = series && Object.keys(series).length ? new Map(Object.entries(series)) : null;
+  const coverDays =
+    input.coverDays != null && input.coverDays > 0 ? Math.ceil(input.coverDays) : 150;
+  const horizon = horizonFromCoverageInput(input);
   if (forecast) {
-    const walked = coverageAlongForecast({ qty, startYmd: input.today, forecast });
+    const walked = coverageAlongForecast({ qty, startYmd: input.today, forecast, horizon });
     const coverageDays = finiteCoverageDays(walked.coverageDays);
     const horizons = horizonDemand({
       coverageDays: walked.coverageDays,
@@ -156,12 +219,14 @@ export function resolveNetworkForecastCoverage(input: {
       inTransitQty: input.inTransitQty ?? 0,
       inTransitWithin45: input.inTransitWithin45 ?? 0,
       inTransitWithin60: input.inTransitWithin60 ?? 0,
+      coverDays,
       demandQty: {
-        d150: sumForecastDemand(forecast, input.today, 150),
-        d120: sumForecastDemand(forecast, input.today, 120),
-        d90: sumForecastDemand(forecast, input.today, 90),
-        d60: sumForecastDemand(forecast, input.today, 60),
-        d45: sumForecastDemand(forecast, input.today, 45),
+        d150: sumForecastDemand(forecast, input.today, 150, horizon),
+        d120: sumForecastDemand(forecast, input.today, 120, horizon),
+        d90: sumForecastDemand(forecast, input.today, 90, horizon),
+        d60: sumForecastDemand(forecast, input.today, 60, horizon),
+        d45: sumForecastDemand(forecast, input.today, 45, horizon),
+        dCover: sumForecastDemand(forecast, input.today, coverDays, horizon),
       },
     });
     return {
@@ -196,9 +261,23 @@ export function resolveNetworkForecastCoverage(input: {
       inTransitQty: input.inTransitQty ?? 0,
       inTransitWithin45: input.inTransitWithin45 ?? 0,
       inTransitWithin60: input.inTransitWithin60 ?? 0,
+      coverDays,
     }),
     onHandTransitCoverageDays,
     onHandTransitStockoutDate: coverOnHandTransitStockout(input),
+  };
+}
+
+function horizonFromCoverageInput(input: {
+  today: string;
+  profileClass?: string | null;
+  forecastP90Daily?: Record<string, number> | null;
+}): ForecastHorizonContext | null {
+  if (!input.profileClass) return null;
+  return {
+    profileClass: input.profileClass,
+    p90: input.forecastP90Daily ? new Map(Object.entries(input.forecastP90Daily)) : null,
+    asOf: utcDateFromYmd(input.today) ?? undefined,
   };
 }
 
@@ -208,13 +287,20 @@ function coverOnHandTransitStockout(input: {
   inTransitQty: number | null | undefined;
   forecastDaily: Record<string, number> | null | undefined;
   flatDaily: number | null | undefined;
+  profileClass?: string | null;
+  forecastP90Daily?: Record<string, number> | null;
 }): string | null {
   if (input.overseasQty == null && input.inTransitQty == null) return null;
   const qty = Math.max(0, input.overseasQty ?? 0) + Math.max(0, input.inTransitQty ?? 0);
   const series = input.forecastDaily ?? null;
   const forecast = series && Object.keys(series).length ? new Map(Object.entries(series)) : null;
   if (forecast) {
-    return coverageAlongForecast({ qty, startYmd: input.today, forecast }).stockoutDate;
+    return coverageAlongForecast({
+      qty,
+      startYmd: input.today,
+      forecast,
+      horizon: horizonFromCoverageInput(input),
+    }).stockoutDate;
   }
   const days = coverageDaysFromQty(qty, input.flatDaily);
   return stockoutDateFromBandDays(input.today, days);
@@ -226,6 +312,8 @@ function coverOnHandTransit(input: {
   inTransitQty: number | null | undefined;
   forecastDaily: Record<string, number> | null | undefined;
   flatDaily: number | null | undefined;
+  profileClass?: string | null;
+  forecastP90Daily?: Record<string, number> | null;
 }): number | null {
   if (input.overseasQty == null && input.inTransitQty == null) return null;
   const qty = Math.max(0, input.overseasQty ?? 0) + Math.max(0, input.inTransitQty ?? 0);
@@ -233,7 +321,12 @@ function coverOnHandTransit(input: {
   const forecast = series && Object.keys(series).length ? new Map(Object.entries(series)) : null;
   if (forecast) {
     return finiteCoverageDays(
-      coverageAlongForecast({ qty, startYmd: input.today, forecast }).coverageDays,
+      coverageAlongForecast({
+        qty,
+        startYmd: input.today,
+        forecast,
+        horizon: horizonFromCoverageInput(input),
+      }).coverageDays,
     );
   }
   return finiteCoverageDays(coverageDaysFromQty(qty, input.flatDaily));

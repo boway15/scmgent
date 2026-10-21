@@ -237,10 +237,16 @@ describe('resolveWarehouseDemandShare', () => {
     assert.equal(resolveWarehouseDemandShare('US-SOUTH', parsed), 0);
   });
 
-  it('returns null for warehouses without a share column or SKUs without shares', () => {
-    assert.equal(resolveWarehouseDemandShare('UK', parsed), null);
+  it('gives a warehouse without a share column zero when other warehouses already have shares', () => {
+    assert.equal(resolveWarehouseDemandShare('UK', parsed), 0);
     assert.equal(resolveWarehouseDemandShare('ALL', parsed), null);
-    assert.equal(resolveWarehouseDemandShare('US-WEST', parseSharesFromSnapshot({})), null);
+    assert.equal(resolveWarehouseDemandShare('OVERSEAS', parsed), null);
+  });
+
+  it('returns null when the SKU has no shares at all', () => {
+    const empty = parseSharesFromSnapshot({});
+    assert.equal(resolveWarehouseDemandShare('UK', empty), null);
+    assert.equal(resolveWarehouseDemandShare('US-WEST', empty), null);
   });
 
   it('scales daily map by share and keeps the original when share is null', () => {

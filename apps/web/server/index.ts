@@ -33,13 +33,13 @@ import { authMiddleware } from './middleware/auth.js';
 import { requireWrite, requireBusinessRead } from './lib/rbac.js';
 import { procurementRoutes } from './routes/procurement.js';
 import { procurementListRoutes } from './routes/procurement-lists.js';
-import { productCostingRoutes } from './routes/product-costing.js';
 import { pmcRoutes } from './routes/pmc.js';
 import { logisticsRoutes } from './routes/logistics.js';
 import { bitableSyncRoutes } from './routes/bitable-sync.js';
 
 import { newsIntelRoutes } from './routes/news-intel.js';
 import { csReplyQualityRoutes } from './routes/cs-reply-quality.js';
+import { qcReinspectionRoutes } from './routes/qc-reinspection.js';
 
 import { taskRoutes } from './routes/tasks.js';
 import { productRoutes } from './routes/products.js';
@@ -142,7 +142,7 @@ app.route('/api', alertRoutes);
 app.route('/api', reorderRoutes);
 app.route('/api', procurementRoutes);
 app.route('/api', procurementListRoutes);
-app.route('/api', productCostingRoutes);
+// 产品成本核算 API 暂不挂载（菜单已下线）；代码见 routes/product-costing.ts
 app.route('/api', pmcRoutes);
 app.route('/api', logisticsRoutes);
 app.route('/api', bitableSyncRoutes);
@@ -166,6 +166,7 @@ app.route('/api', leadTimeProfileRoutes);
 app.route('/api', shipmentRoutes);
 app.route('/api', newsIntelRoutes);
 app.route('/api', csReplyQualityRoutes);
+app.route('/api', qcReinspectionRoutes);
 
 if (serveStaticFiles) {
   app.use('/*', serveStatic({ root: distRoot }));
@@ -212,5 +213,12 @@ if (isDirectRun) {
     for (const ip of listLanIPv4()) {
       console.log(`  LAN: http://${ip}:${port}${suffix}`);
     }
+    setTimeout(() => {
+      import('./lib/alert-action-index.js')
+        .then(({ warmPlanningDashboardCaches }) => warmPlanningDashboardCaches(['goods']))
+        .catch((err) => {
+          console.warn('[startup] warmPlanningDashboardCaches skipped:', err);
+        });
+    }, 1500);
   });
 }

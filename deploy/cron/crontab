@@ -14,4 +14,5 @@
 0 8 * * * /usr/local/bin/run-task.sh /api/tasks/news-ingest
 10 8 * * * /usr/local/bin/run-task.sh /api/tasks/procurement-bulk-stock-pull
 20 8 * * * /usr/local/bin/run-task.sh /api/tasks/procurement-follow-up-pull
+30 8 * * * /usr/local/bin/run-task.sh /api/tasks/qc-reinspection-sync
 0 9 * * 1 /usr/local/bin/run-task.sh /api/tasks/replenishment-forecast

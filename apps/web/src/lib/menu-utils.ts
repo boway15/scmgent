@@ -12,6 +12,9 @@ import {
   ShoppingCart,
   Headphones,
   Newspaper,
+  Receipt,
+  ClipboardCheck,
+  Ship,
   type LucideIcon,
 } from 'lucide-react';
 import type { MenuNode } from '@/lib/api';
@@ -30,6 +33,9 @@ const ICON_MAP: Record<string, LucideIcon> = {
   ShoppingCart,
   Headphones,
   Newspaper,
+  Receipt,
+  ClipboardCheck,
+  Ship,
 };
 
 export function getMenuIcon(icon?: string | null): LucideIcon {
@@ -62,10 +68,12 @@ const RELATED_PATH_ACCESS: Record<string, string> = {
   '/inventory/planning': '/inventory/planning-dashboard',
 };
 
-/** 登录后默认落地页：超级管理员进看板，其余取首个可访问菜单 */
+const PLANNING_HOME_PATH = '/inventory/planning-dashboard';
+
+/** 登录后默认落地页：超级管理员进规划驾驶舱，其余取首个可访问菜单 */
 export function getDefaultHomePath(menus: MenuNode[], roleCode?: string): string {
-  if (roleCode === 'super_admin') return '/dashboard';
-  return flattenMenuPaths(menus)[0] ?? '/dashboard';
+  if (roleCode === 'super_admin') return PLANNING_HOME_PATH;
+  return flattenMenuPaths(menus)[0] ?? PLANNING_HOME_PATH;
 }
 
 export function hasAnyMenuAccess(menus: MenuNode[], roleCode?: string): boolean {

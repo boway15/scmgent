@@ -701,6 +701,34 @@
       "when": 1787472800000,
       "tag": "0118_inventory_menu_merge",
       "breakpoints": true
+    },
+    {
+      "idx": 100,
+      "version": "6",
+      "when": 1787476400000,
+      "tag": "0119_quality_logistics_menus",
+      "breakpoints": true
+    },
+    {
+      "idx": 101,
+      "version": "6",
+      "when": 1787480000000,
+      "tag": "0120_qc_reinspection",
+      "breakpoints": true
+    },
+    {
+      "idx": 102,
+      "version": "6",
+      "when": 1787483600000,
+      "tag": "0121_qc_reinspection_synced_at",
+      "breakpoints": true
+    },
+    {
+      "idx": 103,
+      "version": "6",
+      "when": 1787487200000,
+      "tag": "0122_drop_procurement_costing_menu",
+      "breakpoints": true
     }
   ]
 }

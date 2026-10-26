@@ -10,9 +10,11 @@ import {
 import { applyStockAlertCoverageReplace, saveHealthSnapshots } from '../lib/inventory-health-store.js';
 import {
   regionNetworkEffectiveBySku,
+  shouldEmitImmediateAlert,
   shouldPersistHorizonAlert,
   type StockAlertIncoming,
 } from '../lib/stock-alert-sync.js';
+import { loadPlanningEligibleSkuIds } from '../lib/planning-dashboard.js';
 import { syncReplenishLightFromHealth } from '../lib/replenish-light-sync.js';
 import { shouldDeferReplenishment } from '../lib/warehouse-domain.js';
 import {
@@ -102,7 +104,10 @@ export async function runStockAlert() {
     console.warn('[stockAlert] supply lot sync skipped:', err);
   }
 
-  const healthRows = await computeAllInventoryHealth();
+  const [healthRows, eligibleSkuIds] = await Promise.all([
+    computeAllInventoryHealth(),
+    loadPlanningEligibleSkuIds(),
+  ]);
   const skuIds = [...new Set(healthRows.map((row) => row.skuId))];
   const bundle = await loadTimelineBundle(skuIds);
 
@@ -183,15 +188,17 @@ export async function runStockAlert() {
         row.metrics.timelineStockoutDate = built.timeline.stockoutDateConfirmed;
       }
 
-      collectAlerts(
-        row,
-        built,
-        bundle.snapshots,
-        share,
-        usEffectiveBySku,
-        usRopBySku,
-        incoming,
-      );
+      if (eligibleSkuIds.has(row.skuId)) {
+        collectAlerts(
+          row,
+          built,
+          bundle.snapshots,
+          share,
+          usEffectiveBySku,
+          usRopBySku,
+          incoming,
+        );
+      }
     } catch (err) {
       timelineErrors += 1;
       console.warn(`[stockAlert] timeline skipped ${row.skuCode}/${row.warehouseCode}:`, err);
@@ -206,8 +213,13 @@ export async function runStockAlert() {
   await syncReplenishLightFromHealth(healthRows);
 
   const coverage = await applyStockAlertCoverageReplace(incoming);
-  const { invalidateAlertActionCache } = await import('../lib/alert-action-index.js');
+  const { invalidateAlertActionCache, warmPlanningDashboardCaches } = await import(
+    '../lib/alert-action-index.js'
+  );
   invalidateAlertActionCache();
+  void warmPlanningDashboardCaches(['goods']).catch((err) => {
+    console.warn('[stockAlert] warmPlanningDashboardCaches skipped:', err);
+  });
   console.info(
     `[stockAlert] coverage replace cleared=${coverage.cleared} inserted=${coverage.inserted} active=${coverage.activeCount}`,
   );
@@ -293,7 +305,7 @@ function collectAlerts(
   incoming: StockAlertIncoming[],
 ) {
   const alertType = healthToAlertType(row.healthStatus, row.effectiveQty);
-  if (alertType) {
+  if (alertType && shouldEmitImmediateAlert(alertType, row.avgDaily)) {
     let deferImmediate = false;
     if (row.regionGroup === 'US') {
       const warehouseRop = (row.metrics.reorderPoint as number) ?? 0;

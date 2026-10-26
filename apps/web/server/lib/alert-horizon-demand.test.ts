@@ -25,6 +25,7 @@ describe('horizonDemand', () => {
       demand90: 180,
       ship60: 60,
       urgent45: 30,
+      demand30: 60,
       gap90: 130,
       gap120: 190,
       gap150: 250,
@@ -59,6 +60,7 @@ describe('horizonDemand', () => {
         demand90: 180,
         ship60: 110,
         urgent45: 80,
+        demand30: 60,
         gap90: 0,
         gap120: 0,
         gap150: 0,
@@ -254,6 +256,60 @@ describe('horizonDemand', () => {
     );
   });
 
+  it('caps one shipment at 30 days of demand, then lifts to MOQ', () => {
+    const horizons = horizonDemand({
+      coverageDays: 0,
+      avgDaily: 10,
+      overseasQty: 0,
+      localQty: 0,
+      inTransitQty: 0,
+    });
+    assert.equal(horizons?.demand30, 300);
+    assert.equal(horizons?.urgent45, 450);
+    assert.deepEqual(
+      recommendShip({
+        today: '2026-09-30',
+        shipWindowCovered: false,
+        urgent45: horizons?.urgent45 ?? 0,
+        ship60: horizons?.ship60 ?? 0,
+        action: 'ship_urgent',
+        daysToStockout: 0,
+        shippingLeadDays: 45,
+        maxCoverQty: horizons?.demand30,
+        moq: 20,
+      }),
+      { shipByDate: '2026-09-30', shipQty: 300, shipNow: true },
+    );
+    assert.equal(
+      recommendShip({
+        today: '2026-09-30',
+        shipWindowCovered: false,
+        urgent45: horizons?.urgent45 ?? 0,
+        ship60: horizons?.ship60 ?? 0,
+        action: 'ship_urgent',
+        daysToStockout: 0,
+        shippingLeadDays: 45,
+        maxCoverQty: horizons?.demand30,
+        moq: 400,
+      }).shipQty,
+      400,
+    );
+    assert.equal(
+      recommendShip({
+        today: '2026-09-30',
+        shipWindowCovered: true,
+        urgent45: 450,
+        ship60: 600,
+        action: 'ship',
+        daysToStockout: 0,
+        shippingLeadDays: 45,
+        maxCoverQty: 300,
+        moq: 400,
+      }).shipQty,
+      0,
+    );
+  });
+
   it('falls back to overseas-only order gap for not_ready price tier', () => {
     const horizons = horizonDemand({
       coverageDays: 200,
@@ -293,6 +349,45 @@ describe('horizonDemand', () => {
         priceReason: 'ship_late',
       }),
       { orderByDate: '2026-09-30', orderQty: 280, orderNow: true, orderOverseasReference: true },
+    );
+  });
+
+  it('caps the alert order qty at 30 days of demand, then lifts to MOQ', () => {
+    const horizons = horizonDemand({
+      coverageDays: 0,
+      avgDaily: 10,
+      overseasQty: 0,
+      localQty: 0,
+      inTransitQty: 0,
+      coverDays: 116,
+    });
+    assert.equal(horizons?.demand30, 300);
+    assert.ok((horizons?.gapCover ?? 0) > 300);
+    assert.equal(
+      recommendOrderForNetworkAlert({
+        today: '2026-09-30',
+        coverageDays: 0,
+        totalLeadDays: 102,
+        horizons,
+        networkAction: 'order',
+        priceReason: null,
+        maxCoverQty: horizons?.demand30,
+        moq: 20,
+      }).orderQty,
+      300,
+    );
+    assert.equal(
+      recommendOrderForNetworkAlert({
+        today: '2026-09-30',
+        coverageDays: 0,
+        totalLeadDays: 102,
+        horizons,
+        networkAction: 'order',
+        priceReason: null,
+        maxCoverQty: horizons?.demand30,
+        moq: 400,
+      }).orderQty,
+      400,
     );
   });
 

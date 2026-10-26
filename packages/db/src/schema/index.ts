@@ -16,6 +16,7 @@ export * from './logistics';
 export * from './ops';
 export * from './news-intel';
 export * from './cs-reply-quality';
+export * from './qc-reinspection';
 export * from './lead-time';
 export * from './shipments';
 export * from './inventory-supply-lots';

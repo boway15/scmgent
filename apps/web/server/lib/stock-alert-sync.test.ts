@@ -5,12 +5,19 @@ import {
   diffStockAlertWrites,
   planStaleStockAlertResolve,
   regionNetworkEffectiveBySku,
+  shouldEmitImmediateAlert,
   shouldPersistHorizonAlert,
   stockAlertFingerprint,
   stockAlertIntegerQty,
 } from './stock-alert-sync.js';
 
 describe('stock-alert-sync', () => {
+  it('skips stockout when the warehouse has no demand', () => {
+    assert.equal(shouldEmitImmediateAlert('stockout', 0), false);
+    assert.equal(shouldEmitImmediateAlert('stockout', 0.2), true);
+    assert.equal(shouldEmitImmediateAlert('below_rop', 0), true);
+  });
+
   it('drops coverage_short on green decision health', () => {
     assert.equal(shouldPersistHorizonAlert('coverage_short', 'green'), false);
     assert.equal(shouldPersistHorizonAlert('coverage_short', 'yellow'), true);

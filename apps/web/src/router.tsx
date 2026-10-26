@@ -38,10 +38,10 @@ import { AuditLogsPage } from '@/pages/AuditLogsPage';
 import { NewsIntelPage } from '@/pages/NewsIntelPage';
 import { CsReplyQualityPage } from '@/pages/CsReplyQualityPage';
 import { BulkStockRequestPage, ProcurementFollowUpPage } from '@/pages/ProcurementPages';
-import { ProductCostingToolPage } from '@/pages/ProductCostingToolPage';
 import { HomeRedirect } from '@/components/HomeRedirect';
 import { PlaceholderPage } from '@/pages/PlaceholderPage';
 import { SystemTasksPage } from '@/pages/SystemTasksPage';
+import { QcReinspectionPage } from '@/pages/QcReinspectionPage';
 export function AppRouter() {
   return (
     <Routes>
@@ -81,7 +81,7 @@ export function AppRouter() {
           <Route path="pmc/shipments" element={<ShipmentsPage />} />
           <Route path="procurement/bulk-stock" element={<BulkStockRequestPage />} />
           <Route path="procurement/follow-up" element={<ProcurementFollowUpPage />} />
-          <Route path="procurement/costing" element={<ProductCostingToolPage />} />
+          <Route path="procurement/costing/*" element={<Navigate to="/procurement/follow-up" replace />} />
           <Route path="pmc/drafts" element={<Navigate to="/pmc/tracking" replace />} />
           <Route path="pmc/:id" element={<PmcDetailPage />} />
           <Route path="data/products" element={<ProductMasterPage />} />
@@ -97,6 +97,7 @@ export function AppRouter() {
           <Route path="reorder/suggestions" element={<Navigate to="/pmc/suggestions" replace />} />
           <Route path="reorder/forecast" element={<Navigate to="/data/forecast" replace />} />
           <Route path="reorder/drafts" element={<Navigate to="/pmc/tracking" replace />} />
+          <Route path="quality/reinspection" element={<QcReinspectionPage />} />
           <Route path="logistics/fob-settlement" element={<FobSettlementListPage />} />
           <Route
             path="logistics/fob-fee-rules"

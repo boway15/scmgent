@@ -1,5 +1,5 @@
 import { and, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
-import { db, inventorySupplyLots, reorderSuggestions, skus } from '@scm/db';
+import { db, inventorySupplyLots, reorderSuggestions, skus, spus } from '@scm/db';
 import {
   forecastDailyOnDate,
   publishedForecastDailyRecord,
@@ -19,6 +19,7 @@ import {
 import { getShanghaiBusinessDate } from './inventory-daily-snapshot.js';
 import { loadMergedPublishedForecastBySkuIds } from './forecast-published-resolve.js';
 import { readTurnoverSnapshot } from './inventory-turnover-snapshot.js';
+import { resolveEffectiveMoq } from './replenishment.js';
 
 export type AlertListSupply = {
   /** 本仓：该目的仓开放批次；没有批次时用健康快照头寸，仍没有则为 0 */
@@ -57,6 +58,8 @@ export type AlertListSupply = {
   /** 已发布预测分层。已采纳需求计划时为空，避免在共识需求上再乘远月缓冲。 */
   forecastProfileClass: string | null;
   forecastP90Daily: Record<string, number> | null;
+  /** SKU 起订量优先，否则 SPU。没有则为 0。 */
+  moq: number;
 };
 
 type PoolQtys = {
@@ -207,6 +210,8 @@ export function resolveAlertListSupply(input: {
   forecastP90Daily?: Record<string, number> | null;
   inTransitWindow?: InTransitWindowQty;
   networkInTransitWindow?: InTransitWindowQty;
+  skuMoq?: number | null;
+  spuMoq?: number | null;
 }): AlertListSupply {
   const turnover = readTurnoverListSupply(input.turnover ?? null);
   const snapshotPools = readSnapshotPools(input.metrics);
@@ -251,6 +256,7 @@ export function resolveAlertListSupply(input: {
     networkInTransitUndatedQty: networkTransit.undated,
     forecastProfileClass: input.forecastProfileClass ?? null,
     forecastP90Daily: input.forecastP90Daily ?? null,
+    moq: resolveEffectiveMoq(input.skuMoq, input.spuMoq),
   };
 }
 
@@ -288,76 +294,79 @@ export async function loadAlertListSupply(rows: SupplyRow[]): Promise<Map<string
 
   const skuIds = [...new Set(rows.map((row) => row.skuId))];
   const businessDate = getShanghaiBusinessDate();
-  const [lotRows, transitRows, suggestionRows, snapshotResult, skuRows, forecastBySku] = await Promise.all([
-    db
-      .select({
-        skuId: inventorySupplyLots.skuId,
-        warehouseCode: inventorySupplyLots.warehouseCode,
-        pool: inventorySupplyLots.pool,
-        qty: sql<number>`coalesce(sum(${inventorySupplyLots.qty}), 0)::int`,
-      })
-      .from(inventorySupplyLots)
-      .where(
-        and(inArray(inventorySupplyLots.skuId, skuIds), eq(inventorySupplyLots.status, 'open')),
-      )
-      .groupBy(
-        inventorySupplyLots.skuId,
-        inventorySupplyLots.warehouseCode,
-        inventorySupplyLots.pool,
-      ),
-    db
-      .select({
-        skuId: inventorySupplyLots.skuId,
-        warehouseCode: inventorySupplyLots.warehouseCode,
-        qty: inventorySupplyLots.qty,
-        availableAt: inventorySupplyLots.availableAt,
-        etaEstimated: inventorySupplyLots.etaEstimated,
-        dateUnknown: inventorySupplyLots.dateUnknown,
-      })
-      .from(inventorySupplyLots)
-      .where(
-        and(
-          inArray(inventorySupplyLots.skuId, skuIds),
-          eq(inventorySupplyLots.status, 'open'),
-          eq(inventorySupplyLots.pool, 'in_transit'),
+  const [lotRows, transitRows, suggestionRows, snapshotResult, forecastBySku, planningBundle, moqRows] =
+    await Promise.all([
+      db
+        .select({
+          skuId: inventorySupplyLots.skuId,
+          warehouseCode: inventorySupplyLots.warehouseCode,
+          pool: inventorySupplyLots.pool,
+          qty: sql<number>`coalesce(sum(${inventorySupplyLots.qty}), 0)::int`,
+        })
+        .from(inventorySupplyLots)
+        .where(
+          and(inArray(inventorySupplyLots.skuId, skuIds), eq(inventorySupplyLots.status, 'open')),
+        )
+        .groupBy(
+          inventorySupplyLots.skuId,
+          inventorySupplyLots.warehouseCode,
+          inventorySupplyLots.pool,
         ),
-      ),
-    db
-      .select({
-        skuId: reorderSuggestions.skuId,
-        warehouseCode: reorderSuggestions.warehouseCode,
-        suggestedQty: reorderSuggestions.suggestedQty,
-      })
-      .from(reorderSuggestions)
-      .where(
-        and(
-          inArray(reorderSuggestions.skuId, skuIds),
-          eq(reorderSuggestions.status, 'pending'),
-          isNull(reorderSuggestions.supersededAt),
+      db
+        .select({
+          skuId: inventorySupplyLots.skuId,
+          warehouseCode: inventorySupplyLots.warehouseCode,
+          qty: inventorySupplyLots.qty,
+          availableAt: inventorySupplyLots.availableAt,
+          etaEstimated: inventorySupplyLots.etaEstimated,
+          dateUnknown: inventorySupplyLots.dateUnknown,
+        })
+        .from(inventorySupplyLots)
+        .where(
+          and(
+            inArray(inventorySupplyLots.skuId, skuIds),
+            eq(inventorySupplyLots.status, 'open'),
+            eq(inventorySupplyLots.pool, 'in_transit'),
+          ),
         ),
-      )
-      .orderBy(desc(reorderSuggestions.generatedAt)),
-    db.execute(sql`
-      SELECT DISTINCT ON (sku_id, warehouse_code)
-        sku_id AS "skuId",
-        warehouse_code AS "warehouseCode",
-        metrics,
-        avg_daily AS "avgDaily",
-        total_lead_days AS "totalLeadDays"
-      FROM inventory_health_snapshots
-      WHERE sku_id IN (${sql.join(
-        skuIds.map((id) => sql`${id}::uuid`),
-        sql`, `,
-      )})
-      ORDER BY sku_id, warehouse_code, computed_at DESC
-    `),
-    db
-      .select({ id: skus.id, encodingMeta: skus.encodingMeta })
-      .from(skus)
-      .where(inArray(skus.id, skuIds)),
-    loadMergedPublishedForecastBySkuIds(skuIds),
-  ]);
-  const planningBundle = await loadPlanningDemandDepsForSkus(skuIds);
+      db
+        .select({
+          skuId: reorderSuggestions.skuId,
+          warehouseCode: reorderSuggestions.warehouseCode,
+          suggestedQty: reorderSuggestions.suggestedQty,
+        })
+        .from(reorderSuggestions)
+        .where(
+          and(
+            inArray(reorderSuggestions.skuId, skuIds),
+            eq(reorderSuggestions.status, 'pending'),
+            isNull(reorderSuggestions.supersededAt),
+          ),
+        )
+        .orderBy(desc(reorderSuggestions.generatedAt)),
+      db.execute(sql`
+        SELECT DISTINCT ON (sku_id, warehouse_code)
+          sku_id AS "skuId",
+          warehouse_code AS "warehouseCode",
+          metrics,
+          avg_daily AS "avgDaily",
+          total_lead_days AS "totalLeadDays"
+        FROM inventory_health_snapshots
+        WHERE sku_id IN (${sql.join(
+          skuIds.map((id) => sql`${id}::uuid`),
+          sql`, `,
+        )})
+        ORDER BY sku_id, warehouse_code, computed_at DESC
+      `),
+      loadMergedPublishedForecastBySkuIds(skuIds),
+      loadPlanningDemandDepsForSkus(skuIds),
+      db
+        .select({ id: skus.id, skuMoq: skus.moq, spuMoq: spus.moq })
+        .from(skus)
+        .leftJoin(spus, eq(skus.spuId, spus.id))
+        .where(inArray(skus.id, skuIds)),
+    ]);
+  const moqBySku = new Map(moqRows.map((row) => [row.id, row]));
   const consensusBySku = new Map<
     string,
     { record: Record<string, number> | null; fromPlan: boolean }
@@ -425,8 +434,8 @@ export async function loadAlertListSupply(rows: SupplyRow[]): Promise<Map<string
   }
 
   const turnoverBySku = new Map<string, Record<string, string>>();
-  for (const row of skuRows) {
-    turnoverBySku.set(row.id, readTurnoverSnapshot(row.encodingMeta));
+  for (const [skuId, encodingMeta] of planningBundle.encodingMetaBySku) {
+    turnoverBySku.set(skuId, readTurnoverSnapshot(encodingMeta));
   }
 
   for (const row of rows) {
@@ -462,6 +471,8 @@ export async function loadAlertListSupply(rows: SupplyRow[]): Promise<Map<string
         forecastP90Daily: consensus?.fromPlan ? null : p90Record(published?.p90Map),
         inTransitWindow: transitByKey.get(key),
         networkInTransitWindow: transitBySku.get(row.skuId),
+        skuMoq: moqBySku.get(row.skuId)?.skuMoq,
+        spuMoq: moqBySku.get(row.skuId)?.spuMoq,
       }),
     );
   }

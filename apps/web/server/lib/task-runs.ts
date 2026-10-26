@@ -21,7 +21,8 @@ export type TaskName =
   | 'supply_lot_sync'
   | 'commercial_status_reconcile'
   | 'sales_history_maintenance'
-  | 'sales_daily_feishu_pull';
+  | 'sales_daily_feishu_pull'
+  | 'qc_reinspection_sync';
 
 export async function startTaskRun(taskName: TaskName, triggeredBy: string) {
   const [run] = await db

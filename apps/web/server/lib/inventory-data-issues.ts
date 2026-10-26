@@ -6,6 +6,7 @@ import {
   exceedsPositionMismatchThreshold,
   type WarehouseFactBucket,
 } from './inventory-warehouse-facts.js';
+import { POOL_DISPLAY_LABEL } from './inventory-constants.js';
 
 export const DATA_ISSUE_TYPES = [
   'missing_available_at',
@@ -71,11 +72,7 @@ export type DataIssueCandidate = {
   qty: number;
 };
 
-const POOL_LABEL: Record<DataIssueLot['pool'], string> = {
-  overseas: '海外',
-  in_transit: '在途',
-  local: '本地',
-};
+const POOL_LABEL = POOL_DISPLAY_LABEL;
 
 export function missingAvailableAtFingerprint(lot: DataIssueLot): string {
   return `missing_available_at:${lot.skuId}:${lot.warehouseCode}:${lot.source}:${lot.sourceId || 'none'}`;

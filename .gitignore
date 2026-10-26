@@ -47,3 +47,5 @@ docs/code (1)/
 # 本地 git worktree 与 SDD 进度账本
 .worktrees/
 .superpowers/
+
+*.tsbuildinfo

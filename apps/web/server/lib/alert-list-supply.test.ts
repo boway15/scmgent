@@ -41,6 +41,7 @@ describe('resolveAlertListSupply', () => {
       networkInTransitUndatedQty: 0,
       forecastProfileClass: null,
       forecastP90Daily: null,
+      moq: 0,
     });
   });
 

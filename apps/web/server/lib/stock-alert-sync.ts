@@ -19,6 +19,12 @@ export function stockAlertIntegerQty(value: number): number {
 
 const IMMEDIATE_ALERT_TYPES = new Set(['stockout', 'below_safety', 'below_rop']);
 
+/** 本仓零需求时零库存不算断货（如某 SKU 不在该区域销售） */
+export function shouldEmitImmediateAlert(alertType: string, avgDaily: number): boolean {
+  if (alertType === 'stockout') return avgDaily > 0;
+  return true;
+}
+
 /** 时间轴派生预警仅在与决策灯一致时落库，避免绿灯 SKU 刷出海量 coverage_short。 */
 export function shouldPersistHorizonAlert(
   alertType: string,

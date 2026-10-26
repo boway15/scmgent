@@ -42,6 +42,9 @@ export type AlertRecommendFilterRow = {
   networkAction?: AlertAction;
   networkPriceReason?: PriceReason | null;
   shippingLeadDays?: number;
+  /** 已预计算好的建议下单/发货是否标志，存在时直接走内存过滤，免去二次查库 */
+  orderRecommendYes?: boolean;
+  shipRecommendYes?: boolean;
 };
 
 /** 在分页前按建议下单 / 建议发货是否=yes 过滤，口径与列表列一致。 */
@@ -55,6 +58,21 @@ export async function filterAlertsByRecommendation<T extends AlertRecommendFilte
 ): Promise<T[]> {
   if (input.suggestOrder === undefined && input.suggestShip === undefined) return rows;
   if (!rows.length) return rows;
+
+  const allPrecomputed = rows.every(
+    (row) => row.orderRecommendYes !== undefined && row.shipRecommendYes !== undefined,
+  );
+  if (allPrecomputed) {
+    return rows.filter((row) => {
+      if (input.suggestOrder !== undefined && row.orderRecommendYes !== input.suggestOrder) {
+        return false;
+      }
+      if (input.suggestShip !== undefined && row.shipRecommendYes !== input.suggestShip) {
+        return false;
+      }
+      return true;
+    });
+  }
 
   const [supplyByKey, shippingLead] = await Promise.all([
     loadAlertListSupply(
@@ -96,6 +114,8 @@ export async function filterAlertsByRecommendation<T extends AlertRecommendFilte
       horizons: network.horizons,
       networkAction: shipAction === 'none' ? null : shipAction,
       priceReason: row.networkPriceReason ?? null,
+      maxCoverQty: network.horizons?.demand30,
+      moq: supply.moq,
     });
     const ship = recommendShip({
       today: input.today,
@@ -106,6 +126,8 @@ export async function filterAlertsByRecommendation<T extends AlertRecommendFilte
       daysToStockout: row.daysToStockout,
       shippingLeadDays:
         row.shippingLeadDays ?? shippingLeadFor(row.warehouseCode ?? '', shippingLead),
+      maxCoverQty: network.horizons?.demand30,
+      moq: supply.moq,
     });
 
     const orderYes = orderRecommendYes({

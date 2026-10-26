@@ -9,6 +9,11 @@ import {
   shippingLeadFor,
 } from './alert-ship-lead.js';
 import { buildPlanningExcludedSqlCondition } from './commercial-status.js';
+import { getPlanningDashboard, invalidatePlanningDashboardCache } from './planning-dashboard.js';
+import {
+  getPlanningDemandSource,
+  invalidatePlanningDemandSourceCache,
+} from './planning-demand-source.js';
 import {
   alertOwnerLabel,
   daysUntilDate,
@@ -45,7 +50,8 @@ export type ClassifiedAlert = {
 
 export type InventoryRiskCounts = Record<AlertActionView, number>;
 
-const CACHE_MS = 60_000;
+const CACHE_FRESH_MS = 10 * 60_000;
+const CACHE_STALE_MS = 60 * 60_000;
 
 type CacheEntry = { at: number; rows: ClassifiedAlert[] };
 const cache = new Map<ProductScope, CacheEntry>();
@@ -64,6 +70,21 @@ export function invalidateAlertActionCache(): void {
   classifiedInflight.clear();
   networkInflight.clear();
   clearWarehouseShippingLeadCache();
+  invalidatePlanningDashboardCache();
+  invalidatePlanningDemandSourceCache();
+}
+
+/** 后台静默预热规划驾驶舱三大接口缓存（默认预热主视图 goods），避免用户打开页面遭遇冷启动重算。 */
+export async function warmPlanningDashboardCaches(
+  scopes: ProductScope[] = ['goods'],
+): Promise<void> {
+  await Promise.allSettled([
+    getPlanningDemandSource(),
+    ...scopes.flatMap((scope) => [
+      getPlanningDashboard(undefined, scope),
+      getInventoryRiskCounts(scope),
+    ]),
+  ]);
 }
 
 type RawRow = {
@@ -201,9 +222,7 @@ export async function countNetworkRiskSkus(rows: ClassifiedAlert[]): Promise<Inv
   return countSkuNetworkRisk(skuRows);
 }
 
-async function loadClassifiedAlerts(productScope: ProductScope): Promise<ClassifiedAlert[]> {
-  const hit = cache.get(productScope);
-  if (hit && Date.now() - hit.at < CACHE_MS) return hit.rows;
+function refreshClassifiedAlerts(productScope: ProductScope): Promise<ClassifiedAlert[]> {
   const pending = classifiedInflight.get(productScope);
   if (pending) return pending;
 
@@ -218,6 +237,21 @@ async function loadClassifiedAlerts(productScope: ProductScope): Promise<Classif
     });
   classifiedInflight.set(productScope, promise);
   return promise;
+}
+
+async function loadClassifiedAlerts(productScope: ProductScope): Promise<ClassifiedAlert[]> {
+  const hit = cache.get(productScope);
+  if (hit) {
+    const age = Date.now() - hit.at;
+    if (age < CACHE_FRESH_MS) return hit.rows;
+    if (age < CACHE_STALE_MS) {
+      void refreshClassifiedAlerts(productScope).catch((err) => {
+        console.warn('[alert-action-index] background classified alerts refresh failed:', err);
+      });
+      return hit.rows;
+    }
+  }
+  return refreshClassifiedAlerts(productScope);
 }
 
 async function queryClassifiedAlerts(productScope: ProductScope): Promise<ClassifiedAlert[]> {
@@ -241,6 +275,24 @@ async function queryClassifiedAlerts(productScope: ProductScope): Promise<Classi
       FROM inventory_supply_lots
       WHERE status = 'open'
       GROUP BY sku_id, warehouse_code
+    ),
+    unallocated AS (
+      SELECT sku_id, coalesce(sum(qty), 0)::int AS unallocated_local
+      FROM inventory_supply_lots
+      WHERE status = 'open'
+        AND pool = 'local'
+        AND warehouse_code = ${IN_PRODUCTION_WAREHOUSE}
+      GROUP BY sku_id
+    ),
+    published_profile AS (
+      SELECT DISTINCT ON (m.sku_id)
+        m.sku_id,
+        m.forecast_profile_class AS profile_class
+      FROM sales_forecast_monthly m
+      INNER JOIN sales_forecast_versions v ON v.id = m.version_id
+      WHERE v.status = 'published'
+        AND m.forecast_profile_class IS NOT NULL
+      ORDER BY m.sku_id, v.published_at DESC NULLS LAST
     )
     SELECT
       a.id::text AS id,
@@ -277,24 +329,8 @@ async function queryClassifiedAlerts(productScope: ProductScope): Promise<Classi
       LIMIT 1
     ) h ON true
     LEFT JOIN lots l ON l.sku_id = a.sku_id AND l.warehouse_code = a.warehouse_code
-    LEFT JOIN (
-      SELECT sku_id, coalesce(sum(qty), 0)::int AS unallocated_local
-      FROM inventory_supply_lots
-      WHERE status = 'open'
-        AND pool = 'local'
-        AND warehouse_code = ${IN_PRODUCTION_WAREHOUSE}
-      GROUP BY sku_id
-    ) u ON u.sku_id = a.sku_id
-    LEFT JOIN LATERAL (
-      SELECT m.forecast_profile_class AS profile_class
-      FROM sales_forecast_monthly m
-      INNER JOIN sales_forecast_versions v ON v.id = m.version_id
-      WHERE m.sku_id = a.sku_id
-        AND v.status = 'published'
-        AND m.forecast_profile_class IS NOT NULL
-      ORDER BY v.published_at DESC NULLS LAST
-      LIMIT 1
-    ) fc ON true
+    LEFT JOIN unallocated u ON u.sku_id = a.sku_id
+    LEFT JOIN published_profile fc ON fc.sku_id = a.sku_id
     WHERE a.is_resolved = false
     ${productScopeOnSkuAlias(productScope, 's')}
   `);
@@ -344,6 +380,22 @@ function seedClassifiedAlert(seed: EligibleSkuSeed): ClassifiedAlert {
 async function loadPlanningEligibleSeeds(productScope: ProductScope): Promise<EligibleSkuSeed[]> {
   const skuScopeSql = productScopeOnSkuAlias(productScope, 's');
   const result = await db.execute(sql`
+    WITH recent_turnover AS (
+      SELECT DISTINCT sku_id
+      FROM ${inventoryDailySnapshots}
+      WHERE snapshot_date >= (CURRENT_DATE - ${sql.raw(String(ELIGIBLE_TURNOVER_LOOKBACK_DAYS))} * INTERVAL '1 day')
+    ),
+    recent_sales AS (
+      SELECT DISTINCT sku_id
+      FROM ${salesHistory}
+      WHERE sale_date >= (CURRENT_DATE - ${sql.raw(String(ELIGIBLE_SALES_LOOKBACK_DAYS))} * INTERVAL '1 day')
+        AND qty_sold > 0
+    ),
+    eligible_union AS (
+      SELECT sku_id FROM recent_turnover
+      UNION
+      SELECT sku_id FROM recent_sales
+    )
     SELECT
       s.id::text AS "skuId",
       s.code AS "skuCode",
@@ -351,6 +403,7 @@ async function loadPlanningEligibleSeeds(productScope: ProductScope): Promise<El
       s.project_group AS "projectGroup",
       h.warehouse_code AS "warehouseCode"
     FROM ${skus} s
+    INNER JOIN eligible_union eu ON eu.sku_id = s.id
     LEFT JOIN LATERAL (
       SELECT warehouse_code
       FROM ${inventoryHealthSnapshots}
@@ -360,21 +413,6 @@ async function loadPlanningEligibleSeeds(productScope: ProductScope): Promise<El
     ) h ON true
     WHERE s.is_active = true
       ${skuScopeSql}
-      AND (
-        EXISTS (
-          SELECT 1
-          FROM ${inventoryDailySnapshots} ids
-          WHERE ids.sku_id = s.id
-            AND ids.snapshot_date >= (CURRENT_DATE - ${sql.raw(String(ELIGIBLE_TURNOVER_LOOKBACK_DAYS))} * INTERVAL '1 day')
-        )
-        OR EXISTS (
-          SELECT 1
-          FROM ${salesHistory} sh
-          WHERE sh.sku_id = s.id
-            AND sh.sale_date >= (CURRENT_DATE - ${sql.raw(String(ELIGIBLE_SALES_LOOKBACK_DAYS))} * INTERVAL '1 day')
-            AND sh.qty_sold > 0
-        )
-      )
       AND NOT ${sql.raw(planningExcludedSql)}
   `);
   return Array.from(result as unknown as EligibleSkuSeed[]);
@@ -396,9 +434,7 @@ export async function loadNetworkAlertUniverse(productScope: ProductScope): Prom
   return mergePlanningEligibleAlertRows(rows, productScope);
 }
 
-async function loadSkuNetworkClassified(productScope: ProductScope): Promise<SkuNetworkClassified[]> {
-  const hit = networkCache.get(productScope);
-  if (hit && Date.now() - hit.at < CACHE_MS) return hit.rows;
+function refreshSkuNetworkClassified(productScope: ProductScope): Promise<SkuNetworkClassified[]> {
   const pending = networkInflight.get(productScope);
   if (pending) return pending;
 
@@ -417,6 +453,21 @@ async function loadSkuNetworkClassified(productScope: ProductScope): Promise<Sku
     });
   networkInflight.set(productScope, promise);
   return promise;
+}
+
+async function loadSkuNetworkClassified(productScope: ProductScope): Promise<SkuNetworkClassified[]> {
+  const hit = networkCache.get(productScope);
+  if (hit) {
+    const age = Date.now() - hit.at;
+    if (age < CACHE_FRESH_MS) return hit.rows;
+    if (age < CACHE_STALE_MS) {
+      void refreshSkuNetworkClassified(productScope).catch((err) => {
+        console.warn('[alert-action-index] background network risk refresh failed:', err);
+      });
+      return hit.rows;
+    }
+  }
+  return refreshSkuNetworkClassified(productScope);
 }
 
 export async function getInventoryRiskCounts(productScope: ProductScope): Promise<InventoryRiskCounts> {

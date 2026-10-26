@@ -80,13 +80,14 @@ export async function listAllRecords(
   appToken: string,
   tableId: string,
   importType?: string,
-  options?: { displayFormulaRef?: boolean },
+  options?: { displayFormulaRef?: boolean; viewId?: string },
 ): Promise<BitableRecord[]> {
   const maxRows = getMaxRows(importType);
   const token = await getTenantAccessToken();
   const records: BitableRecord[] = [];
   let pageToken: string | undefined;
   const displayFormulaRef = options?.displayFormulaRef ?? false;
+  const viewId = options?.viewId?.trim();
 
   do {
     const url = new URL(
@@ -97,6 +98,7 @@ export async function listAllRecords(
     if (displayFormulaRef) {
       url.searchParams.set('display_formula_ref', 'true');
     }
+    if (viewId) url.searchParams.set('view_id', viewId);
     if (pageToken) url.searchParams.set('page_token', pageToken);
 
     const body = await withFeishuFetchRetry(async () => {

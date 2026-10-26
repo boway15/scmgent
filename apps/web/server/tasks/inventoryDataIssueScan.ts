@@ -9,7 +9,6 @@ import {
 import {
   detectInventoryDataIssues,
   type DataIssueLot,
-  type DataIssueShareGapSku,
   type DataIssueSku,
   type DataIssueWarehouseFact,
 } from '../lib/inventory-data-issues.js';
@@ -136,41 +135,11 @@ export async function runInventoryDataIssueScan() {
     };
   });
 
-  const onHandBySku = new Map<string, Map<string, number>>();
-  for (const fact of warehouseFacts) {
-    if (!fact.selected || fact.bucket !== 'on_hand') continue;
-    const byWh = onHandBySku.get(fact.skuId) ?? new Map<string, number>();
-    byWh.set(fact.warehouseCode, (byWh.get(fact.warehouseCode) ?? 0) + fact.qty);
-    onHandBySku.set(fact.skuId, byWh);
-  }
-
-  const shareGapSkuIds = new Set([
-    ...overseas.map((row) => row.skuId),
-    ...onHandBySku.keys(),
-  ]);
-  const shareGapSkus: DataIssueShareGapSku[] = [...shareGapSkuIds].map((skuId) => {
-    const overseasRow = overseas.find((row) => row.skuId === skuId);
-    const sku = skuById.get(skuId);
-    const share = allocationBySku.get(skuId)?.share ?? {
-      method: 'unallocated' as const,
-      shareSum: 0,
-      shareSumWarning: false,
-      weights: [],
-    };
-    return {
-      skuId,
-      skuCode: sku?.skuCode ?? '',
-      overseasAvailable: overseasRow?.qtyAvailable ?? 0,
-      share,
-      factOnHandByWarehouse: onHandBySku.get(skuId) ?? new Map(),
-    };
-  });
-
+  // position_share_gap 只作对照、不驱动规划，不再进入待处理队列；已有 open 行由 upsert 自动结案
   const detected = detectInventoryDataIssues({
     lots,
     skus: detectSkus,
     warehouseFacts,
-    shareGapSkus,
   });
   const upsert = await applyDataIssueUpsert(detected);
   return {

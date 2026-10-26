@@ -19,10 +19,16 @@ export function DemandSourceCard() {
   const query = useQuery({
     queryKey: ['planning-demand-source'],
     queryFn: api.getPlanningDemandSource,
-    staleTime: 60_000,
+    staleTime: 5 * 60_000,
   });
 
-  if (query.isLoading) return null;
+  if (query.isLoading) {
+    return (
+      <Card className="border-primary/20 bg-primary/5 shadow-card">
+        <CardContent className="py-3 text-sm text-text-sub">加载补货当前需求口径中...</CardContent>
+      </Card>
+    );
+  }
   if (query.isError || !query.data) {
     return (
       <Card className="shadow-card">

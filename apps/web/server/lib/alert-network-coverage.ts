@@ -10,6 +10,7 @@ import { meanOfLastThreePositive } from './demand-plan-resolve.js';
 import { getForecastDailyForDate, type ForecastHorizonContext } from './forecast-demand.js';
 import type { PublishedForecastEntry } from './forecast-published-resolve.js';
 import { addDaysIso } from './inventory-iso-date.js';
+import { SINGLE_REPLENISHMENT_COVER_DAYS } from './inventory-timeline.js';
 import { isIsoWeekPeriod, isoWeekMondayUtc } from './planning-calendar.js';
 
 const COVERAGE_WALK_MAX_DAYS = 1095;
@@ -61,16 +62,40 @@ export function horizonFallbackDaily(forecast: Map<string, number>): number {
   return meanOfLastThreePositive(forecast);
 }
 
-function demandDailyOnDate(
+const DAY_MS = 86_400_000;
+
+type PreparedForecastCurve = {
+  forecast: Map<string, number>;
+  horizonEnd: string | null;
+  fallbackDaily: number;
+  horizon?: ForecastHorizonContext | null;
+};
+
+function prepareForecastCurve(
   forecast: Map<string, number>,
-  ymd: string,
   horizon?: ForecastHorizonContext | null,
+): PreparedForecastCurve {
+  return {
+    forecast,
+    horizonEnd: forecastHorizonEndYmd(forecast),
+    fallbackDaily: horizonFallbackDaily(forecast),
+    horizon,
+  };
+}
+
+function demandDailyOnPreparedDate(
+  curve: PreparedForecastCurve,
+  ymd: string,
+  dateObj?: Date,
 ): number {
-  const horizonEnd = forecastHorizonEndYmd(forecast);
-  if (horizonEnd != null && ymd > horizonEnd) {
-    return horizonFallbackDaily(forecast);
+  if (curve.horizonEnd != null && ymd > curve.horizonEnd) {
+    return curve.fallbackDaily;
   }
-  return forecastDailyOnDate(forecast, ymd, horizon);
+  if (!curve.forecast.size) return 0;
+  const date = dateObj ?? utcDateFromYmd(ymd);
+  if (!date) return 0;
+  const daily = getForecastDailyForDate(curve.forecast, date, 0, curve.horizon);
+  return Number.isFinite(daily) && daily > 0 ? daily : 0;
 }
 
 export function sumForecastDemand(
@@ -79,11 +104,115 @@ export function sumForecastDemand(
   days: number,
   horizon?: ForecastHorizonContext | null,
 ): number {
+  if (days <= 0 || !forecast.size) return 0;
+  const curve = prepareForecastCurve(forecast, horizon);
+  const startDate = utcDateFromYmd(startYmd);
+  if (!startDate) return 0;
+  const baseMs = startDate.getTime();
   let sum = 0;
   for (let offset = 0; offset < days; offset += 1) {
-    sum += demandDailyOnDate(forecast, addDaysIso(startYmd, offset), horizon);
+    const d = new Date(baseMs + offset * DAY_MS);
+    const ymd = d.toISOString().slice(0, 10);
+    sum += demandDailyOnPreparedDate(curve, ymd, d);
   }
   return Math.round(sum);
+}
+
+function sumMultipleForecastWindows(
+  curve: PreparedForecastCurve,
+  startYmd: string,
+  coverDays: number,
+): {
+  d30: number;
+  d45: number;
+  d60: number;
+  d90: number;
+  d120: number;
+  d150: number;
+  dCover: number;
+} {
+  const maxDays = Math.max(150, coverDays);
+  const startDate = utcDateFromYmd(startYmd);
+  if (!startDate || !curve.forecast.size) {
+    return { d30: 0, d45: 0, d60: 0, d90: 0, d120: 0, d150: 0, dCover: 0 };
+  }
+  const baseMs = startDate.getTime();
+  let running = 0;
+  let s30 = 0;
+  let s45 = 0;
+  let s60 = 0;
+  let s90 = 0;
+  let s120 = 0;
+  let s150 = 0;
+  let sCover = 0;
+
+  for (let offset = 0; offset < maxDays; offset += 1) {
+    const d = new Date(baseMs + offset * DAY_MS);
+    const ymd = d.toISOString().slice(0, 10);
+    running += demandDailyOnPreparedDate(curve, ymd, d);
+    const dayCount = offset + 1;
+    if (dayCount === SINGLE_REPLENISHMENT_COVER_DAYS) s30 = running;
+    if (dayCount === 45) s45 = running;
+    if (dayCount === 60) s60 = running;
+    if (dayCount === 90) s90 = running;
+    if (dayCount === 120) s120 = running;
+    if (dayCount === 150) s150 = running;
+    if (dayCount === coverDays) sCover = running;
+  }
+
+  return {
+    d30: Math.round(s30),
+    d45: Math.round(s45),
+    d60: Math.round(s60),
+    d90: Math.round(s90),
+    d120: Math.round(s120),
+    d150: Math.round(s150),
+    dCover: Math.round(sCover),
+  };
+}
+
+function walkPreparedCoverage(
+  qty: number,
+  startYmd: string,
+  curve: PreparedForecastCurve,
+  maxDays = COVERAGE_WALK_MAX_DAYS,
+): { coverageDays: number | null; stockoutDate: string | null } {
+  if (qty <= 0) {
+    return { coverageDays: 0, stockoutDate: startYmd.slice(0, 10) };
+  }
+  if (!curve.forecast.size) return { coverageDays: null, stockoutDate: null };
+
+  const startDate = utcDateFromYmd(startYmd);
+  if (!startDate) return { coverageDays: null, stockoutDate: null };
+  const baseMs = startDate.getTime();
+
+  let remaining = qty;
+  let consumed = false;
+  for (let dayIndex = 0; dayIndex < maxDays; dayIndex += 1) {
+    const d = new Date(baseMs + dayIndex * DAY_MS);
+    const ymd = d.toISOString().slice(0, 10);
+    const daily = demandDailyOnPreparedDate(curve, ymd, d);
+    if (daily <= 0) continue;
+    consumed = true;
+    if (remaining <= daily) {
+      const coverageDays = dayIndex + remaining / daily;
+      return {
+        coverageDays,
+        stockoutDate: addDaysIso(startYmd, Math.floor(coverageDays)),
+      };
+    }
+    remaining -= daily;
+  }
+  if (!consumed) {
+    return {
+      coverageDays: MAX_COVERAGE_DAYS,
+      stockoutDate: addDaysIso(startYmd, MAX_COVERAGE_DAYS),
+    };
+  }
+  return {
+    coverageDays: MAX_COVERAGE_DAYS,
+    stockoutDate: addDaysIso(startYmd, MAX_COVERAGE_DAYS),
+  };
 }
 
 /**
@@ -103,37 +232,13 @@ export function coverageAlongForecast(input: {
     return { coverageDays: 0, stockoutDate: input.startYmd.slice(0, 10) };
   }
   if (!input.forecast.size) return { coverageDays: null, stockoutDate: null };
-
-  const maxDays = input.maxDays ?? COVERAGE_WALK_MAX_DAYS;
-  let remaining = input.qty;
-  let consumed = false;
-  for (let dayIndex = 0; dayIndex < maxDays; dayIndex += 1) {
-    const daily = demandDailyOnDate(
-      input.forecast,
-      addDaysIso(input.startYmd, dayIndex),
-      input.horizon,
-    );
-    if (daily <= 0) continue;
-    consumed = true;
-    if (remaining <= daily) {
-      const coverageDays = dayIndex + remaining / daily;
-      return {
-        coverageDays,
-        stockoutDate: addDaysIso(input.startYmd, Math.floor(coverageDays)),
-      };
-    }
-    remaining -= daily;
-  }
-  if (!consumed) {
-    return {
-      coverageDays: MAX_COVERAGE_DAYS,
-      stockoutDate: addDaysIso(input.startYmd, MAX_COVERAGE_DAYS),
-    };
-  }
-  return {
-    coverageDays: MAX_COVERAGE_DAYS,
-    stockoutDate: addDaysIso(input.startYmd, MAX_COVERAGE_DAYS),
-  };
+  const curve = prepareForecastCurve(input.forecast, input.horizon);
+  return walkPreparedCoverage(
+    input.qty,
+    input.startYmd,
+    curve,
+    input.maxDays ?? COVERAGE_WALK_MAX_DAYS,
+  );
 }
 
 export function networkQty(input: {
@@ -192,25 +297,28 @@ export function resolveNetworkForecastCoverage(input: {
   onHandTransitStockoutDate: string | null;
 } {
   const qty = networkQty(input);
-  const onHandTransitCoverageDays = coverOnHandTransit(input);
+  const series = input.forecastDaily ?? null;
+  const forecast = series && Object.keys(series).length ? new Map(Object.entries(series)) : null;
+  const horizon = horizonFromCoverageInput(input);
+  const preparedCurve = forecast ? prepareForecastCurve(forecast, horizon) : null;
+  const onHandTransit = resolveOnHandTransitPrepared(input, preparedCurve);
+
   if (qty == null) {
     return {
       coverageDays: null,
       stockoutDate: null,
       horizons: null,
-      onHandTransitCoverageDays,
+      onHandTransitCoverageDays: onHandTransit.coverageDays,
       onHandTransitStockoutDate: null,
     };
   }
 
-  const series = input.forecastDaily ?? null;
-  const forecast = series && Object.keys(series).length ? new Map(Object.entries(series)) : null;
   const coverDays =
     input.coverDays != null && input.coverDays > 0 ? Math.ceil(input.coverDays) : 150;
-  const horizon = horizonFromCoverageInput(input);
-  if (forecast) {
-    const walked = coverageAlongForecast({ qty, startYmd: input.today, forecast, horizon });
+  if (preparedCurve) {
+    const walked = walkPreparedCoverage(qty, input.today, preparedCurve);
     const coverageDays = finiteCoverageDays(walked.coverageDays);
+    const demandQty = sumMultipleForecastWindows(preparedCurve, input.today, coverDays);
     const horizons = horizonDemand({
       coverageDays: walked.coverageDays,
       avgDaily: null,
@@ -220,21 +328,14 @@ export function resolveNetworkForecastCoverage(input: {
       inTransitWithin45: input.inTransitWithin45 ?? 0,
       inTransitWithin60: input.inTransitWithin60 ?? 0,
       coverDays,
-      demandQty: {
-        d150: sumForecastDemand(forecast, input.today, 150, horizon),
-        d120: sumForecastDemand(forecast, input.today, 120, horizon),
-        d90: sumForecastDemand(forecast, input.today, 90, horizon),
-        d60: sumForecastDemand(forecast, input.today, 60, horizon),
-        d45: sumForecastDemand(forecast, input.today, 45, horizon),
-        dCover: sumForecastDemand(forecast, input.today, coverDays, horizon),
-      },
+      demandQty,
     });
     return {
       coverageDays,
       stockoutDate: walked.stockoutDate,
       horizons,
-      onHandTransitCoverageDays,
-      onHandTransitStockoutDate: coverOnHandTransitStockout(input),
+      onHandTransitCoverageDays: onHandTransit.coverageDays,
+      onHandTransitStockoutDate: onHandTransit.stockoutDate,
     };
   }
 
@@ -263,8 +364,8 @@ export function resolveNetworkForecastCoverage(input: {
       inTransitWithin60: input.inTransitWithin60 ?? 0,
       coverDays,
     }),
-    onHandTransitCoverageDays,
-    onHandTransitStockoutDate: coverOnHandTransitStockout(input),
+    onHandTransitCoverageDays: onHandTransit.coverageDays,
+    onHandTransitStockoutDate: onHandTransit.stockoutDate,
   };
 }
 
@@ -281,55 +382,31 @@ function horizonFromCoverageInput(input: {
   };
 }
 
-function coverOnHandTransitStockout(input: {
-  today: string;
-  overseasQty: number | null | undefined;
-  inTransitQty: number | null | undefined;
-  forecastDaily: Record<string, number> | null | undefined;
-  flatDaily: number | null | undefined;
-  profileClass?: string | null;
-  forecastP90Daily?: Record<string, number> | null;
-}): string | null {
-  if (input.overseasQty == null && input.inTransitQty == null) return null;
-  const qty = Math.max(0, input.overseasQty ?? 0) + Math.max(0, input.inTransitQty ?? 0);
-  const series = input.forecastDaily ?? null;
-  const forecast = series && Object.keys(series).length ? new Map(Object.entries(series)) : null;
-  if (forecast) {
-    return coverageAlongForecast({
-      qty,
-      startYmd: input.today,
-      forecast,
-      horizon: horizonFromCoverageInput(input),
-    }).stockoutDate;
+function resolveOnHandTransitPrepared(
+  input: {
+    today: string;
+    overseasQty: number | null | undefined;
+    inTransitQty: number | null | undefined;
+    flatDaily: number | null | undefined;
+  },
+  preparedCurve: PreparedForecastCurve | null,
+): { coverageDays: number | null; stockoutDate: string | null } {
+  if (input.overseasQty == null && input.inTransitQty == null) {
+    return { coverageDays: null, stockoutDate: null };
   }
-  const days = coverageDaysFromQty(qty, input.flatDaily);
-  return stockoutDateFromBandDays(input.today, days);
-}
-
-function coverOnHandTransit(input: {
-  today: string;
-  overseasQty: number | null | undefined;
-  inTransitQty: number | null | undefined;
-  forecastDaily: Record<string, number> | null | undefined;
-  flatDaily: number | null | undefined;
-  profileClass?: string | null;
-  forecastP90Daily?: Record<string, number> | null;
-}): number | null {
-  if (input.overseasQty == null && input.inTransitQty == null) return null;
   const qty = Math.max(0, input.overseasQty ?? 0) + Math.max(0, input.inTransitQty ?? 0);
-  const series = input.forecastDaily ?? null;
-  const forecast = series && Object.keys(series).length ? new Map(Object.entries(series)) : null;
-  if (forecast) {
-    return finiteCoverageDays(
-      coverageAlongForecast({
-        qty,
-        startYmd: input.today,
-        forecast,
-        horizon: horizonFromCoverageInput(input),
-      }).coverageDays,
-    );
+  if (preparedCurve) {
+    const walked = walkPreparedCoverage(qty, input.today, preparedCurve);
+    return {
+      coverageDays: finiteCoverageDays(walked.coverageDays),
+      stockoutDate: walked.stockoutDate,
+    };
   }
-  return finiteCoverageDays(coverageDaysFromQty(qty, input.flatDaily));
+  const rawDays = coverageDaysFromQty(qty, input.flatDaily);
+  return {
+    coverageDays: finiteCoverageDays(rawDays),
+    stockoutDate: stockoutDateFromBandDays(input.today, rawDays),
+  };
 }
 
 /** 已发布销售预测：业务日所在月（或 ISO 周）的全网生效日均，仅作展示参考。 */

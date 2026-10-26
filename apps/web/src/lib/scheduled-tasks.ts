@@ -82,6 +82,14 @@ export const SCHEDULED_TASKS: ScheduledTask[] = [
     description: '从飞书拉取采购跟单列表',
   },
   {
+    id: 'qc_reinspection_sync',
+    name: '二次验货同步',
+    path: '/api/tasks/qc-reinspection-sync',
+    cron: '30 8 * * *',
+    cronLabel: '每天 08:30',
+    description: '按二次验货视图和工厂全称范围，把新明细写入飞书「需二次验货数据」并更新本地列表',
+  },
+  {
     id: 'inventory_data_issue_scan',
     name: '库存数据问题扫描',
     path: '/api/tasks/inventory-data-issue-scan',
@@ -107,6 +115,7 @@ export const TASK_NAME_LABELS: Record<string, string> = {
   news_ingest: '新闻情报采集',
   procurement_bulk_stock_pull: '备货需求飞书拉取',
   procurement_follow_up_pull: '采购跟单飞书拉取',
+  qc_reinspection_sync: '二次验货同步',
   replenishment_forecast: '补货建议生成',
   purchase_follow_up: '采购跟单提醒',
   inventory_exception_scan: '库存异常扫描',

@@ -61,7 +61,57 @@ type SellingCoverageRow = {
   historical_skus: number;
 };
 
+const DEMAND_SOURCE_FRESH_MS = 10 * 60_000;
+const DEMAND_SOURCE_STALE_MS = 60 * 60_000;
+let demandSourceCache: { at: number; data: PlanningDemandSource } | null = null;
+let demandSourceInflight: Promise<PlanningDemandSource> | null = null;
+let demandSourceCacheGen = 0;
+
+export function invalidatePlanningDemandSourceCache(): void {
+  demandSourceCacheGen += 1;
+  demandSourceCache = null;
+  demandSourceInflight = null;
+}
+
+function refreshPlanningDemandSourceCache(): Promise<PlanningDemandSource> {
+  if (demandSourceInflight) return demandSourceInflight;
+
+  const gen = demandSourceCacheGen;
+  const promise = queryPlanningDemandSource()
+    .then((data) => {
+      if (gen === demandSourceCacheGen) {
+        demandSourceCache = { at: Date.now(), data };
+      }
+      return data;
+    })
+    .finally(() => {
+      if (demandSourceInflight === promise) {
+        demandSourceInflight = null;
+      }
+    });
+
+  demandSourceInflight = promise;
+  return promise;
+}
+
 export async function getPlanningDemandSource(): Promise<PlanningDemandSource> {
+  if (demandSourceCache) {
+    const age = Date.now() - demandSourceCache.at;
+    if (age < DEMAND_SOURCE_FRESH_MS) {
+      return demandSourceCache.data;
+    }
+    if (age < DEMAND_SOURCE_STALE_MS) {
+      void refreshPlanningDemandSourceCache().catch((err) => {
+        console.warn('[planning-demand-source] background cache refresh failed:', err);
+      });
+      return demandSourceCache.data;
+    }
+  }
+
+  return refreshPlanningDemandSourceCache();
+}
+
+async function queryPlanningDemandSource(): Promise<PlanningDemandSource> {
   const [publishedRows, adoptionRows, healthRows, sellingRows, salesMaxRows] = await Promise.all([
     db
       .select({
@@ -103,19 +153,23 @@ export async function getPlanningDemandSource(): Promise<PlanningDemandSource> {
       WITH latest_batch AS (
         SELECT max(computed_at) AS computed_at FROM ${inventoryHealthSnapshots}
       ),
+      max_sale AS (
+        SELECT max(sale_date) AS max_date FROM ${salesHistory}
+      ),
+      recent_sold_skus AS (
+        SELECT DISTINCT sh.sku_id
+        FROM ${salesHistory} sh
+        CROSS JOIN max_sale ms
+        WHERE sh.qty_sold > 0
+          AND sh.sale_date > ms.max_date - ${sql.raw(String(SELLING_LOOKBACK_DAYS))}
+      ),
       selling_skus AS (
         SELECT s.id
         FROM ${skus} s
+        INNER JOIN recent_sold_skus rss ON rss.sku_id = s.id
         WHERE s.is_active = true
         ${productScopeOnSkuAlias('goods', 's')}
           AND NOT coalesce(${sql.raw(planningExcludedSql)}, false)
-          AND EXISTS (
-            SELECT 1
-            FROM ${salesHistory} sh
-            WHERE sh.sku_id = s.id
-              AND sh.qty_sold > 0
-              AND sh.sale_date > (SELECT max(sale_date) FROM ${salesHistory}) - ${sql.raw(String(SELLING_LOOKBACK_DAYS))}
-          )
       ),
       batch_skus AS (
         SELECT h.sku_id, bool_or(h.demand_source = 'forecast') AS has_forecast

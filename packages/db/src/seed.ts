@@ -27,14 +27,6 @@ type MenuSeed = {
 
 const MENU_SEEDS: MenuSeed[] = [
   {
-    code: 'dashboard',
-    name: '经营看板',
-    icon: 'LayoutDashboard',
-    path: '/dashboard',
-    sortOrder: 0,
-    isLeaf: true,
-  },
-  {
     code: 'inventory',
     name: '库存运营',
     icon: 'Package',
@@ -63,15 +55,12 @@ const MENU_SEEDS: MenuSeed[] = [
   },
   {
     code: 'supply',
-    name: '采购发运',
+    name: '采购补货',
     icon: 'Truck',
     sortOrder: 20,
     isLeaf: false,
     children: [
       { code: 'pmc.suggestion', name: '补货建议', path: '/pmc/suggestions', sortOrder: 10, isLeaf: true },
-      { code: 'pmc.list', name: '计划列表', path: '/pmc/list', sortOrder: 20, isLeaf: true },
-      { code: 'pmc.tracking', name: '计划跟单', path: '/pmc/tracking', sortOrder: 30, isLeaf: true },
-      { code: 'pmc.shipments', name: '发运管理', path: '/pmc/shipments', sortOrder: 40, isLeaf: true },
       {
         code: 'procurement.bulk_stock',
         name: '大件备货申请',
@@ -86,18 +75,37 @@ const MENU_SEEDS: MenuSeed[] = [
         sortOrder: 60,
         isLeaf: true,
       },
+    ],
+  },
+  {
+    code: 'quality',
+    name: '质检',
+    icon: 'ClipboardCheck',
+    sortOrder: 24,
+    isLeaf: false,
+    children: [
       {
-        code: 'procurement.costing',
-        name: '产品成本核算',
-        path: '/procurement/costing',
-        sortOrder: 70,
+        code: 'quality.reinspection',
+        name: '二次验货',
+        path: '/quality/reinspection',
+        sortOrder: 10,
         isLeaf: true,
       },
+    ],
+  },
+  {
+    code: 'logistics',
+    name: '物流',
+    icon: 'Ship',
+    sortOrder: 26,
+    isLeaf: false,
+    children: [
       {
         code: 'logistics.fob_settlement',
         name: 'FOB 分账',
+        icon: 'Receipt',
         path: '/logistics/fob-settlement',
-        sortOrder: 80,
+        sortOrder: 10,
         isLeaf: true,
       },
     ],
@@ -186,23 +194,28 @@ const DEPRECATED_MENU_CODES = [
   'inventory.lead_time',
   'pmc',
   'procurement',
-  'logistics',
   'cs',
   'ai',
   'intel',
+  // 2026-10 减法：PMC 写流程停用（下单在迅捷 ERP），经营看板下线；恢复时移回 MENU_SEEDS
+  'dashboard',
+  'pmc.list',
+  'pmc.tracking',
+  'pmc.shipments',
+  // 2026-10：产品成本核算暂不交付；恢复时从 DEPRECATED 移回 MENU_SEEDS 与 SUPPLY_MENU_CODES
+  'procurement.costing',
 ];
 
 const SUPPLY_MENU_CODES = [
   'supply',
   'pmc.suggestion',
-  'pmc.list',
-  'pmc.tracking',
-  'pmc.shipments',
   'procurement.bulk_stock',
   'procurement.follow_up',
-  'procurement.costing',
-  'logistics.fob_settlement',
 ] as const;
+
+const QUALITY_MENU_CODES = ['quality', 'quality.reinspection'] as const;
+
+const LOGISTICS_MENU_CODES = ['logistics', 'logistics.fob_settlement'] as const;
 
 const ASSISTANT_MENU_CODES = ['assistant', 'ai.chat', 'cs.quality', 'intel.news'] as const;
 
@@ -226,9 +239,10 @@ const INVENTORY_MENU_CODES = [
 
 const ROLE_MENU_CODES: Record<string, string[]> = {
   super_admin: [
-    'dashboard',
     ...INVENTORY_MENU_CODES,
     ...SUPPLY_MENU_CODES,
+    ...QUALITY_MENU_CODES,
+    ...LOGISTICS_MENU_CODES,
     ...DATA_MENU_CODES,
     'data.demand_plan',
     ...ASSISTANT_MENU_CODES,
@@ -240,14 +254,12 @@ const ROLE_MENU_CODES: Record<string, string[]> = {
     'system.tasks',
   ],
   pmc_planner: [
-    'dashboard',
     ...INVENTORY_MENU_CODES,
     'supply',
     'pmc.suggestion',
-    'pmc.list',
-    'pmc.shipments',
     'procurement.bulk_stock',
-    'logistics.fob_settlement',
+    ...QUALITY_MENU_CODES,
+    ...LOGISTICS_MENU_CODES,
     ...DATA_MENU_CODES,
     'data.demand_plan',
     'assistant',
@@ -256,15 +268,12 @@ const ROLE_MENU_CODES: Record<string, string[]> = {
     'help',
   ],
   warehouse: [
-    'dashboard',
     'inventory',
     'inventory.overview',
     'inventory.alert',
     'inventory.pools',
     'inventory.data_issues',
-    'supply',
-    'pmc.list',
-    'logistics.fob_settlement',
+    ...LOGISTICS_MENU_CODES,
     ...DATA_MENU_CODES,
     'assistant',
     'ai.chat',
@@ -272,9 +281,10 @@ const ROLE_MENU_CODES: Record<string, string[]> = {
     'help',
   ],
   purchaser: [
-    'dashboard',
     ...INVENTORY_MENU_CODES,
     ...SUPPLY_MENU_CODES,
+    ...QUALITY_MENU_CODES,
+    ...LOGISTICS_MENU_CODES,
     ...DATA_MENU_CODES,
     'assistant',
     'ai.chat',
@@ -282,7 +292,6 @@ const ROLE_MENU_CODES: Record<string, string[]> = {
     'help',
   ],
   viewer: [
-    'dashboard',
     'inventory',
     'inventory.planning_dashboard',
     'inventory.overview',
@@ -290,12 +299,10 @@ const ROLE_MENU_CODES: Record<string, string[]> = {
     'inventory.data_issues',
     'supply',
     'pmc.suggestion',
-    'pmc.list',
-    'pmc.tracking',
     'procurement.bulk_stock',
     'procurement.follow_up',
-    'procurement.costing',
-    'logistics.fob_settlement',
+    ...QUALITY_MENU_CODES,
+    ...LOGISTICS_MENU_CODES,
     ...DATA_MENU_CODES.filter((code) => code !== 'data.products'),
     'assistant',
     'ai.chat',

@@ -814,8 +814,6 @@ export type PlanningDashboard = {
   healthYellowSkuCount: number;
   belowRopCount: number;
   pendingSuggestions: number;
-  delayedShipments: number;
-  delayedDraftsEtaAvailable: number;
   stockoutRateApprox: number;
   stockoutHorizon7: number;
   stockoutHorizon15: number;
@@ -1372,6 +1370,31 @@ function importRequestError(body: { message?: string; errors?: unknown }, fallba
   }
   return err;
 }
+
+export type QcReinspectionListItem = {
+  id: string;
+  sourceRecordId: string;
+  supplierShortName: string | null;
+  inspectionStatus: string | null;
+  purchaseOrderNo: string | null;
+  demandNo: string | null;
+  sku: string | null;
+  productName: string | null;
+  cartonCount: string | null;
+  pieceCount: string | null;
+  destWarehouse: string | null;
+  factoryType: string | null;
+  expectedShipDate: string | null;
+  containerCartonCount: string | null;
+  containerPieceCount: string | null;
+  transferStatus: string | null;
+  followUpReadyAt: string | null;
+  goodsReadyAt: string | null;
+  loadingNote: string | null;
+  gapDays: number | null;
+  insertedAt: string;
+  syncedAt: string;
+};
 
 export const api = {
   getAuthConfig: () =>
@@ -5280,6 +5303,28 @@ export const api = {
       method: 'PATCH',
       body: JSON.stringify(body),
     }),
+  listQcReinspection: (params?: { page?: number; pageSize?: number; keyword?: string }) => {
+    const search = new URLSearchParams();
+    if (params?.page) search.set('page', String(params.page));
+    if (params?.pageSize) search.set('pageSize', String(params.pageSize));
+    if (params?.keyword) search.set('keyword', params.keyword);
+    const query = search.toString();
+    return request<{
+      items: QcReinspectionListItem[];
+      total: number;
+      page: number;
+      pageSize: number;
+      lastInsertedAt: string | null;
+    }>(`/api/quality/reinspection${query ? `?${query}` : ''}`);
+  },
+  syncQcReinspection: () =>
+    request<{
+      sourceCount: number;
+      matched: number;
+      created: number;
+      refreshed: number;
+      whitelistSize: number;
+    }>('/api/quality/reinspection/sync', { method: 'POST' }),
 };
 
 async function downloadAttachment(res: Response, fallbackName: string) {

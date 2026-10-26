@@ -11,6 +11,7 @@ import { api, type SupplyLotBatchFilters, type SupplyLotRow, type SupplyLotSumma
 import { ProductScopeSwitch } from '@/components/ProductScopeSwitch';
 import { SegmentedControl } from '@/components/SegmentedControl';
 import { useProductScope, type ProductScope } from '@/lib/product-scope';
+import { POOL_DISPLAY_LABEL } from '@/lib/inventory-pool-labels';
 import { cn } from '@/lib/utils';
 
 const VIEW_MODES = [
@@ -19,9 +20,9 @@ const VIEW_MODES = [
 ];
 
 const POOL_TABS = [
-  { id: 'local' as const, label: '本地库存' },
-  { id: 'in_transit' as const, label: '在途库存' },
-  { id: 'overseas' as const, label: '海外库存' },
+  { id: 'local' as const, label: POOL_DISPLAY_LABEL.local },
+  { id: 'in_transit' as const, label: POOL_DISPLAY_LABEL.in_transit },
+  { id: 'overseas' as const, label: POOL_DISPLAY_LABEL.overseas },
 ];
 
 const PROD_LABEL: Record<string, string> = {
@@ -31,9 +32,9 @@ const PROD_LABEL: Record<string, string> = {
 };
 
 const DETAIL_POOLS = [
-  { id: 'local' as const, label: '本地' },
-  { id: 'overseas' as const, label: '在库' },
-  { id: 'in_transit' as const, label: '在途' },
+  { id: 'local' as const, label: POOL_DISPLAY_LABEL.local },
+  { id: 'overseas' as const, label: POOL_DISPLAY_LABEL.overseas },
+  { id: 'in_transit' as const, label: POOL_DISPLAY_LABEL.in_transit },
 ];
 
 function sortLotsByAvailableAt(items: SupplyLotRow[]) {
@@ -277,7 +278,7 @@ export function InventoryPoolsPage() {
     <div className="space-y-6">
       <PageHeader
         title="库存三池"
-        description="按 SKU × 目的仓查看本地、在库、在途和最近到货，展开行可看批次。数据以迅捷 / 飞书为准，本页只读。"
+        description="按 SKU × 目的仓查看未发、在库、在途和最近到货，展开行可看批次。未发=国内还没发出，在途=头程路上，在库=已进海外仓。数据以迅捷 / 飞书为准，本页只读。"
       >
         <div className="flex flex-wrap gap-2">
           <Button variant="outline" disabled={exporting || !total} onClick={() => void onExport()}>
@@ -403,7 +404,7 @@ export function InventoryPoolsPage() {
                   label="无期在途"
                   onClick={() => setHasUndatedTransit((v) => !v)}
                 />
-                <FilterChip active={hasLocal} label="有本地" onClick={() => setHasLocal((v) => !v)} />
+                <FilterChip active={hasLocal} label="有未发" onClick={() => setHasLocal((v) => !v)} />
               </>
             ) : (
               <FilterChip
@@ -437,9 +438,9 @@ export function InventoryPoolsPage() {
                   <th className="w-8 py-2 pr-1" />
                   <th className="py-2 pr-3">SKU</th>
                   <th className="py-2 pr-3">目的仓</th>
-                  <th className="py-2 pr-3">本地</th>
-                  <th className="py-2 pr-3">在库</th>
-                  <th className="py-2 pr-3">在途</th>
+                  <th className="py-2 pr-3">{POOL_DISPLAY_LABEL.local}</th>
+                  <th className="py-2 pr-3">{POOL_DISPLAY_LABEL.overseas}</th>
+                  <th className="py-2 pr-3">{POOL_DISPLAY_LABEL.in_transit}</th>
                   <th className="py-2 pr-3">最近到货</th>
                   <th className="py-2 pr-3">操作</th>
                 </tr>
@@ -487,7 +488,7 @@ export function InventoryPoolsPage() {
                   <tr>
                     <td colSpan={8} className="py-6 text-text-sub">
                       {pool === 'local'
-                        ? '暂无本地批次：当前没有开放跟单，且没有飞书供应商订单（在产）可投影。在途/海外请切换上方标签。'
+                        ? '暂无未发批次：当前没有开放跟单，且没有飞书供应商订单（在产）可投影。在途 / 在库请切换上方标签。'
                         : '暂无批次。可点击「从快照/跟单同步」生成。'}
                     </td>
                   </tr>

@@ -9,12 +9,9 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { api, type UnallocatedSupplyRow } from '@/lib/api';
 import { ProductScopeSwitch } from '@/components/ProductScopeSwitch';
 import { useProductScope } from '@/lib/product-scope';
+import { POOL_DISPLAY_LABEL } from '@/lib/inventory-pool-labels';
 
-const POOL_LABEL: Record<UnallocatedSupplyRow['pool'], string> = {
-  local: '本地 / 在产',
-  in_transit: '在途',
-  overseas: '海外',
-};
+const POOL_LABEL = POOL_DISPLAY_LABEL;
 
 function formatSuggestedDestinations(row: UnallocatedSupplyRow): string {
   if (!row.suggestedDestinations.length) {
@@ -117,9 +114,9 @@ export function InventoryUnallocatedPage() {
           }}
         >
           <option value="all">全部池</option>
-          <option value="local">本地 / 在产</option>
-          <option value="in_transit">在途</option>
-          <option value="overseas">海外</option>
+          <option value="local">{POOL_DISPLAY_LABEL.local}</option>
+          <option value="in_transit">{POOL_DISPLAY_LABEL.in_transit}</option>
+          <option value="overseas">{POOL_DISPLAY_LABEL.overseas}</option>
         </select>
       </div>
 

@@ -28,6 +28,7 @@ import {
   weekForecastDailyForPlan,
 } from './demand-plan-reconstruct.js';
 import { chunkRowsForInsert } from './inventory-health-store.js';
+import { invalidateAlertActionCache } from './alert-action-index.js';
 import { calcEffectiveDailyDemand } from './effective-daily-demand.js';
 import { forecastMonthKey } from './forecast-demand.js';
 import { FORECAST_HORIZON_MONTHS } from './forecast-limits.js';
@@ -709,13 +710,15 @@ export async function adoptDemandPlan(params: {
   adoptedBy?: string;
 }): Promise<AdoptionRow> {
   const version = await canAdoptWeeklyVersion(params.versionId);
-  return upsertAdoption({
+  const row = await upsertAdoption({
     projectGroup: version.projectGroup,
     warehouseCode: version.warehouseCode,
     source: 'demand_plan',
     demandPlanVersionId: version.id,
     adoptedBy: params.adoptedBy,
   });
+  invalidateAlertActionCache();
+  return row;
 }
 
 export async function adoptForecast(params: {
@@ -723,13 +726,15 @@ export async function adoptForecast(params: {
   warehouseCode: string;
   adoptedBy?: string;
 }): Promise<AdoptionRow> {
-  return upsertAdoption({
+  const row = await upsertAdoption({
     projectGroup: params.projectGroup,
     warehouseCode: params.warehouseCode,
     source: 'forecast',
     demandPlanVersionId: null,
     adoptedBy: params.adoptedBy,
   });
+  invalidateAlertActionCache();
+  return row;
 }
 
 export async function archiveDemandPlan(versionId: string, archivedBy?: string) {
@@ -748,6 +753,7 @@ export async function archiveDemandPlan(versionId: string, archivedBy?: string) 
     .where(eq(demandPlanVersions.id, versionId))
     .returning();
   if (!row) httpError('需求计划版本不存在', 404);
+  invalidateAlertActionCache();
   return row;
 }
 

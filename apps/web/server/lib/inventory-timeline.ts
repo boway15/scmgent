@@ -7,6 +7,9 @@ import { addDaysIso, subtractDaysIso } from './inventory-supply-lots.js';
 
 export const DEFAULT_TIMELINE_HORIZONS = [0, 7, 15, 30, 45] as const;
 
+/** 单次建议下单最多覆盖的规划需求天数。毛缺口不使用该上限。 */
+export const SINGLE_REPLENISHMENT_COVER_DAYS = 30;
+
 export type TimelineLot = {
   pool: 'overseas' | 'in_transit' | 'local';
   qty: number;
@@ -128,6 +131,7 @@ export function projectDailyInventory(params: {
   let demandCum = 0;
   let allDemandZero = true;
   let demandCumAtTarget = 0;
+  let demandCoverQty = 0;
   let supplyExpectedAtTarget = 0;
   let supplyPipelineAtTarget = 0;
   let stockoutDateConfirmed: string | null = null;
@@ -140,6 +144,7 @@ export function projectDailyInventory(params: {
     const dayDemand = params.dailyDemandFn(k);
     if (dayDemand !== 0) allDemandZero = false;
     demandCum += dayDemand;
+    if (k < SINGLE_REPLENISHMENT_COVER_DAYS) demandCoverQty += dayDemand;
 
     let confirmedQty = 0;
     let expectedQty = 0;
@@ -217,6 +222,7 @@ export function projectDailyInventory(params: {
       cumulativeDemandAtTarget: demandCumAtTarget,
       safetyStockQty: params.safetyStockQty,
       moq: params.moq,
+      maxCoverQty: demandCoverQty,
     });
     if (stockoutDateExpected) {
       const unclamped = subtractDaysIso(stockoutDateExpected, params.totalLeadDays);
@@ -304,7 +310,9 @@ export function calcProjectedBalance(params: {
 }
 
 /**
- * 建议补货量 = max(0, ceil(目标期末累计需求 + 安全库存 − 该时点 projectedOverseas))，再抬升 MOQ。
+ * 建议补货量 = max(0, ceil(目标期末累计需求 + 安全库存 − 该时点 projectedOverseas))。
+ * 传入 maxCoverQty（>0）时，先把单次数量封顶到该覆盖量，再抬升 MOQ。
+ * 毛缺口不传 maxCoverQty。净缺口为 0 时不因为起订量出单。
  * projectedOverseas 在净缺口口径下应含有上架日的计划批次。
  */
 export function calcSuggestedQtyFromTimeline(params: {
@@ -312,8 +320,10 @@ export function calcSuggestedQtyFromTimeline(params: {
   cumulativeDemandAtTarget: number;
   safetyStockQty: number;
   moq?: number;
+  /** 单次最多覆盖的需求量；不传或 ≤0 时不封顶 */
+  maxCoverQty?: number;
 }): number {
-  const raw = Math.max(
+  let raw = Math.max(
     0,
     Math.ceil(
       params.cumulativeDemandAtTarget +
@@ -322,6 +332,8 @@ export function calcSuggestedQtyFromTimeline(params: {
     ),
   );
   if (raw <= 0) return 0;
+  const cover = params.maxCoverQty ?? 0;
+  if (cover > 0) raw = Math.min(raw, Math.ceil(cover));
   const moq = params.moq ?? 0;
   return moq > 0 ? Math.max(raw, moq) : raw;
 }

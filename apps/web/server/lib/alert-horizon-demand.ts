@@ -1,4 +1,5 @@
 import { addDaysIso } from './inventory-iso-date.js';
+import { SINGLE_REPLENISHMENT_COVER_DAYS } from './inventory-timeline.js';
 import { SHIP_SLACK_URGENT_DAYS, type AlertAction, type PriceReason } from './alert-action.js';
 
 /** 预计断货（含本地）短于 150 天时，按全网日均拆需求窗口。发货缺口只扣海外在库和窗口内能上架的确定在途，不受「含本地≥150天」影响。 */
@@ -25,6 +26,8 @@ export type HorizonDemand = {
   demand90: number;
   ship60: number;
   urgent45: number;
+  /** 从今天起 30 天规划需求，单次建议发货的数量上限。 */
+  demand30: number;
   /** 下单缺口：窗口需求减去在库、在途、本地。已采购的供给都扣掉。 */
   gap90: number;
   gap120: number;
@@ -119,6 +122,7 @@ export function horizonDemand(input: {
     d90: number;
     d60: number;
     d45: number;
+    d30?: number;
     dCover?: number;
   };
 }): HorizonDemand | null {
@@ -133,7 +137,7 @@ export function horizonDemand(input: {
   const within60 = Math.max(0, input.inTransitWithin60 ?? 0);
   const windows = demandWindows(input.avgDaily, input.demandQty);
   if (!windows && !covered) return null;
-  const demand = windows ?? { d150: 0, d120: 0, d90: 0, d60: 0, d45: 0 };
+  const demand = windows ?? { d150: 0, d120: 0, d90: 0, d60: 0, d45: 0, d30: 0 };
   const coverDays =
     input.coverDays != null && input.coverDays > 0
       ? Math.ceil(input.coverDays)
@@ -159,6 +163,7 @@ export function horizonDemand(input: {
     demand90: demand.d90,
     ship60,
     urgent45,
+    demand30: demand.d30,
     gap90: orderGap(demand.d90),
     gap120: orderGap(demand.d120),
     gap150: orderGap(demand.d150),
@@ -174,10 +179,26 @@ export function horizonDemand(input: {
 
 function demandWindows(
   avgDaily: number | null,
-  demandQty: { d150: number; d120: number; d90: number; d60: number; d45: number } | undefined,
-): { d150: number; d120: number; d90: number; d60: number; d45: number } | null {
-  if (demandQty) return demandQty;
+  demandQty:
+    | {
+        d150: number;
+        d120: number;
+        d90: number;
+        d60: number;
+        d45: number;
+        d30?: number;
+      }
+    | undefined,
+): { d150: number; d120: number; d90: number; d60: number; d45: number; d30: number } | null {
   const daily = avgDaily ?? 0;
+  if (demandQty) {
+    return {
+      ...demandQty,
+      d30:
+        demandQty.d30 ??
+        (daily > 0 ? Math.round(daily * SINGLE_REPLENISHMENT_COVER_DAYS) : 0),
+    };
+  }
   if (daily <= 0) return null;
   const demand = (horizon: number) => Math.round(daily * horizon);
   return {
@@ -186,6 +207,7 @@ function demandWindows(
     d90: demand(90),
     d60: demand(60),
     d45: demand(45),
+    d30: demand(SINGLE_REPLENISHMENT_COVER_DAYS),
   };
 }
 
@@ -233,7 +255,17 @@ export function recommendOrder(input: {
   };
 }
 
-/** 即将断货时，在全网已覆盖 150 天仍可按海外侧缺口给出补单参考（船期来不及 / 货还不能发）。 */
+/** 单次下单/发货：先按缺口封顶到 30 天需求，再抬到起订量。缺口为 0 时不抬。 */
+export function capSingleBatchQty(raw: number, maxCoverQty?: number, moq?: number): number {
+  if (raw <= 0) return 0;
+  const cover = maxCoverQty ?? 0;
+  let qty = cover > 0 ? Math.min(raw, Math.ceil(cover)) : raw;
+  const floor = moq ?? 0;
+  if (floor > 0) qty = Math.max(qty, floor);
+  return qty;
+}
+
+/** 即将断货时，在全网已覆盖 150 天仍可按海外侧缺口给出补单参考。单次数量封顶到 30 天需求。 */
 export function recommendOrderForNetworkAlert(input: {
   today: string;
   coverageDays: number | null;
@@ -242,8 +274,15 @@ export function recommendOrderForNetworkAlert(input: {
   horizons: HorizonDemand | null;
   networkAction: AlertAction | null;
   priceReason: PriceReason | null;
+  /** 从今天起 30 天规划需求。不传或 ≤0 时不封顶。 */
+  maxCoverQty?: number;
+  moq?: number;
 }): OrderRecommendation {
   const h = input.horizons;
+  const cap = (rec: OrderRecommendation): OrderRecommendation => ({
+    ...rec,
+    orderQty: capSingleBatchQty(rec.orderQty, input.maxCoverQty, input.moq),
+  });
   const base = recommendOrder({
     today: input.today,
     coverageDays: input.coverageDays,
@@ -254,7 +293,7 @@ export function recommendOrderForNetworkAlert(input: {
     gapCover: h?.gapCover,
     windowCovered: h?.windowCovered ?? false,
   });
-  if (base.orderQty > 0) return base;
+  if (base.orderQty > 0) return cap(base);
   const useOverseasGap =
     input.networkAction === 'price' &&
     (input.priceReason === 'not_ready' || input.priceReason === 'ship_late');
@@ -273,7 +312,7 @@ export function recommendOrderForNetworkAlert(input: {
     gapCover,
     windowCovered: false,
   });
-  return { ...overseas, orderOverseasReference: true };
+  return cap({ ...overseas, orderOverseasReference: true });
 }
 
 export type ShipRecommendation = {
@@ -282,7 +321,11 @@ export type ShipRecommendation = {
   shipNow: boolean;
 };
 
-/** 发货数量优先按分档取 45d 紧急 / 60d 窗口；最晚开船日由确定断货日与海运交期推算。 */
+/**
+ * 发货数量优先按分档取 45 天紧急 / 60 天窗口缺口。
+ * 单次最多覆盖 30 天规划需求，有缺口再抬到起订量；缺口为 0 不发。
+ * 最晚开船日由确定断货日与海运交期推算。
+ */
 export function recommendShip(input: {
   today: string;
   shipWindowCovered: boolean;
@@ -291,6 +334,10 @@ export function recommendShip(input: {
   action: AlertAction | null;
   daysToStockout: number | null;
   shippingLeadDays: number;
+  /** 从今天起 30 天规划需求。不传或 ≤0 时不封顶。 */
+  maxCoverQty?: number;
+  /** 商品起订量。只在缺口大于 0 时抬升。 */
+  moq?: number;
 }): ShipRecommendation {
   if (input.shipWindowCovered) {
     return { shipByDate: null, shipQty: 0, shipNow: false };
@@ -304,6 +351,7 @@ export function recommendShip(input: {
   if (shipQty <= 0) {
     return { shipByDate: null, shipQty: 0, shipNow: false };
   }
+  shipQty = capSingleBatchQty(shipQty, input.maxCoverQty, input.moq);
   const lead = input.shippingLeadDays > 0 ? input.shippingLeadDays : 45;
   const slack =
     input.daysToStockout != null && Number.isFinite(input.daysToStockout)

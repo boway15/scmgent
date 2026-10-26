@@ -1,5 +1,5 @@
 import { Link, useSearchParams } from 'react-router-dom';
-import { keepPreviousData, useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
 import { api } from '@/lib/api';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -25,21 +25,31 @@ function QtyCell({ value }: { value: number | null | undefined }) {
   return <>{value.toLocaleString()}</>;
 }
 
-function SalesWindowCell({
+function SalesQtyCells({
   d7,
   d14,
   d30,
+  className,
+  firstClassName,
 }: {
   d7: number | null | undefined;
   d14: number | null | undefined;
   d30: number | null | undefined;
+  className: string;
+  firstClassName?: string;
 }) {
-  const part = (value: number | null | undefined) =>
-    value == null ? '—' : value.toLocaleString();
   return (
-    <span className="whitespace-nowrap tabular-nums text-text-sub" title="7天 / 14天 / 30天销量（周转表）">
-      {part(d7)}/{part(d14)}/{part(d30)}
-    </span>
+    <>
+      <td className={firstClassName ?? className} title="周转 7天销量">
+        <QtyCell value={d7} />
+      </td>
+      <td className={className} title="周转 14天销量">
+        <QtyCell value={d14} />
+      </td>
+      <td className={className} title="周转 30天销量">
+        <QtyCell value={d30} />
+      </td>
+    </>
   );
 }
 
@@ -70,7 +80,7 @@ function CategoryCell({
   if ((action === 'ship_urgent' || action === 'ship') && !hasShippableLots) {
     hints.push('暂无可发，等完工');
   }
-  if (hasUnallocatedLocal) hints.push('有未定仓本地货');
+  if (hasUnallocatedLocal) hints.push('有未定仓未发');
 
   return (
     <div className="min-w-[6.5rem] space-y-1">
@@ -232,7 +242,10 @@ export function AlertsPage() {
         suggestShip: suggestShip || undefined,
       }),
     staleTime: 60_000,
-    placeholderData: keepPreviousData,
+    placeholderData: (previousData, previousQuery) => {
+      if (previousQuery?.queryKey[6] !== grain) return undefined;
+      return previousData;
+    },
   });
 
   const [detectHint, setDetectHint] = useState<string | null>(null);
@@ -311,7 +324,7 @@ export function AlertsPage() {
         if (!batch.items.length) break;
         pageNum += 1;
       }
-      downloadAlertListCsv(all, grain);
+      await downloadAlertListCsv(all, grain);
     } finally {
       setExporting(false);
     }
@@ -334,7 +347,7 @@ export function AlertsPage() {
       </PageHeader>
 
       <p className="text-sm text-text-sub">
-        {scene?.hint ?? '确定性缺货和发货按确定断货日，不含本地库存和无日期在途。下单、健康、超备和滞销的可售天数含本地库存。发货档按应发统计。'}
+        {scene?.hint ?? '确定性缺货和发货按确定断货日，不含未发和无日期在途。下单、健康、超备和滞销的可售天数含未发。发货档按应发统计。'}
       </p>
       <ProductScopeSwitch />
       <div className="flex flex-wrap gap-2">
@@ -390,7 +403,7 @@ export function AlertsPage() {
             )}
           </CardTitle>
           <Button type="button" variant="outline" size="sm" disabled={exporting || !data} onClick={() => void exportCsv()}>
-            {exporting ? '导出中…' : '导出 CSV'}
+            {exporting ? '导出中…' : '导出 Excel'}
           </Button>
         </CardHeader>
         <CardContent>
@@ -419,7 +432,7 @@ export function AlertsPage() {
             <summary className="cursor-pointer select-none text-text-sub hover:text-text-main">口径说明（点击展开）</summary>
             <p className="mt-2 leading-relaxed">
               {grain === 'sku'
-                ? 'SKU 全网：分母为可规划 SKU，不限于本轮预警快照。库存数量来自飞书周转。可售天数和预计断货优先用已发布销售预测，从今天起按每天所属月份逐日扣减。没有已发布预测时才用周转「本月预测日均」；日均为空按 0 计，有库存时覆盖封顶 9999 天（进确定性滞销）。近7/14/30天销量取自周转「7天销量」「14天销量」「30天销量」，单格为 7/14/30。确定性缺货/发货档按「在库+在途」可售与海运交期比较，与上方卡片分档一致。'
+                ? 'SKU 全网：分母为可规划 SKU，不限于本轮预警快照。库存数量来自飞书周转。可售天数和预计断货优先用已发布销售预测，从今天起按每天所属月份逐日扣减。没有已发布预测时才用周转「本月预测日均」；日均为空按 0 计，有库存时覆盖封顶 9999 天（进确定性滞销）。近7/14/30天销量取自周转「7天销量」「14天销量」「30天销量」，分列展示。确定性缺货/发货档按「在库+在途」可售与海运交期比较，与上方卡片分档一致。'
                 : 'SKU × 仓库：分档按本仓确定断货日（左侧「天数」）。右侧「全网合计·在库+在途」为 SKU 汇总，可长于本仓；本仓已确定性缺货时仍可能看到全网在库+在途大于 45 天。'}
             </p>
           </details>
@@ -459,17 +472,27 @@ function DaysCell({ value }: { value: number | null | undefined }) {
   return <>{`${Math.round(value)}天`}</>;
 }
 
+function dedupeSkuNetworkRows(alerts: AlertItem[]): AlertItem[] {
+  const seen = new Set<string>();
+  return alerts.filter((row) => {
+    if (seen.has(row.skuId)) return false;
+    seen.add(row.skuId);
+    return true;
+  });
+}
+
 function SkuNetworkTable({ alerts }: { alerts: AlertItem[] }) {
+  const rows = dedupeSkuNetworkRows(alerts);
   return (
     <div className={alertTableWrap}>
-      <table className="w-full min-w-[1180px] border-collapse text-sm">
+      <table className="w-full min-w-[1280px] border-collapse text-sm">
         <thead className="sticky top-0 z-30 bg-muted text-text-sub">
           <tr className="border-b border-border">
             <th rowSpan={2} className={cn(stickySkuTh, 'align-bottom text-left')}>
               SKU
             </th>
-            <th rowSpan={2} className={cn(alertTh, 'align-bottom text-right')} title="周转 7/14/30 天销量">
-              近7/14/30天
+            <th colSpan={3} className={alertThGroup} title="周转 7/14/30 天销量">
+              销量
             </th>
             <th rowSpan={2} className={cn(alertTh, 'align-bottom')}>
               等级
@@ -492,29 +515,32 @@ function SkuNetworkTable({ alerts }: { alerts: AlertItem[] }) {
             <th colSpan={3} className={cn(alertThGroup, 'bg-card/80')} title="数量为补到 150 天仍缺的件数">
               建议下单
             </th>
-            <th colSpan={3} className={cn(alertThGroup, 'bg-card/80')} title="只扣海外在库与窗口内确定在途">
+            <th colSpan={3} className={cn(alertThGroup, 'bg-card/80')} title="只扣在库与窗口内确定在途">
               建议发货
             </th>
           </tr>
           <tr className="border-b border-border text-text-sub">
-            <th className={alertThSub}>本地</th>
+            <th className={alertThSub} title="周转 7天销量">7天</th>
+            <th className={alertThSub} title="周转 14天销量">14天</th>
+            <th className={alertThSub} title="周转 30天销量">30天</th>
+            <th className={alertThSub}>未发</th>
             <th className={alertThSub}>在库</th>
             <th className={alertThSub}>在途</th>
-            <th className={cn(alertThSub, 'bg-card/80')}>含本地</th>
-            <th className={cn(alertThSub, 'bg-card/80')} title="在库 + 在途，按月预测逐日扣，不含本地">
+            <th className={cn(alertThSub, 'bg-card/80')}>含未发</th>
+            <th className={cn(alertThSub, 'bg-card/80')} title="在库 + 在途，按月预测逐日扣，不含未发">
               在库+在途
             </th>
             <th className={cn(alertThSub, 'bg-card/80')}>预计断货</th>
             <th className={cn(alertThSub, 'bg-highlight-warm/40')}>150d</th>
             <th className={cn(alertThSub, 'bg-highlight-warm/40')}>120d</th>
             <th className={cn(alertThSub, 'bg-highlight-warm/40')}>90d</th>
-            <th className={cn(alertThSub, 'bg-highlight-warm/55')} title="未来90天需求 − 在库 − 在途 − 本地">
+            <th className={cn(alertThSub, 'bg-highlight-warm/55')} title="未来90天需求 − 在库 − 在途 − 未发">
               90d
             </th>
-            <th className={cn(alertThSub, 'bg-highlight-warm/55')} title="未来120天需求 − 在库 − 在途 − 本地">
+            <th className={cn(alertThSub, 'bg-highlight-warm/55')} title="未来120天需求 − 在库 − 在途 − 未发">
               120d
             </th>
-            <th className={cn(alertThSub, 'bg-highlight-warm/55')} title="未来150天需求 − 在库 − 在途 − 本地">
+            <th className={cn(alertThSub, 'bg-highlight-warm/55')} title="未来150天需求 − 在库 − 在途 − 未发">
               150d
             </th>
             <th className={cn(alertThSub, 'bg-card/80')}>是否</th>
@@ -530,15 +556,18 @@ function SkuNetworkTable({ alerts }: { alerts: AlertItem[] }) {
           </tr>
         </thead>
         <tbody>
-          {alerts.map((a) => {
+          {rows.map((a) => {
             const orderRec = orderRecommendationFields(a);
             const shipRec = shipRecommendationFields(a);
             return (
             <tr key={a.skuId} className={alertTr}>
               <td className={stickySkuTd}>{a.skuCode}</td>
-              <td className="p-2 text-right">
-                <SalesWindowCell d7={a.turnoverSales7d} d14={a.turnoverSales14d} d30={a.turnoverSales30d} />
-              </td>
+              <SalesQtyCells
+                className={alertTdNum}
+                d7={a.turnoverSales7d}
+                d14={a.turnoverSales14d}
+                d30={a.turnoverSales30d}
+              />
               <td className="p-2 font-mono text-center">{a.level ? ALERT_LEVEL_LABEL[a.level] ?? a.level : '—'}</td>
               <td className="p-2">
                 <CategoryCell
@@ -588,9 +617,9 @@ function SkuNetworkTable({ alerts }: { alerts: AlertItem[] }) {
             </tr>
           );
           })}
-          {!alerts.length && (
+          {!rows.length && (
             <tr>
-              <td colSpan={22} className="p-4 text-center text-text-hint">
+              <td colSpan={24} className="p-4 text-center text-text-hint">
                 暂无记录
               </td>
             </tr>
@@ -604,14 +633,14 @@ function SkuNetworkTable({ alerts }: { alerts: AlertItem[] }) {
 function WarehouseAlertTable({ alerts, resolve }: { alerts: AlertItem[]; resolve: (id: string) => void }) {
   return (
     <div className={alertTableWrap}>
-      <table className="w-full min-w-[1400px] border-collapse text-sm">
+      <table className="w-full min-w-[1520px] border-collapse text-sm">
         <thead className="sticky top-0 z-30 bg-muted">
           <tr className="border-b border-border text-left text-text-sub">
             <th rowSpan={2} className={cn(stickySkuTh, 'align-bottom text-left')}>
               SKU
             </th>
-            <th rowSpan={2} className="p-2 align-bottom font-normal" title="周转 7/14/30 天销量">
-              近7/14/30天
+            <th colSpan={3} className="border-l border-border p-2 text-center font-medium text-text-main" title="周转 7/14/30 天销量">
+              销量
             </th>
             <th rowSpan={2} className="p-2 align-bottom font-normal">仓库</th>
             <th rowSpan={2} className="p-2 align-bottom font-normal">等级</th>
@@ -624,23 +653,26 @@ function WarehouseAlertTable({ alerts, resolve }: { alerts: AlertItem[]; resolve
             </th>
             <th colSpan={7} className="border-l border-border bg-highlight-warm/70 p-2 text-center font-medium text-text-main">
               全网合计
-              <div className="text-[11px] font-normal text-text-sub">含本地，与全网天数同一口径</div>
+              <div className="text-[11px] font-normal text-text-sub">含未发，与全网天数同一口径</div>
             </th>
             <th rowSpan={2} className="p-2 align-bottom font-normal">操作</th>
           </tr>
           <tr className="border-b border-border text-left text-text-sub">
-            <th className="border-l border-border p-2 font-normal">本地</th>
+            <th className="border-l border-border p-2 text-right font-normal" title="周转 7天销量">7天</th>
+            <th className="p-2 text-right font-normal" title="周转 14天销量">14天</th>
+            <th className="p-2 text-right font-normal" title="周转 30天销量">30天</th>
+            <th className="border-l border-border p-2 font-normal">未发</th>
             <th className="p-2 font-normal">在库</th>
             <th className="p-2 font-normal">在途</th>
-            <th className="p-2 font-normal" title="海外在库加上有上架日的在途，按确定断货日">在库可售</th>
+            <th className="p-2 font-normal" title="在库加上有上架日的在途，按确定断货日">在库可售</th>
             <th className="p-2 font-normal" title="在途件数 ÷ 本仓日均。上架日未定，按件数粗算">在途可售</th>
-            <th className="p-2 font-normal" title="在库 + 在途件数 ÷ 本仓日均，不含本地">在库在途可售</th>
+            <th className="p-2 font-normal" title="在库 + 在途件数 ÷ 本仓日均，不含未发">在库在途可售</th>
             <th className="p-2 font-normal" title="没有上架日，或上架日是估算">在途未定</th>
             <th className="p-2 font-normal">未来需求</th>
             <th className="p-2 font-normal">预计缺货</th>
             <th className="border-l border-border bg-highlight-warm/70 p-2 font-normal">天数</th>
-            <th className="bg-highlight-warm/70 p-2 font-normal" title="全网在库 + 在途，按月预测逐日扣，不含本地">在库在途可售</th>
-            <th className="bg-highlight-warm/70 p-2 font-normal">本地</th>
+            <th className="bg-highlight-warm/70 p-2 font-normal" title="全网在库 + 在途，按月预测逐日扣，不含未发">在库在途可售</th>
+            <th className="bg-highlight-warm/70 p-2 font-normal">未发</th>
             <th className="bg-highlight-warm/70 p-2 font-normal">在库</th>
             <th className="bg-highlight-warm/70 p-2 font-normal">在途</th>
             <th className="bg-highlight-warm/70 p-2 font-normal">未来需求</th>
@@ -651,9 +683,13 @@ function WarehouseAlertTable({ alerts, resolve }: { alerts: AlertItem[]; resolve
           {alerts.map((a) => (
             <tr key={a.id} className={alertTr}>
               <td className={stickySkuTd}>{a.skuCode}</td>
-              <td className="p-2 text-right">
-                <SalesWindowCell d7={a.turnoverSales7d} d14={a.turnoverSales14d} d30={a.turnoverSales30d} />
-              </td>
+              <SalesQtyCells
+                className="p-2 text-right tabular-nums"
+                firstClassName="border-l border-border/40 p-2 text-right tabular-nums"
+                d7={a.turnoverSales7d}
+                d14={a.turnoverSales14d}
+                d30={a.turnoverSales30d}
+              />
               <td className="p-2 font-mono text-text-sub">{a.warehouseCode ?? '—'}</td>
               <td className="p-2 font-mono">{a.level ? ALERT_LEVEL_LABEL[a.level] ?? a.level : '—'}</td>
               <td className="p-2">
@@ -709,7 +745,7 @@ function WarehouseAlertTable({ alerts, resolve }: { alerts: AlertItem[]; resolve
           ))}
           {!alerts.length && (
             <tr>
-              <td colSpan={24} className="p-4 text-center text-text-hint">暂无记录</td>
+              <td colSpan={26} className="p-4 text-center text-text-hint">暂无记录</td>
             </tr>
           )}
         </tbody>

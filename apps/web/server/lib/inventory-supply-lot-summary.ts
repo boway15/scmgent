@@ -1,6 +1,7 @@
 import { and, desc, eq, gt, ilike, inArray, or, sql, type SQL } from 'drizzle-orm';
 import { db, inventorySupplyLots, skus } from '@scm/db';
 import { buildCsv } from './csv-export.js';
+import { POOL_DISPLAY_LABEL } from './inventory-constants.js';
 import {
   parseProductScope,
   productScopeSql,
@@ -53,9 +54,9 @@ const SUMMARY_EXPORT_HEADERS = [
   'SKU',
   'SKU名称',
   '目的仓',
-  '本地',
-  '在库',
-  '在途',
+  POOL_DISPLAY_LABEL.local,
+  POOL_DISPLAY_LABEL.overseas,
+  POOL_DISPLAY_LABEL.in_transit,
   '无期在途',
   '最近到货日',
   '最近到货数量',

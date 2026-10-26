@@ -58,6 +58,7 @@ flowchart LR
 | 默认生产提前期 `DEFAULT_PRODUCTION_LEAD_DAYS` | 50 天 | `apps/web/server/lib/replenishment-coverage.ts` |
 | 默认安全库存天数 `DEFAULT_SAFETY_STOCK_DAYS` | 14 天 | 同上 |
 | 默认超储阈值 `DEFAULT_OVERSTOCK_THRESHOLD_DAYS` | 180 天 | 同上 |
+| 单次补货覆盖上限 `SINGLE_REPLENISHMENT_COVER_DAYS` | 30 天 | `apps/web/server/lib/inventory-timeline.ts` |
 | 默认入仓缓冲 | 7 天 | 同上 / `warehouses.inbound_buffer_days` |
 | 需求反推封顶 `UNCONSTRAIN_CAP_RATIO` | 1.5 | `apps/web/server/lib/forecast-demand-unconstrain.ts` |
 | 有货覆盖率门槛 `MIN_AVAILABILITY_COVERAGE` | 0.3 | `apps/web/server/lib/inventory-health-service.ts` |
@@ -349,9 +350,9 @@ flowchart TB
 | 页面 | 路由 |
 |------|------|
 | 补货建议 `ReorderSuggestionsPage` | `/pmc/suggestions` |
-| PMC 列表/详情 `PmcListPage` / `PmcDetailPage` | `/pmc/list`、`/pmc/:id` |
-| 采购跟踪 `PurchaseTrackingPage` | `/pmc/tracking` |
-| 发运 `ShipmentsPage` | `/pmc/shipments` |
+| PMC 列表/详情 `PmcListPage` / `PmcDetailPage`（2026-10 菜单下线，路由保留） | `/pmc/list`、`/pmc/:id` |
+| 采购跟踪 `PurchaseTrackingPage`（2026-10 菜单下线，路由保留） | `/pmc/tracking` |
+| 发运 `ShipmentsPage`（2026-10 菜单下线，路由保留） | `/pmc/shipments` |
 | 交期配置 `LeadTimeProfilesPage` | `/inventory/lead-time` |
 | 三池批次 `InventoryPoolsPage` | `/inventory/pools` |
 | 未分配供应池 `InventoryUnallocatedPage` | `/inventory/unallocated` |
@@ -437,7 +438,7 @@ flowchart TB
 | 窗口 | `min(180, max(90, ceil(L) + ceil(安全库存天数)))` |
 | 展示节点 | `[0, 7, 15, 30, min(L, 窗口)]` 去重 |
 | 缺货/破安全日 | 确定线（confirmed）期末 ≤0 → `stockoutDateConfirmed`；低于安全库存 → `safetyBreachDateConfirmed` |
-| 建议量 | 锚点 `kT = min(totalLeadDays, 窗口)`；`max(0, ceil(累计需求@kT + SS − 供给@kT))`，再按 MOQ 抬升；另算只含 confirmed+expected 的毛缺口 |
+| 建议量 | 锚点 `kT = min(totalLeadDays, 窗口)`；净建议量 `max(0, ceil(累计需求@kT + SS − 含计划供给@kT))`，再封顶为从今天起 30 天规划需求（`k = 0..29`，含当天），最后按 MOQ 抬升。净缺口为 0 不抬 MOQ。毛缺口只扣 confirmed+expected，不按 30 天封顶 |
 | 回填 | 无海外 confirmed 批次时，可把本仓 `qty_available` 作为当日 confirmed 供给；禁止把 `OVERSEAS` 全量灌入某个目的仓 |
 
 **分仓需求**（`resolveWarehouseDemandShare`，`inventory-share-allocation.ts`）——已发布预测是 SKU 全站汇总，落到物理仓时统一按周转快照的区域销售占比拆分，健康度、时间轴、补货建议、安全库存建议同源：
@@ -473,7 +474,7 @@ flowchart TB
 
 **每日覆盖（快照）**：`runStockAlert` 每轮先将全部 `is_resolved=false` 结案，再写入本轮去重后的命中行；`coverage_short` / `overstock` 等时间轴派生预警仅在**时间轴决策灯**为黄/红/蓝时落库（避免绿灯 SKU 刷量）。列表「待处理」= **本轮快照**，不是历史堆积。人工「标记已处理」仍可用；若风险未消失，下次扫描会重新出现。
 
-**库存风险看板（规划）**：驾驶舱按可规划 SKU 全网可售天数出概览——已断货、即将断货（原调价档拆分）、紧急发货、发货、90/120 天下单、健康 120–150、轻度超备 151–180、超备 181–300、确定性滞销 >300。点卡片进 **SKU 全网** 明细。同一 SKU 只进最紧急的一档。全网需求曲线与规划页、补货任务相同：已采纳需求计划优先，否则用已发布预测。建议件数补到该行总提前期加安全库存，不再固定补满 150 天。全网可售到达 150 天只清掉 90/120/150 天对照缺口；只要可售还没盖住交期加安全库存，建议件数仍按该目标计算。绿灯安全覆盖进入 151–180；灰灯滞销按可售天数进 181–300 或 >300。没有已发布预测且周转日均为空时按日均 0 计，有库存则覆盖封顶 9999 天（进确定性滞销）。无周转头寸、算不出库存数量的行仍不进档。详见 [`docs/prd/inventory-alerts-dual-view.md`](../prd/inventory-alerts-dual-view.md)。
+**库存风险看板（规划）**：驾驶舱按可规划 SKU 全网可售天数出概览——已断货、即将断货（原调价档拆分）、紧急发货、发货、90/120 天下单、健康 120–150、轻度超备 151–180、超备 181–300、确定性滞销 >300。点卡片进 **SKU 全网** 明细。同一 SKU 只进最紧急的一档。全网需求曲线与规划页、补货任务相同：已采纳需求计划优先，否则用已发布预测。建议件数先按总提前期加安全库存算缺口，再把单次下单数量封顶为从今天起 30 天规划需求，有缺口再抬到商品起订量；不再把整段交期一次下完。全网可售到达 150 天只清掉 90/120/150 天对照缺口；只要可售还没盖住交期加安全库存，仍会给出建议，但单次不超过 30 天需求。建议发货仍用 45/60 天海外缺口判断要不要发，单次数量同样不超过这 30 天规划需求；近 30 天需求为 0 时不封顶，缺口为 0 不下单、不发货。这个 30 天按需求曲线，不是表上「近 30 天销量」（断货时实际销量会被压到接近 0）。绿灯安全覆盖进入 151–180；灰灯滞销按可售天数进 181–300 或 >300。没有已发布预测且周转日均为空时按日均 0 计，有库存则覆盖封顶 9999 天（进确定性滞销）。无周转头寸、算不出库存数量的行仍不进档。详见 [`docs/prd/inventory-alerts-dual-view.md`](../prd/inventory-alerts-dual-view.md)。
 
 **⑦ 数据问题队列**（`inventory-data-issues.ts`）
 
@@ -486,7 +487,7 @@ flowchart TB
 | `share_sum_mismatch` | 占比和偏差 >5% | planning | 迅捷校正各仓占比使合计 ≈100% |
 | `unmapped_warehouse` | 影子长表仓后缀不在 8 区映射 | planning | 迅捷确认仓名；系统补仓码映射 |
 | `position_source_mismatch` | 查询 vs 全链同仓同状态超 20 件或 15% | planning | 迅捷核对两表数量 |
-| `position_share_gap` | 影子在库 vs 周转合计×占比超阈值 | planning | 对照用；不自动改占比拆分 |
+| `position_share_gap` | 影子在库 vs 周转合计×占比超阈值 | planning | 对照用；2026-10 起不再写入队列 |
 
 ### 3.4 公式与参数
 
@@ -575,14 +576,14 @@ SKU 规划入口（`SkuPlanningEntryPage`）列表列展示**库存健康灯**�
 | `IN-PRODUCTION` | 在产逻辑仓：工厂在产、出货前未定目的仓的货 |
 | `OVERSEAS` | 海外未定仓合计（逻辑仓，不是某个物理 FBA/海外仓） |
 | `ALL` | 全网络需求汇总用的仓码 |
-| `local` / 本地池 | 工厂侧在产、待出货批次 |
-| `in_transit` / 在途池 | 已发运、在途未到可售的批次 |
-| `overseas` / 海外池 | 已在海外网络、可售或待拆分的在库 |
+| `local` / 未发 | 国内供应商侧在产、待出货，还没发出 |
+| `in_transit` / 在途 | 已发运、海运等头程路上，还没到海外仓可卖 |
+| `overseas` / 在库 | 已在海外仓网络、可卖或待拆分 |
 | open 批次 | 未关闭的三池供给行（尚未入库结案） |
 | ETA / 预计可售日 | 预计在海外仓可售的日期 |
 | MOQ | 最小起订量 |
-| 确定线 / confirmed | 只含海外可售 + 真实预计到仓日在途 |
-| 预计线 / expected | 再加已达出货交期的本地货 |
+| 确定线 / confirmed | 只含海外可售 + 真实预计到仓日的在途 |
+| 预计线 / expected | 再加已达出货交期的未发 |
 | 计划线 / planned | 在产未完工或估期在途，仅展示管道 |
 | Profile | 交期模板（生产/国内/订舱/海运/清关/入仓六段） |
 | Champion 预测 | 对照用已发布销售预测版本（与主时间轴需求可不同） |
@@ -631,7 +632,7 @@ SKU 规划入口（`SkuPlanningEntryPage`）列表列展示**库存健康灯**�
 
 | 档 | 条件 | 对缺货日 / 建议量 |
 |----|------|-------------------|
-| 确定 `confirmed` | 海外池；或在途且 ETA 真实（非估计、非未知日期） | 进入确定余额；确定余额 ≤ 0 的第一天 = 确定缺货日 |
+| 确定 `confirmed` | 在库；或在途且 ETA 真实（非估计、非未知日期） | 进入确定余额；确定余额 ≤ 0 的第一天 = 确定缺货日 |
 | 预计 `expected` | 本地已完工，且 `ship_ready_at ≤ 今天` | 进入预计余额与毛缺口；不单独改确定缺货日 |
 | 计划 `planned` | 其余有可用日的本地/估期在途 | 只在时间轴「管道」列展示；净建议量会扣它，毛缺口不扣 |
 | 排除 `excluded` | 无可用日，或本地仍在产/未到出货日 | 三池可见，时间轴当 0 |
@@ -645,7 +646,7 @@ SKU 规划入口（`SkuPlanningEntryPage`）列表列展示**库存健康灯**�
 | 健康灯 | 时间轴决策灯，决定要不要补 | `calcTimelineDecisionHealth`。灰：生命周期滞销/停售，或日均 ≤ 0.1 且确定覆盖 ≥ 90 天。红：确定缺货日 ≤ 今天+总交期，或 `uncoverableByNewPo`。黄：建议量 > 0，或破安全日 ≤ 今天+总交期+安全天数。蓝：建议量 = 0 且确定覆盖 > 超备阈值（默认 180），或没有缺货日且今日确定余额 > 0、日均 = 0（覆盖为无穷）。其余绿。旁注「覆盖天数灯」是 `calcInventoryHealth` 影子灯，不驱动建议量 |
 | 有效供给 | 当前视图的快照头寸合计 | 网络 = 各物理仓有效供给之和（**不含**只存在于 `IN-PRODUCTION` 的在产残差）。分仓 = 该仓一条头寸。与四格、时间轴下方「当前有效供给（快照）」同一字段 |
 | 覆盖天数 | 确定供给还能撑几天 | 有确定缺货日：该日与今天的日历差。否则：时间轴今天的确定余额 / 日均；日均 ≤ 0 且今日确定余额 > 0 时显示「无消耗」（无穷） |
-| 建议补货量 | 新下一笔要补的件数 | 锚点 `kT = min(总交期, W)`。净建议量 `max(0, ceil(累计需求@kT + 安全库存件数 − 确定供给 − 预计供给 − 计划供给))`，再按 MOQ 抬升。毛缺口只用确定+预计，页面在两者不一致时标注「毛缺口」。窗口内需求全为 0 则建议量为 0，并清空缺货日 |
+| 建议补货量 | 新下一笔要补的件数 | 锚点 `kT = min(总交期, W)`。净缺口 `max(0, ceil(累计需求@kT + 安全库存件数 − 确定供给 − 预计供给 − 计划供给))`。单次数量不超过从今天起 30 天规划需求（含当天，`SINGLE_REPLENISHMENT_COVER_DAYS`）；近 30 天需求为 0 时不封顶。有净缺口再按 MOQ 抬升，起订量可以高于 30 天需求；净缺口为 0 则建议 0。毛缺口只用确定+预计，不按 30 天封顶，页面在两者不一致时标注「毛缺口」。窗口内需求全为 0 则建议量为 0，并清空缺货日 |
 | 断货日 | 确定线第一次见底的日期 | `stockoutDateConfirmed`：`confirmedEnding(k) ≤ 0` 的第一个 `asOf`。需求全 0 则为空，页面显示「暂无」。无时间轴时退回 `今天 + floor(覆盖天数)` |
 | 日均需求 | 时间轴用的兜底日需求 | 网络：`loadPlanningDemandForSkuWarehouse(ALL)` 的 `fallbackDaily`。分仓：健康度算出的 `avgDaily`（有预测用前向日均 × 占比，无预测用历史销量；有货覆盖率 ≥ 30% 才做缺货修正） |
 
@@ -671,12 +672,12 @@ SKU 规划入口（`SkuPlanningEntryPage`）列表列展示**库存健康灯**�
 | 破安全库存日 | 确定余额第一次 `< 安全库存件数` 的日期；需求全 0 则空 |
 | 最晚下单日 | 同「建议下单」`reorderDate`。无预计缺货日则为空 |
 | 交期地平线预计余额 | 时间轴节点里 `horizonDays = 总交期` 那一行的预计余额（四舍五入）。没有恰好等于总交期的节点时，取最大 `horizonDays` 那一行。预计余额 = 确定供给 + 已到可用日的预计供给 − 累计需求 |
-| 在产（local） | open lots 中 `pool=local` 的数量合计，含 `IN-PRODUCTION` |
-| 调拨在途 | open lots 中 `pool=in_transit` 合计（各仓 + 未定仓） |
-| 海外未定仓 | open lots 中 `pool=overseas` 合计 |
+| 未发（local） | open lots 中 `pool=local` 的数量合计，含 `IN-PRODUCTION` |
+| 在途 | open lots 中 `pool=in_transit` 合计（各仓 + 未定仓） |
+| 在库 | open lots 中 `pool=overseas` 合计 |
 | 无可用日 | `date_unknown` 或 `available_at` 为空的 open lot 数量合计 |
 
-「网络库存位置」在网络视图下**不是**五桶都按仓相加：可售、已确认开放、已分配、欠单来自各物理仓头寸之和；「生产中」改用在产 lot 合计；「在途库存」改用在途 lot 合计。底部「有效供给」仍是各仓头寸之和，所以可以小于「生产中」。分仓视图五桶都来自该仓 `resolveInventoryPosition`。欠单现网恒为 0。
+「网络库存位置」在网络视图下**不是**五桶都按仓相加：可售、已确认开放、已分配、欠单来自各物理仓头寸之和；「生产中」改用在产 lot 合计；「在途」改用在途 lot 合计。底部「有效供给」仍是各仓头寸之和，所以可以小于「生产中」。分仓视图五桶都来自该仓 `resolveInventoryPosition`。欠单现网恒为 0。
 
 供应链提前期六段相加得合计（`calcTotalLeadTime`）。网络视图的下单窗口用 `resolveNetworkOrderLeadDays`：在有销售占比或有开放批次的物理仓上取 `resolveLeadTimeForSkuWarehouse` 的最大 `totalLeadDays`，并与生产段比较后取较大值（新采购要经过生产再加物流才能可售）。没有这类仓时回退 `resolvePreShipmentLeadTimeForSku`（只计生产天数，缺省 50）。展示的六段取合计最长的那一仓；生产段仍长于所有仓时，其余五段为 0。分仓视图用目的仓 Profile 的六段。有 `profileId` 显示「已匹配交期 Profile」，否则「使用分层默认值」。
 
@@ -718,7 +719,7 @@ SKU 规划入口（`SkuPlanningEntryPage`）列表列展示**库存健康灯**�
 | 库存 → 供应 | `reorder_suggestions` | 建议量、建议日、健康灯、交期、`metrics`（含需求来源、预测版本） |
 | 供应 → 库存 | `inventory_supply_lots` | 带 `available_at` 的三池供给，驱动时间轴 |
 | 供应 → 库存 | `pmc_receipts` → `inventory_records` | 到货入库 |
-| 供应 → 库存（规划页） | `pickNearestEtaAvailable` | 最近一笔 open 跟单/计划的 ETA |
+| 供应 → 库存（规划页） | `pickNearestEtaAvailable` | 本仓 open 三池批次中最近的未来 `available_at`（来源飞书采购镜像） |
 | 库存 → 供应 | `skus.encoding_meta` | 销售占比、在途分桶、PO 最早上架时间（供三池同步） |
 
 ---
@@ -747,10 +748,11 @@ SKU 规划入口（`SkuPlanningEntryPage`）列表列展示**库存健康灯**�
 2. `warehouse_stock_facts` 分仓影子长表（查询 + 全链拆列；不写台账）
 3. `inventory_data_issue_scan` 数据问题扫描（含影子长表对账）
 4. `replenishment_forecast` 补货建议
-5. `stock_alert` 缺货 / 时间轴预警
-6. `inventory_exception_scan` 库存异常扫描
-7. `purchase_follow_up` 跟单提醒（T-30/T-14/T-7，跟单仍为 draft 时推送）
-8. 飞书群 digest（待处理建议、开放预警、异常、数据问题统计）
+5. `stock_alert` 缺货 / 时间轴预警（仅可规划 SKU；本仓日均需求为 0 时不报 `stockout`）
+6. `purchase_follow_up` 跟单提醒（T-30/T-14/T-7，跟单仍为 draft 时推送）
+7. 飞书群 digest（待处理建议、开放预警、数据问题统计）
+
+> 2026-10 起 `inventory_exception_scan` 移出流水线（无前端页面），仅保留手动触发接口。
 
 ### 5.2 外部集成
 

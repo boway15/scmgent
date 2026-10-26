@@ -412,15 +412,16 @@ describe('inventory planning view', () => {
     assert.equal('unallocatedNetworkQty' in without, false);
   });
 
-  it('selects the nearest future ETA for the requested warehouse', () => {
+  it('selects the nearest future available date from open supply lots of the warehouse', () => {
     assert.equal(
       pickNearestEtaAvailable(
         [
-          { etaAvailable: '2026-08-20', warehouseCode: 'US-WEST', status: 'in_transit' },
-          { etaAvailable: '2026-08-10', warehouseCode: 'US-EAST', status: 'confirmed' },
-          { etaAvailable: '2026-08-15', warehouseCode: 'US-WEST', status: 'confirmed' },
-          { etaAvailable: '2026-07-20', warehouseCode: 'US-WEST', status: 'in_transit' },
-          { etaAvailable: '2026-08-01', warehouseCode: 'US-WEST', status: 'cancelled' },
+          { availableAt: '2026-08-20', warehouseCode: 'US-WEST', status: 'open', dateUnknown: false },
+          { availableAt: '2026-08-10', warehouseCode: 'US-EAST', status: 'open', dateUnknown: false },
+          { availableAt: '2026-08-15', warehouseCode: 'US-WEST', status: 'open', dateUnknown: false },
+          { availableAt: '2026-07-20', warehouseCode: 'US-WEST', status: 'open', dateUnknown: false },
+          { availableAt: '2026-08-01', warehouseCode: 'US-WEST', status: 'cancelled', dateUnknown: false },
+          { availableAt: '2026-08-02', warehouseCode: 'US-WEST', status: 'open', dateUnknown: true },
         ],
         'US-WEST',
         '2026-07-29',

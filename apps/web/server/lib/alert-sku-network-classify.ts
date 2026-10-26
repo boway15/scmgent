@@ -9,12 +9,22 @@ import {
   matchesInventoryRiskView,
 } from './alert-action.js';
 import {
+  orderCoverDays,
+  recommendOrderForNetworkAlert,
+  recommendShip,
+  type HorizonDemand,
+  type OrderRecommendation,
+  type ShipRecommendation,
+} from './alert-horizon-demand.js';
+import {
   loadWarehouseShippingLeadMap,
   shippingLeadAcrossWarehouses,
 } from './alert-ship-lead.js';
 import { alertSupplyKey, loadAlertListSupply, type AlertListSupply } from './alert-list-supply.js';
 import { finiteCoverageDays, resolveNetworkForecastCoverage } from './alert-network-coverage.js';
+import { orderRecommendYes, shipRecommendYes } from './alert-recommendation-filter.js';
 import { getShanghaiBusinessDate } from './inventory-daily-snapshot.js';
+import { DEFAULT_SAFETY_STOCK_DAYS } from './replenishment-coverage.js';
 
 const LEVEL_RANK: Record<string, number> = { l3: 0, l2: 1, l1: 2 };
 
@@ -67,7 +77,20 @@ function resolveNetworkCoverageForSupply(input: { today: string; supply: AlertLi
     forecastP90Daily: input.supply.forecastP90Daily,
     inTransitWithin45: input.supply.networkInTransitWithin45 ?? 0,
     inTransitWithin60: input.supply.networkInTransitWithin60 ?? 0,
+    coverDays: orderCoverDays(input.supply.totalLeadDays, DEFAULT_SAFETY_STOCK_DAYS),
   });
+}
+
+function shipDaysFromNetworkCoverage(
+  today: string,
+  network: ReturnType<typeof resolveNetworkCoverageForSupply>,
+): { shipDays: number | null; onHandTransitCoverageDays: number | null } {
+  const fromDate = daysUntilDate(today, network.onHandTransitStockoutDate);
+  const cov = finiteCoverageDays(network.onHandTransitCoverageDays);
+  const shipDays =
+    fromDate ??
+    (cov != null && Number.isFinite(cov) ? Math.floor(cov) : null);
+  return { shipDays, onHandTransitCoverageDays: cov };
 }
 
 /** 与列表「在库+在途」列同一套：海外在库+在途按预测曲线（或周转日均）折算，不用飞书预计断货日。 */
@@ -76,15 +99,10 @@ export function networkOnHandTransitShipDays(input: {
   supply: AlertListSupply;
 }): { shipDays: number | null; onHandTransitCoverageDays: number | null } {
   const network = resolveNetworkCoverageForSupply(input);
-  const fromDate = daysUntilDate(input.today, network.onHandTransitStockoutDate);
-  const cov = finiteCoverageDays(network.onHandTransitCoverageDays);
-  const shipDays =
-    fromDate ??
-    (cov != null && Number.isFinite(cov) ? Math.floor(cov) : null);
-  return { shipDays, onHandTransitCoverageDays: cov };
+  return shipDaysFromNetworkCoverage(input.today, network);
 }
 
-/** 全网 SKU 分档：可售/断货与列表「含本地、在库+在途」同口径。 */
+/** 全网 SKU 分档：可售/断货与列表「含未发、在库+在途」同口径。 */
 export function resolveNetworkSkuAlertAction(input: {
   today: string;
   supply: AlertListSupply;
@@ -96,10 +114,7 @@ export function resolveNetworkSkuAlertAction(input: {
     today: input.today,
     supply: input.supply,
   });
-  const { shipDays } = networkOnHandTransitShipDays({
-    today: input.today,
-    supply: input.supply,
-  });
+  const { shipDays } = shipDaysFromNetworkCoverage(input.today, network);
 
   return resolveAlertAction({
     shipDays,
@@ -115,6 +130,16 @@ export type SkuNetworkClassified = SkuClassifyWarehouseRow & {
   networkAction: AlertAction;
   networkPriceReason: PriceReason | null;
   shippingLeadDays: number;
+  /** 预计算并缓存的全网供给与预测覆盖数据，避免分页渲染与过滤时二次查库计算 */
+  supply?: AlertListSupply;
+  networkCoverageDays?: number | null;
+  networkOnHandTransitDays?: number | null;
+  networkStockoutDate?: string | null;
+  horizons?: HorizonDemand | null;
+  orderRecommendation?: OrderRecommendation;
+  shipRecommendation?: ShipRecommendation;
+  orderRecommendYes?: boolean;
+  shipRecommendYes?: boolean;
 };
 
 /** 按 SKU 聚合后做全网分档；用于 SKU 全网列表与概览卡片计数。 */
@@ -152,31 +177,81 @@ export async function classifyAlertsBySkuNetwork(
       rows.map((row) => row.warehouseCode),
       shippingLead,
     );
-    const resolved = resolveNetworkSkuAlertAction({
-      today,
-      supply,
+    const hasShippable = skuHasShippableLots(rows);
+    const network = resolveNetworkCoverageForSupply({ today, supply });
+    const { shipDays, onHandTransitCoverageDays } = shipDaysFromNetworkCoverage(today, network);
+    const fullDays = finiteCoverageDays(network.coverageDays);
+    const resolved = resolveAlertAction({
+      shipDays,
+      fullDays,
       shippingLeadDays,
-      hasShippableLots: skuHasShippableLots(rows),
+      hasShippableLots: hasShippable,
       noise: false,
+      totalLeadDays: supply.totalLeadDays,
     });
     if (resolved.action === 'none') continue;
-    const { shipDays } = networkOnHandTransitShipDays({ today, supply });
     const level = moreSevereLevel(
       rep.level,
       resolveAlertLevel({
         action: resolved.action,
         shipDays,
-        fullDays: finiteCoverageDays(resolveNetworkCoverageForSupply({ today, supply }).coverageDays),
+        fullDays,
         profileClass: null,
         totalLeadDays: supply.totalLeadDays,
       }),
     );
+    const networkActionForRec = resolved.action;
+    const order = recommendOrderForNetworkAlert({
+      today,
+      coverageDays: network.coverageDays,
+      totalLeadDays: supply.totalLeadDays ?? null,
+      safetyStockDays: DEFAULT_SAFETY_STOCK_DAYS,
+      horizons: network.horizons,
+      networkAction: networkActionForRec,
+      priceReason: resolved.priceReason,
+      maxCoverQty: network.horizons?.demand30,
+      moq: supply.moq,
+    });
+    const ship = recommendShip({
+      today,
+      shipWindowCovered: network.horizons?.shipWindowCovered ?? false,
+      urgent45: network.horizons?.urgent45 ?? 0,
+      ship60: network.horizons?.ship60 ?? 0,
+      action: networkActionForRec,
+      daysToStockout:
+        onHandTransitCoverageDays != null && Number.isFinite(onHandTransitCoverageDays)
+          ? onHandTransitCoverageDays
+          : null,
+      shippingLeadDays,
+      maxCoverQty: network.horizons?.demand30,
+      moq: supply.moq,
+    });
+    const orderWindowCovered = network.horizons?.windowCovered ?? false;
+    const shipWindowCovered = network.horizons?.shipWindowCovered ?? false;
+
     out.push({
       ...rep,
+      hasShippableLots: hasShippable,
       level,
       networkAction: resolved.action,
       networkPriceReason: resolved.priceReason,
       shippingLeadDays,
+      supply,
+      networkCoverageDays: network.coverageDays,
+      networkOnHandTransitDays: network.onHandTransitCoverageDays,
+      networkStockoutDate: network.stockoutDate,
+      horizons: network.horizons,
+      orderRecommendation: order,
+      shipRecommendation: ship,
+      orderRecommendYes: orderRecommendYes({
+        orderWindowCovered,
+        orderQty: order.orderQty,
+        orderOverseasReference: order.orderOverseasReference,
+      }),
+      shipRecommendYes: shipRecommendYes({
+        shipWindowCovered,
+        shipQty: ship.shipQty,
+      }),
     });
   }
 

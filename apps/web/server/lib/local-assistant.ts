@@ -22,7 +22,7 @@ const FAQ: FaqEntry[] = [
   {
     keywords: ['rop', '补货点', 'reorder point'],
     answer:
-      'ROP（Reorder Point）= 平均日销量 × 采购交期 + 安全库存。\n当有效供给（飞书快照：可售+在途+在产−已分配，不含跟单）低于 ROP 时，系统会生成补货建议或触发预警。',
+      'ROP（Reorder Point）= 平均日销量 × 采购交期 + 安全库存。\n当有效供给（飞书快照：可售+在途+未发−已分配，不含跟单）低于 ROP 时，系统会生成补货建议或触发预警。',
   },
   {
     keywords: ['eoq', '经济订货', '订货批量'],
@@ -32,7 +32,7 @@ const FAQ: FaqEntry[] = [
   {
     keywords: ['补货建议', '补货预测', 'replenish'],
     answer:
-      '流程：运行「补货预测」→ 生成只读建议行 → 在迅捷下单 → 进度经飞书采购镜像同步。\n时间轴在途/在产来自飞书「采购跟单」与「大件备货申请」目的仓，不在本系统维护跟单或发运。',
+      '流程：运行「补货预测」→ 生成只读建议行 → 在迅捷下单 → 进度经飞书采购镜像同步。\n时间轴在途 / 未发来自飞书「采购跟单」与「大件备货申请」目的仓，不在本系统维护跟单或发运。',
   },
   {
     keywords: ['pmc', '需求计划', '下单计划', '计划列表'],
@@ -70,9 +70,9 @@ const FAQ: FaqEntry[] = [
       'SKU 补货亮灯在「商品主数据 > SKU」维护：\n• 红灯：低于 ROP 时必须补货（如 SKU-HM-001 硅胶铲勺五件套）\n• 黄灯：低于 ROP 时，仅当同 SPU 有红灯 SKU 也需补货才生成建议（如 SKU-HM-002 与 SPU-KIT-001 联动）\n• 绿灯：不参与自动补货建议（如 SKU-HM-005 床垫清库存款）\n\n库存总览展示亮灯与当前是否可补。',
   },
   {
-    keywords: ['有效供给', '在途', '在产'],
+    keywords: ['有效供给', '在途', '在产', '未发', '在库', '国内未发', '头程在途', '海外在库'],
     answer:
-      '分仓有效供给 = 可售 + 在途 − 已分配（在途已指向目的仓；本仓无量时按销售占比分摊 OVERSEAS）。在产为 SKU 级未分仓池，货物发出后才计入目的仓在途。\n仓网/全局有效供给 = 各仓（可售+在途）之和 + 在产池。补货与预警按仓比较 ROP，仓网互调时参考全局池。',
+      '分仓有效供给 = 可售 + 在途 − 已分配（在途已指向目的仓；本仓无量时按销售占比分摊 OVERSEAS）。未发为 SKU 级未分仓池，货物发出后才计入目的仓在途。\n仓网/全局有效供给 = 各仓（可售+在途）之和 + 未发。补货与预警按仓比较 ROP，仓网互调时参考全局池。',
   },
 ];
 
@@ -112,7 +112,7 @@ export async function buildSkuContext(params: {
     lines.push(
       `仓 ${params.warehouseCode}：可售 ${pos.qtyAvailable}，在途 ${pos.qtyInTransit}，已分配 ${pos.qtyReserved}，本仓有效 ${pos.effectiveQty}`,
     );
-    lines.push(`SKU 在产池（未分仓）：${inProduction}`);
+    lines.push(`SKU 未发（未分仓）：${inProduction}`);
   } else {
     const whRows = await db
       .selectDistinct({ warehouse: inventoryRecords.warehouse })
@@ -128,7 +128,7 @@ export async function buildSkuContext(params: {
     }
     const inProduction = await getLatestInProductionQty(id);
     if (inProduction > 0) {
-      lines.push(`SKU 在产池（未分仓）：${inProduction}`);
+      lines.push(`SKU 未发（未分仓）：${inProduction}`);
     }
     if (!whRows.length) {
       lines.push('暂无库存台账记录');

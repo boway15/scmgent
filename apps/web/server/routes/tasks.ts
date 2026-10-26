@@ -32,6 +32,7 @@ import { INVENTORY_TURNOVER_PULL_TASK } from '../lib/inventory-turnover-pull-tas
 import { runCommercialStatusReconcile } from '../tasks/commercialStatusReconcile.js';
 import { runSalesDailyFeishuPull } from '../tasks/salesDailyFeishuPull.js';
 import { SALES_DAILY_FEISHU_PULL_TASK } from '../lib/feishu-sales-daily-pull-task.js';
+import { syncQcReinspection } from '../lib/qc-reinspection-sync.js';
 
 export const taskRoutes = new Hono();
 
@@ -355,4 +356,21 @@ taskRoutes.post('/tasks/sales-daily-feishu-pull', requireCronSecret, async (c) =
     return c.json({ skipped: true, message: result.reason, taskRunId: run.id }, 409);
   }
   return c.json({ ...result, taskRunId: run.id });
+});
+
+taskRoutes.post('/tasks/qc-reinspection-sync', requireCronSecret, async (c) => {
+  const triggeredBy = resolveTriggeredBy(c);
+  const run = await startTaskRun('qc_reinspection_sync', triggeredBy);
+  try {
+    const result = await syncQcReinspection();
+    await finishTaskRun(run.id, {
+      success: true,
+      resultSummary: `source=${result.sourceCount}; matched=${result.matched}; created=${result.created}; refreshed=${result.refreshed}; whitelist=${result.whitelistSize}`,
+    });
+    return c.json({ ...result, taskRunId: run.id });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'qc reinspection sync failed';
+    await finishTaskRun(run.id, { success: false, errorMessage: message });
+    return c.json({ message, taskRunId: run.id }, 500);
+  }
 });

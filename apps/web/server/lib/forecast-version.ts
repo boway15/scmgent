@@ -9,6 +9,7 @@ import {
 } from '@scm/db';
 import { FORECAST_V41_PLATFORM_CODES } from './forecast-platform-scope.js';
 import { parseBaselinePlatformFromVersionName } from './forecast-version-label.js';
+import { invalidateAlertActionCache } from './alert-action-index.js';
 
 export type ForecastVersionStatus = 'draft' | 'published' | 'archived';
 
@@ -126,6 +127,7 @@ export async function publishForecastVersion(versionId: string, publishedBy: str
     .where(eq(salesForecastVersions.id, versionId))
     .returning();
 
+  invalidateAlertActionCache();
   return published;
 }
 
@@ -135,6 +137,7 @@ export async function archiveForecastVersion(versionId: string) {
     .set({ status: 'archived', updatedAt: new Date() })
     .where(eq(salesForecastVersions.id, versionId))
     .returning();
+  if (row) invalidateAlertActionCache();
   return row;
 }
 

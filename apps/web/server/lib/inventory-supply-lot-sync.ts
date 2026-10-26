@@ -7,7 +7,7 @@ import {
   skus,
   warehouses,
 } from '@scm/db';
-import { IN_PRODUCTION_WAREHOUSE } from './inventory-constants.js';
+import { IN_PRODUCTION_WAREHOUSE, POOL_DISPLAY_LABEL } from './inventory-constants.js';
 import {
   parseSharesFromSnapshot,
   parseTransitBuckets,
@@ -596,11 +596,7 @@ export async function loadOpenLotsForNetworkTimeline(params: {
   return loadOpenLotsForSku({ skuId: params.skuId });
 }
 
-const POOL_LABEL: Record<'overseas' | 'in_transit' | 'local', string> = {
-  overseas: '在库',
-  in_transit: '在途',
-  local: '本地',
-};
+const POOL_LABEL = POOL_DISPLAY_LABEL;
 
 const BATCH_EXPORT_HEADERS = [
   'SKU',

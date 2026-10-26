@@ -70,7 +70,7 @@ export function RequireAuth() {
   const allowedPaths = flattenMenuPaths(menus);
   const homePath = getDefaultHomePath(menus, user.role.code);
 
-  if (pathname === '/' || (pathname === '/dashboard' && !canAccessPath('/dashboard', allowedPaths, user.role.code))) {
+  if (pathname === '/') {
     return <Navigate to={homePath} replace />;
   }
 

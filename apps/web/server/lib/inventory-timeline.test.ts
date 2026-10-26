@@ -6,6 +6,7 @@ import {
   calcTimelineWindowDays,
   classifySupplyLot,
   projectDailyInventory,
+  SINGLE_REPLENISHMENT_COVER_DAYS,
   type DailyLot,
   type TimelineLot,
 } from './inventory-timeline.js';
@@ -62,6 +63,44 @@ describe('inventory-timeline', () => {
     });
     // max(0, ceil(2600+200-2300)) = 500
     assert.equal(qty, 500);
+  });
+
+  it('caps one order at 30 days of demand, then lifts to MOQ', () => {
+    const underCap = calcSuggestedQtyFromTimeline({
+      projectedOverseasAtTarget: 0,
+      cumulativeDemandAtTarget: 150,
+      safetyStockQty: 0,
+      moq: 20,
+      maxCoverQty: 300,
+    });
+    assert.equal(underCap, 150);
+
+    const capped = calcSuggestedQtyFromTimeline({
+      projectedOverseasAtTarget: 0,
+      cumulativeDemandAtTarget: 840,
+      safetyStockQty: 0,
+      moq: 20,
+      maxCoverQty: 300,
+    });
+    assert.equal(capped, 300);
+
+    const moqWins = calcSuggestedQtyFromTimeline({
+      projectedOverseasAtTarget: 0,
+      cumulativeDemandAtTarget: 840,
+      safetyStockQty: 0,
+      moq: 400,
+      maxCoverQty: 300,
+    });
+    assert.equal(moqWins, 400);
+
+    const noGap = calcSuggestedQtyFromTimeline({
+      projectedOverseasAtTarget: 1000,
+      cumulativeDemandAtTarget: 100,
+      safetyStockQty: 0,
+      moq: 400,
+      maxCoverQty: 300,
+    });
+    assert.equal(noGap, 0);
   });
 
   it('excludes local lots that are not yet ship-ready (caller filters eligible)', () => {
@@ -218,7 +257,9 @@ describe('projectDailyInventory', () => {
     const productionOnly = projectDailyInventory({ ...shared, totalLeadDays: 50 });
     const fullChain = projectDailyInventory({ ...shared, totalLeadDays: 102 });
     assert.equal(productionOnly.suggestedQty, 150);
-    assert.equal(fullChain.suggestedQty, 670);
+    assert.equal(productionOnly.suggestedQtyGross, 150);
+    assert.equal(fullChain.suggestedQtyGross, 670);
+    assert.equal(fullChain.suggestedQty, SINGLE_REPLENISHMENT_COVER_DAYS * 10);
   });
 
   it('projects long-lead balances; net suggestedQty deducts dated planned, gross does not', () => {
@@ -246,7 +287,7 @@ describe('projectDailyInventory', () => {
     assert.equal(p30.confirmedEnding, 260);
     assert.equal(p30.expectedEnding, 260);
     assert.equal(r.suggestedQtyGross, 2820);
-    assert.equal(r.suggestedQty, 2020);
+    assert.equal(r.suggestedQty, SINGLE_REPLENISHMENT_COVER_DAYS * 40);
     assert.equal(r.uncoverableByNewPo, true);
     assert.ok(r.safetyBreachDateConfirmed);
     assert.ok(r.stockoutDateConfirmed);

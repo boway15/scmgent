@@ -5,9 +5,6 @@ import {
   demandPlanVersions,
   forecastAccuracyMonthly,
   inventorySupplyLots,
-  pmcPlanItems,
-  pmcPlans,
-  purchaseDrafts,
   safetyStockConfig,
   skus,
   spus,
@@ -233,16 +230,6 @@ type PlanningHealth = Pick<
   >;
 };
 
-const OPEN_ETA_STATUSES = new Set([
-  'draft',
-  'confirmed',
-  'in_production',
-  'ready_to_ship',
-  'in_transit',
-  'partial_received',
-  'exception',
-]);
-
 function isoDate(date: Date): string {
   return date.toISOString().slice(0, 10);
 }
@@ -259,23 +246,25 @@ export function estimateStockoutDate(
 }
 
 export function pickNearestEtaAvailable(
-  rows: Array<{
-    etaAvailable: string | null;
-    warehouseCode: string | null;
+  lots: Array<{
+    availableAt: string | null;
+    warehouseCode: string;
     status: string;
+    dateUnknown: boolean;
   }>,
   warehouseCode: string,
   today = isoDate(new Date()),
 ): string | null {
-  const candidates = rows
+  const candidates = lots
     .filter(
-      (row) =>
-        row.warehouseCode === warehouseCode &&
-        row.etaAvailable != null &&
-        row.etaAvailable >= today &&
-        OPEN_ETA_STATUSES.has(row.status),
+      (lot) =>
+        lot.warehouseCode === warehouseCode &&
+        lot.status === 'open' &&
+        !lot.dateUnknown &&
+        lot.availableAt != null &&
+        lot.availableAt >= today,
     )
-    .map((row) => row.etaAvailable as string)
+    .map((lot) => lot.availableAt as string)
     .sort((a, b) => a.localeCompare(b));
   return candidates[0] ?? null;
 }
@@ -718,21 +707,25 @@ export async function getSkuPlanningView(params: {
     .limit(1);
   if (!warehouse) return null;
 
-  const [policies, salesBySkuId, forecastBySkuId, etaRows] = await Promise.all([
+  const [policies, salesBySkuId, forecastBySkuId, etaLots] = await Promise.all([
     db.select().from(safetyStockConfig).where(eq(safetyStockConfig.skuId, sku.id)),
     loadDailySalesBySkuIds([sku.id]),
     loadMergedPublishedForecastBySkuIds([sku.id]),
     db
       .select({
-        etaAvailable: purchaseDrafts.etaAvailable,
-        status: purchaseDrafts.status,
-        itemWarehouseCode: pmcPlanItems.warehouseCode,
-        planWarehouseCode: pmcPlans.targetWarehouseCode,
+        availableAt: inventorySupplyLots.availableAt,
+        warehouseCode: inventorySupplyLots.warehouseCode,
+        status: inventorySupplyLots.status,
+        dateUnknown: inventorySupplyLots.dateUnknown,
       })
-      .from(purchaseDrafts)
-      .leftJoin(pmcPlanItems, eq(purchaseDrafts.planItemId, pmcPlanItems.id))
-      .leftJoin(pmcPlans, eq(pmcPlanItems.planId, pmcPlans.id))
-      .where(eq(purchaseDrafts.skuId, sku.id)),
+      .from(inventorySupplyLots)
+      .where(
+        and(
+          eq(inventorySupplyLots.skuId, sku.id),
+          eq(inventorySupplyLots.warehouseCode, warehouse.code),
+          eq(inventorySupplyLots.status, 'open'),
+        ),
+      ),
   ]);
 
   const forecastEntry = forecastBySkuId.get(sku.id) ?? {
@@ -778,14 +771,7 @@ export async function getSkuPlanningView(params: {
     share,
     moq: sku.skuMoq || sku.spuMoq || undefined,
   });
-  const etaAvailableNearest = pickNearestEtaAvailable(
-    etaRows.map((row) => ({
-      etaAvailable: row.etaAvailable,
-      status: row.status,
-      warehouseCode: row.itemWarehouseCode ?? row.planWarehouseCode,
-    })),
-    warehouse.code,
-  );
+  const etaAvailableNearest = pickNearestEtaAvailable(etaLots, warehouse.code);
 
   let timeline: DailyInventoryResult | null = null;
   let timelineSuggestedQty: number | undefined;

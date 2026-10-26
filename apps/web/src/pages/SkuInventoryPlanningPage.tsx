@@ -12,6 +12,7 @@ import {
   PLANNING_FIELD_TIPS,
   PLANNING_TERM_LEGEND,
 } from '@/lib/inventory-planning-glossary';
+import { POOL_DISPLAY_LABEL } from '@/lib/inventory-pool-labels';
 
 type PlanningView = SkuPlanningView & {
   stockoutAdjusted?: boolean;
@@ -28,7 +29,7 @@ type PlanningView = SkuPlanningView & {
 const POSITION_ROWS = [
   ['qtyAvailable', '可售库存', '+'],
   ['qtyInProduction', '生产中', '+'],
-  ['qtyInTransit', '在途库存', '+'],
+  ['qtyInTransit', '在途', '+'],
   ['qtyConfirmedOpen', '已确认开放量', '+'],
   ['qtyReserved', '已分配', '−'],
   ['qtyBackorder', '欠单', '−'],
@@ -43,11 +44,7 @@ const LEAD_TIME_ROWS = [
   ['inboundDays', '入仓'],
 ] as const;
 
-const POOL_LABEL: Record<'overseas' | 'in_transit' | 'local', string> = {
-  local: '本地',
-  in_transit: '在途',
-  overseas: '海外',
-};
+const POOL_LABEL = POOL_DISPLAY_LABEL;
 
 const SHIPMENT_STATUS_LABEL: Record<ShipmentStatus, string> = {
   booked: '已订舱',
@@ -261,7 +258,7 @@ function TimelineTable({ item }: { item: PlanningView }) {
       <p className="text-xs leading-relaxed text-text-hint">
         {item.scope === 'network'
           ? '数据源：三池开放批次里已到可用日的「确定档」。未完工的在产逻辑仓只在开放批次展示，不进确定线。交期只用生产天数。'
-          : '数据源：该仓三池批次。确定线=海外可售+真实预计到仓日在途；预计线=已达出货交期的本地货；计划线（在产/估期）不填近窗、不挡建议量。'}
+          : '数据源：该仓三池批次。确定线=海外可售+真实预计到仓日的在途；预计线=已达出货交期的未发；计划线（在产/估期）不填近窗、不挡建议量。'}
       </p>
     </>
   );
@@ -352,7 +349,7 @@ function SupplyChainReadonlySections({
         </CardHeader>
         <CardContent>
           <p className="mb-3 text-xs leading-relaxed text-text-hint">
-            数据源：三池开放批次（跟单、发运、飞书库存周转残差）。可用日是预计海外可售日：海外池用周转快照日，在途用发运/跟单预计可售日或飞书「最早在途上架时间」，本地在产用飞书「采购单最早上架时间」。生产未完成的日期不进入上方时间轴。
+            数据源：三池开放批次（跟单、发运、飞书库存周转残差）。可用日是预计海外可售日：在库用周转快照日，在途用发运/跟单预计可售日或飞书「最早在途上架时间」，未发用飞书「采购单最早上架时间」。生产未完成的日期不进入上方时间轴。
           </p>
           {pools.isLoading ? (
             <p className="text-sm text-text-sub">加载开放批次…</p>
@@ -713,21 +710,21 @@ export function SkuInventoryPlanningPage() {
       {isNetwork && item.supplyPools ? (
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
           <MetricCard
-            label="在产（本地池）"
+            label="未发"
             value={item.supplyPools.localQty}
-            hint="数据源：三池本地批次，含在产逻辑仓，不计入有效供给"
+            hint="数据源：三池未发批次，含在产逻辑仓，不计入有效供给"
             tip={FIELD_TIPS.localQty}
           />
           <MetricCard
-            label="调拨在途"
+            label="在途"
             value={item.supplyPools.inTransitQty}
             hint="数据源：三池在途批次（各仓 + 未定仓）"
             tip={FIELD_TIPS.inTransitQty}
           />
           <MetricCard
-            label="海外未定仓"
+            label="在库"
             value={item.supplyPools.overseasQty}
-            hint="数据源：三池海外批次"
+            hint="数据源：三池在库批次"
             tip={FIELD_TIPS.overseasQty}
           />
           <MetricCard
@@ -768,7 +765,7 @@ export function SkuInventoryPlanningPage() {
           <MetricCard
             label="确定缺货日"
             value={item.timeline.stockoutDateConfirmed ?? '暂无'}
-            hint="数据源：时间轴确定线（海外可售 + 真实预计到仓日在途）"
+            hint="数据源：时间轴确定线（海外可售 + 真实预计到仓日的在途）"
             tip={FIELD_TIPS.stockoutDate}
           />
           <MetricCard

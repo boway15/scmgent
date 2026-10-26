@@ -125,51 +125,75 @@ alertRoutes.get('/alerts', requireMenu('inventory.alert'), async (c) => {
         );
       }
       const pageRows = listed.slice(offset, offset + pageSize);
-      const [supplyByKey, shippingLead] = await Promise.all([
-        loadAlertListSupply(
-          pageRows.map((row) => ({
-            skuId: row.skuId,
-            warehouseCode: row.warehouseCode,
-            projectedStockoutDate: null,
-          })),
-        ),
-        loadWarehouseShippingLeadMap(),
-      ]);
+      const missingSupplyRows = pageRows.filter((row) => !row.supply);
+      const [fallbackSupplyByKey, shippingLead] = missingSupplyRows.length
+        ? await Promise.all([
+            loadAlertListSupply(
+              missingSupplyRows.map((row) => ({
+                skuId: row.skuId,
+                warehouseCode: row.warehouseCode,
+                projectedStockoutDate: null,
+              })),
+            ),
+            loadWarehouseShippingLeadMap(),
+          ])
+        : [null, null];
       const items = pageRows.map((row) => {
-        const supply = supplyByKey.get(alertSupplyKey(row.skuId, row.warehouseCode));
-        const network = resolveNetworkForecastCoverage({
-          today,
-          localQty: supply?.networkLocalQty,
-          overseasQty: supply?.networkOverseasQty,
-          inTransitQty: supply?.networkInTransitQty,
-          forecastDaily: supply?.networkForecastDaily,
-          flatDaily: supply?.networkForecastDaily ? null : supply?.networkAvgDaily,
-          profileClass: supply?.forecastProfileClass,
-          forecastP90Daily: supply?.forecastP90Daily,
-          inTransitWithin45: supply?.networkInTransitWithin45 ?? 0,
-          inTransitWithin60: supply?.networkInTransitWithin60 ?? 0,
-          coverDays: orderCoverDays(supply?.totalLeadDays, DEFAULT_SAFETY_STOCK_DAYS),
-        });
+        const supply =
+          row.supply ?? fallbackSupplyByKey?.get(alertSupplyKey(row.skuId, row.warehouseCode));
+        const hasPrecomputed =
+          row.supply !== undefined &&
+          row.orderRecommendation !== undefined &&
+          row.shipRecommendation !== undefined;
+        const network = hasPrecomputed
+          ? {
+              coverageDays: row.networkCoverageDays ?? null,
+              onHandTransitCoverageDays: row.networkOnHandTransitDays ?? null,
+              stockoutDate: row.networkStockoutDate ?? null,
+              horizons: row.horizons ?? null,
+            }
+          : resolveNetworkForecastCoverage({
+              today,
+              localQty: supply?.networkLocalQty,
+              overseasQty: supply?.networkOverseasQty,
+              inTransitQty: supply?.networkInTransitQty,
+              forecastDaily: supply?.networkForecastDaily,
+              flatDaily: supply?.networkForecastDaily ? null : supply?.networkAvgDaily,
+              profileClass: supply?.forecastProfileClass,
+              forecastP90Daily: supply?.forecastP90Daily,
+              inTransitWithin45: supply?.networkInTransitWithin45 ?? 0,
+              inTransitWithin60: supply?.networkInTransitWithin60 ?? 0,
+              coverDays: orderCoverDays(supply?.totalLeadDays, DEFAULT_SAFETY_STOCK_DAYS),
+            });
         const networkAction = row.networkAction === 'none' ? null : row.networkAction;
-        const order = recommendOrderForNetworkAlert({
-          today,
-          coverageDays: network.coverageDays,
-          totalLeadDays: supply?.totalLeadDays ?? null,
-          safetyStockDays: DEFAULT_SAFETY_STOCK_DAYS,
-          horizons: network.horizons,
-          networkAction,
-          priceReason: row.networkPriceReason,
-        });
-        const ship = recommendShip({
-          today,
-          shipWindowCovered: network.horizons?.shipWindowCovered ?? false,
-          urgent45: network.horizons?.urgent45 ?? 0,
-          ship60: network.horizons?.ship60 ?? 0,
-          action: networkAction,
-          daysToStockout: finiteDays(network.onHandTransitCoverageDays),
-          shippingLeadDays:
-            row.shippingLeadDays ?? shippingLeadFor(row.warehouseCode ?? '', shippingLead),
-        });
+        const order =
+          row.orderRecommendation ??
+          recommendOrderForNetworkAlert({
+            today,
+            coverageDays: network.coverageDays,
+            totalLeadDays: supply?.totalLeadDays ?? null,
+            safetyStockDays: DEFAULT_SAFETY_STOCK_DAYS,
+            horizons: network.horizons,
+            networkAction,
+            priceReason: row.networkPriceReason,
+            maxCoverQty: network.horizons?.demand30,
+            moq: supply?.moq,
+          });
+        const ship =
+          row.shipRecommendation ??
+          recommendShip({
+            today,
+            shipWindowCovered: network.horizons?.shipWindowCovered ?? false,
+            urgent45: network.horizons?.urgent45 ?? 0,
+            ship60: network.horizons?.ship60 ?? 0,
+            action: networkAction,
+            daysToStockout: finiteDays(network.onHandTransitCoverageDays),
+            shippingLeadDays:
+              row.shippingLeadDays ??
+              (shippingLead ? shippingLeadFor(row.warehouseCode ?? '', shippingLead) : 45),
+            maxCoverQty: network.horizons?.demand30,
+            moq: supply?.moq,
+          });
         const displayView =
           inventoryRiskViewLabel({
             action: row.networkAction,
@@ -328,6 +352,8 @@ alertRoutes.get('/alerts', requireMenu('inventory.alert'), async (c) => {
         horizons: network.horizons,
         networkAction: shipAction,
         priceReason: classifiedRow?.priceReason ?? null,
+        maxCoverQty: network.horizons?.demand30,
+        moq: supply?.moq,
       });
       const ship = recommendShip({
         today,
@@ -337,6 +363,8 @@ alertRoutes.get('/alerts', requireMenu('inventory.alert'), async (c) => {
         action: shipAction,
         daysToStockout: classifiedRow?.daysToStockout ?? null,
         shippingLeadDays: shippingLeadFor(row.warehouseCode ?? '', warehouseShippingLead),
+        maxCoverQty: network.horizons?.demand30,
+        moq: supply?.moq,
       });
       return {
         ...row,

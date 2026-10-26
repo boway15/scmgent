@@ -51,15 +51,15 @@ const SECTIONS: HelpSection[] = [
         </li>
         <li>
           手动触发补货预测（需 CRON 权限）：<code className="rounded bg-muted px-1">POST /api/tasks/replenishment-forecast</code>，随后在{' '}
-          <Link to="/pmc/suggestions" className="text-primary hover:underline">补货建议</Link> 采纳并入 PMC 计划。
+          <Link to="/pmc/suggestions" className="text-primary hover:underline">补货建议</Link> 导出清单，在迅捷 ERP 下单。
         </li>
         <li>
-          <Link to="/pmc/list" className="text-primary hover:underline">计划列表</Link>
-          ：确认计划 → 自动生成 <Link to="/pmc/tracking" className="text-primary hover:underline">采购跟单</Link>。
+          <Link to="/procurement/follow-up" className="text-primary hover:underline">采购跟单</Link>
+          ：飞书采购镜像，每日同步为三池在途 / 未发。
         </li>
         <li>
-          <Link to="/dashboard" className="text-primary hover:underline">经营看板</Link>
-          ：查看 KPI 与今日待办。
+          <Link to="/inventory/planning-dashboard" className="text-primary hover:underline">规划驾驶舱</Link>
+          ：查看库存风险、预测覆盖与今日待办。
         </li>
       </ol>
     ),
@@ -164,7 +164,7 @@ const SECTIONS: HelpSection[] = [
     body: (
       <ul className="list-disc space-y-2 pl-5">
         <li>
-          <strong>本仓有效</strong> = 可售 + 已发运在途（发运单指定目的仓）；<strong>在产</strong> 为出货前 SKU 级网络池，不定目的仓。
+          <strong>本仓有效</strong> = 可售 + 在途（发运单指定目的仓）；<strong>未发</strong> 为出货前 SKU 级网络池，不定目的仓。
         </li>
         <li>
           <strong>US 仓网</strong>：美西/美东等仓可互调，单仓低于 ROP 但仓网合计充足时可能推迟补货。
@@ -238,7 +238,7 @@ const SECTIONS: HelpSection[] = [
       <p>
         头程物流费用分摊：创建 FOB 分账单 → 导入拖车/海运费 CSV → 执行分摊计算。
         商家发货明细导入为预留能力。入口：
-        <Link to="/logistics/fob-settlement" className="ml-1 text-primary hover:underline">物流管理 → FOB 分账</Link>。
+        <Link to="/logistics/fob-settlement" className="ml-1 text-primary hover:underline">物流 → FOB 分账</Link>。
       </p>
     ),
   },

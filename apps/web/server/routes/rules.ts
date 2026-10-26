@@ -174,7 +174,8 @@ ruleRoutes.post('/rules/:module/param-sets/:id/simulate', async (c) =>
       )
       .limit(SIMULATION_MAX_SKUS);
     if (!skuRows.length) return c.json({ message: '没有匹配的在售 SKU' }, 400);
-    const capturedUpdatedAt = row.updatedAt;
+    const capturedUpdatedAt =
+      row.updatedAt instanceof Date ? row.updatedAt.toISOString() : String(row.updatedAt);
     const result = await simulateReplenishment({ draft: toActive(row), skuIds: skuRows.map((r) => r.id) });
     const [stamped] = await db
       .update(ruleParamSets)
@@ -183,7 +184,7 @@ ruleRoutes.post('/rules/:module/param-sets/:id/simulate', async (c) =>
         and(
           eq(ruleParamSets.id, row.id),
           eq(ruleParamSets.status, 'draft'),
-          sql`date_trunc('milliseconds', ${ruleParamSets.updatedAt}) = ${capturedUpdatedAt}`,
+          sql`date_trunc('milliseconds', ${ruleParamSets.updatedAt}) = ${capturedUpdatedAt}::timestamptz`,
         ),
       )
       .returning();

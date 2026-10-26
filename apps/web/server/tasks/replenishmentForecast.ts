@@ -131,11 +131,37 @@ function positionKey(skuId: string, warehouseCode: string) {
   return `${skuId}::${warehouseCode}`;
 }
 
-export async function runReplenishmentForecast() {
-  try {
-    await syncInventorySupplyLots();
-  } catch (err) {
-    console.warn('[replenishmentForecast] supply lot sync skipped:', err);
+export type ReplenishmentRunOptions = {
+  /** 试算 / 基线：不同步三池、不写任何表、不调 Dify */
+  dryRun?: boolean;
+  skuIds?: string[];
+};
+
+export type ReplenishmentDryRow = {
+  skuCode: string;
+  warehouseCode: string;
+  suggestedQty: number;
+  suggestedDate: string;
+  healthStatus: string;
+  needsManualConfirm: boolean;
+};
+
+export type ReplenishmentHealthDryRow = {
+  skuCode: string;
+  warehouseCode: string;
+  healthStatus: string;
+  suggestedQty: number;
+  suggestedDate: string;
+};
+
+export async function runReplenishmentForecast(options: ReplenishmentRunOptions = {}) {
+  const dryRun = options.dryRun === true;
+  if (!dryRun) {
+    try {
+      await syncInventorySupplyLots();
+    } catch (err) {
+      console.warn('[replenishmentForecast] supply lot sync skipped:', err);
+    }
   }
 
   const spuMoqMap = new Map(
@@ -157,7 +183,11 @@ export async function runReplenishmentForecast() {
       encodingMeta: skus.encodingMeta,
     })
     .from(skus)
-    .where(eq(skus.isActive, true));
+    .where(
+      options.skuIds?.length
+        ? and(eq(skus.isActive, true), inArray(skus.id, options.skuIds))
+        : eq(skus.isActive, true),
+    );
 
   const whRows = await db
     .select({
@@ -341,7 +371,7 @@ export async function runReplenishmentForecast() {
       coverageByWh[wh.code] = health.coverage;
 
       const reorderPoint = (health.metrics.reorderPoint as number) ?? 0;
-      await upsertSafetyStock(sku.id, wh.code, {
+      if (!dryRun) await upsertSafetyStock(sku.id, wh.code, {
         safetyStockQty: (health.metrics.safetyStockQty as number) ?? 0,
         reorderPoint,
         reorderQty: (health.metrics.eoqQty as number) ?? 0,
@@ -670,8 +700,8 @@ export async function runReplenishmentForecast() {
     if (networkSuggestion) pending.push(networkSuggestion);
   }
 
-  const snapshotCount = await saveHealthSnapshots(healthRows);
-  await syncReplenishLightFromHealth(healthRows);
+  const snapshotCount = dryRun ? 0 : await saveHealthSnapshots(healthRows);
+  if (!dryRun) await syncReplenishLightFromHealth(healthRows);
 
   const spuRedNeeding = new Set<string>();
   for (const item of pending) {
@@ -692,8 +722,7 @@ export async function runReplenishmentForecast() {
   let difyEnhanced = false;
 
   const shouldEnhance =
-    eligibleItems.length > 0 &&
-    isReplenishmentWorkflowEnabled();
+    !dryRun && eligibleItems.length > 0 && isReplenishmentWorkflowEnabled();
 
   if (shouldEnhance) {
     try {
@@ -709,6 +738,35 @@ export async function runReplenishmentForecast() {
     } catch (err) {
       console.warn('[replenishmentForecast] enhancement skipped:', err);
     }
+  }
+
+  if (dryRun) {
+    return {
+      suggestionCount: eligibleItems.length,
+      snapshotCount: 0,
+      results: [],
+      dry: {
+        suggestions: eligibleItems.map(
+          (item): ReplenishmentDryRow => ({
+            skuCode: item.skuCode,
+            warehouseCode: item.warehouseCode ?? 'NETWORK',
+            suggestedQty: item.suggestedQty,
+            suggestedDate: item.suggestedDate,
+            healthStatus: item.healthStatus,
+            needsManualConfirm: item.metrics?.needsManualConfirm === true,
+          }),
+        ),
+        health: healthRows.map(
+          (row): ReplenishmentHealthDryRow => ({
+            skuCode: row.skuCode,
+            warehouseCode: row.warehouseCode,
+            healthStatus: row.healthStatus,
+            suggestedQty: row.suggestedQty,
+            suggestedDate: row.suggestedDate,
+          }),
+        ),
+      },
+    };
   }
 
   const expireSkuIds = pendingSkuIdsToExpire({

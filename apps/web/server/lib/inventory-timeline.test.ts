@@ -319,3 +319,18 @@ describe('projectDailyInventory', () => {
     assert.equal(r.uncoverableByNewPo, false);
   });
 });
+
+describe('projectDailyInventory coverDays', () => {
+  it('caps by custom coverDays instead of 30', () => {
+    const r = projectDailyInventory({
+      lots: [],
+      today: '2026-10-26',
+      totalLeadDays: 60,
+      safetyStockDays: 0,
+      safetyStockQty: 0,
+      dailyDemandFn: () => 10,
+      coverDays: 45,
+    });
+    assert.equal(r.suggestedQty, 450);
+  });
+});

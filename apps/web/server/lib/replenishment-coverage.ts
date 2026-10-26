@@ -1,5 +1,7 @@
 /** 跨境补货覆盖天数与健康灯计算（阶段一） */
 
+import { REPLENISHMENT_DEFAULTS } from '../rules/replenishment/params.js';
+
 export type {
   InventoryHealth,
 } from './inventory-light.js';
@@ -24,8 +26,8 @@ import {
 
 export const DEFAULT_PRODUCTION_LEAD_DAYS = 50;
 export const DEFAULT_INBOUND_BUFFER_DAYS = 7;
-export const DEFAULT_SAFETY_STOCK_DAYS = 14;
-export const DEFAULT_OVERSTOCK_THRESHOLD_DAYS = 180;
+export const DEFAULT_SAFETY_STOCK_DAYS = REPLENISHMENT_DEFAULTS.defaultSafetyStockDays;
+export const DEFAULT_OVERSTOCK_THRESHOLD_DAYS = REPLENISHMENT_DEFAULTS.overstockThresholdDays;
 
 /** 目的仓默认海运周期（天） */
 export const DEFAULT_SHIPPING_LEAD_BY_WAREHOUSE: Record<string, number> = {

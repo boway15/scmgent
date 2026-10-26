@@ -445,6 +445,8 @@ export async function computeSkuWarehouseHealth(params: {
   /** SKU 销售占比（周转快照）；缺省时按需查库 */
   share?: ShareParseResult;
   moq?: number;
+  /** 规则中心解析出的默认值；未传时用代码默认值 */
+  ruleDefaults?: { safetyStockDays: number; overstockThresholdDays: number };
   /** 全量预加载缓存：传入后跳过 lead / position / availability 的按条查库 */
   caches?: {
     leadTime: ResolvedLeadTime;
@@ -544,9 +546,10 @@ export async function computeSkuWarehouseHealth(params: {
     productionDays: leadTime.productionDays,
     shippingDays: leadTime.shippingDays,
     inboundBufferDays: leadTime.inboundBufferDays,
-    safetyStockDays: policy?.safetyStockDays ?? undefined,
+    safetyStockDays: policy?.safetyStockDays ?? params.ruleDefaults?.safetyStockDays ?? undefined,
     targetCoverageDays: policy?.targetCoverageDays ?? undefined,
-    overstockThresholdDays: policy?.overstockThresholdDays ?? undefined,
+    overstockThresholdDays:
+      policy?.overstockThresholdDays ?? params.ruleDefaults?.overstockThresholdDays ?? undefined,
     moq: params.moq,
     lifecycle: forecastEntry.lifecycle,
   });
@@ -563,6 +566,7 @@ export async function computeSkuWarehouseHealth(params: {
     totalLeadDays: leadTime.totalLeadDays,
     forecastErrorStdDev: params.forecastErrorStdDev,
     profileLeadTimeStdDev: leadTime.leadTimeStdDev,
+    defaultSafetyStockDays: params.ruleDefaults?.safetyStockDays,
   });
 
   const lifecycleLabel = forecastEntry.lifecycle ?? params.sku.lifecycle ?? null;

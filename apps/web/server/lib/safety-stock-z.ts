@@ -1,8 +1,10 @@
 /** Optional Z-value safety stock methods (P3). Default remains coverage_days elsewhere. */
 
+import { DEFAULT_SAFETY_STOCK_DAYS } from './replenishment-coverage.js';
+
 export type SafetyStockMethod = 'coverage_days' | 'z_demand' | 'z_demand_leadtime';
 
-export const DEFAULT_PLANNING_SAFETY_STOCK_DAYS = 14;
+export { DEFAULT_SAFETY_STOCK_DAYS as DEFAULT_PLANNING_SAFETY_STOCK_DAYS } from './replenishment-coverage.js';
 
 export type PlanningSafetyStockPolicy = {
   safetyStockMethod?: string | null;
@@ -74,6 +76,7 @@ export function resolvePlanningSafetyStock(params: {
   totalLeadDays: number;
   forecastErrorStdDev?: number | null;
   profileLeadTimeStdDev?: number | string | null;
+  defaultSafetyStockDays?: number;
 }): { safetyStockQty: number; reorderPoint: number; method: SafetyStockMethod | 'manual'; demandStdDevSource: 'forecast_error' | 'historical' } {
   const policy = params.policy ?? null;
   const reorderPointFor = (safetyStockQty: number) =>
@@ -104,7 +107,7 @@ export function resolvePlanningSafetyStock(params: {
     totalLeadDays: params.totalLeadDays,
     avgDaily: params.avgDaily,
     leadTimeStdDev: coalesceLeadTimeStdDev(policy?.leadTimeStdDev, params.profileLeadTimeStdDev),
-    safetyStockDays: policy?.safetyStockDays ?? DEFAULT_PLANNING_SAFETY_STOCK_DAYS,
+    safetyStockDays: policy?.safetyStockDays ?? params.defaultSafetyStockDays ?? DEFAULT_SAFETY_STOCK_DAYS,
   });
   return {
     safetyStockQty,

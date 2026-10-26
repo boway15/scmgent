@@ -25,9 +25,10 @@ import {
   type SafetyStockSuggestion,
 } from './safety-stock-suggestion.js';
 import { coalesceLeadTimeStdDev, selectDemandStdDev } from './safety-stock-z.js';
+import { DEFAULT_SAFETY_STOCK_DAYS } from './replenishment-coverage.js';
 import { summarizePrecisionWindow } from './planning-demand-gate.js';
 
-export const DEFAULT_CONFIGURED_SAFETY_STOCK_DAYS = 14;
+export { DEFAULT_SAFETY_STOCK_DAYS as DEFAULT_CONFIGURED_SAFETY_STOCK_DAYS } from './replenishment-coverage.js';
 
 export type SafetyStockSuggestionRow = {
   skuId: string;
@@ -183,7 +184,7 @@ function buildSuggestionFromCaches(params: {
   }).stdDev;
 
   const configured = {
-    safetyStockDays: params.input.policy?.safetyStockDays ?? DEFAULT_CONFIGURED_SAFETY_STOCK_DAYS,
+    safetyStockDays: params.input.policy?.safetyStockDays ?? DEFAULT_SAFETY_STOCK_DAYS,
     safetyStockQty: params.input.policy?.safetyStockQty ?? 0,
     reorderPoint: params.input.policy?.reorderPoint ?? 0,
     safetyStockMethod: params.input.policy?.safetyStockMethod ?? 'coverage_days',

@@ -162,6 +162,7 @@ export function assembleWarehouseTimeline(params: {
   includeChampionShadow?: boolean;
   /** 仅销售预测曲线使用。需求计划周曲线不传。 */
   farHorizon?: ForecastHorizonContext | null;
+  coverDays?: number;
 }): {
   timeline: DailyInventoryResult;
   suggestedQty: number;
@@ -227,6 +228,7 @@ export function assembleWarehouseTimeline(params: {
     safetyStockQty: params.safetyStockQty,
     moq: params.moq,
     dailyDemandFn,
+    coverDays: params.coverDays,
   });
 
   let championTimeline: DailyInventoryResult | undefined;
@@ -247,6 +249,7 @@ export function assembleWarehouseTimeline(params: {
           params.avgDaily,
         );
       },
+      coverDays: params.coverDays,
     });
   }
 
@@ -272,6 +275,7 @@ export async function buildSkuWarehouseTimeline(params: {
   share?: ShareParseResult;
   encodingMeta?: unknown;
   includeChampionShadow?: boolean;
+  coverDays?: number;
 }): Promise<{
   timeline: DailyInventoryResult;
   suggestedQty: number;
@@ -332,6 +336,7 @@ export async function buildSkuWarehouseTimeline(params: {
     openLots,
     planningDemand,
     includeChampionShadow: params.includeChampionShadow,
+    coverDays: params.coverDays,
   });
 }
 
@@ -348,6 +353,7 @@ export async function buildSkuNetworkTimeline(params: {
   encodingMeta?: unknown;
   includeChampionShadow?: boolean;
   farHorizon?: ForecastHorizonContext | null;
+  coverDays?: number;
 }): Promise<{
   timeline: DailyInventoryResult;
   suggestedQty: number;
@@ -430,6 +436,7 @@ export async function buildSkuNetworkTimeline(params: {
     safetyStockQty: params.safetyStockQty,
     moq: params.moq,
     dailyDemandFn,
+    coverDays: params.coverDays,
   });
 
   let championTimeline: DailyInventoryResult | undefined;
@@ -450,6 +457,7 @@ export async function buildSkuNetworkTimeline(params: {
           params.avgDaily,
         );
       },
+      coverDays: params.coverDays,
     });
   }
 

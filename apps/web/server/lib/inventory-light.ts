@@ -6,6 +6,7 @@
  * 下单决策灯见 `calcTimelineDecisionHealth`（时间轴口径）；`calcInventoryHealth` 保留为影子。
  */
 
+import { REPLENISHMENT_DEFAULTS } from '../rules/replenishment/params.js';
 import { addDaysIso, diffDaysIso } from './inventory-iso-date.js';
 
 export type InventoryHealth = 'red' | 'yellow' | 'green' | 'blue' | 'gray';
@@ -80,8 +81,10 @@ export function buildGrayLifecycleSqlCondition(lifecycleColumnSql: string): stri
   return `(${conditions.join(' OR ')})`;
 }
 
-export const SLOW_MOVING_MAX_DAILY = 0.1;
-export const SLOW_MOVING_MIN_COVERAGE_DAYS = 90;
+export const SLOW_MOVING_MAX_DAILY = REPLENISHMENT_DEFAULTS.slowMovingDailyMax;
+export const SLOW_MOVING_MIN_COVERAGE_DAYS = REPLENISHMENT_DEFAULTS.slowMovingMinCoverageDays;
+
+export type SlowMovingThresholds = { maxDaily: number; minCoverageDays: number };
 
 export function isGrayLifecycle(lifecycle: string | null | undefined): boolean {
   const text = lifecycle?.trim().toLowerCase();
@@ -93,13 +96,13 @@ export function isSlowMovingStock(params: {
   effectiveQty: number;
   avgDaily: number;
   coverageDays: number;
+  thresholds?: SlowMovingThresholds;
 }): boolean {
+  const maxDaily = params.thresholds?.maxDaily ?? SLOW_MOVING_MAX_DAILY;
+  const minCoverage = params.thresholds?.minCoverageDays ?? SLOW_MOVING_MIN_COVERAGE_DAYS;
   if (params.effectiveQty <= 0) return false;
-  if (params.avgDaily > SLOW_MOVING_MAX_DAILY) return false;
-  return (
-    Number.isFinite(params.coverageDays) &&
-    params.coverageDays >= SLOW_MOVING_MIN_COVERAGE_DAYS
-  );
+  if (params.avgDaily > maxDaily) return false;
+  return Number.isFinite(params.coverageDays) && params.coverageDays >= minCoverage;
 }
 
 export function calcInventoryHealth(params: {
@@ -196,6 +199,7 @@ export function calcTimelineDecisionHealth(params: {
   lifecycle?: string | null;
   effectiveQty?: number;
   avgDaily?: number;
+  slowMoving?: SlowMovingThresholds;
 }): InventoryHealth {
   const avgDaily = params.avgDaily ?? 0;
   const effectiveQty = params.effectiveQty ?? 0;
@@ -206,6 +210,7 @@ export function calcTimelineDecisionHealth(params: {
       effectiveQty,
       avgDaily,
       coverageDays: params.confirmedCoverageDays,
+      thresholds: params.slowMoving,
     })
   ) {
     return 'gray';

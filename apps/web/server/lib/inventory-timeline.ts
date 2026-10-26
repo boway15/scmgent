@@ -3,12 +3,14 @@
  * 调用方应只传入 isLotEligibleForTimeline === true 的批次。
  */
 
+import { decideReplenishmentQty } from '../rules/replenishment/qty.js';
+import { REPLENISHMENT_DEFAULTS } from '../rules/replenishment/params.js';
 import { addDaysIso, subtractDaysIso } from './inventory-supply-lots.js';
 
 export const DEFAULT_TIMELINE_HORIZONS = [0, 7, 15, 30, 45] as const;
 
 /** 单次建议下单最多覆盖的规划需求天数。毛缺口不使用该上限。 */
-export const SINGLE_REPLENISHMENT_COVER_DAYS = 30;
+export const SINGLE_REPLENISHMENT_COVER_DAYS = REPLENISHMENT_DEFAULTS.singleCoverDays;
 
 export type TimelineLot = {
   pool: 'overseas' | 'in_transit' | 'local';
@@ -120,7 +122,10 @@ export function projectDailyInventory(params: {
   safetyStockQty: number;
   moq?: number;
   dailyDemandFn: (horizonDays: number) => number;
+  /** 单次补货覆盖天数，缺省为规则默认值 */
+  coverDays?: number;
 }): DailyInventoryResult {
+  const coverDays = params.coverDays ?? SINGLE_REPLENISHMENT_COVER_DAYS;
   const windowDays = calcTimelineWindowDays(params.totalLeadDays, params.safetyStockDays);
   const reserved = Math.max(0, params.reservedQty ?? 0);
   const horizons = displayHorizonDays(params.totalLeadDays, windowDays);
@@ -144,7 +149,7 @@ export function projectDailyInventory(params: {
     const dayDemand = params.dailyDemandFn(k);
     if (dayDemand !== 0) allDemandZero = false;
     demandCum += dayDemand;
-    if (k < SINGLE_REPLENISHMENT_COVER_DAYS) demandCoverQty += dayDemand;
+    if (k < coverDays) demandCoverQty += dayDemand;
 
     let confirmedQty = 0;
     let expectedQty = 0;
@@ -323,19 +328,13 @@ export function calcSuggestedQtyFromTimeline(params: {
   /** 单次最多覆盖的需求量；不传或 ≤0 时不封顶 */
   maxCoverQty?: number;
 }): number {
-  let raw = Math.max(
-    0,
-    Math.ceil(
-      params.cumulativeDemandAtTarget +
-        params.safetyStockQty -
-        params.projectedOverseasAtTarget,
-    ),
-  );
-  if (raw <= 0) return 0;
-  const cover = params.maxCoverQty ?? 0;
-  if (cover > 0) raw = Math.min(raw, Math.ceil(cover));
-  const moq = params.moq ?? 0;
-  return moq > 0 ? Math.max(raw, moq) : raw;
+  return decideReplenishmentQty({
+    cumulativeDemandAtTarget: params.cumulativeDemandAtTarget,
+    safetyStockQty: params.safetyStockQty,
+    supplyAtTarget: params.projectedOverseasAtTarget,
+    coverQty: params.maxCoverQty,
+    moq: params.moq,
+  });
 }
 
 /** 毛缺口（不含计划）与净缺口（含有上架日的计划）并列。 */

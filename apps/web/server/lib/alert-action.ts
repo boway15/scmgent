@@ -1,3 +1,4 @@
+import { DEFAULT_SAFETY_STOCK_DAYS } from './replenishment-coverage.js';
 import { addDaysIso } from './inventory-iso-date.js';
 
 /** 库存概览分档。同一行只取最紧急的一档。发货档按确定供给的开船窗口，不要求本仓已经可发。 */
@@ -9,7 +10,6 @@ export const ORDER_TIGHT_MAX_DAYS = 90;
 export const ORDER_MAX_DAYS = 120;
 export const HEALTHY_MAX_DAYS = 150;
 export const MILD_OVERSTOCK_MAX_DAYS = 180;
-const DEFAULT_ALERT_SAFETY_DAYS = 14;
 
 export type AlertCoverageBands = {
   orderTightMax: number;
@@ -38,7 +38,7 @@ export function alertCoverageBands(input?: {
   const safety =
     input?.safetyStockDays != null && input.safetyStockDays > 0
       ? input.safetyStockDays
-      : DEFAULT_ALERT_SAFETY_DAYS;
+      : DEFAULT_SAFETY_STOCK_DAYS;
   const orderTightMax = Math.max(ORDER_TIGHT_MAX_DAYS, total);
   const orderMax = Math.max(ORDER_MAX_DAYS, total + safety);
   const healthyMax = Math.max(HEALTHY_MAX_DAYS, orderMax + 30);

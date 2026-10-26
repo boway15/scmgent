@@ -729,6 +729,13 @@
       "when": 1787487200000,
       "tag": "0122_drop_procurement_costing_menu",
       "breakpoints": true
+    },
+    {
+      "idx": 104,
+      "version": "6",
+      "when": 1787573600000,
+      "tag": "0123_rule_param_sets",
+      "breakpoints": true
     }
   ]
 }

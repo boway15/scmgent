@@ -22,3 +22,4 @@ export * from './shipments';
 export * from './inventory-supply-lots';
 export * from './inventory-data-issues';
 export * from './inventory-dest-allocations';
+export * from './rules';

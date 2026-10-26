@@ -191,12 +191,18 @@ export type ReplenishmentHealthDryRow = {
 
 默认抽样：最近有补货建议的在售 SKU 最多 300 个，加上其余在售 SKU 按编码顺序取 200 个；抽中的 SKU id 写进基线文件，`compare` 用同一批 SKU。`--full` 跑全部在售 SKU（全量单次可能超过 1 小时，只在 Task 10 收尾时用）。
 
+脚本在 `apps/web/scripts/` 下执行，`dotenv/config` 找不到仓库根的 `.env`。必须先显式加载 `../../../.env`（从 `apps/web/scripts` 上溯三级到仓库根），再用动态 `import` 加载 `@scm/db` 和补货任务，否则数据库客户端会在环境变量就绪前初始化。
+
 ```ts
-import 'dotenv/config';
+import { config } from 'dotenv';
 import { readFileSync, writeFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { and, asc, desc, eq, notInArray } from 'drizzle-orm';
-import { db, reorderSuggestions, skus } from '@scm/db';
-import { runReplenishmentForecast } from '../server/tasks/replenishmentForecast.js';
+
+config({ path: resolve(import.meta.dirname, '../../../.env') });
+
+const { db, reorderSuggestions, skus } = await import('@scm/db');
+const { runReplenishmentForecast } = await import('../server/tasks/replenishmentForecast.js');
 
 const SAMPLE_WITH_SUGGESTIONS = 300;
 const SAMPLE_OTHERS = 200;

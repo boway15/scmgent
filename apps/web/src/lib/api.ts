@@ -1322,6 +1322,43 @@ export type SkuForecastContext = {
   profileSegment: string | null;
 };
 
+export type RuleParamSpec =
+  | { kind: 'int' | 'number'; label: string; unit?: string; default: number; min: number; max: number; help?: string }
+  | { kind: 'boolean'; label: string; default: boolean; help?: string }
+  | { kind: 'enum'; label: string; default: string; options: Array<{ value: string; label: string }>; help?: string };
+
+export type RuleModuleView = {
+  code: string;
+  name: string;
+  description: string;
+  version: number;
+  scopes: string[];
+  params: Record<string, RuleParamSpec>;
+};
+
+export type RuleParamSetStatus = 'draft' | 'pending_approval' | 'active' | 'archived';
+
+export type RuleParamSetView = {
+  id: string;
+  moduleCode: string;
+  scopeType: string;
+  scopeValue: string;
+  params: Record<string, number | boolean | string>;
+  version: number;
+  status: RuleParamSetStatus;
+  note: string | null;
+  reviewNote: string | null;
+  simulatedAt: string | null;
+  updatedAt: string;
+};
+
+export type RuleSimulationRow = {
+  skuCode: string;
+  warehouseCode: string;
+  before: { suggestedQty: number; suggestedDate: string; healthStatus: string } | null;
+  after: { suggestedQty: number; suggestedDate: string; healthStatus: string } | null;
+};
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const url = apiUrl(path);
   let res: Response;
@@ -5325,6 +5362,37 @@ export const api = {
       refreshed: number;
       whitelistSize: number;
     }>('/api/quality/reinspection/sync', { method: 'POST' }),
+  getRuleModules: () => request<{ items: RuleModuleView[] }>('/api/rules'),
+  getRuleParamSets: (module: string) =>
+    request<{ items: RuleParamSetView[] }>(`/api/rules/${module}/param-sets`),
+  createRuleParamSet: (
+    module: string,
+    data: { scopeType: string; scopeValue?: string; params: Record<string, unknown>; note: string },
+  ) =>
+    request<RuleParamSetView>(`/api/rules/${module}/param-sets`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+  updateRuleParamSet: (module: string, id: string, data: { params?: Record<string, unknown>; note?: string }) =>
+    request<RuleParamSetView>(`/api/rules/${module}/param-sets/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(data),
+    }),
+  simulateRuleParamSet: (module: string, id: string, data: { skuCodes?: string[]; projectGroup?: string }) =>
+    request<{ rows: RuleSimulationRow[]; changed: number; total: number; skuCount: number; maxSkus: number }>(
+      `/api/rules/${module}/param-sets/${id}/simulate`,
+      { method: 'POST', body: JSON.stringify(data) },
+    ),
+  ruleParamSetAction: (
+    module: string,
+    id: string,
+    action: 'submit' | 'approve' | 'reject' | 'restore',
+    data?: { reviewNote?: string },
+  ) =>
+    request<RuleParamSetView>(`/api/rules/${module}/param-sets/${id}/${action}`, {
+      method: 'POST',
+      body: JSON.stringify(data ?? {}),
+    }),
 };
 
 async function downloadAttachment(res: Response, fallbackName: string) {

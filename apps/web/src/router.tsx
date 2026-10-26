@@ -41,6 +41,7 @@ import { BulkStockRequestPage, ProcurementFollowUpPage } from '@/pages/Procureme
 import { HomeRedirect } from '@/components/HomeRedirect';
 import { PlaceholderPage } from '@/pages/PlaceholderPage';
 import { SystemTasksPage } from '@/pages/SystemTasksPage';
+import { RuleCenterPage } from '@/pages/RuleCenterPage';
 import { QcReinspectionPage } from '@/pages/QcReinspectionPage';
 export function AppRouter() {
   return (
@@ -110,6 +111,7 @@ export function AppRouter() {
           <Route path="system/roles" element={<RoleMenusPage />} />
           <Route path="system/logs" element={<AuditLogsPage />} />
           <Route path="system/tasks" element={<SystemTasksPage />} />
+          <Route path="system/rules" element={<RuleCenterPage />} />
           <Route path="intel/news" element={<NewsIntelPage />} />
           <Route path="cs/quality" element={<CsReplyQualityPage />} />
           <Route path="system/menus" element={<Navigate to="/system/roles" replace />} />

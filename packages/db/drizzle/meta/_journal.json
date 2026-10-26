@@ -736,6 +736,13 @@
       "when": 1787573600000,
       "tag": "0123_rule_param_sets",
       "breakpoints": true
+    },
+    {
+      "idx": 105,
+      "version": "6",
+      "when": 1787573700000,
+      "tag": "0124_rule_center_menu",
+      "breakpoints": true
     }
   ]
 }

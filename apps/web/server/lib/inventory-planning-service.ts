@@ -56,10 +56,9 @@ import {
   attachHealthStatusToWarehouses,
   loadLatestHealthByWarehouseForSku,
 } from './sku-health-aggregate.js';
-import {
-  DEFAULT_OVERSTOCK_THRESHOLD_DAYS,
-  DEFAULT_SAFETY_STOCK_DAYS,
-} from './replenishment-coverage.js';
+import { DEFAULT_OVERSTOCK_THRESHOLD_DAYS } from './replenishment-coverage.js';
+import { createParamsResolver, loadActiveParamSets } from '../rules/core/store.js';
+import { REPLENISHMENT_PARAMS, replenishmentRule, resolveMoqByPriority } from '../rules/replenishment/index.js';
 import {
   evaluateDemandGate,
   isDemandReconstructCapHit,
@@ -288,6 +287,11 @@ export function buildSkuPlanningView(input: {
   demandGate?: ReturnType<typeof evaluateDemandGate>;
   latePoActions?: LatePoAction[];
   isAccessory?: boolean;
+  ruleParams?: {
+    overstockThresholdDays: number;
+    slowMovingDailyMax: number;
+    slowMovingMinCoverageDays: number;
+  };
 }): SkuPlanningView {
   const reorderPoint = Number(input.health.metrics.reorderPoint);
   const stockoutFromTimeline = input.timeline?.stockoutDateConfirmed ?? null;
@@ -308,7 +312,9 @@ export function buildSkuPlanningView(input: {
       totalLeadDays: input.timeline.totalLeadDays,
       safetyStockDays: input.health.coverage.safetyStockDays,
       overstockThresholdDays:
-        input.health.coverage.overstockThresholdDays ?? DEFAULT_OVERSTOCK_THRESHOLD_DAYS,
+        input.health.coverage.overstockThresholdDays ??
+        input.ruleParams?.overstockThresholdDays ??
+        DEFAULT_OVERSTOCK_THRESHOLD_DAYS,
       suggestedQty:
         input.timelineSuggestedQty != null
           ? input.timelineSuggestedQty
@@ -320,6 +326,12 @@ export function buildSkuPlanningView(input: {
       lifecycle: input.health.lifecycle,
       effectiveQty: input.health.position.effectiveQty,
       avgDaily: input.health.avgDaily,
+      slowMoving: input.ruleParams
+        ? {
+            maxDaily: input.ruleParams.slowMovingDailyMax,
+            minCoverageDays: input.ruleParams.slowMovingMinCoverageDays,
+          }
+        : undefined,
     });
   }
 
@@ -408,6 +420,7 @@ export async function getSkuNetworkPlanningView(params: {
       spuId: skus.spuId,
       skuMoq: skus.moq,
       spuMoq: spus.moq,
+      projectGroup: skus.projectGroup,
       merchantCode: skus.merchantCode,
       leadTimeDays: skus.leadTimeDays,
       unitCost: skus.unitCost,
@@ -418,6 +431,12 @@ export async function getSkuNetworkPlanningView(params: {
     .where(eq(skus.id, params.skuId))
     .limit(1);
   if (!sku) return null;
+
+  const resolveRuleParams = createParamsResolver(
+    REPLENISHMENT_PARAMS,
+    await loadActiveParamSets(replenishmentRule.code),
+  );
+  const ruleParams = resolveRuleParams({ projectGroup: sku.projectGroup }).values;
 
   const [policies, forecastBySkuId, physicalWh, openLots, openLotRows, unallocatedNetworkQty, lead] =
     await Promise.all([
@@ -478,8 +497,8 @@ export async function getSkuNetworkPlanningView(params: {
   const safetyStockDays = policies
     .filter((row) => !NETWORK_VIEW_EXCLUDED_WAREHOUSES.has(row.warehouseCode))
     .reduce(
-      (max, row) => Math.max(max, row.safetyStockDays ?? DEFAULT_SAFETY_STOCK_DAYS),
-      DEFAULT_SAFETY_STOCK_DAYS,
+      (max, row) => Math.max(max, row.safetyStockDays ?? ruleParams.defaultSafetyStockDays),
+      ruleParams.defaultSafetyStockDays,
     );
   const networkSafety = {
     safetyStockDays,
@@ -567,7 +586,8 @@ export async function getSkuNetworkPlanningView(params: {
       totalLeadDays: leadTime.totalLeadDays,
       safetyStockDays: networkSafety.safetyStockDays,
       safetyStockQty: networkSafety.safetyStockQty,
-      moq: sku.skuMoq || sku.spuMoq || undefined,
+      moq: resolveMoqByPriority(sku.skuMoq, sku.spuMoq, ruleParams.moqPriority) || undefined,
+      coverDays: ruleParams.singleCoverDays,
       includeChampionShadow: true,
     });
     timeline = built.timeline;
@@ -615,7 +635,7 @@ export async function getSkuNetworkPlanningView(params: {
           today: timeline.today,
           totalLeadDays: timeline.totalLeadDays,
           safetyStockDays: networkSafety.safetyStockDays,
-          overstockThresholdDays: DEFAULT_OVERSTOCK_THRESHOLD_DAYS,
+          overstockThresholdDays: ruleParams.overstockThresholdDays,
           suggestedQty: timelineSuggestedQty ?? timeline.suggestedQty,
           uncoverableByNewPo: timeline.uncoverableByNewPo,
           stockoutDateConfirmed: timeline.stockoutDateConfirmed,
@@ -624,6 +644,10 @@ export async function getSkuNetworkPlanningView(params: {
           lifecycle: forecastEntry.lifecycle,
           effectiveQty: totalEffective,
           avgDaily,
+          slowMoving: {
+            maxDaily: ruleParams.slowMovingDailyMax,
+            minCoverageDays: ruleParams.slowMovingMinCoverageDays,
+          },
         })
       : 'green';
 
@@ -641,7 +665,7 @@ export async function getSkuNetworkPlanningView(params: {
       metrics: { reorderPoint: avgDaily * leadTime.totalLeadDays },
       coverage: {
         safetyStockDays: networkSafety.safetyStockDays,
-        overstockThresholdDays: DEFAULT_OVERSTOCK_THRESHOLD_DAYS,
+        overstockThresholdDays: ruleParams.overstockThresholdDays,
       },
       position,
       leadTime,
@@ -660,6 +684,7 @@ export async function getSkuNetworkPlanningView(params: {
     championStockoutDateConfirmed,
     championSuggestedQty,
     isAccessory: isAccessorySku({ code: sku.code, skuKind: sku.skuKind }),
+    ruleParams,
   });
 }
 
@@ -680,6 +705,7 @@ export async function getSkuPlanningView(params: {
       spuId: skus.spuId,
       skuMoq: skus.moq,
       spuMoq: spus.moq,
+      projectGroup: skus.projectGroup,
       merchantCode: skus.merchantCode,
       leadTimeDays: skus.leadTimeDays,
       unitCost: skus.unitCost,
@@ -690,6 +716,11 @@ export async function getSkuPlanningView(params: {
     .where(eq(skus.id, params.skuId))
     .limit(1);
   if (!sku) return null;
+
+  const resolveRuleParams = createParamsResolver(
+    REPLENISHMENT_PARAMS,
+    await loadActiveParamSets(replenishmentRule.code),
+  );
 
   const warehouseCondition = and(
     eq(warehouses.isActive, true),
@@ -706,6 +737,11 @@ export async function getSkuPlanningView(params: {
     .orderBy(warehouses.sortOrder)
     .limit(1);
   if (!warehouse) return null;
+
+  const ruleParams = resolveRuleParams({
+    projectGroup: sku.projectGroup,
+    warehouse: warehouse.code,
+  }).values;
 
   const [policies, salesBySkuId, forecastBySkuId, etaLots] = await Promise.all([
     db.select().from(safetyStockConfig).where(eq(safetyStockConfig.skuId, sku.id)),
@@ -769,7 +805,11 @@ export async function getSkuPlanningView(params: {
     planningDemand,
     forecastErrorStdDev: accuracySummary.errorStdDev,
     share,
-    moq: sku.skuMoq || sku.spuMoq || undefined,
+    moq: resolveMoqByPriority(sku.skuMoq, sku.spuMoq, ruleParams.moqPriority) || undefined,
+    ruleDefaults: {
+      safetyStockDays: ruleParams.defaultSafetyStockDays,
+      overstockThresholdDays: ruleParams.overstockThresholdDays,
+    },
   });
   const etaAvailableNearest = pickNearestEtaAvailable(etaLots, warehouse.code);
 
@@ -789,7 +829,8 @@ export async function getSkuPlanningView(params: {
       totalLeadDays: health.totalLeadDays,
       safetyStockDays: health.coverage.safetyStockDays,
       safetyStockQty,
-      moq: sku.skuMoq || sku.spuMoq || undefined,
+      moq: resolveMoqByPriority(sku.skuMoq, sku.spuMoq, ruleParams.moqPriority) || undefined,
+      coverDays: ruleParams.singleCoverDays,
       share,
       includeChampionShadow: true,
     });
@@ -911,5 +952,6 @@ export async function getSkuPlanningView(params: {
     demandGate,
     latePoActions,
     isAccessory: isAccessorySku({ code: sku.code, skuKind: sku.skuKind }),
+    ruleParams,
   });
 }

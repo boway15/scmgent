@@ -74,8 +74,8 @@ flowchart LR
 | 文件 | 内容 |
 |------|------|
 | `params.ts` | zod 参数 schema：每项含中文名、单位、默认值、取值范围、说明；规则中心表单据此渲染 |
-| `evaluate.ts` | 纯函数 `evaluate(facts, params) → RuleResult`，不访问数据库 |
-| `index.ts` | `defineRuleModule({ code, name, version, params, scopes, evaluate })` |
+| `evaluate.ts` 等 | 纯函数判断（如备货的 `decideReplenishmentQty`、`decideWarehouseCandidate`），输入事实与参数、输出结论与 trace，不访问数据库。各模块的事实类型不同，判断函数按模块各自导出，不强求统一签名 |
+| `index.ts` | `defineRuleModule({ code, name, description, version, params, scopes })` 模块元数据，并 re-export 判断函数 |
 | `*.test.ts` | 参数边界与判断分支单测 |
 
 注册表：`apps/web/server/rules/registry.ts`，列出全部模块；规则中心页面与 API 按注册表自动生成。
@@ -115,7 +115,9 @@ export const replenishmentRule = defineRuleModule({
 | `params` | jsonb | 仅存该层覆盖的键（稀疏），未出现的键向上继承 |
 | `version` | int | 同 `(module_code, scope_type, scope_value)` 内递增 |
 | `status` | varchar | `draft` / `pending_approval` / `active` / `archived` |
-| `note` | text | 修改说明（提交必填） |
+| `note` | text | 修改说明（新建必填） |
+| `review_note` | text | 驳回原因 |
+| `simulated_at` | timestamptz | 最近一次试算时间；为空不可提交 |
 | `created_by` / `approved_by` | uuid | 用户 |
 | `approved_at` / `activated_at` | timestamptz | |
 
@@ -147,14 +149,16 @@ export const replenishmentRule = defineRuleModule({
 | 动作 | 角色 |
 |------|------|
 | 查看参数、查看试算结果 | 所有可访问规则中心的登录用户 |
-| 新建 / 编辑草稿、发起试算、提交审批 | 计划 / PMC 角色、管理员 |
-| 审批生效、驳回、回滚到历史版本 | 管理员（`super_admin` 及管理员角色） |
+| 新建 / 编辑草稿、发起试算、提交审批、从历史版本恢复 | `pmc_planner`、`super_admin` |
+| 审批生效、驳回 | `super_admin` |
 
-通过现有 `requireRole` 实现。计划 / PMC 对应的具体 `roles.code` 在实现计划中对照 `docs/sql/miaoda-seed-roles-menus.sql` 与库内角色确认。
+通过现有 `requireRole` 实现（`super_admin` 默认放行）。查看权限由菜单 `system.rules` 授予 `super_admin`、`pmc_planner`、`viewer`。
 
 ### 5.4 试算
 
-`POST /rules/:module/simulate`：入参为草稿参数集 id 与 SKU 范围（项目组 / SKU 列表，上限 200 个 SKU）。对同一份事实分别用「当前生效」与「草稿」参数评估，返回逐行差异（建议量、日期、灯色、trace）。试算写 `rule_eval_runs`（`trigger = simulation`），不写建议表。
+`POST /rules/:module/param-sets/:id/simulate`：入参为 SKU 范围（项目组或 SKU 列表），第 0 期同步执行，**单次最多 50 个 SKU**（补货计算逐 SKU 逐仓查库，更大范围需改异步任务）。对同一份事实分别用「当前生效」与「草稿」参数以 dry-run 方式评估，返回有差异的行（建议量、日期、灯色）。试算不写建议表、不写健康快照；成功后记录草稿的 `simulated_at`，草稿再次编辑会清空它。
+
+审批流转：`draft` →（试算后）提交 → `pending_approval` → 管理员审批 → `active`（同作用范围旧 `active` 归档）；驳回则回到 `draft` 并记录 `review_note`。回滚 = 从 `archived` 版本「恢复为草稿」，再走一遍试算与审批。
 
 ## 6. 第 0 期：框架 + 备货规则
 
@@ -167,7 +171,7 @@ export const replenishmentRule = defineRuleModule({
 | 判断 | 补不补、补多少、何时下单、人工确认、黄灯联动、US 仓网延后 | `apps/web/server/rules/replenishment/` |
 | 落库 | 写建议、健康快照、回写安全库存、记录 run | 留在 `tasks/replenishmentForecast.ts` |
 
-**需要外移的逻辑**：「单次补货 30 天封顶」与「MOQ 抬升」当前在时间轴内部计算 `suggestedQty`。第 0 期改为时间轴只输出净缺口、毛缺口、30 天规划需求等事实，封顶与 MOQ 由备货规则执行。SKU 规划页（`inventory-planning-service.ts`）同步改为调用备货规则得到建议量，保证页面与任务同源。
+**需要外移的逻辑**：「单次补货 30 天封顶」与「MOQ 抬升」当前在时间轴内部计算 `suggestedQty`。第 0 期把这段计算移到 `rules/replenishment/qty.ts`（`decideReplenishmentQty`），时间轴委托调用并接收 `coverDays` 入参；时间轴结果仍保留 `suggestedQty` 字段，因为有十余处调用方在读，彻底改为「只输出缺口」放到第 2 期预警迁移时一并处理。SKU 规划页（`inventory-planning-service.ts`）与补货任务读同一套解析后的参数，保证同源。
 
 ### 6.2 备货规则参数（第一批）
 
@@ -177,26 +181,22 @@ export const replenishmentRule = defineRuleModule({
 |--------|--------|------|----------|
 | `singleCoverDays` | 单次补货覆盖天数 | 30 | `inventory-timeline.ts` `SINGLE_REPLENISHMENT_COVER_DAYS` |
 | `defaultSafetyStockDays` | 默认安全库存天数 | 14 | 4 处重复常量，合并为此参数 |
-| `defaultProductionLeadDays` | 默认生产交期 | 50 | `replenishment-coverage.ts` |
-| `defaultInboundBufferDays` | 默认入仓缓冲 | 7 | 同上 |
-| `overstockThresholdDays` | 超储阈值 | 180 | 同上 |
+| `overstockThresholdDays` | 超储阈值 | 180 | `replenishment-coverage.ts` |
 | `slowMovingDailyMax` | 滞销日均上限 | 0.1 | `inventory-light.ts` |
 | `slowMovingMinCoverageDays` | 滞销覆盖下限 | 90 | `inventory-light.ts` `SLOW_MOVING_MIN_COVERAGE_DAYS` |
 | `moqPriority` | MOQ 取值顺序 | `sku_then_spu` | `replenishment.ts` `resolveEffectiveMoq` |
-| `yellowLightLinkage` | 黄灯联动（同 SPU 有红灯必补才补） | `true` | `replenish-light.ts` |
+| `yellowLightLinkage` | 黄灯联动（关 = 黄灯与红灯一样需要即补） | `true` | `replenish-light.ts` |
 | `usNetworkDeferEnabled` | US 仓网延后 | `true` | `warehouse-domain.ts` |
-| `farHorizonBufferEnabled` | 远期预测缓冲 | `true` | 网络时间轴 |
-| `farHorizonAClassMultiplier` | A 类远期倍数 | 1.1 | 同上 |
-| `demandReconstructCapRatio` | 需求反推封顶倍数 | 1.5 | `forecast-demand-unconstrain.ts` `UNCONSTRAIN_CAP_RATIO` |
 
 说明：
 
 - 被其他模块共用的参数（如默认安全库存天数）第 0 期挂在备货模块下；第 1 期起出货、预警模块通过「引用备货参数」读取，不再各自定义。
-- 驾驶舱 / 预警中对「单次补货 30 天封顶」的引用，改为读取已解析的备货参数；分档逻辑本身不在第 0 期改动。
+- **移出第 0 期的参数**：默认生产交期（50）、默认入仓缓冲（7）是交期事实的兜底值，属于事实层配置；远期预测缓冲（A 类 ×1.1 / B 类 P90）与需求反推封顶倍数（1.5）属于需求域，同时影响需求计划生成，只在备货侧改会造成口径分裂。这几项后续单独设计。
+- 驾驶舱、预警、需求计划服务中对这些参数的引用，第 0 期仍用代码默认值，第 2 期迁移时统一读取解析后的参数。规则中心页面需提示这一点。
 
 ### 6.3 规则中心页面
 
-- 菜单新增「规则中心」，路由 `/settings/rules`，每个已注册模块一个标签页。
+- 菜单「系统设置」下新增「规则中心」（菜单 code `system.rules`），路由 `/system/rules`，与现有系统页一致；每个已注册模块一个标签页。
 - 标签页内容：参数表（全局值 + 覆盖了哪些项目组 / 仓）、版本历史、待审批列表、试算入口。
 - 参数表单由模块 `params.ts` 的 schema 生成，展示中文名、单位、默认值、取值范围、说明。
 - UI 遵循 `scm-design` Skill 规范。
@@ -210,9 +210,10 @@ export const replenishmentRule = defineRuleModule({
 | GET | `/rules/:module/resolved` | 查询某作用范围组合下的最终生效参数及每个键的来源层 |
 | POST | `/rules/:module/param-sets` | 新建草稿 |
 | PATCH | `/rules/:module/param-sets/:id` | 编辑草稿 |
+| POST | `/rules/:module/param-sets/:id/simulate` | 试算 |
 | POST | `/rules/:module/param-sets/:id/submit` | 提交审批 |
 | POST | `/rules/:module/param-sets/:id/approve` / `reject` | 管理员审批 / 驳回 |
-| POST | `/rules/:module/simulate` | 试算 |
+| POST | `/rules/:module/param-sets/:id/restore` | 从历史版本恢复为草稿 |
 
 ### 6.5 迁移不改结果的保证
 

@@ -189,10 +189,38 @@ export type ReplenishmentHealthDryRow = {
 
 `apps/web/scripts/replenishment-baseline.ts`：
 
+默认抽样：最近有补货建议的在售 SKU 最多 300 个，加上其余在售 SKU 按编码顺序取 200 个；抽中的 SKU id 写进基线文件，`compare` 用同一批 SKU。`--full` 跑全部在售 SKU（全量单次可能超过 1 小时，只在 Task 10 收尾时用）。
+
 ```ts
 import 'dotenv/config';
 import { readFileSync, writeFileSync } from 'node:fs';
+import { and, asc, desc, eq, notInArray } from 'drizzle-orm';
+import { db, reorderSuggestions, skus } from '@scm/db';
 import { runReplenishmentForecast } from '../server/tasks/replenishmentForecast.js';
+
+const SAMPLE_WITH_SUGGESTIONS = 300;
+const SAMPLE_OTHERS = 200;
+
+async function pickSampleSkuIds(): Promise<string[]> {
+  const suggested = await db
+    .selectDistinct({ id: skus.id, generatedAt: reorderSuggestions.generatedAt })
+    .from(reorderSuggestions)
+    .innerJoin(skus, eq(reorderSuggestions.skuId, skus.id))
+    .where(eq(skus.isActive, true))
+    .orderBy(desc(reorderSuggestions.generatedAt));
+  const withSuggestions = [...new Set(suggested.map((r) => r.id))].slice(0, SAMPLE_WITH_SUGGESTIONS);
+  const others = await db
+    .select({ id: skus.id })
+    .from(skus)
+    .where(
+      withSuggestions.length
+        ? and(eq(skus.isActive, true), notInArray(skus.id, withSuggestions))
+        : eq(skus.isActive, true),
+    )
+    .orderBy(asc(skus.code))
+    .limit(SAMPLE_OTHERS);
+  return [...withSuggestions, ...others.map((r) => r.id)];
+}
 
 type Row = Record<string, string | number | boolean>;
 
@@ -226,23 +254,39 @@ function diffRows(name: string, base: Row[], next: Row[]): string[] {
   return out;
 }
 
+type Baseline = {
+  /** null 表示全量 */
+  skuIds: string[] | null;
+  suggestions: Row[];
+  health: Row[];
+};
+
 async function main() {
-  const [mode, file] = process.argv.slice(2);
+  const args = process.argv.slice(2);
+  const full = args.includes('--full');
+  const [mode, file] = args.filter((a) => !a.startsWith('--'));
   if ((mode !== 'export' && mode !== 'compare') || !file) {
-    console.error('用法: tsx scripts/replenishment-baseline.ts <export|compare> <file.json>');
+    console.error('用法: tsx scripts/replenishment-baseline.ts <export|compare> <file.json> [--full]');
     process.exit(2);
   }
-  const result = await runReplenishmentForecast({ dryRun: true });
-  const current = {
+  const base = mode === 'compare' ? (JSON.parse(readFileSync(file, 'utf8')) as Baseline) : null;
+  const skuIds = base ? base.skuIds : full ? null : await pickSampleSkuIds();
+  const started = Date.now();
+  const result = await runReplenishmentForecast({ dryRun: true, ...(skuIds ? { skuIds } : {}) });
+  const current: Baseline = {
+    skuIds,
     suggestions: sortRows(result.dry?.suggestions ?? []),
     health: sortRows(result.dry?.health ?? []),
   };
+  const seconds = Math.round((Date.now() - started) / 1000);
   if (mode === 'export') {
     writeFileSync(file, JSON.stringify(current, null, 2), 'utf8');
-    console.log(`已导出 ${current.suggestions.length} 条建议、${current.health.length} 条健康行 → ${file}`);
+    console.log(
+      `已导出 ${skuIds ? `${skuIds.length} 个 SKU` : '全量'}：${current.suggestions.length} 条建议、${current.health.length} 条健康行，用时 ${seconds}s → ${file}`,
+    );
     process.exit(0);
   }
-  const base = JSON.parse(readFileSync(file, 'utf8')) as typeof current;
+  if (!base) process.exit(2);
   const diffs = [
     ...diffRows('suggestions', base.suggestions, current.suggestions),
     ...diffRows('health', base.health, current.health),
@@ -272,7 +316,12 @@ Expected: `fail 0`
 前置：本地数据库为一份生产快照（按 `docs/local-server-release-sop.md` 恢复），`.env` 指向它。
 
 Run: `pnpm --filter @scm/web exec tsx scripts/replenishment-baseline.ts export ../../.tmp-rules-baseline.json`
-Expected: 输出「已导出 N 条建议、M 条健康行」，N、M > 0。
+Expected: 输出「已导出 K 个 SKU：N 条建议、M 条健康行」，K ≈ 500，N、M > 0。
+
+然后立即跑一次 compare，确认 dry-run 结果可重复（同一代码两次运行一致）：
+
+Run: `pnpm --filter @scm/web exec tsx scripts/replenishment-baseline.ts compare ../../.tmp-rules-baseline.json`
+Expected: `与基线一致`。若不一致，说明计算本身有不确定性（如依赖当前时刻），须先查明原因再继续。
 
 基线文件不提交（`.tmp-*` 前缀）。**时间轴依赖当天日期，基线对照须在同一天完成**；跨天时按 Task 8 Step 1 用 worktree 重新导出基线。
 
@@ -2800,6 +2849,9 @@ cd ../scm-agent && git worktree remove ../scm-agent-baseline
 确认 `SELECT count(*) FROM rule_param_sets WHERE status = 'active';` 为 0，然后：
 
 Run: `pnpm --filter @scm/web exec tsx scripts/replenishment-baseline.ts compare ../../.tmp-rules-baseline.json`
+Expected: `与基线一致`
+
+再做一次全量对照：在 baseline worktree 中 `export ../../.tmp-rules-baseline-full.json --full`，回到主目录 `compare ../../.tmp-rules-baseline-full.json`（全量单次可能超过 1 小时，两次须同一天完成）。
 Expected: `与基线一致`
 
 - [ ] **Step 2: 全量相关测试**

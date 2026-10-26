@@ -1,77 +1,78 @@
-# Task 3 Report：从 M1 拷贝存储与预处理
+# Task 3 Report: 备货规则模块（参数 + 纯函数判断）
 
 ## Status
 
 **DONE**
 
-## 实现内容
-
-- 从 `feature/product-costing-bom-m1` 精确检出存储、项目编号、BOM 合并、工作流输出解析及 PPTX/PDF 预处理文件。
-- 保留 Task 2 的 `types.ts` 与 `bom-math.ts`，未从 M1 覆盖。
-- `parseWorkflowLines` 使用 Task 2 的 `normalizeAiLine`，返回包含 `origin` 的规范化 BOM 行。
-- `mergeBomLines` 对缺少 `origin` 的旧草稿行回填 `explicit`，并增加回归断言。
-- 未修改预处理算法。
-
-## TDD 记录
-
-- 新增 `origin` 回归断言后单独运行 `merge-lines.test.ts`，按预期以 `undefined !== 'explicit'` RED。
-- 增加最小兼容处理后，指定测试集转为 GREEN。
-
-## 验证结果
-
-- Task 3 指定命令：**7/7 tests PASS，5/5 suites PASS**。
-- IDE linter：`apps/web/server/lib/product-costing` 无错误。
-- `git diff --cached --check`：提交前通过。
-- 提交仅包含 14 个 `apps/web/server/lib/product-costing` 任务文件；未纳入工作区其他修改或未跟踪文件。
-
 ## Commit
 
-`6023290 feat(costing): port M1 storage and PPTX preprocess`
+- SHA: `6d07ad4943d57896ea8dab26fa54a81491d89077`
+- Subject: `feat(rules): replenishment rule module params and pure decisions`
+
+## Files Changed (7)
+
+| File | Action |
+|------|--------|
+| `apps/web/server/rules/replenishment/params.ts` | Created |
+| `apps/web/server/rules/replenishment/qty.ts` | Created |
+| `apps/web/server/rules/replenishment/qty.test.ts` | Created |
+| `apps/web/server/rules/replenishment/evaluate.ts` | Created |
+| `apps/web/server/rules/replenishment/evaluate.test.ts` | Created |
+| `apps/web/server/rules/replenishment/index.ts` | Created |
+| `apps/web/server/rules/registry.ts` | Created |
+
+No changes to `replenishmentForecast.ts`, timeline, or database (per scope).
+
+## TDD: RED / GREEN
+
+### qty.test.ts — RED (Step 3)
+
+```text
+Command: pnpm --filter @scm/web exec tsx --test server/rules/replenishment/qty.test.ts
+Exit code: 1
+Error [ERR_MODULE_NOT_FOUND]: Cannot find module '.../replenishment/qty.js'
+ℹ fail 1
+```
+
+### qty.test.ts — GREEN (Step 5)
+
+```text
+Command: pnpm --filter @scm/web exec tsx --test server/rules/replenishment/qty.test.ts
+Exit code: 0
+ℹ tests 5
+ℹ pass 5
+ℹ fail 0
+```
+
+### evaluate.test.ts — RED (Step 7)
+
+```text
+Command: pnpm --filter @scm/web exec tsx --test server/rules/replenishment/evaluate.test.ts
+Exit code: 1
+Error [ERR_MODULE_NOT_FOUND]: Cannot find module '.../replenishment/evaluate.js'
+ℹ fail 1
+```
+
+### Both — GREEN (Step 9)
+
+```text
+Command: pnpm --filter @scm/web exec tsx --test server/rules/replenishment/qty.test.ts server/rules/replenishment/evaluate.test.ts
+Exit code: 0
+ℹ tests 16
+ℹ suites 4
+ℹ pass 16
+ℹ fail 0
+```
+
+## Self-Review
+
+- **Imports**: Task 2 core (`param.js`, `define.js`) used as specified. `InventoryHealth` from `replenishment-coverage.js` re-exports correctly. `needsReplenishmentByHealth`, `shouldReplenishByLight` wired in `evaluate.ts`.
+- **Defaults**: `REPLENISHMENT_DEFAULTS` via `defaultsOf(REPLENISHMENT_PARAMS)` — singleCoverDays 30, defaultSafetyStockDays 14, overstockThresholdDays 180, slowMovingDailyMax 0.1, slowMovingMinCoverageDays 90, moqPriority `sku_then_spu`, yellowLightLinkage true, usNetworkDeferEnabled true.
+- **Registry**: `RULE_MODULES` contains `replenishmentRule`; `getRuleModule('replenishment')` resolves.
+- **Pure functions**: `decideReplenishmentQty` matches timeline gap/cover/MOQ semantics from brief tests. `decideWarehouseCandidate` trace items align with skip/include paths tested.
+- **Gap**: `isUsDeferEnabled` exported but untested (brief did not require tests); trivial passthrough.
 
 ## Concerns
 
-- Brief 的 Produces 列表写为 `nextCostingProjectNo`，但指定 M1 源文件实际导出 `buildProjectNo` 与 `randomProjectSuffix`。为遵守“从分支检出、不要改业务语义”，本任务保留 M1 原导出，后续调用方需确认接口命名。
-
----
-
-## Review fix: export `nextCostingProjectNo`
-
-**Status:** DONE
-
-**Change:** `project-no.ts` 新增 `nextCostingProjectNo()`，实现与 M1 `service.ts` 一致：`buildProjectNo(new Date(), randomProjectSuffix())`。
-
-**Import check:**
-
-```
-cd apps/web && pnpm exec tsx -e "import { nextCostingProjectNo } from './server/lib/product-costing/project-no.ts'; console.log(typeof nextCostingProjectNo, nextCostingProjectNo());"
-function CST-20260813-8438
-```
-
-**Covering tests:**
-
-```
-cd apps/web && pnpm exec tsx --test server/lib/product-costing/storage.test.ts server/lib/product-costing/merge-lines.test.ts server/lib/product-costing/parse-workflow-output.test.ts
-```
-
-```
-▶ mergeBomLines
-  ✔ sums qty for same material+spec+unit (4.6732ms)
-✔ mergeBomLines (9.4084ms)
-▶ parseWorkflowLines
-  ✔ parses stringified lines (6.4221ms)
-✔ parseWorkflowLines (10.5041ms)
-▶ resolveStoragePath
-  ✔ rejects path traversal (1.5868ms)
-  ✔ accepts project-relative paths (0.8196ms)
-✔ resolveStoragePath (4.6751ms)
-ℹ tests 4
-ℹ suites 3
-ℹ pass 4
-ℹ fail 0
-ℹ cancelled 0
-ℹ skipped 0
-ℹ todo 0
-ℹ duration_ms 929.0016
-```
-
-**Commit:** `fix(costing): export nextCostingProjectNo alias`
+- None blocking. Future tasks should wire these modules into forecast/timeline without duplicating logic in `replenishmentForecast.ts` until explicitly migrated.
+- `git add` scoped to `replenishment/` + `registry.ts` only (not `git add -A`) to avoid unrelated untracked files in repo root.

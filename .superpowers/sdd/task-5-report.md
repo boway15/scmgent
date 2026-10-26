@@ -1,35 +1,89 @@
-# Task 5 Report: 产品 / 清单 / 现算详情 API
+# Task 5 Report: 参数集数据表与迁移
 
 ## Status
-DONE
+
+**DONE**
 
 ## Commit
-`feat(costing): add project and BOM line APIs with live cost`
 
-## Tests
-- RED：`service.test.ts` 因 `service.js` 尚不存在按预期失败。
-- GREEN：产品成本 service、`calcCostSummary`、价目匹配和 BOM 数学共 14/14 通过。
-- 路由模块导入检查通过；本任务三个 TypeScript 文件 IDE lint 无错误。
+- SHA: `c9d59a0795f6a922bb18d6f08a78b0edbba4cd83`
+- Subject: `feat(db): rule_param_sets and rule_eval_runs`
+- Branch: `feat/rule-modules-p0`
+- Staged only the 4 files named in the brief (not `git add -A`).
+
+## Files Changed (4)
+
+| File | Action |
+|------|--------|
+| `packages/db/src/schema/rules.ts` | Created: `ruleParamSets`, `ruleEvalRuns` |
+| `packages/db/src/schema/index.ts` | Appended `export * from './rules';` |
+| `packages/db/drizzle/0123_rule_param_sets.sql` | Created migration SQL (verbatim from brief) |
+| `packages/db/drizzle/meta/_journal.json` | Appended idx 104 / tag `0123_rule_param_sets` |
+
+## Migration: `pnpm db:migrate`
+
+```text
+> scm-agent@1.2.0 db:migrate D:\Docker\project\scm-agent
+> pnpm --filter @scm/db migrate
+
+> @scm/db@1.2.0 migrate D:\Docker\project\scm-agent\packages\db
+> drizzle-kit migrate
+
+drizzle-kit: v0.21.4
+drizzle-orm: v0.30.10
+
+No config path provided, using default path
+Reading config file 'D:\Docker\project\scm-agent\packages\db\drizzle.config.ts'
+Using 'postgres' driver for database querying
+[⣷] applying migrations...{
+  severity_local: 'NOTICE',
+  severity: 'NOTICE',
+  code: '42P06',
+  message: 'schema "drizzle" already exists, skipping',
+  file: 'schemacmds.c',
+  line: '132',
+  routine: 'CreateSchemaCommand'
+}
+{
+  severity_local: 'NOTICE',
+  severity: 'NOTICE',
+  code: '42P07',
+  message: 'relation "__drizzle_migrations" already exists, skipping',
+  file: 'parse_utilcmd.c',
+  line: '207',
+  routine: 'transformCreateStmt'
+}
+[✓] migrations applied successfully!
+```
+
+Exit code: 0
+
+## Index check: `\d rule_param_sets`
+
+Command:
+
+```text
+docker exec scm-agent-postgres-1 psql -U scm -d scm_dev -c "\d rule_param_sets"
+```
+
+Output (indexes section):
+
+```text
+Indexes:
+    "rule_param_sets_pkey" PRIMARY KEY, btree (id)
+    "rule_param_sets_module_scope_idx" btree (module_code, scope_type, scope_value)
+    "rule_param_sets_one_active_idx" UNIQUE, btree (module_code, scope_type, scope_value) WHERE status::text = 'active'::text
+    "rule_param_sets_version_idx" UNIQUE, btree (module_code, scope_type, scope_value, version)
+```
+
+Partial unique index `rule_param_sets_one_active_idx` is present as specified.
+
+## Scope
+
+- No API routes added.
+- No replenishment logic changes.
+- Journal was appended at idx 104; existing entries not renumbered.
 
 ## Concerns
-- 全量 `tsconfig.node.json` 类型检查仍有仓库既有错误，本任务文件无诊断。
-- Vite 构建被既有 `SalesAnalyticsPage.tsx` 无法解析 `recharts` 阻塞。
-- 未连接 PostgreSQL 做实际 CRUD/上传集成测试。
 
-## Important Review Fixes
-- `replaceBomLines` 的项目检查、状态更新时间、旧行删除与新行插入已纳入同一事务；插入失败会整体回滚。
-- BOM 写入先将 `qty_net`、`loss_rate` 四舍五入到 4 位，再据此计算 `qty_gross`；创建、整表替换和单行更新统一使用该逻辑。
-- PUT 空清单和 POST 单行在项目不存在时统一返回 404。
-
-## Review Verification
-Command:
-`pnpm --filter @scm/web exec tsx --test server/lib/product-costing/service.test.ts server/lib/product-costing/bom-math.test.ts server/lib/product-costing/cost-calc.test.ts server/lib/product-costing/match-price.test.ts`
-
-Output:
-`tests 15; suites 6; pass 15; fail 0; duration_ms 1906.0039`
-
-Command:
-`pnpm --filter @scm/web exec tsx -e "import('./server/routes/product-costing.ts').then(() => console.log('product-costing route import ok'))"`
-
-Output:
-`product-costing route import ok`
+None.

@@ -1,43 +1,138 @@
-﻿### Task 5: Spec 鏀跺熬 + 鍏ㄩ噺鐩稿叧娴嬭瘯
+### Task 5: 参数集数据表与迁移
 
 **Files:**
-- Modify: `docs/superpowers/specs/2026-08-11-t99-system-floor-design.md` 鈥?鐘舵€佹敼涓?`宸插疄鐜癭
+- Create: `packages/db/src/schema/rules.ts`
+- Modify: `packages/db/src/schema/index.ts`
+- Create: `packages/db/drizzle/0123_rule_param_sets.sql`
+- Modify: `packages/db/drizzle/meta/_journal.json`
 
-- [ ] **Step 1: 璺戠浉鍏虫祴璇曞浠?*
+**Interfaces:**
+- Produces: drizzle 表对象 `ruleParamSets`、`ruleEvalRuns`（从 `@scm/db` 导出）
 
-```bash
-pnpm --filter @scm/web exec tsx --test server/lib/forecast-demand.test.ts
-pnpm --filter @scm/web exec tsx --test server/lib/forecast-allcat-v41.test.ts
+- [ ] **Step 1: 写 schema**
+
+`packages/db/src/schema/rules.ts`：
+
+```ts
+import { pgTable, uuid, varchar, text, integer, jsonb, timestamp, index } from 'drizzle-orm/pg-core';
+import { users } from './auth';
+
+/** 规则参数集。params 只存该作用范围覆盖的键，未出现的键向上继承。 */
+export const ruleParamSets = pgTable(
+  'rule_param_sets',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    moduleCode: varchar('module_code', { length: 50 }).notNull(),
+    scopeType: varchar('scope_type', { length: 20 }).notNull(),
+    scopeValue: varchar('scope_value', { length: 100 }).notNull(),
+    params: jsonb('params').notNull(),
+    version: integer('version').notNull(),
+    /** draft / pending_approval / active / archived */
+    status: varchar('status', { length: 20 }).notNull().default('draft'),
+    note: text('note'),
+    reviewNote: text('review_note'),
+    simulatedAt: timestamp('simulated_at', { withTimezone: true }),
+    createdBy: uuid('created_by').references(() => users.id),
+    approvedBy: uuid('approved_by').references(() => users.id),
+    approvedAt: timestamp('approved_at', { withTimezone: true }),
+    activatedAt: timestamp('activated_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    moduleScopeIdx: index('rule_param_sets_module_scope_idx').on(
+      table.moduleCode,
+      table.scopeType,
+      table.scopeValue,
+    ),
+  }),
+);
+
+/** 每次规则评估一行；建议 / 预警只存 run id。 */
+export const ruleEvalRuns = pgTable('rule_eval_runs', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  moduleCode: varchar('module_code', { length: 50 }).notNull(),
+  /** task / simulation / page */
+  trigger: varchar('trigger', { length: 20 }).notNull(),
+  moduleVersion: integer('module_version').notNull(),
+  paramSetIds: jsonb('param_set_ids').notNull(),
+  startedAt: timestamp('started_at', { withTimezone: true }).notNull().defaultNow(),
+  finishedAt: timestamp('finished_at', { withTimezone: true }),
+});
 ```
 
-Expected: 鍏ㄩ儴 PASS
+`packages/db/src/schema/index.ts` 末尾加 `export * from './rules';`
 
-- [ ] **Step 2: 鏇存柊 spec 鐘舵€佽**
+- [ ] **Step 2: 写迁移 SQL**
 
-`> **鐘舵€?*锛氬凡瀹炵幇`
+`packages/db/drizzle/0123_rule_param_sets.sql`：
 
-- [ ] **Step 3: Commit**
+```sql
+CREATE TABLE IF NOT EXISTS "rule_param_sets" (
+  "id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+  "module_code" varchar(50) NOT NULL,
+  "scope_type" varchar(20) NOT NULL,
+  "scope_value" varchar(100) NOT NULL,
+  "params" jsonb NOT NULL,
+  "version" integer NOT NULL,
+  "status" varchar(20) DEFAULT 'draft' NOT NULL,
+  "note" text,
+  "review_note" text,
+  "simulated_at" timestamptz,
+  "created_by" uuid REFERENCES "users"("id"),
+  "approved_by" uuid REFERENCES "users"("id"),
+  "approved_at" timestamptz,
+  "activated_at" timestamptz,
+  "created_at" timestamptz DEFAULT now() NOT NULL,
+  "updated_at" timestamptz DEFAULT now() NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS "rule_param_sets_module_scope_idx"
+  ON "rule_param_sets" ("module_code", "scope_type", "scope_value");
+
+CREATE UNIQUE INDEX IF NOT EXISTS "rule_param_sets_one_active_idx"
+  ON "rule_param_sets" ("module_code", "scope_type", "scope_value")
+  WHERE "status" = 'active';
+
+CREATE UNIQUE INDEX IF NOT EXISTS "rule_param_sets_version_idx"
+  ON "rule_param_sets" ("module_code", "scope_type", "scope_value", "version");
+
+CREATE TABLE IF NOT EXISTS "rule_eval_runs" (
+  "id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+  "module_code" varchar(50) NOT NULL,
+  "trigger" varchar(20) NOT NULL,
+  "module_version" integer NOT NULL,
+  "param_set_ids" jsonb NOT NULL,
+  "started_at" timestamptz DEFAULT now() NOT NULL,
+  "finished_at" timestamptz
+);
+```
+
+- [ ] **Step 3: 登记 journal**
+
+在 `packages/db/drizzle/meta/_journal.json` 的 `entries` 数组末尾（`0122_drop_procurement_costing_menu` 之后）追加：
+
+```json
+    {
+      "idx": 104,
+      "version": "6",
+      "when": 1787573600000,
+      "tag": "0123_rule_param_sets",
+      "breakpoints": true
+    }
+```
+
+- [ ] **Step 4: 本地迁移验证**
+
+Run: `pnpm db:migrate`
+Expected: 成功；`psql` 中 `\d rule_param_sets` 可见部分唯一索引 `rule_param_sets_one_active_idx`。
+
+- [ ] **Step 5: Commit**
 
 ```bash
-git add docs/superpowers/specs/2026-08-11-t99-system-floor-design.md
-git commit -m "docs(forecast): mark T99 system floor spec implemented"
+git add packages/db/src/schema/rules.ts packages/db/src/schema/index.ts packages/db/drizzle/0123_rule_param_sets.sql packages/db/drizzle/meta/_journal.json
+git commit -m "feat(db): rule_param_sets and rule_eval_runs"
 ```
 
 ---
 
-## Spec coverage (self-review)
-
-| Spec 瑕佹眰 | Task |
-|-----------|------|
-| `resolveT99SystemFloorDaily` + 闂搁棬 + 杩滄湀琛板噺 | Task 1 |
-| 琛ヨ揣 fallback `recent30鈮?` 鈫?0 | Task 1 |
-| `computeAllCatV41BoundedDaily` T99 鍑烘暟 | Task 2 |
-| `t99FloorDaily` / `t99FloorMode` factors | Task 2 |
-| 鏍囩/澶嶆牳鏂囨銆屼繚瀹堜繚搴曘€?| Task 2 + 4 |
-| 鎵归噺鐭╅樀鍐欏叆闈?0锛堝幓鎺夌‖缂栫爜锛?| Task 3 |
-| 鍓嶇绛栫暐/鍒楄〃/鎶藉眽/鍒楀府鍔?| Task 4 |
-| 銆屽緟鏍″噯銆嶄粎绯荤粺涓?0 | Task 4锛堟棦鏈夋潯浠讹紝verify锛?|
-| 涓嶈繘涓?KPI / 涓嶆敼 Dify / 涓嶉噸璺戝巻鍙?| Global Constraints锛堟棤棰濆浠ｇ爜锛?|
-| 楠屾敹鍗曟祴鍦烘櫙 | Task 1鈥?銆? |
-
-鏃犲崰浣嶇锛沗resolveT99SystemFloorDaily` 绛惧悕鍦?Task 1/2/3 涓€鑷淬€?

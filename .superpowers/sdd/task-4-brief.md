@@ -1,64 +1,181 @@
-### Task 4: 离线 7 月复盘 + 收尾
+### Task 4: 现有计算改为读规则函数与可传入参数（行为不变）
 
 **Files:**
-- Modify (可选): `apps/web/scripts/validate-july-t4b-relax.ts` — 在标题打印当前 `V41_T4B_*` / `T99_SYSTEM_FLOOR_DISCOUNT`
-- Modify: `docs/superpowers/specs/2026-08-12-t4b-t99-optimistic-relax-design.md` — 状态改为「已实现」
+- Modify: `apps/web/server/lib/inventory-timeline.ts`
+- Modify: `apps/web/server/lib/inventory-timeline-service.ts`
+- Modify: `apps/web/server/lib/inventory-light.ts`
+- Modify: `apps/web/server/lib/replenishment-coverage.ts`
+- Modify: `apps/web/server/lib/safety-stock-z.ts`
+- Modify: `apps/web/server/lib/safety-stock-suggestion-service.ts`
+- Modify: `apps/web/server/lib/alert-action.ts`
+- Modify: `apps/web/server/lib/inventory-health-service.ts`
+- Test: `apps/web/server/lib/inventory-timeline.test.ts`（新增用例）
 
 **Interfaces:**
-- 脚本仍不写库；T99 行若 `old_system_d>0` 可走 `computeAllCatV41BoundedDaily`；脚本现有 `tier === 'T99' return 0` 需改为调用真实 T99 分支（否则复盘看不到折扣抬升）
+- Consumes: `decideReplenishmentQty`、`REPLENISHMENT_DEFAULTS`
+- Produces:
+  - `projectDailyInventory(params & { coverDays?: number })`
+  - `buildSkuWarehouseTimeline(params & { coverDays?: number })`、`buildSkuNetworkTimeline(params & { coverDays?: number })`、`assembleWarehouseTimeline(params & { coverDays?: number })`
+  - `type SlowMovingThresholds = { maxDaily: number; minCoverageDays: number }`；`isSlowMovingStock(params & { thresholds?: SlowMovingThresholds })`、`calcTimelineDecisionHealth(params & { slowMoving?: SlowMovingThresholds })`
+  - `resolvePlanningSafetyStock(params & { defaultSafetyStockDays?: number })`
+  - `computeSkuWarehouseHealth(params & { ruleDefaults?: { safetyStockDays: number; overstockThresholdDays: number } })`
 
-- [ ] **Step 1: 修脚本 T99 重算**
+- [ ] **Step 1: 写失败测试（时间轴 coverDays）**
 
-将 `recompute` 中：
-
-```ts
-if (tier === 'T99') return 0;
-```
-
-改为照常调用 `computeAllCatV41BoundedDaily`（与其它层相同），让 T99 走系统保底。
-
-文件头注释改为说明「T4B+T99 方案 A 常量复盘」。
-
-在 `main` 开头 `console.log` 打印：
+在 `server/lib/inventory-timeline.test.ts` 末尾追加：
 
 ```ts
-import {
-  V41_T4B_CONSERVATIVE_FACTOR,
-  V41_T4B_NEAR_CONSERVATIVE_FACTOR,
-  V41_T4B_RECENT30_CAP,
-  V41_T4B_RECENT90_CAP,
-} from '../server/lib/forecast-allcat-v41.js';
-import { T99_SYSTEM_FLOOR_DISCOUNT } from '../server/lib/forecast-demand.js';
-
-console.log('constants', {
-  T4B_near: V41_T4B_NEAR_CONSERVATIVE_FACTOR,
-  T4B_far: V41_T4B_CONSERVATIVE_FACTOR,
-  T4B_r30_cap: V41_T4B_RECENT30_CAP,
-  T4B_r90_cap: V41_T4B_RECENT90_CAP,
-  T99_discount: T99_SYSTEM_FLOOR_DISCOUNT,
+describe('projectDailyInventory coverDays', () => {
+  it('caps by custom coverDays instead of 30', () => {
+    const r = projectDailyInventory({
+      lots: [],
+      today: '2026-10-26',
+      totalLeadDays: 60,
+      safetyStockDays: 0,
+      safetyStockQty: 0,
+      dailyDemandFn: () => 10,
+      coverDays: 45,
+    });
+    assert.equal(r.suggestedQty, 450);
+  });
 });
 ```
 
-- [ ] **Step 2: 跑离线复盘（环境允许时）**
+- [ ] **Step 2: 运行确认失败**
 
-Run: `pnpm --filter @scm/web exec tsx scripts/validate-july-t4b-relax.ts`
+Run: `pnpm --filter @scm/web exec tsx --test server/lib/inventory-timeline.test.ts`
+Expected: FAIL（`suggestedQty` 为 300）
 
-Expected: 输出含 T4B / T99 行；相对「旧系统」偏差应向 0 靠拢（不要求一次达标 0）。若本机无 Docker/DB，记录跳过原因，不阻塞合并；单测已覆盖常量。
+- [ ] **Step 3: 改 `inventory-timeline.ts`**
 
-- [ ] **Step 3: 标记 spec 已实现**
+1. 顶部加 `import { decideReplenishmentQty } from '../rules/replenishment/qty.js';` 与 `import { REPLENISHMENT_DEFAULTS } from '../rules/replenishment/params.js';`。
+2. `export const SINGLE_REPLENISHMENT_COVER_DAYS = 30;` 改为 `export const SINGLE_REPLENISHMENT_COVER_DAYS = REPLENISHMENT_DEFAULTS.singleCoverDays;`
+3. `projectDailyInventory` 参数类型增加 `/** 单次补货覆盖天数，缺省为规则默认值 */ coverDays?: number;`，函数体开头加 `const coverDays = params.coverDays ?? SINGLE_REPLENISHMENT_COVER_DAYS;`，循环内 `if (k < SINGLE_REPLENISHMENT_COVER_DAYS)` 改为 `if (k < coverDays)`。
+4. `calcSuggestedQtyFromTimeline` 函数体替换为委托：
+   ```ts
+   return decideReplenishmentQty({
+     cumulativeDemandAtTarget: params.cumulativeDemandAtTarget,
+     safetyStockQty: params.safetyStockQty,
+     supplyAtTarget: params.projectedOverseasAtTarget,
+     coverQty: params.maxCoverQty,
+     moq: params.moq,
+   });
+   ```
 
-将设计文档头部改为：
+- [ ] **Step 4: 改 `inventory-timeline-service.ts` 透传**
 
-```markdown
-> **状态**：已实现  
+`assembleWarehouseTimeline`、`buildSkuWarehouseTimeline`、`buildSkuNetworkTimeline` 三个函数的参数类型都加 `coverDays?: number;`。四处 `projectDailyInventory({...})` 调用（主时间轴与 champion 影子各两处）都加一行 `coverDays: params.coverDays,`；`buildSkuWarehouseTimeline` 调 `assembleWarehouseTimeline` 时加 `coverDays: params.coverDays,`。
+
+- [ ] **Step 5: 改 `inventory-light.ts` 滞销阈值**
+
+```ts
+import { REPLENISHMENT_DEFAULTS } from '../rules/replenishment/params.js';
+
+export const SLOW_MOVING_MAX_DAILY = REPLENISHMENT_DEFAULTS.slowMovingDailyMax;
+export const SLOW_MOVING_MIN_COVERAGE_DAYS = REPLENISHMENT_DEFAULTS.slowMovingMinCoverageDays;
+
+export type SlowMovingThresholds = { maxDaily: number; minCoverageDays: number };
+
+export function isSlowMovingStock(params: {
+  effectiveQty: number;
+  avgDaily: number;
+  coverageDays: number;
+  thresholds?: SlowMovingThresholds;
+}): boolean {
+  const maxDaily = params.thresholds?.maxDaily ?? SLOW_MOVING_MAX_DAILY;
+  const minCoverage = params.thresholds?.minCoverageDays ?? SLOW_MOVING_MIN_COVERAGE_DAYS;
+  if (params.effectiveQty <= 0) return false;
+  if (params.avgDaily > maxDaily) return false;
+  return Number.isFinite(params.coverageDays) && params.coverageDays >= minCoverage;
+}
 ```
 
-- [ ] **Step 4: Commit**
+`calcTimelineDecisionHealth` 参数加 `slowMoving?: SlowMovingThresholds;`，内部 `isSlowMovingStock({...})` 调用加 `thresholds: params.slowMoving,`。
 
-Also add the plan file if still untracked:
-`docs/superpowers/plans/2026-08-12-t4b-t99-optimistic-relax.md`
+- [ ] **Step 6: 合并安全库存与超储默认常量**
+
+- `replenishment-coverage.ts`：
+  ```ts
+  import { REPLENISHMENT_DEFAULTS } from '../rules/replenishment/params.js';
+  export const DEFAULT_SAFETY_STOCK_DAYS = REPLENISHMENT_DEFAULTS.defaultSafetyStockDays;
+  export const DEFAULT_OVERSTOCK_THRESHOLD_DAYS = REPLENISHMENT_DEFAULTS.overstockThresholdDays;
+  ```
+- `safety-stock-z.ts`：`export const DEFAULT_PLANNING_SAFETY_STOCK_DAYS = 14;` 改为 `export { DEFAULT_SAFETY_STOCK_DAYS as DEFAULT_PLANNING_SAFETY_STOCK_DAYS } from './replenishment-coverage.js';`，文件内使用处改为 `import { DEFAULT_SAFETY_STOCK_DAYS } from './replenishment-coverage.js';` 后引用 `DEFAULT_SAFETY_STOCK_DAYS`。`resolvePlanningSafetyStock` 参数加 `defaultSafetyStockDays?: number;`，第 107 行改为 `safetyStockDays: policy?.safetyStockDays ?? params.defaultSafetyStockDays ?? DEFAULT_SAFETY_STOCK_DAYS,`。
+- `safety-stock-suggestion-service.ts`：`export const DEFAULT_CONFIGURED_SAFETY_STOCK_DAYS = 14;` 改为 `export { DEFAULT_SAFETY_STOCK_DAYS as DEFAULT_CONFIGURED_SAFETY_STOCK_DAYS } from './replenishment-coverage.js';`，并在文件内引用处改用导入的 `DEFAULT_SAFETY_STOCK_DAYS`。
+- `alert-action.ts`：删除 `const DEFAULT_ALERT_SAFETY_DAYS = 14;`，改为 `import { DEFAULT_SAFETY_STOCK_DAYS } from './replenishment-coverage.js';`，第 41 行改为 `: DEFAULT_SAFETY_STOCK_DAYS;`。
+
+若出现循环导入（`replenishment-coverage.ts` ↔ `inventory-light.ts`），`rules/replenishment/params.ts` 只依赖 `rules/core/param.ts`，不会成环；如 tsx 报 `Cannot access before initialization`，把上述 re-export 改为直接 `= 14` 字面量并加 `// 与 REPLENISHMENT_DEFAULTS 保持一致` 测试断言（见 Step 8）。
+
+- [ ] **Step 7: `computeSkuWarehouseHealth` 加 `ruleDefaults`**
+
+参数类型加：
+
+```ts
+  /** 规则中心解析出的默认值；未传时用代码默认值 */
+  ruleDefaults?: { safetyStockDays: number; overstockThresholdDays: number };
+```
+
+第 547、549 行改为：
+
+```ts
+      safetyStockDays: policy?.safetyStockDays ?? params.ruleDefaults?.safetyStockDays ?? undefined,
+      overstockThresholdDays:
+        policy?.overstockThresholdDays ?? params.ruleDefaults?.overstockThresholdDays ?? undefined,
+```
+
+第 559 行 `resolvePlanningSafetyStock({` 调用内加 `defaultSafetyStockDays: params.ruleDefaults?.safetyStockDays,`。
+
+- [ ] **Step 8: 加默认值一致性测试**
+
+`apps/web/server/rules/replenishment/defaults-consistency.test.ts`：
+
+```ts
+import assert from 'node:assert/strict';
+import { describe, it } from 'node:test';
+import { REPLENISHMENT_DEFAULTS } from './params.js';
+import {
+  DEFAULT_OVERSTOCK_THRESHOLD_DAYS,
+  DEFAULT_SAFETY_STOCK_DAYS,
+} from '../../lib/replenishment-coverage.js';
+import { SINGLE_REPLENISHMENT_COVER_DAYS } from '../../lib/inventory-timeline.js';
+import { SLOW_MOVING_MAX_DAILY, SLOW_MOVING_MIN_COVERAGE_DAYS } from '../../lib/inventory-light.js';
+import { DEFAULT_PLANNING_SAFETY_STOCK_DAYS } from '../../lib/safety-stock-z.js';
+
+describe('replenishment defaults match legacy constants', () => {
+  it('all equal', () => {
+    assert.equal(REPLENISHMENT_DEFAULTS.singleCoverDays, 30);
+    assert.equal(SINGLE_REPLENISHMENT_COVER_DAYS, 30);
+    assert.equal(DEFAULT_SAFETY_STOCK_DAYS, 14);
+    assert.equal(DEFAULT_PLANNING_SAFETY_STOCK_DAYS, 14);
+    assert.equal(DEFAULT_OVERSTOCK_THRESHOLD_DAYS, 180);
+    assert.equal(SLOW_MOVING_MAX_DAILY, 0.1);
+    assert.equal(SLOW_MOVING_MIN_COVERAGE_DAYS, 90);
+    assert.equal(REPLENISHMENT_DEFAULTS.moqPriority, 'sku_then_spu');
+    assert.equal(REPLENISHMENT_DEFAULTS.yellowLightLinkage, true);
+    assert.equal(REPLENISHMENT_DEFAULTS.usNetworkDeferEnabled, true);
+  });
+});
+```
+
+- [ ] **Step 9: 跑全部相关测试与类型检查**
+
+Run: `pnpm --filter @scm/web exec tsx --test server/lib/inventory-timeline.test.ts server/lib/replenishment-coverage.test.ts server/lib/network-replenishment.test.ts server/lib/inventory-health-service.test.ts server/lib/stock-alert-timeline.test.ts server/rules/replenishment/defaults-consistency.test.ts server/rules/replenishment/qty.test.ts`
+Expected: `fail 0`
+
+Run: `pnpm --filter @scm/web exec tsc --noEmit -p tsconfig.json`
+Expected: 无新增报错
+
+- [ ] **Step 10: 基线对照（默认参数下应无差异）**
+
+Run: `pnpm --filter @scm/web exec tsx scripts/replenishment-baseline.ts compare ../../.tmp-rules-baseline.json`
+Expected: `与基线一致`
+
+- [ ] **Step 11: Commit**
 
 ```bash
-git add apps/web/scripts/validate-july-t4b-relax.ts docs/superpowers/specs/2026-08-12-t4b-t99-optimistic-relax-design.md docs/superpowers/plans/2026-08-12-t4b-t99-optimistic-relax.md
-git commit -m "chore(forecast): validate July T4B/T99 plan-A relax offline"
+git add apps/web/server/lib apps/web/server/rules
+git commit -m "refactor(planning): route replenishment qty and defaults through rule module"
 ```
+
+---
+

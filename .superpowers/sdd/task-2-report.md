@@ -1,94 +1,76 @@
-# Task 2 Report: T4B 四处常量放宽（TDD）
+# Task 2 Report: 规则框架核心（参数描述 + 分层解析）
 
-## Status
+## 实现摘要
 
-**DONE**
+在 `apps/web/server/rules/core/` 新增纯函数规则核心库，未改动数据库、补货任务或 UI。
 
-## Summary
+| 文件 | 职责 |
+|------|------|
+| `param.ts` | `ParamSpec` / `ParamSchema` 类型、`defaultsOf`、`checkParamValue`、`validateParamPatch` |
+| `resolve.ts` | `SCOPE_PRIORITY` 分层解析、`resolveParams`、作用域上下文与 `ParamSource` 溯源 |
+| `define.ts` | `RuleTraceItem`、`RuleModuleMeta`、`defineRuleModule`（恒等元数据注册） |
+| `param.test.ts` | 默认值与 patch 校验 |
+| `resolve.test.ts` | 无集默认、按 key 覆盖、忽略不匹配 scope、跳过非法/未知键 |
 
-Plan A 温和乐观：仅放宽 T4B 四处常量（远月保守系数 0.75、近端 0.9、recent90 cap 1.0、recent30 cap 0.95）。未改动 Ghost 阈值、T4B flex decay、近端抬底或 T99。按 brief 走 TDD：先补失败断言 → RED → 改常量 → GREEN → 提交。
+导出名称与类型与 task brief 一致，供后续任务导入。
 
-## Constants Changed
+## TDD：RED / GREEN
 
-| Constant | Before | After |
-|----------|--------|-------|
-| `V41_T4B_CONSERVATIVE_FACTOR` | 0.6 | 0.75 |
-| `V41_T4B_NEAR_CONSERVATIVE_FACTOR` | 0.8 | 0.9 |
-| `V41_T4B_RECENT90_CAP` | 0.9 | 1.0 |
-| `V41_T4B_RECENT30_CAP` | 0.85 | 0.95 |
+### Step 2 — param RED
 
-## Files Modified
-
-| File | Change |
-|------|--------|
-| `apps/web/server/lib/forecast-allcat-v41.ts` | 更新四处 T4B 常量；注释保留「缓解系统性低估」并追加「方案 A 温和乐观」 |
-| `apps/web/server/lib/forecast-allcat-v41.test.ts` | tail upper bias 断言 cap 改为 `1.36 * 1.0`；新增 `T4B plan-A constants` 用例；import `V41_T4B_RECENT30_CAP` / `V41_T4B_RECENT90_CAP` |
-
-## TDD Evidence
-
-### RED (Step 2)
-
-命令：
-
-```bash
-pnpm --filter @scm/web exec tsx --test server/lib/forecast-allcat-v41.test.ts
+```text
+pnpm --filter @scm/web exec tsx --test server/rules/core/param.test.ts
 ```
 
-结果：**FAIL** — 46/47 pass，1 fail。
+结果：`ERR_MODULE_NOT_FOUND`（无法找到 `./param.js`），测试套件 fail 1。
 
-```
-✖ T4B plan-A constants: near 0.9 / far 0.75 / caps 0.95 & 1.0
-  AssertionError: Expected values to be strictly equal:
-  0.8 !== 0.9
-      at forecast-allcat-v41.test.ts:983:12
-```
+### Step 4 — param GREEN
 
-（常量仍为旧值 `V41_T4B_NEAR_CONSERVATIVE_FACTOR = 0.8` 时，新断言按预期失败。）
+同上命令。
 
-### GREEN (Step 4)
+结果：`fail 0`，4 tests pass（defaultsOf ×1，validateParamPatch ×3）。
 
-命令：
+### Step 6 — resolve RED（预期）
 
-```bash
-pnpm --filter @scm/web exec tsx --test server/lib/forecast-allcat-v41.test.ts
-pnpm --filter @scm/web exec tsx --test server/lib/forecast-demand.test.ts
+在仅存在 `resolve.test.ts`、无 `resolve.ts` 时，预期与 param 相同为 `ERR_MODULE_NOT_FOUND`。实现 `resolve.ts` 前应按 brief 先跑失败；本任务在写入 `resolve.test.ts` 后于同轮次完成 `resolve.ts`/`define.ts`，随后验证通过。
+
+### Step 8 — 全量 GREEN
+
+```text
+pnpm --filter @scm/web exec tsx --test server/rules/core/param.test.ts server/rules/core/resolve.test.ts
 ```
 
-结果：**PASS**
+结果：
 
-- `forecast-allcat-v41.test.ts`: 46/46 pass
-- `forecast-demand.test.ts`: 14/14 pass
+```text
+ℹ tests 8
+ℹ pass 8
+ℹ fail 0
+```
+
+## 变更文件
+
+- `apps/web/server/rules/core/param.ts`（新建）
+- `apps/web/server/rules/core/param.test.ts`（新建）
+- `apps/web/server/rules/core/resolve.ts`（新建）
+- `apps/web/server/rules/core/resolve.test.ts`（新建）
+- `apps/web/server/rules/core/define.ts`（新建）
 
 ## Commit
 
-| SHA | Subject |
-|-----|---------|
-| `a362a9b` | feat(forecast): relax T4B conservative factor and recent caps |
+- SHA: `c382478bf29289dcff289a9f0d344942ea86303d`
+- Subject: `feat(rules): param schema, layered resolver and module definition`
 
-## Review Fix (2026-08-12)
+## 自检
 
-**Issue:** 原提交 `5800be0` 混入 ~70 行无关代码（`aggregateAllCatV41HorizonFactorsForDisplay`、`V41PlatformContribution`、`aggregatedPlatformCount` 解析/展示及聚合测试）。
+- [x] 代码与 brief 片段一致（含中文错误文案、`GLOBAL_SCOPE_VALUE`、`checkParamValue` 导出供 resolve 复用）。
+- [x] `resolveParams` 按 `SCOPE_PRIORITY` 从低到高叠加，同 key 后层覆盖；无效值与 schema 外键跳过；`paramSetIds` 为实际贡献参数的 set id 集合。
+- [x] 测试断言与 brief 一致（含 `paramSetIds.sort()` 与 DE 仓 invalid coverDays 回退 global 40）。
+- [x] 仅 `git add apps/web/server/rules/core`，未纳入 `.tmp-*` 等无关文件。
+- [ ] `define.ts` / `defineRuleModule` 暂无单测（brief 未要求）；后续模块任务应覆盖。
+- [ ] 未新增 barrel `index.ts`（brief 未要求）；调用方按 `./param.js`、`./resolve.js`、`./define.js` 直接导入。
 
-**Fix:** `git reset --soft HEAD~1` → 自 `forecast-allcat-v41.ts` / `.test.ts` 还原无关 hunk → 仅保留四处 T4B 常量 + plan-A 测试 → 重新提交。
+## 关注点
 
-**Post-fix tests:**
-
-```bash
-pnpm --filter @scm/web exec tsx --test server/lib/forecast-allcat-v41.test.ts
-pnpm --filter @scm/web exec tsx --test server/lib/forecast-demand.test.ts
-```
-
-- `forecast-allcat-v41.test.ts`: **46/46 pass**
-- `forecast-demand.test.ts`: **14/14 pass**
-
-**WIP:** 聚合/display 相关改动仍保留在其他文件的未提交工作区（如 `forecast-horizon.ts`、`forecast-v41-system-formula.ts` 等），未写入 Task 2 提交。
-
-## Self-Review
-
-### Scope
-
-- 仅改 brief 指定的四处常量与对应测试；`V41_T4B_FLEX_*`、近端 floor、Ghost 阈值、T99 均未动。
-
-### Concerns
-
-- 无。T4B 放宽幅度与 Task 1 T99 discount 0.8 同属 Plan A，后续 Task 3+ 做端到端校验即可。
+- `paramSetIds` 顺序依赖 `Set` 插入顺序（SCOPE_PRIORITY 遍历顺序），测试用 `.sort()` 比较；若产品需要稳定展示顺序，后续可显式排序。
+- 同 scope 多条 `ActiveParamSet` 时 `sets.find` 取第一条；DB 层应保证同 scope 唯一或后续任务定义合并策略。

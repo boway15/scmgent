@@ -10,7 +10,6 @@ import {
   demandPlanMonthly,
   demandPlanVersions,
 } from '@scm/db';
-import { applyMoq, resolveEffectiveMoq } from '../lib/replenishment.js';
 import { formatCoverageReason, type InventoryHealth } from '../lib/replenishment-coverage.js';
 import { getRegionPoolSnapshot } from '../lib/inventory-snapshot.js';
 import { shouldDeferReplenishment, US_WAREHOUSE_CODES } from '../lib/warehouse-domain.js';
@@ -21,11 +20,7 @@ import {
   type NetworkTimelineOverride,
   type ReplenishmentCandidate,
 } from '../lib/network-replenishment.js';
-import {
-  normalizeReplenishLight,
-  shouldReplenishByLight,
-  type ReplenishLight,
-} from '../lib/replenish-light.js';
+import { normalizeReplenishLight } from '../lib/replenish-light.js';
 import { enhanceReplenishmentReasons } from '../integrations/dify-workflows.js';
 import { isReplenishmentWorkflowEnabled } from '../integrations/dify.js';
 import {
@@ -68,10 +63,6 @@ import {
   calcTimelineDecisionHealth,
   needsReplenishmentByHealth,
 } from '../lib/inventory-light.js';
-import {
-  DEFAULT_OVERSTOCK_THRESHOLD_DAYS,
-  DEFAULT_SAFETY_STOCK_DAYS,
-} from '../lib/replenishment-coverage.js';
 import { IN_PRODUCTION_WAREHOUSE } from '../lib/inventory-constants.js';
 import { DEMAND_PLAN_WAREHOUSE_ALL } from '../lib/demand-plan-config.js';
 import {
@@ -85,6 +76,15 @@ import {
   stockoutDaysFromInStockRatio,
 } from '../lib/planning-demand-gate.js';
 import { buildLatePoActions } from '../lib/planning-late-po-actions.js';
+import { createParamsResolver, finishRuleRun, loadActiveParamSets, startRuleRun } from '../rules/core/store.js';
+import type { ActiveParamSet } from '../rules/core/resolve.js';
+import {
+  REPLENISHMENT_PARAMS,
+  decideWarehouseCandidate,
+  resolveMoqByPriority,
+  shouldReplenishWithLinkage,
+  replenishmentRule,
+} from '../rules/replenishment/index.js';
 
 /** 回写本轮规划口径的件数 / ROP；人工配置（calcMethod=manual）不覆盖 */
 async function upsertSafetyStock(
@@ -135,6 +135,9 @@ export type ReplenishmentRunOptions = {
   /** 试算 / 基线：不同步三池、不写任何表、不调 Dify */
   dryRun?: boolean;
   skuIds?: string[];
+  /** 试算用：替代数据库 active 参数集 */
+  paramSets?: ActiveParamSet[];
+  trigger?: 'task' | 'simulation';
 };
 
 export type ReplenishmentDryRow = {
@@ -174,6 +177,7 @@ export async function runReplenishmentForecast(options: ReplenishmentRunOptions 
       code: skus.code,
       spuId: skus.spuId,
       moq: skus.moq,
+      projectGroup: skus.projectGroup,
       merchantCode: skus.merchantCode,
       replenishLight: skus.replenishLight,
       leadTimeDays: skus.leadTimeDays,
@@ -204,6 +208,9 @@ export async function runReplenishmentForecast(options: ReplenishmentRunOptions 
   }
 
   const skuIds = activeSkus.map((s) => s.id);
+  const paramSets = options.paramSets ?? (await loadActiveParamSets(replenishmentRule.code));
+  const resolveRuleParams = createParamsResolver(REPLENISHMENT_PARAMS, paramSets);
+  const usedParamSetIds = new Set<string>();
   const physicalWarehouseCodes = whRows.map((wh) => wh.code);
   const demandWindowDays = replenishmentSalesLookbackDays();
 
@@ -302,9 +309,12 @@ export async function runReplenishmentForecast(options: ReplenishmentRunOptions 
 
   for (const sku of activeSkus) {
     const replenishLight = normalizeReplenishLight(sku.replenishLight);
-    const effectiveMoq = resolveEffectiveMoq(
+    const skuParams = resolveRuleParams({ projectGroup: sku.projectGroup });
+    skuParams.paramSetIds.forEach((id) => usedParamSetIds.add(id));
+    const effectiveMoq = resolveMoqByPriority(
       sku.moq,
       sku.spuId ? spuMoqMap.get(sku.spuId) : null,
+      skuParams.values.moqPriority,
     );
     const policyMap = policyBySku.get(sku.id) ?? new Map();
     const forecastEntry = forecastBySkuId.get(sku.id) ?? {
@@ -347,6 +357,8 @@ export async function runReplenishmentForecast(options: ReplenishmentRunOptions 
         },
         planningBundle.deps,
       );
+      const whParams = resolveRuleParams({ projectGroup: sku.projectGroup, warehouse: wh.code });
+      whParams.paramSetIds.forEach((id) => usedParamSetIds.add(id));
       const health = await computeSkuWarehouseHealth({
         sku,
         warehouse: wh,
@@ -358,6 +370,10 @@ export async function runReplenishmentForecast(options: ReplenishmentRunOptions 
         forecastErrorStdDev: errorStdDevBySku.get(sku.id) ?? null,
         share,
         moq: effectiveMoq || undefined,
+        ruleDefaults: {
+          safetyStockDays: whParams.values.defaultSafetyStockDays,
+          overstockThresholdDays: whParams.values.overstockThresholdDays,
+        },
         caches: {
           leadTime,
           position: positionByKey.get(key) ?? emptyPosition(wh.code),
@@ -392,6 +408,8 @@ export async function runReplenishmentForecast(options: ReplenishmentRunOptions 
     const skuCandidates: ReplenishmentCandidate[] = [];
 
     for (const wh of whRows) {
+      const whParams = resolveRuleParams({ projectGroup: sku.projectGroup, warehouse: wh.code });
+      whParams.paramSetIds.forEach((id) => usedParamSetIds.add(id));
       const health = healthRows.find(
         (h) => h.skuId === sku.id && h.warehouseCode === wh.code,
       )!;
@@ -400,8 +418,15 @@ export async function runReplenishmentForecast(options: ReplenishmentRunOptions 
       health.metrics.coverageHealthStatus = coverageHealthStatus;
       health.metrics.coverageDaysShadow = health.coverageDays;
 
-      // 灰灯不进建议；覆盖天数灯降为影子，不再决定是否出建议
+      // 灰灯不进建议；覆盖天数灯降为影子，不再决定是否出建议。须在时间轴之前跳过，避免改写健康快照。
       if (coverageHealthStatus === 'gray') {
+        health.metrics.ruleTrace = decideWarehouseCandidate({
+          coverageHealth: 'gray',
+          decisionHealth: 'gray',
+          deferredByUsNetwork: false,
+          suggestedQty: 0,
+          moq: 0,
+        }).trace;
         continue;
       }
 
@@ -410,10 +435,10 @@ export async function runReplenishmentForecast(options: ReplenishmentRunOptions 
 
       let suggestedQty = coverage.suggestedQty;
       let suggestedDate = coverage.suggestedDate;
-      let decisionHealth = coverageHealthStatus;
+      let decisionHealth: InventoryHealth = coverageHealthStatus;
       let confirmedCoverageDays = health.coverageDays;
       let deferUs = false;
-      if (wh.regionGroup === 'US') {
+      if (wh.regionGroup === 'US' && whParams.values.usNetworkDeferEnabled) {
         deferUs = shouldDeferReplenishment({
           warehouseEffective: position.effectiveQty,
           warehouseRop: eoqRop,
@@ -437,6 +462,7 @@ export async function runReplenishmentForecast(options: ReplenishmentRunOptions 
           safetyStockDays: health.coverage.safetyStockDays,
           safetyStockQty,
           moq: effectiveMoq || undefined,
+          coverDays: whParams.values.singleCoverDays,
         });
         suggestedQty = timelineResult.suggestedQty;
         suggestedDate =
@@ -453,7 +479,7 @@ export async function runReplenishmentForecast(options: ReplenishmentRunOptions 
           totalLeadDays: health.totalLeadDays,
           safetyStockDays: health.coverage.safetyStockDays,
           overstockThresholdDays:
-            health.coverage.overstockThresholdDays ?? DEFAULT_OVERSTOCK_THRESHOLD_DAYS,
+            health.coverage.overstockThresholdDays ?? whParams.values.overstockThresholdDays,
           suggestedQty: timelineResult.suggestedQty,
           uncoverableByNewPo: timelineResult.timeline.uncoverableByNewPo,
           stockoutDateConfirmed: timelineResult.timeline.stockoutDateConfirmed,
@@ -462,6 +488,10 @@ export async function runReplenishmentForecast(options: ReplenishmentRunOptions 
           lifecycle: health.lifecycle,
           effectiveQty: position.effectiveQty,
           avgDaily: health.avgDaily,
+          slowMoving: {
+            maxDaily: whParams.values.slowMovingDailyMax,
+            minCoverageDays: whParams.values.slowMovingMinCoverageDays,
+          },
         });
         health.metrics.timelineSuggestedQty = timelineResult.suggestedQty;
         health.metrics.timelineSuggestedQtyGross = timelineResult.timeline.suggestedQtyGross;
@@ -493,12 +523,17 @@ export async function runReplenishmentForecast(options: ReplenishmentRunOptions 
         ? confirmedCoverageDays
         : health.coverageDays;
 
-      if (deferUs) continue;
-      if (!needsReplenishmentByHealth(decisionHealth)) continue;
-      if (suggestedQty <= 0) continue;
-
+      const candidate = decideWarehouseCandidate({
+        coverageHealth: coverageHealthStatus,
+        decisionHealth,
+        deferredByUsNetwork: deferUs,
+        suggestedQty,
+        moq: effectiveMoq,
+      });
+      health.metrics.ruleTrace = candidate.trace;
+      if (!candidate.include) continue;
       const rawQty = suggestedQty;
-      suggestedQty = applyMoq(suggestedQty, effectiveMoq);
+      suggestedQty = candidate.qty;
 
       const poolNote =
         wh.regionGroup === 'US'
@@ -591,6 +626,7 @@ export async function runReplenishmentForecast(options: ReplenishmentRunOptions 
           latePoActions: lateActions,
           usNetworkRop,
           usNetworkEffective: usPool.effectiveQty,
+          ruleTrace: candidate.trace,
         },
       });
     }
@@ -605,8 +641,8 @@ export async function runReplenishmentForecast(options: ReplenishmentRunOptions 
             row.warehouseCode !== 'OVERSEAS',
         );
         const safetyStockDays = policyRows.reduce(
-          (max, row) => Math.max(max, row.safetyStockDays ?? DEFAULT_SAFETY_STOCK_DAYS),
-          DEFAULT_SAFETY_STOCK_DAYS,
+          (max, row) => Math.max(max, row.safetyStockDays ?? skuParams.values.defaultSafetyStockDays),
+          skuParams.values.defaultSafetyStockDays,
         );
         const networkPlanning = await loadPlanningDemandForSkuWarehouse(
           {
@@ -656,6 +692,7 @@ export async function runReplenishmentForecast(options: ReplenishmentRunOptions 
         const networkTimeline = await buildSkuNetworkTimeline({
           skuId: sku.id,
           avgDaily: networkAvgDaily,
+          coverDays: skuParams.values.singleCoverDays,
           forecastMap:
             networkPlanning.source === 'demand_plan'
               ? networkPlanning.demandMap
@@ -710,11 +747,15 @@ export async function runReplenishmentForecast(options: ReplenishmentRunOptions 
     }
   }
 
+  const linkageBySku = new Map(
+    activeSkus.map((sku) => [sku.id, resolveRuleParams({ projectGroup: sku.projectGroup }).values.yellowLightLinkage]),
+  );
   const eligibleItems = pending.filter((item) =>
-    shouldReplenishByLight({
+    shouldReplenishWithLinkage({
       replenishLight: item.replenishLight,
       needsReplenishment: true,
       spuHasRedNeedingReplenishment: item.spuId ? spuRedNeeding.has(item.spuId) : false,
+      yellowLightLinkage: linkageBySku.get(item.skuId) ?? true,
     }),
   );
 
@@ -739,6 +780,15 @@ export async function runReplenishmentForecast(options: ReplenishmentRunOptions 
       console.warn('[replenishmentForecast] enhancement skipped:', err);
     }
   }
+
+  const ruleRunId = dryRun
+    ? null
+    : await startRuleRun({
+        moduleCode: replenishmentRule.code,
+        trigger: options.trigger ?? 'task',
+        moduleVersion: replenishmentRule.version,
+        paramSetIds: [...usedParamSetIds],
+      });
 
   if (dryRun) {
     return {
@@ -793,7 +843,7 @@ export async function runReplenishmentForecast(options: ReplenishmentRunOptions 
       latestOrderDays: Number.isFinite(item.latestOrderDays)
         ? String(item.latestOrderDays)
         : null,
-      metrics: item.metrics,
+      metrics: { ...item.metrics, ruleRunId },
       status: 'pending',
     });
 
@@ -810,6 +860,8 @@ export async function runReplenishmentForecast(options: ReplenishmentRunOptions 
   const engine = difyEnhanced
     ? 'coverage-timeline+ai-enhanced'
     : 'coverage-timeline';
+
+  if (ruleRunId) await finishRuleRun(ruleRunId);
 
   return { suggestionCount: count, snapshotCount, engine, difyEnhanced, results };
 }

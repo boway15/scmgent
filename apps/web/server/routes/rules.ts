@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, max } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNotNull, max, sql } from 'drizzle-orm';
 import { Hono } from 'hono';
 import { db, ruleParamSets, skus } from '@scm/db';
 import { getCurrentUser, requireRole } from '../lib/auth-context.js';
@@ -174,8 +174,20 @@ ruleRoutes.post('/rules/:module/param-sets/:id/simulate', async (c) =>
       )
       .limit(SIMULATION_MAX_SKUS);
     if (!skuRows.length) return c.json({ message: '没有匹配的在售 SKU' }, 400);
+    const capturedUpdatedAt = row.updatedAt;
     const result = await simulateReplenishment({ draft: toActive(row), skuIds: skuRows.map((r) => r.id) });
-    await db.update(ruleParamSets).set({ simulatedAt: new Date() }).where(eq(ruleParamSets.id, row.id));
+    const [stamped] = await db
+      .update(ruleParamSets)
+      .set({ simulatedAt: new Date() })
+      .where(
+        and(
+          eq(ruleParamSets.id, row.id),
+          eq(ruleParamSets.status, 'draft'),
+          sql`date_trunc('milliseconds', ${ruleParamSets.updatedAt}) = ${capturedUpdatedAt}`,
+        ),
+      )
+      .returning();
+    if (!stamped) return c.json({ message: '草稿已变更，请重新试算' }, 409);
     return c.json({ ...result, skuCount: skuRows.length, maxSkus: SIMULATION_MAX_SKUS });
   }),
 );
@@ -193,8 +205,15 @@ ruleRoutes.post('/rules/:module/param-sets/:id/submit', async (c) =>
     const [updated] = await db
       .update(ruleParamSets)
       .set({ status: 'pending_approval', updatedAt: new Date() })
-      .where(eq(ruleParamSets.id, row.id))
+      .where(
+        and(
+          eq(ruleParamSets.id, row.id),
+          eq(ruleParamSets.status, 'draft'),
+          isNotNull(ruleParamSets.simulatedAt),
+        ),
+      )
       .returning();
+    if (!updated) return c.json({ message: '草稿已变更，请重新试算' }, 409);
     return c.json(updated);
   }),
 );
@@ -209,25 +228,42 @@ ruleRoutes.post('/rules/:module/param-sets/:id/approve', async (c) =>
     if (!row) return c.json({ message: '参数集不存在' }, 404);
     if (row.status !== 'pending_approval') return c.json({ message: '只有待审批的参数集可以审批' }, 409);
     const now = new Date();
-    const updated = await db.transaction(async (tx) => {
-      await tx
-        .update(ruleParamSets)
-        .set({ status: 'archived', updatedAt: now })
-        .where(
-          and(
-            eq(ruleParamSets.moduleCode, row.moduleCode),
-            eq(ruleParamSets.scopeType, row.scopeType),
-            eq(ruleParamSets.scopeValue, row.scopeValue),
-            eq(ruleParamSets.status, 'active'),
-          ),
-        );
-      const [r] = await tx
-        .update(ruleParamSets)
-        .set({ status: 'active', approvedBy: user.id, approvedAt: now, activatedAt: now, updatedAt: now })
-        .where(eq(ruleParamSets.id, row.id))
-        .returning();
-      return r;
-    });
+    let updated: typeof ruleParamSets.$inferSelect | undefined;
+    try {
+      updated = await db.transaction(async (tx) => {
+        const [locked] = await tx
+          .select({ id: ruleParamSets.id })
+          .from(ruleParamSets)
+          .where(and(eq(ruleParamSets.id, row.id), eq(ruleParamSets.status, 'pending_approval')))
+          .for('update');
+        if (!locked) return undefined;
+
+        await tx
+          .update(ruleParamSets)
+          .set({ status: 'archived', updatedAt: now })
+          .where(
+            and(
+              eq(ruleParamSets.moduleCode, row.moduleCode),
+              eq(ruleParamSets.scopeType, row.scopeType),
+              eq(ruleParamSets.scopeValue, row.scopeValue),
+              eq(ruleParamSets.status, 'active'),
+            ),
+          );
+        const [r] = await tx
+          .update(ruleParamSets)
+          .set({ status: 'active', approvedBy: user.id, approvedAt: now, activatedAt: now, updatedAt: now })
+          .where(and(eq(ruleParamSets.id, row.id), eq(ruleParamSets.status, 'pending_approval')))
+          .returning();
+        if (!r) throw new Error('参数集状态已变更');
+        return r;
+      });
+    } catch (err) {
+      if (err instanceof Error && err.message === '参数集状态已变更') {
+        return c.json({ message: '参数集状态已变更' }, 409);
+      }
+      throw err;
+    }
+    if (!updated) return c.json({ message: '参数集状态已变更' }, 409);
     return c.json(updated);
   }),
 );

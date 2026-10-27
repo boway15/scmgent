@@ -51,14 +51,16 @@ flowchart LR
 
 ### 0.3 关键常量速查
 
+自 2026-10 起，备货相关参数（单次补货覆盖天数、默认安全库存天数、超储阈值、滞销阈值、MOQ 取值顺序、黄灯联动、US 仓网延后）由「规则中心」（`/system/rules`，`rule_param_sets`）按 全局 → 项目组 → 仓库 分层覆盖；下表为无参数集时的默认值。补货任务与 SKU 规划页同源读取；驾驶舱与预警在第 1、2 期迁移前仍用默认值。
+
 | 常量 | 值 | 文件 |
 |------|----|------|
 | 预测地平线 `FORECAST_HORIZON_MONTHS` | 6 个自然月 | `apps/web/server/lib/forecast-limits.ts` |
 | 需求计划地平线 `DEMAND_PLAN_HORIZON_WEEKS` | 26 个 ISO 周 | `apps/web/server/lib/planning-calendar.ts` |
 | 默认生产提前期 `DEFAULT_PRODUCTION_LEAD_DAYS` | 50 天 | `apps/web/server/lib/replenishment-coverage.ts` |
-| 默认安全库存天数 `DEFAULT_SAFETY_STOCK_DAYS` | 14 天 | 同上 |
-| 默认超储阈值 `DEFAULT_OVERSTOCK_THRESHOLD_DAYS` | 180 天 | 同上 |
-| 单次补货覆盖上限 `SINGLE_REPLENISHMENT_COVER_DAYS` | 30 天 | `apps/web/server/lib/inventory-timeline.ts` |
+| 默认安全库存天数 `DEFAULT_SAFETY_STOCK_DAYS` | 14 天 | `apps/web/server/rules/replenishment/params.ts` |
+| 默认超储阈值 `DEFAULT_OVERSTOCK_THRESHOLD_DAYS` | 180 天 | `apps/web/server/rules/replenishment/params.ts` |
+| 单次补货覆盖上限 `SINGLE_REPLENISHMENT_COVER_DAYS` | 30 天 | `apps/web/server/rules/replenishment/params.ts` |
 | 默认入仓缓冲 | 7 天 | 同上 / `warehouses.inbound_buffer_days` |
 | 需求反推封顶 `UNCONSTRAIN_CAP_RATIO` | 1.5 | `apps/web/server/lib/forecast-demand-unconstrain.ts` |
 | 有货覆盖率门槛 `MIN_AVAILABILITY_COVERAGE` | 0.3 | `apps/web/server/lib/inventory-health-service.ts` |
@@ -241,6 +243,7 @@ flowchart TB
 - 写入前把该 SKU 旧的 pending 建议标记 `superseded_at`；新建议 `status = pending`。
 - 若新 PO 已来不及覆盖缺货（`uncoverable_by_new_po`），`metrics` 中附只读动作建议：互调 / 快船 / 接受断货（`planning-late-po-actions.ts`），不自动执行。
 - 可选 Dify 润色建议理由。
+- 每次运行写 `rule_eval_runs`，建议 `metrics.ruleRunId` 指向本次使用的参数集版本；`metrics.ruleTrace` 记录判断依据。
 
 **② 建议 → PMC**（`PATCH /reorder/suggestions/:id`，`pmc-plan.ts`）
 

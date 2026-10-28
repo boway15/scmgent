@@ -37,7 +37,7 @@ export const PRODUCT_MASTER_SKU_COLUMNS: ProductMasterSkuColumnDef[] = [
   { id: 'actions', label: '操作', kind: 'actions' },
 ];
 
-export const PRODUCT_MASTER_SKU_COLUMN_WIDTHS_KEY = 'scm.product-master.sku-column-widths-v1';
+export const PRODUCT_MASTER_SKU_COLUMN_WIDTHS_KEY = 'scm.product-master.sku-column-widths-v2';
 
 export function defaultProductMasterSkuColumnWidth(columnId: string): number {
   switch (columnId) {
@@ -65,6 +65,7 @@ export function defaultProductMasterSkuColumnWidth(columnId: string): number {
     case 'commercialStatus':
     case 'commercialStatusNorm':
     case 'projectGroup':
+      return 240;
     case 'salesCountry':
     case 'ownerName':
     case 'developerName':

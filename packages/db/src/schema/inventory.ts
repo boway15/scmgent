@@ -44,8 +44,8 @@ export const skus = pgTable(
     name: varchar('name', { length: 200 }).notNull(),
     unit: varchar('unit', { length: 20 }).notNull(),
     category: varchar('category', { length: 500 }),
-    /** 从品类路径第二段派生的项目组，如 项目1组 */
-    projectGroup: varchar('project_group', { length: 20 }),
+    /** 品类路径中间段，如 Amazon项目1组-第一曲线-US */
+    projectGroup: varchar('project_group', { length: 200 }),
     /** C 生命周期（销量推断：新品/间歇/疑似断货） */
     lifecycle: varchar('lifecycle', { length: 50 }),
     /** ERP 商业状态原文（飞书生命周期/产品状态） */

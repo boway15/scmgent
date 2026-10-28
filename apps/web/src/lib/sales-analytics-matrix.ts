@@ -16,18 +16,18 @@ export const MATRIX_DIMS: Record<MatrixMode, MatrixDimKey[]> = {
 };
 
 export const MATRIX_MODE_OPTIONS: Array<{ value: MatrixMode; label: string }> = [
-  { value: 'b', label: '组别' },
+  { value: 'b', label: '项目组' },
   { value: 's', label: '站点' },
-  { value: 'sb', label: '站点 × 组别' },
+  { value: 'sb', label: '站点 × 项目组' },
   { value: 'sc', label: '站点 × 品类' },
   { value: 'sp', label: '站点 × 平台' },
-  { value: 'bc', label: '组别 × 品类' },
-  { value: 'bp', label: '组别 × 平台' },
+  { value: 'bc', label: '项目组 × 品类' },
+  { value: 'bp', label: '项目组 × 平台' },
 ];
 
 export const DIM_NAME: Record<MatrixDimKey, string> = {
   s: '站点',
-  b: '组别',
+  b: '项目组',
   c: '品类',
   p: '平台',
 };

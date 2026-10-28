@@ -65,6 +65,7 @@ describe('buildReinspectionBitableFields', () => {
         expectedShipDate: '2026-10-22',
         containerCartonCount: '1',
         containerPieceCount: '3',
+        transferOrderNo: 'DB20261022001',
         transferStatus: '已放舱',
         followUpReadyAtMs: Date.parse('2026-05-15T00:00:00Z'),
         goodsReadyAtMs: null,
@@ -76,6 +77,7 @@ describe('buildReinspectionBitableFields', () => {
 
     assert.equal(fields['供应商简称'], 'ZZBJS');
     assert.equal(fields['来源记录ID'], 'rec1');
+    assert.equal(fields['调拨单号'], 'DB20261022001');
     assert.equal(fields['首次插入时间'], Date.parse('2026-10-23T01:00:00Z'));
     assert.equal(fields['数据同步时间'], Date.parse('2026-10-23T01:00:00Z'));
     assert.equal('插入时间' in fields, false);
@@ -104,6 +106,7 @@ describe('buildReinspectionBitableFields', () => {
       expectedShipDate: '2026-10-22',
       containerCartonCount: '1',
       containerPieceCount: '3',
+      transferOrderNo: 'DB20261022001',
       transferStatus: '已放舱',
       followUpReadyAtMs: Date.parse('2026-05-15T00:00:00Z'),
       goodsReadyAtMs: null,

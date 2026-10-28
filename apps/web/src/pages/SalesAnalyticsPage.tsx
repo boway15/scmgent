@@ -45,7 +45,7 @@ const DIM_META: Array<{
   metaKey: 'sites' | 'depts' | 'categories' | 'platforms';
 }> = [
   { key: 's', label: '站点', metaKey: 'sites' },
-  { key: 'b', label: '组别', metaKey: 'depts' },
+  { key: 'b', label: '项目组', metaKey: 'depts' },
   { key: 'c', label: '品类', metaKey: 'categories' },
   { key: 'p', label: '平台', metaKey: 'platforms' },
 ];
@@ -366,7 +366,7 @@ export function SalesAnalyticsPage() {
         <Card>
           <CardContent className="space-y-3 pt-6">
             <p className="text-sm text-text-sub">
-              暂无可用看板数据。点击「生成看板数据」将从日销量历史预聚合四维 Cube（站点 / 组别 / 品类 / 平台）。
+              暂无可用看板数据。点击「生成看板数据」按站点 / 项目组 / 品类 / 平台预聚合，月度从最早有销量的月份起。
             </p>
             <Button type="button" disabled={busy} onClick={() => rebuild.mutate()}>
               {busy ? '生成中…' : '生成看板数据'}
@@ -421,7 +421,8 @@ export function SalesAnalyticsPage() {
             <CardHeader>
               <CardTitle className="text-base">分析维度与筛选</CardTitle>
               <p className="text-sm text-text-sub">
-                四维多选默认全选；任一维清空则无命中行。期段按{gran === 'week' ? '周' : '月'}起止过滤 KPI 与图表。
+                项目组取品类路径中间段（事业部\项目组\品类）。月度从最早有销量的月份起，含日表已裁剪、只留在月销量里的历史；周度只含仍保留的日销量。期段按
+                {gran === 'week' ? '周' : '月'}起止过滤，默认全部。
               </p>
             </CardHeader>
             <CardContent className="flex flex-wrap items-end gap-4">

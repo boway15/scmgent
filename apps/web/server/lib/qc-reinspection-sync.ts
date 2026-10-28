@@ -1,7 +1,8 @@
-import { count, desc, ilike, max, or, sql } from 'drizzle-orm';
+import { and, count, desc, eq, ilike, isNull, max, or, sql } from 'drizzle-orm';
 import { db, qcReinspectionFactories, qcReinspectionRows } from '@scm/db';
 import {
   batchCreateBitableRecords,
+  batchGetBitableRecords,
   batchUpdateBitableRecords,
   ensureBitableFields,
   extractFieldValue,
@@ -44,6 +45,7 @@ const TARGET_FIELDS: BitableFieldCreateInput[] = [
   { field_name: '期望出货日期', type: 1 },
   { field_name: '货柜实发箱数', type: 2, property: { formatter: '0' } },
   { field_name: '货柜实发数量', type: 2, property: { formatter: '0' } },
+  { field_name: '调拨单号', type: 1 },
   { field_name: '调拨状态', type: 1 },
   {
     field_name: '跟单货好时间',
@@ -112,6 +114,7 @@ function snapshotFromSource(record: BitableRecord): QcSourceSnapshot {
     expectedShipDate: textOf(fields, '期望出货日期'),
     containerCartonCount: textOf(fields, '货柜实发箱数'),
     containerPieceCount: textOf(fields, '货柜实发数量'),
+    transferOrderNo: textOf(fields, '调拨单号'),
     transferStatus: textOf(fields, '调拨状态'),
     followUpReadyAtMs: readEpochMs(fields['跟单货好时间']),
     goodsReadyAtMs: readEpochMs(fields['货好时间']),
@@ -140,6 +143,7 @@ function snapshotFromTarget(record: BitableRecord): QcSourceSnapshot | null {
     expectedShipDate: textOf(fields, '期望出货日期'),
     containerCartonCount: textOf(fields, '货柜实发箱数'),
     containerPieceCount: textOf(fields, '货柜实发数量'),
+    transferOrderNo: textOf(fields, '调拨单号'),
     transferStatus: textOf(fields, '调拨状态'),
     followUpReadyAtMs: readEpochMs(fields['跟单货好时间']),
     goodsReadyAtMs: readEpochMs(fields['货好时间']),
@@ -175,6 +179,7 @@ function rowValues(
     expectedShipDate: blankToNull(row.expectedShipDate),
     containerCartonCount: blankToNull(row.containerCartonCount),
     containerPieceCount: blankToNull(row.containerPieceCount),
+    transferOrderNo: blankToNull(row.transferOrderNo),
     transferStatus: blankToNull(row.transferStatus),
     followUpReadyAt: row.followUpReadyAtMs != null ? formatShanghaiDate(row.followUpReadyAtMs) : null,
     goodsReadyAt: row.goodsReadyAtMs != null ? formatShanghaiDate(row.goodsReadyAtMs) : null,
@@ -212,6 +217,7 @@ async function upsertLocalRow(
         expectedShipDate: values.expectedShipDate,
         containerCartonCount: values.containerCartonCount,
         containerPieceCount: values.containerPieceCount,
+        transferOrderNo: values.transferOrderNo,
         transferStatus: values.transferStatus,
         followUpReadyAt: values.followUpReadyAt,
         goodsReadyAt: values.goodsReadyAt,
@@ -328,12 +334,154 @@ export async function syncQcReinspection() {
     await upsertLocalRow(creating[i]!, createdIds[i] ?? null, syncedAtMs, syncedAtMs);
   }
 
+  const backfill = await backfillQcReinspectionTransferOrderNo();
+
   return {
     sourceCount: sourceRecords.length,
     matched: matched.length,
     created: createdIds.length,
     refreshed: refreshes.length,
     whitelistSize: whitelist.length,
+    backfill,
+  };
+}
+
+function businessMatchKey(parts: {
+  purchaseOrderNo: string | null | undefined;
+  sku: string | null | undefined;
+  demandNo: string | null | undefined;
+  destWarehouse: string | null | undefined;
+}): string {
+  return [parts.purchaseOrderNo, parts.sku, parts.demandNo, parts.destWarehouse]
+    .map((part) => (part ?? '').trim())
+    .join('|');
+}
+
+/**
+ * 对本地仍缺「调拨单号」的历史行：
+ * 1) 按来源记录 ID 回查采购跟进；
+ * 2) 来源已删除时，用 采购单号+SKU+需求单号+目的仓 在现有跟进表唯一匹配。
+ * 写回本地与飞书目标表。
+ */
+export async function backfillQcReinspectionTransferOrderNo() {
+  const config = getQcReinspectionConfig();
+  await ensureBitableFields(config.appToken, config.targetTableId, TARGET_FIELDS);
+
+  const emptyRows = await db
+    .select({
+      id: qcReinspectionRows.id,
+      sourceRecordId: qcReinspectionRows.sourceRecordId,
+      bitableRecordId: qcReinspectionRows.bitableRecordId,
+      purchaseOrderNo: qcReinspectionRows.purchaseOrderNo,
+      sku: qcReinspectionRows.sku,
+      demandNo: qcReinspectionRows.demandNo,
+      destWarehouse: qcReinspectionRows.destWarehouse,
+    })
+    .from(qcReinspectionRows)
+    .where(
+      or(isNull(qcReinspectionRows.transferOrderNo), eq(qcReinspectionRows.transferOrderNo, '')),
+    );
+
+  if (!emptyRows.length) {
+    return {
+      scanned: 0,
+      updatedLocal: 0,
+      updatedFeishu: 0,
+      matchedBySourceId: 0,
+      matchedByBusinessKey: 0,
+      missingSource: 0,
+    };
+  }
+
+  const sourceById = await batchGetBitableRecords(
+    config.appToken,
+    config.sourceTableId,
+    emptyRows.map((row) => row.sourceRecordId),
+    { displayFormulaRef: true },
+  );
+  const transferBySourceId = new Map<string, string>();
+  for (const record of sourceById) {
+    const value = textOf(record.fields, '调拨单号').trim();
+    if (value) transferBySourceId.set(record.record_id, value);
+  }
+
+  const unresolved = emptyRows.filter((row) => !transferBySourceId.has(row.sourceRecordId));
+  const transferByBusinessKey = new Map<string, string>();
+  if (unresolved.length) {
+    const followUpRecords = await listAllRecords(
+      config.appToken,
+      config.sourceTableId,
+      'procurement-purchase_follow_up',
+      { displayFormulaRef: true },
+    );
+    const candidates = new Map<string, Set<string>>();
+    for (const record of followUpRecords) {
+      const value = textOf(record.fields, '调拨单号').trim();
+      if (!value) continue;
+      const key = businessMatchKey({
+        purchaseOrderNo: textOf(record.fields, '采购单号'),
+        sku: textOf(record.fields, 'SKU'),
+        demandNo: textOf(record.fields, '需求单号'),
+        destWarehouse: textOf(record.fields, '目的仓'),
+      });
+      if (!key.replace(/\|/g, '')) continue;
+      if (!candidates.has(key)) candidates.set(key, new Set());
+      candidates.get(key)!.add(value);
+    }
+    for (const [key, values] of candidates) {
+      if (values.size === 1) transferByBusinessKey.set(key, [...values][0]!);
+    }
+  }
+
+  const feishuUpdates: Array<{ recordId: string; fields: Record<string, string> }> = [];
+  let updatedLocal = 0;
+  let matchedBySourceId = 0;
+  let matchedByBusinessKey = 0;
+  let missingSource = 0;
+
+  for (const row of emptyRows) {
+    let transferOrderNo = transferBySourceId.get(row.sourceRecordId) ?? null;
+    let via: 'sourceId' | 'businessKey' | null = transferOrderNo ? 'sourceId' : null;
+    if (!transferOrderNo) {
+      const key = businessMatchKey(row);
+      transferOrderNo = transferByBusinessKey.get(key) ?? null;
+      if (transferOrderNo) via = 'businessKey';
+    }
+    if (!transferOrderNo) {
+      missingSource += 1;
+      continue;
+    }
+    await db
+      .update(qcReinspectionRows)
+      .set({ transferOrderNo })
+      .where(
+        and(
+          eq(qcReinspectionRows.id, row.id),
+          or(isNull(qcReinspectionRows.transferOrderNo), eq(qcReinspectionRows.transferOrderNo, '')),
+        ),
+      );
+    updatedLocal += 1;
+    if (via === 'sourceId') matchedBySourceId += 1;
+    if (via === 'businessKey') matchedByBusinessKey += 1;
+    if (row.bitableRecordId) {
+      feishuUpdates.push({
+        recordId: row.bitableRecordId,
+        fields: { 调拨单号: transferOrderNo },
+      });
+    }
+  }
+
+  if (feishuUpdates.length) {
+    await batchUpdateBitableRecords(config.appToken, config.targetTableId, feishuUpdates);
+  }
+
+  return {
+    scanned: emptyRows.length,
+    updatedLocal,
+    updatedFeishu: feishuUpdates.length,
+    matchedBySourceId,
+    matchedByBusinessKey,
+    missingSource,
   };
 }
 
@@ -353,6 +501,7 @@ export type QcReinspectionListItem = {
   expectedShipDate: string | null;
   containerCartonCount: string | null;
   containerPieceCount: string | null;
+  transferOrderNo: string | null;
   transferStatus: string | null;
   followUpReadyAt: string | null;
   goodsReadyAt: string | null;
@@ -372,6 +521,7 @@ export async function listQcReinspection(input: { keyword?: string; page: number
         ilike(qcReinspectionRows.sku, pattern),
         ilike(qcReinspectionRows.purchaseOrderNo, pattern),
         ilike(qcReinspectionRows.demandNo, pattern),
+        ilike(qcReinspectionRows.transferOrderNo, pattern),
         ilike(qcReinspectionRows.productName, pattern),
       )
     : sql`true`;
@@ -404,6 +554,7 @@ export async function listQcReinspection(input: { keyword?: string; page: number
     expectedShipDate: row.expectedShipDate,
     containerCartonCount: row.containerCartonCount,
     containerPieceCount: row.containerPieceCount,
+    transferOrderNo: row.transferOrderNo,
     transferStatus: row.transferStatus,
     followUpReadyAt: row.followUpReadyAt,
     goodsReadyAt: row.goodsReadyAt,

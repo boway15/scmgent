@@ -3,6 +3,7 @@ import {
   db,
   salesAnalyticsCubeSnapshots,
   salesHistory,
+  salesHistoryMonthly,
   salesPlatforms,
   skus,
   warehouses,
@@ -11,6 +12,7 @@ import {
 import { stationForWarehouse } from './forecast-demand.js';
 import { isAccessorySku } from './sku-encoding.js';
 import type { ProductScope } from './planning-accessory-filter.js';
+import { shouldAggregateCalendarMonth } from './sales-history-monthly.js';
 import { normalizeSalesPlatformSync } from './sales-platform.js';
 import {
   ANALYTICS_SITE_ORDER,
@@ -21,6 +23,8 @@ import {
   type AnalyticsSite,
 } from './sales-analytics-dims.js';
 
+export type CubeQtyBucket = 'both' | 'month' | 'week';
+
 export type CubeSourceRow = {
   saleDate: string;
   qtySold: number;
@@ -28,7 +32,25 @@ export type CubeSourceRow = {
   warehouseCode?: string | null;
   channel?: string | null;
   category?: string | null;
+  /**
+   * both: 计入月与周（日表里该月完整保留）。
+   * month: 只计入月（月表历史，没有日）。
+   * week: 只计入周（该月日表已被裁成残月，月销量改由月表承担）。
+   */
+  bucket?: CubeQtyBucket;
 };
+
+/** 日行是否还能代表整月。月起始日早于日表最早日期时，该月已不完整。 */
+export function bucketForDailySale(
+  saleDate: string,
+  dailyMinDate: string | null,
+): CubeQtyBucket {
+  const y = Number(saleDate.slice(0, 4));
+  const m = Number(saleDate.slice(5, 7));
+  if (!Number.isFinite(y) || !Number.isFinite(m) || m < 1 || m > 12) return 'both';
+  if (!dailyMinDate) return 'both';
+  return shouldAggregateCalendarMonth(y, m, dailyMinDate) ? 'both' : 'week';
+}
 
 type EntityAcc = {
   s: string;
@@ -120,14 +142,15 @@ function accumulateCubeRowsInto(
 
     const qty = Number(row.qtySold);
     const safeQty = Number.isFinite(qty) ? qty : 0;
-    state.totalSales += safeQty;
+    const bucket = row.bucket ?? 'both';
+    if (bucket !== 'week') state.totalSales += safeQty;
 
     if (!state.dateStart || saleDate < state.dateStart) state.dateStart = saleDate;
     if (!state.dateEnd || saleDate > state.dateEnd) state.dateEnd = saleDate;
 
     const month = saleDate.slice(0, 7);
-    state.monthSet.add(month);
-    const week = isoWeekLabel(saleDate);
+    const week = bucket === 'month' ? null : isoWeekLabel(saleDate);
+    if (bucket !== 'week') state.monthSet.add(month);
     if (week) state.weekSet.add(week);
 
     const s = resolveAnalyticsSite({
@@ -146,7 +169,9 @@ function accumulateCubeRowsInto(
       ent = { s, b, c, p, monthQty: new Map(), weekQty: new Map() };
       state.entities.set(key, ent);
     }
-    ent.monthQty.set(month, (ent.monthQty.get(month) ?? 0) + safeQty);
+    if (bucket !== 'week') {
+      ent.monthQty.set(month, (ent.monthQty.get(month) ?? 0) + safeQty);
+    }
     if (week) ent.weekQty.set(week, (ent.weekQty.get(week) ?? 0) + safeQty);
   }
 }
@@ -315,14 +340,50 @@ async function loadPlatformNameMap(): Promise<Map<string, string>> {
   return new Map(rows.map((r) => [r.code, r.name]));
 }
 
+async function loadSalesHistoryMinDate(): Promise<string | null> {
+  const [row] = await db
+    .select({ minDate: sql<string | null>`min(${salesHistory.saleDate})::text` })
+    .from(salesHistory);
+  const raw = row?.minDate?.slice(0, 10) ?? '';
+  return /^\d{4}-\d{2}-\d{2}$/.test(raw) ? raw : null;
+}
+
+function pushScopedRow(
+  row: CubeSourceRow,
+  skuCode: string | null | undefined,
+  skuKind: string | null | undefined,
+  goodsPage: CubeSourceRow[],
+  accessoryPage: CubeSourceRow[],
+): void {
+  if (isAccessorySku({ code: skuCode, skuKind })) accessoryPage.push(row);
+  else goodsPage.push(row);
+}
+
+function flushCubePages(
+  goodsPage: CubeSourceRow[],
+  accessoryPage: CubeSourceRow[],
+  stateGoods: CubeAccState,
+  stateAccessory: CubeAccState,
+  warehouseStationByCode: Map<string, string>,
+  platformNameByCode: Map<string, string>,
+): void {
+  if (goodsPage.length) {
+    accumulateCubeRowsInto(stateGoods, goodsPage, warehouseStationByCode, platformNameByCode);
+  }
+  if (accessoryPage.length) {
+    accumulateCubeRowsInto(stateAccessory, accessoryPage, warehouseStationByCode, platformNameByCode);
+  }
+}
+
 async function accumulateSalesHistoryPagesDual(
   warehouseStationByCode: Map<string, string>,
   platformNameByCode: Map<string, string>,
 ): Promise<{ goods: SalesAnalyticsCubePayload; accessory: SalesAnalyticsCubePayload }> {
   const stateGoods = createCubeAccumulator();
   const stateAccessory = createCubeAccumulator();
-  let cursor: string | null = null;
+  const dailyMinDate = await loadSalesHistoryMinDate();
 
+  let cursor: string | null = null;
   for (;;) {
     const batch = await db
       .select({
@@ -347,26 +408,86 @@ async function accumulateSalesHistoryPagesDual(
     const goodsPage: CubeSourceRow[] = [];
     const accessoryPage: CubeSourceRow[] = [];
     for (const row of batch) {
+      const saleDate = String(row.saleDate).slice(0, 10);
       const cubeRow: CubeSourceRow = {
-        saleDate: String(row.saleDate).slice(0, 10),
+        saleDate,
         qtySold: Number(row.qtySold) || 0,
         station: row.station,
         warehouseCode: row.warehouseCode,
         channel: row.channel,
         category: row.category,
+        bucket: bucketForDailySale(saleDate, dailyMinDate),
       };
-      if (isAccessorySku({ code: row.skuCode, skuKind: row.skuKind })) {
-        accessoryPage.push(cubeRow);
-      } else {
-        goodsPage.push(cubeRow);
-      }
+      pushScopedRow(cubeRow, row.skuCode, row.skuKind, goodsPage, accessoryPage);
     }
-    if (goodsPage.length) {
-      accumulateCubeRowsInto(stateGoods, goodsPage, warehouseStationByCode, platformNameByCode);
+    flushCubePages(
+      goodsPage,
+      accessoryPage,
+      stateGoods,
+      stateAccessory,
+      warehouseStationByCode,
+      platformNameByCode,
+    );
+
+    cursor = batch[batch.length - 1]!.id;
+    if (batch.length < HISTORY_PAGE_SIZE) break;
+  }
+
+  cursor = null;
+  for (;;) {
+    const olderThanDaily = dailyMinDate
+      ? sql`make_date(${salesHistoryMonthly.saleYear}, ${salesHistoryMonthly.month}, 1) < ${dailyMinDate}::date`
+      : undefined;
+    const batch = await db
+      .select({
+        id: salesHistoryMonthly.id,
+        saleYear: salesHistoryMonthly.saleYear,
+        month: salesHistoryMonthly.month,
+        qtySold: salesHistoryMonthly.qtySold,
+        channel: salesHistoryMonthly.channel,
+        category: sql<string | null>`coalesce(${salesHistoryMonthly.category}, ${skus.category})`,
+        skuCode: skus.code,
+        skuKind: skus.skuKind,
+      })
+      .from(salesHistoryMonthly)
+      .leftJoin(skus, eq(skus.id, salesHistoryMonthly.skuId))
+      .where(
+        cursor
+          ? olderThanDaily
+            ? and(gt(salesHistoryMonthly.id, cursor), olderThanDaily)
+            : gt(salesHistoryMonthly.id, cursor)
+          : olderThanDaily,
+      )
+      .orderBy(salesHistoryMonthly.id)
+      .limit(HISTORY_PAGE_SIZE);
+
+    if (!batch.length) break;
+
+    const goodsPage: CubeSourceRow[] = [];
+    const accessoryPage: CubeSourceRow[] = [];
+    for (const row of batch) {
+      const month = Number(row.month);
+      const year = Number(row.saleYear);
+      if (!Number.isFinite(year) || month < 1 || month > 12) continue;
+      const cubeRow: CubeSourceRow = {
+        saleDate: `${year}-${String(month).padStart(2, '0')}-01`,
+        qtySold: Number(row.qtySold) || 0,
+        station: null,
+        warehouseCode: null,
+        channel: row.channel,
+        category: row.category,
+        bucket: 'month',
+      };
+      pushScopedRow(cubeRow, row.skuCode, row.skuKind, goodsPage, accessoryPage);
     }
-    if (accessoryPage.length) {
-      accumulateCubeRowsInto(stateAccessory, accessoryPage, warehouseStationByCode, platformNameByCode);
-    }
+    flushCubePages(
+      goodsPage,
+      accessoryPage,
+      stateGoods,
+      stateAccessory,
+      warehouseStationByCode,
+      platformNameByCode,
+    );
 
     cursor = batch[batch.length - 1]!.id;
     if (batch.length < HISTORY_PAGE_SIZE) break;

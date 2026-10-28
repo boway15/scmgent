@@ -6,18 +6,20 @@ export function normalizeCategoryPath(value: string | null | undefined): string 
   return (value ?? '').trim().replace(/\\/g, '/');
 }
 
-const PROJECT_GROUP_RE = /项目\d+组/;
-
-/** 从品类路径第二段提取核心项目组名，如 `项目1组`；匹配不到返回 null。 */
+/**
+ * 项目组 = 品类路径中间段。
+ * `事业部\项目组\品类` 取第二段，例如
+ * `DJ02-家具事业1部\Amazon项目1组-第一曲线-US\卧室-床` → `Amazon项目1组-第一曲线-US`。
+ * 多于三段时，去掉首段和末段后的中间全部保留。不足三段返回 null。
+ */
 export function extractProjectGroupFromCategory(
   category: string | null | undefined,
 ): string | null {
   const normalized = normalizeCategoryPath(category);
   if (!normalized) return null;
   const segments = normalized.split('/').filter(Boolean);
-  if (segments.length < 2) return null;
-  const match = segments[1].match(PROJECT_GROUP_RE);
-  return match?.[0] ?? null;
+  if (segments.length < 3) return null;
+  return segments.slice(1, -1).join('\\') || null;
 }
 
 /** Match SKU category against a filter (exact or parent path prefix). */

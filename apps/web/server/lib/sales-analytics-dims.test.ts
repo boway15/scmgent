@@ -71,16 +71,28 @@ describe('sales-analytics-dims', () => {
     assert.equal(resolveAnalyticsSite({ station: '', category: null }), '其他');
   });
 
-  it('extracts dept with overseas prefix', () => {
+  it('extracts project group as the middle category segment', () => {
     assert.equal(
-      extractAnalyticsDept('DJ02\\Amazon项目1组-第一曲线-US\\卧室-床'),
-      '项目1组',
+      extractAnalyticsDept('DJ02-家具事业1部\\Amazon项目1组-第一曲线-US\\卧室-床Beds'),
+      'Amazon项目1组-第一曲线-US',
     );
     assert.equal(
-      extractAnalyticsDept('海外事业\\海外项目3组-EU\\户外'),
-      '海外项目3组',
+      extractAnalyticsDept('DJ02-家具事业1部\\营销一部-项目1组\\卧室-床头柜Nightstands'),
+      '营销一部-项目1组',
     );
-    assert.equal(extractAnalyticsDept('DJ01-郑州大件\\无项目\\叶子'), 'DJ01-郑州大件');
+    assert.equal(
+      extractAnalyticsDept('DJ01-郑州大件\\Amazon项目3组-第一曲线-US\\客厅-咖啡桌Coffee Tables'),
+      'Amazon项目3组-第一曲线-US',
+    );
+    assert.equal(
+      extractAnalyticsDept('DJ01-郑州大件/Amazon项目2组-第一曲线-EU/浴室-镜柜Bathroom Mirrors'),
+      'Amazon项目2组-第一曲线-EU',
+    );
+    assert.equal(
+      extractAnalyticsDept('事业部\\Amazon项目6组-第一曲线-US\\子层\\办公-电脑桌Desks'),
+      'Amazon项目6组-第一曲线-US\\子层',
+    );
+    assert.equal(extractAnalyticsDept('只有两段\\叶子'), '(未分组)');
     assert.equal(extractAnalyticsDept(null), '(未分组)');
   });
 

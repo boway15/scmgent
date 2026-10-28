@@ -25,6 +25,7 @@ export const qcReinspectionRows = pgTable(
     expectedShipDate: varchar('expected_ship_date', { length: 40 }),
     containerCartonCount: varchar('container_carton_count', { length: 50 }),
     containerPieceCount: varchar('container_piece_count', { length: 50 }),
+    transferOrderNo: varchar('transfer_order_no', { length: 100 }),
     transferStatus: varchar('transfer_status', { length: 50 }),
     followUpReadyAt: varchar('follow_up_ready_at', { length: 40 }),
     goodsReadyAt: varchar('goods_ready_at', { length: 40 }),

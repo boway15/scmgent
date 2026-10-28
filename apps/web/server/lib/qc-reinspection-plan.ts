@@ -14,6 +14,7 @@ export type QcSourceSnapshot = {
   expectedShipDate: string;
   containerCartonCount: string;
   containerPieceCount: string;
+  transferOrderNo: string;
   transferStatus: string;
   followUpReadyAtMs: number | null;
   goodsReadyAtMs: number | null;
@@ -90,6 +91,7 @@ function businessFields(row: QcSourceSnapshot): Record<string, string | number> 
   putText(fields, '期望出货日期', row.expectedShipDate);
   putNumber(fields, '货柜实发箱数', row.containerCartonCount);
   putNumber(fields, '货柜实发数量', row.containerPieceCount);
+  putText(fields, '调拨单号', row.transferOrderNo);
   putText(fields, '调拨状态', row.transferStatus);
   if (row.followUpReadyAtMs != null) fields['跟单货好时间'] = row.followUpReadyAtMs;
   if (row.goodsReadyAtMs != null) fields['货好时间'] = row.goodsReadyAtMs;

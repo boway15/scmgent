@@ -1,20 +1,8 @@
-import { normalizeCategoryPath } from './sku-category.js';
-
-const DEPT_PAT = /(?:海外)?\s*项目\s*第?\s*([0-9一二三四五六七八九十]+)\s*组/;
-const CN_NUM: Record<string, number> = {
-  一: 1, 二: 2, 三: 3, 四: 4, 五: 5, 六: 6, 七: 7, 八: 8, 九: 9, 十: 10,
-};
+import { extractProjectGroupFromCategory, normalizeCategoryPath } from './sku-category.js';
 
 export type AnalyticsSite = 'US' | 'EU' | 'UK' | '其他';
 
 export const ANALYTICS_SITE_ORDER: AnalyticsSite[] = ['US', 'EU', 'UK', '其他'];
-
-function cn2num(z: string): number {
-  if (/^\d+$/.test(z)) return Number.parseInt(z, 10);
-  if (z === '十') return 10;
-  if (z.includes('十')) return 10;
-  return CN_NUM[z] ?? 0;
-}
 
 /** Normalize short codes / warehouse stations to US/EU/UK/其他. */
 export function bucketAnalyticsSite(
@@ -130,18 +118,9 @@ export function resolveAnalyticsSite(input: {
   return '其他';
 }
 
+/** 销售分析项目组，与商品主数据同一口径；无法提炼时显示「(未分组)」。 */
 export function extractAnalyticsDept(category: string | null | undefined): string {
-  const raw = (category ?? '').trim();
-  if (!raw) return '(未分组)';
-  const m = raw.match(DEPT_PAT);
-  if (m) {
-    const num = cn2num(m[1]!);
-    const isHaiwai = raw.includes('海外');
-    return `${isHaiwai ? '海外项目' : '项目'}${num}组`;
-  }
-  const normalized = normalizeCategoryPath(raw);
-  const first = normalized.split('/').filter(Boolean)[0];
-  return first || '(未分组)';
+  return extractProjectGroupFromCategory(category) ?? '(未分组)';
 }
 
 export function extractAnalyticsCategoryLeaf(

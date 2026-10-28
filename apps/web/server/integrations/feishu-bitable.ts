@@ -383,6 +383,55 @@ export async function batchCreateBitableRecords(
   return ids;
 }
 
+/** Batch-read records by id (max 100 per request). */
+export async function batchGetBitableRecords(
+  appToken: string,
+  tableId: string,
+  recordIds: string[],
+  options?: { displayFormulaRef?: boolean },
+): Promise<BitableRecord[]> {
+  const ids = [...new Set(recordIds.map((id) => id.trim()).filter(Boolean))];
+  if (!ids.length) return [];
+
+  const token = await getTenantAccessToken();
+  const out: BitableRecord[] = [];
+  const chunkSize = 100;
+  const displayFormulaRef = options?.displayFormulaRef ?? false;
+
+  for (let i = 0; i < ids.length; i += chunkSize) {
+    const chunk = ids.slice(i, i + chunkSize);
+    const url = new URL(
+      `${FEISHU_BASE}/bitable/v1/apps/${encodeURIComponent(appToken)}/tables/${encodeURIComponent(tableId)}/records/batch_get`,
+    );
+    if (displayFormulaRef) {
+      url.searchParams.set('display_formula_ref', 'true');
+    }
+
+    const body = await withFeishuFetchRetry(async () => {
+      const res = await fetch(url.toString(), {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ record_ids: chunk }),
+      });
+      return (await res.json()) as ListRecordsResponse & {
+        data?: { records?: BitableRecord[] };
+      };
+    });
+
+    if (body.code !== 0) {
+      throw new Error(`Feishu Bitable batch_get failed: ${body.msg ?? 'unknown'}`);
+    }
+
+    const records = body.data?.records ?? body.data?.items ?? [];
+    out.push(...records);
+  }
+
+  return out;
+}
+
 export async function batchUpdateBitableRecords(
   appToken: string,
   tableId: string,

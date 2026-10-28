@@ -31,7 +31,7 @@ export const demandPlanVersions = pgTable(
     horizonMonths: integer('horizon_months').notNull().default(12),
     startWeek: varchar('start_week', { length: 8 }),
     horizonWeeks: integer('horizon_weeks'),
-    projectGroup: varchar('project_group', { length: 20 }).notNull(),
+    projectGroup: varchar('project_group', { length: 200 }).notNull(),
     warehouseCode: varchar('warehouse_code', { length: 50 }).notNull(),
     publishedAt: timestamp('published_at', { withTimezone: true }),
     createdBy: uuid('created_by').references(() => users.id),
@@ -116,7 +116,7 @@ export const planningDemandAdoptions = pgTable(
   'planning_demand_adoptions',
   {
     id: uuid('id').primaryKey().defaultRandom(),
-    projectGroup: varchar('project_group', { length: 20 }).notNull(),
+    projectGroup: varchar('project_group', { length: 200 }).notNull(),
     warehouseCode: varchar('warehouse_code', { length: 50 }).notNull(),
     source: varchar('source', { length: 20 }).notNull(),
     demandPlanVersionId: uuid('demand_plan_version_id').references(() => demandPlanVersions.id, {

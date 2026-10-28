@@ -115,3 +115,30 @@ total_sets = 0
 - 路由路径、角色、状态机与简报一致。审批在事务里把同范围 `active` 归档，再把当前行设为 `active`。
 - 冒烟覆盖了列表、创建草稿、试算、提交、审批、解析值 45，并删除了冒烟行。
 - 未改补货默认结果的代码路径；试算走 `dryRun: true`，服务日志里这几步都是 2xx，没有写入错误。
+
+## Review Fixes
+
+试算在 `simulateReplenishment` 之后回写 `simulatedAt` 时，WHERE 要求 `id` 相同、`status = 'draft'`，且 `updatedAt` 与试算前读到的值按毫秒相等（`date_trunc('milliseconds', updated_at)`，因为 JS Date 会丢掉 `timestamptz` 的微秒）。`.returning()` 为零行时返回 409 `{ message: '草稿已变更，请重新试算' }`，不返回试算成功。
+
+提交把状态改为 `pending_approval` 时，WHERE 同时要求 `status = 'draft'` 且 `simulatedAt` 非空。零行返回 409 `{ message: '草稿已变更，请重新试算' }`。
+
+审批先锁定仍为 `pending_approval` 的行，命中后才归档同范围 `active`，再把该行更新为 `active`（WHERE 含 `pending_approval`）。零行则事务回滚并返回 409 `{ message: '参数集状态已变更' }`，不会在未命中时归档当前生效集。
+
+```text
+Command: pnpm --filter @scm/web exec tsx --test server/rules/simulate.test.ts
+Exit code: 0
+▶ overlayDraft
+  ✔ replaces active set of same scope (0.8818ms)
+✔ overlayDraft (1.4608ms)
+▶ diffSuggestions
+  ✔ reports changed, added and removed rows only (0.3011ms)
+✔ diffSuggestions (0.3832ms)
+ℹ tests 2
+ℹ suites 2
+ℹ pass 2
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 1885.8921
+```

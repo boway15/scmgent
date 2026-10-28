@@ -939,7 +939,7 @@ export type SkuOverview = {
   name: string;
   unit: string;
   category?: string | null;
-  /** 从品类派生的项目组，如 项目1组 */
+  /** 从品类路径中间段派生的项目组，如 Amazon项目1组-第一曲线-US */
   projectGroup?: string | null;
   /** A 品类 */
   lifecycle?: string | null;
@@ -1424,6 +1424,7 @@ export type QcReinspectionListItem = {
   expectedShipDate: string | null;
   containerCartonCount: string | null;
   containerPieceCount: string | null;
+  transferOrderNo: string | null;
   transferStatus: string | null;
   followUpReadyAt: string | null;
   goodsReadyAt: string | null;

@@ -363,9 +363,10 @@ taskRoutes.post('/tasks/qc-reinspection-sync', requireCronSecret, async (c) => {
   const run = await startTaskRun('qc_reinspection_sync', triggeredBy);
   try {
     const result = await syncQcReinspection();
+    const backfill = result.backfill;
     await finishTaskRun(run.id, {
       success: true,
-      resultSummary: `source=${result.sourceCount}; matched=${result.matched}; created=${result.created}; refreshed=${result.refreshed}; whitelist=${result.whitelistSize}`,
+      resultSummary: `source=${result.sourceCount}; matched=${result.matched}; created=${result.created}; refreshed=${result.refreshed}; whitelist=${result.whitelistSize}; backfillLocal=${backfill.updatedLocal}; backfillFeishu=${backfill.updatedFeishu}; backfillById=${backfill.matchedBySourceId}; backfillByKey=${backfill.matchedByBusinessKey}; backfillMissing=${backfill.missingSource}`,
     });
     return c.json({ ...result, taskRunId: run.id });
   } catch (err) {

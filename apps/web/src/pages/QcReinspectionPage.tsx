@@ -24,6 +24,7 @@ const COLUMNS: Array<{ key: keyof QcReinspectionListItem; label: string; numeric
   { key: 'expectedShipDate', label: '期望出货日期' },
   { key: 'containerCartonCount', label: '货柜实发箱数', numeric: true },
   { key: 'containerPieceCount', label: '货柜实发数量', numeric: true },
+  { key: 'transferOrderNo', label: '调拨单号' },
   { key: 'transferStatus', label: '调拨状态' },
   { key: 'followUpReadyAt', label: '跟单货好时间' },
   { key: 'goodsReadyAt', label: '货好时间' },
@@ -106,7 +107,7 @@ export function QcReinspectionPage() {
             keyword={keyword}
             onKeywordChange={setKeyword}
             onSearch={() => setAppliedKeyword(keyword.trim())}
-            placeholder="来源记录ID / 供应商简称 / SKU / 采购单号 / 需求单号"
+            placeholder="来源记录ID / 供应商简称 / SKU / 采购单号 / 需求单号 / 调拨单号"
           />
           {message ? <p className="mb-3 text-sm text-text-sub">{message}</p> : null}
           {listQuery.isError ? (

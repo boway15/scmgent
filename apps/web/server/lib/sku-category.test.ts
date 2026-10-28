@@ -48,20 +48,31 @@ describe('sku-category', () => {
     );
   });
 
-  it('extracts 项目x组 from category path second segment', () => {
+  it('extracts the middle category segment as project group', () => {
     assert.equal(
       extractProjectGroupFromCategory(
         'DJ02-家具事业1部\\Amazon项目1组-第一曲线-US\\卧室-床头柜Nightstands',
       ),
-      '项目1组',
+      'Amazon项目1组-第一曲线-US',
     );
     assert.equal(
       extractProjectGroupFromCategory(
         'DJ01-郑州大件/非Amazon项目6组-第二曲线-US/客厅-电视柜',
       ),
-      '项目6组',
+      '非Amazon项目6组-第二曲线-US',
+    );
+    assert.equal(
+      extractProjectGroupFromCategory('DJ01-郑州大件\\大件品牌五部-AmazonUA组-US\\配件'),
+      '大件品牌五部-AmazonUA组-US',
+    );
+    assert.equal(
+      extractProjectGroupFromCategory(
+        '事业部\\Amazon项目6组-第一曲线-US\\子层\\办公-电脑桌Desks',
+      ),
+      'Amazon项目6组-第一曲线-US\\子层',
     );
     assert.equal(extractProjectGroupFromCategory('Outdoor/Patio'), null);
+    assert.equal(extractProjectGroupFromCategory('只有两段\\叶子'), null);
     assert.equal(extractProjectGroupFromCategory('单段品类'), null);
     assert.equal(extractProjectGroupFromCategory(null), null);
     assert.equal(extractProjectGroupFromCategory(''), null);

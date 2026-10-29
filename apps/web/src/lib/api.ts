@@ -3,6 +3,13 @@ import type { HorizonBand } from './forecast-horizon-meta';
 import { appendProductScopeQuery, type ProductScope } from './product-scope';
 import type { SalesAnalyticsCubePayload } from './sales-analytics-types';
 
+function appendRepeatedQuery(qs: URLSearchParams, key: string, values?: string[]) {
+  for (const value of values ?? []) {
+    const trimmed = value.trim();
+    if (trimmed) qs.append(key, trimmed);
+  }
+}
+
 export type MenuNode = {
   id: string;
   name: string;
@@ -4189,6 +4196,7 @@ export const api = {
     station?: string;
     platform?: string;
     projectGroup?: string;
+    projectGroups?: string[];
     skuCode?: string;
     versionName?: string;
     targetVersionId?: string;
@@ -4524,6 +4532,7 @@ export const api = {
     skuId?: string;
     skuCode?: string;
     category?: string;
+    categories?: string[];
     profileSegment?: string;
     pendingCalibration?: boolean;
     page?: number;
@@ -4538,7 +4547,8 @@ export const api = {
     if (params?.platform != null && params.platform !== '') qs.set('platform', params.platform);
     if (params?.skuId) qs.set('skuId', params.skuId);
     if (params?.skuCode) qs.set('skuCode', params.skuCode);
-    if (params?.category) qs.set('category', params.category);
+    appendRepeatedQuery(qs, 'categories', params?.categories);
+    if (!params?.categories?.length && params?.category) qs.set('category', params.category);
     if (params?.profileSegment) qs.set('profileSegment', params.profileSegment);
     if (params?.pendingCalibration) qs.set('pendingCalibration', 'true');
     if (params?.page) qs.set('page', String(params.page));
@@ -4617,6 +4627,7 @@ export const api = {
     platform?: string;
     skuCode?: string;
     category?: string;
+    categories?: string[];
     profileSegment?: string;
     pendingCalibration?: boolean;
     monthCount?: number;
@@ -4629,7 +4640,8 @@ export const api = {
     if (params.station) qs.set('station', params.station);
     if (params.platform != null && params.platform !== '') qs.set('platform', params.platform);
     if (params.skuCode) qs.set('skuCode', params.skuCode);
-    if (params.category) qs.set('category', params.category);
+    appendRepeatedQuery(qs, 'categories', params.categories);
+    if (!params.categories?.length && params.category) qs.set('category', params.category);
     if (params.profileSegment) qs.set('profileSegment', params.profileSegment);
     if (params.pendingCalibration) qs.set('pendingCalibration', 'true');
     if (params.monthCount != null) qs.set('monthCount', String(params.monthCount));

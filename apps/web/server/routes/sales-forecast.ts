@@ -86,6 +86,7 @@ import {
 import { getTaskRunById, startTaskRun } from '../lib/task-runs.js';
 import {
   countActiveSkusForForecast,
+  resolveProjectGroupFilters,
   searchSkuCategories,
   searchSkuProjectGroups,
 } from '../lib/sku-category.js';
@@ -196,8 +197,26 @@ async function requireForecastWrite(c: Context, next: Next) {
   return next();
 }
 
-async function countActiveSkus(input: { projectGroup?: string; skuCode?: string }): Promise<number> {
+const MAX_SCOPE_FILTERS = 50;
+
+async function countActiveSkus(input: {
+  projectGroup?: string;
+  projectGroups?: string[];
+  skuCode?: string;
+}): Promise<number> {
   return countActiveSkusForForecast(input);
+}
+
+function readCategoryQuery(c: Context): { categories: string[] } | { error: string } {
+  const fromMulti = [
+    ...new Set((c.req.queries('categories') ?? []).map((item) => item.trim()).filter(Boolean)),
+  ];
+  const single = c.req.query('category')?.trim();
+  const categories = fromMulti.length ? fromMulti : single ? [single] : [];
+  if (categories.length > MAX_SCOPE_FILTERS) {
+    return { error: `品类最多选择 ${MAX_SCOPE_FILTERS} 个` };
+  }
+  return { categories };
 }
 
 function mapReviewItemRow(row: {
@@ -320,6 +339,7 @@ salesForecastRoutes.post('/sales-forecasts/generate-baseline', requireMenu('data
     station?: string;
     platform?: string;
     projectGroup?: string;
+    projectGroups?: string[];
     skuCode?: string;
     versionName?: string;
     targetVersionId?: string;
@@ -340,8 +360,17 @@ salesForecastRoutes.post('/sales-forecasts/generate-baseline', requireMenu('data
     return c.json({ message: err instanceof Error ? err.message : 'startMonth 无效' }, 400);
   }
   const skuCode = body.skuCode?.trim() || undefined;
-  const projectGroup = body.projectGroup?.trim() || undefined;
-  const perStationSkuCount = await countActiveSkus({ projectGroup, skuCode });
+  const projectGroups = resolveProjectGroupFilters({
+    projectGroup: body.projectGroup,
+    projectGroups: Array.isArray(body.projectGroups) ? body.projectGroups : undefined,
+  });
+  if (projectGroups.length > MAX_SCOPE_FILTERS) {
+    return c.json({ message: `项目组最多选择 ${MAX_SCOPE_FILTERS} 个` }, 400);
+  }
+  const perStationSkuCount = await countActiveSkus({
+    projectGroups: projectGroups.length ? projectGroups : undefined,
+    skuCode,
+  });
   const activeSkuCount = perStationSkuCount;
   if (skuCode && activeSkuCount === 0) {
     return c.json({ message: `SKU ${skuCode} 不存在、未启用，或与所选项目组不匹配` }, 404);
@@ -360,7 +389,7 @@ salesForecastRoutes.post('/sales-forecasts/generate-baseline', requireMenu('data
   const autoVersionName = buildBaselineDraftVersionName({
     monthCount,
     platform,
-    projectGroup,
+    projectGroups,
     skuCode,
   });
 
@@ -405,7 +434,7 @@ salesForecastRoutes.post('/sales-forecasts/generate-baseline', requireMenu('data
 
   const taskInput = {
     platform,
-    projectGroup,
+    projectGroups: projectGroups.length ? projectGroups : undefined,
     skuCode,
     versionName: versionName ?? autoVersionName,
     monthCount,
@@ -1124,7 +1153,8 @@ salesForecastRoutes.get('/sales-forecasts/horizon', requireMenu('data.forecast')
   const platform = c.req.query('platform')?.trim() || undefined;
   const skuCode = c.req.query('skuCode')?.trim() || undefined;
   const skuId = c.req.query('skuId')?.trim() || undefined;
-  const category = c.req.query('category')?.trim() || undefined;
+  const categoryQuery = readCategoryQuery(c);
+  if ('error' in categoryQuery) return c.json({ message: categoryQuery.error }, 400);
   const profileSegment = c.req.query('profileSegment')?.trim() || undefined;
   const pendingCalibration = c.req.query('pendingCalibration')?.trim() === 'true';
   const monthCountRaw = Number(c.req.query('monthCount')?.trim());
@@ -1142,7 +1172,7 @@ salesForecastRoutes.get('/sales-forecasts/horizon', requireMenu('data.forecast')
     platform,
     skuId,
     skuCode,
-    category,
+    categories: categoryQuery.categories,
     profileSegment,
     pendingCalibration: pendingCalibration || undefined,
     page,
@@ -1172,6 +1202,8 @@ salesForecastRoutes.get('/sales-forecasts/horizon/export', requireMenu('data.for
   const historyMonthCountRaw = Number(c.req.query('historyMonthCount')?.trim());
   const historyMonthCount = Number.isFinite(historyMonthCountRaw) ? historyMonthCountRaw : undefined;
   const pendingCalibration = c.req.query('pendingCalibration')?.trim() === 'true';
+  const categoryQuery = readCategoryQuery(c);
+  if ('error' in categoryQuery) return c.json({ message: categoryQuery.error }, 400);
 
   const { csv } = await buildForecastHorizonExportCsv({
     mode,
@@ -1179,7 +1211,7 @@ salesForecastRoutes.get('/sales-forecasts/horizon/export', requireMenu('data.for
     station: c.req.query('station')?.trim() || undefined,
     platform: c.req.query('platform')?.trim() || undefined,
     skuCode: c.req.query('skuCode')?.trim() || undefined,
-    category: c.req.query('category')?.trim() || undefined,
+    categories: categoryQuery.categories,
     profileSegment: c.req.query('profileSegment')?.trim() || undefined,
     pendingCalibration: pendingCalibration || undefined,
     monthCount,

@@ -28,11 +28,28 @@ export function parseBaselinePlatformFromVersionName(versionName?: string | null
   return null;
 }
 
+function distinctScopeLabels(
+  many?: Array<string | null | undefined> | null,
+  single?: string | null,
+): string[] {
+  const fromList = [
+    ...new Set(
+      (many ?? [])
+        .map((item) => (typeof item === 'string' ? item.trim() : ''))
+        .filter(Boolean),
+    ),
+  ];
+  if (fromList.length) return fromList;
+  const trimmed = single?.trim();
+  return trimmed ? [trimmed] : [];
+}
+
 /** 生成草稿的人类可读范围标签（写入 version_name，列表用于区分 3M/6M/渠道/单 SKU） */
 export function buildBaselineDraftVersionName(input: {
   monthCount: number;
   platform?: string | null;
   projectGroup?: string | null;
+  projectGroups?: Array<string | null | undefined> | null;
   skuCode?: string | null;
   now?: Date;
 }): string {
@@ -40,14 +57,20 @@ export function buildBaselineDraftVersionName(input: {
   const platformCode = normalizeSalesPlatform(input.platform?.trim() || 'ALL');
   const platformLabel = BASELINE_PLATFORM_LABEL[platformCode] ?? platformCode;
   const skuCode = input.skuCode?.trim().toUpperCase();
-  const projectGroup = input.projectGroup?.trim();
+  const projectGroups = distinctScopeLabels(input.projectGroups, input.projectGroup);
   const date = (input.now ?? new Date()).toISOString().slice(0, 10);
 
   let scopeLabel = '全量 SKU';
   if (skuCode) {
     scopeLabel = `单 SKU ${skuCode}`;
-  } else if (projectGroup) {
-    scopeLabel = `项目组 ${projectGroup}`;
+  } else if (projectGroups.length === 1) {
+    scopeLabel = `项目组 ${projectGroups[0]}`;
+  } else if (projectGroups.length > 1) {
+    const joined = projectGroups.join('、');
+    scopeLabel =
+      joined.length <= 60
+        ? `项目组 ${joined}`
+        : `项目组 ${projectGroups[0]} 等${projectGroups.length}个`;
   }
 
   return `${monthCount} 个月 · ${platformLabel} · ${scopeLabel} · ${date}`;

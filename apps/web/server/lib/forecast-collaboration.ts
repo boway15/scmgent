@@ -17,7 +17,8 @@ import {
   getForecastVersionById,
 } from './forecast-version.js';
 import {
-  skuMatchesProjectGroupFilter,
+  resolveProjectGroupFilters,
+  skuMatchesAnyProjectGroupFilter,
 } from './sku-category.js';
 import { isAccessorySku } from './sku-encoding.js';
 import {
@@ -826,6 +827,7 @@ export async function generateBaselineForecastVersion(input: {
   station?: string;
   platform?: string;
   projectGroup?: string;
+  projectGroups?: string[];
   skuCode?: string;
   versionName?: string;
   monthCount?: number;
@@ -859,6 +861,7 @@ async function generateBaselineForecastVersionForStation(input: {
   station: string;
   platform?: string;
   projectGroup?: string;
+  projectGroups?: string[];
   skuCode?: string;
   versionName?: string;
   monthCount?: number;
@@ -934,6 +937,7 @@ async function generateBaselineForStationPlatform(input: {
   station: string;
   platform: string;
   projectGroup?: string;
+  projectGroups?: string[];
   skuCode?: string;
   versionName?: string;
   monthCount?: number;
@@ -951,7 +955,7 @@ async function generateBaselineForStationPlatform(input: {
 }) {
   const station = resolveForecastGenerationStation(input.station);
   const platform = normalizeSalesPlatform(input.platform);
-  const projectGroupFilter = input.projectGroup?.trim() || undefined;
+  const projectGroupFilters = resolveProjectGroupFilters(input);
   const skuCodeFilter = input.skuCode?.trim().toUpperCase() || undefined;
   let version = input.existingVersionId ? await getForecastVersionById(input.existingVersionId) : null;
   if (input.existingVersionId && !version) {
@@ -1033,9 +1037,9 @@ async function generateBaselineForStationPlatform(input: {
     .from(skus)
     .where(eq(skus.isActive, true));
 
-  if (projectGroupFilter) {
+  if (projectGroupFilters.length) {
     skuRows = skuRows.filter((sku) =>
-      skuMatchesProjectGroupFilter(sku.projectGroup, projectGroupFilter),
+      skuMatchesAnyProjectGroupFilter(sku.projectGroup, projectGroupFilters),
     );
   }
 

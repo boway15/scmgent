@@ -20,7 +20,7 @@ import {
 } from './forecast-station-scope.js';
 import { loadSeasonalityLookup, resolveSeasonalityFactors } from './forecast-collaboration.js';
 import { getForecastVersionById } from './forecast-version.js';
-import { categoryMatchesFilterCondition } from './sku-category.js';
+import { categoriesMatchFilterCondition, resolveCategoryFilters } from './sku-category.js';
 import { loadMonthlySalesBySkuIds } from './sales-history-query.js';
 import { MAX_FORECAST_MONTH_COUNT } from './forecast-limits.js';
 import { resolveForecastStartMonthAsOf } from './forecast-start-month.js';
@@ -35,6 +35,12 @@ export const ALLCAT_V41_TIER_SORT_ORDER = ['T1', 'T2', 'T3', 'T3P', 'T4A', 'T4B'
 export function isPersistedProfileSegment(segment: string | null | undefined): boolean {
   const normalized = segment?.trim().toUpperCase();
   return Boolean(normalized && normalized !== 'AI');
+}
+
+function forecastCategoryFilterSql(categories?: string[]) {
+  const filters = resolveCategoryFilters({ categories });
+  if (!filters.length) return undefined;
+  return categoriesMatchFilterCondition(sql<string | null>`null`, skus.category, filters);
 }
 
 /** 商品分层列表排序权重（越小越靠前） */
@@ -920,7 +926,7 @@ async function listForecastHorizonAggregated(input: {
   station?: string;
   skuId?: string;
   skuCode?: string;
-  category?: string;
+  categories?: string[];
   profileSegment?: string;
   pendingCalibration?: boolean;
   page: number;
@@ -944,14 +950,8 @@ async function listForecastHorizonAggregated(input: {
   } else if (input.skuCode?.trim()) {
     conditions.push(ilike(skus.code, `%${input.skuCode.trim()}%`));
   }
-  if (input.category?.trim()) {
-    const categoryCondition = categoryMatchesFilterCondition(
-      sql<string | null>`null`,
-      skus.category,
-      input.category,
-    );
-    if (categoryCondition) conditions.push(categoryCondition);
-  }
+  const categoryCondition = forecastCategoryFilterSql(input.categories);
+  if (categoryCondition) conditions.push(categoryCondition);
 
   const tierSkuIds = await loadAnchorTierFilteredSkuIds({
     versionId: input.versionId,
@@ -1199,6 +1199,7 @@ export async function listForecastHorizon(input: {
   skuId?: string;
   skuCode?: string;
   category?: string;
+  categories?: string[];
   profileSegment?: string;
   pendingCalibration?: boolean;
   page?: number;
@@ -1240,6 +1241,10 @@ export async function listForecastHorizon(input: {
   const version = await getForecastVersionById(versionId);
   const stationFilter = normalizeForecastStation(input.station);
 
+  const categoryFilters = resolveCategoryFilters({
+    category: input.category,
+    categories: input.categories,
+  });
   const platformNormalized = normalizeSalesPlatform(input.platform?.trim() || 'ALL');
   if (platformNormalized === 'ALL') {
     return listForecastHorizonAggregated({
@@ -1247,7 +1252,7 @@ export async function listForecastHorizon(input: {
       station: stationFilter,
       skuId: input.skuId,
       skuCode: input.skuCode,
-      category: input.category,
+      categories: categoryFilters,
       profileSegment: input.profileSegment,
       pendingCalibration: input.pendingCalibration,
       page,
@@ -1272,14 +1277,8 @@ export async function listForecastHorizon(input: {
   } else if (input.skuCode?.trim()) {
     conditions.push(ilike(skus.code, `%${input.skuCode.trim()}%`));
   }
-  if (input.category?.trim()) {
-    const categoryCondition = categoryMatchesFilterCondition(
-      sql<string | null>`null`,
-      skus.category,
-      input.category,
-    );
-    if (categoryCondition) conditions.push(categoryCondition);
-  }
+  const categoryCondition = forecastCategoryFilterSql(categoryFilters);
+  if (categoryCondition) conditions.push(categoryCondition);
   if (versionId) {
     appendHorizonPlatformTierFilter(conditions, {
       versionId,

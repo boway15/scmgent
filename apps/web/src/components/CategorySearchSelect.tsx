@@ -1,34 +1,30 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api';
+import { ChecklistSearchSelect } from '@/components/ChecklistSearchSelect';
 import { Input } from '@/components/ui/input';
 import { cn } from '@/lib/utils';
 
 type CategorySearchSelectProps = {
-  value: string;
-  onChange: (value: string) => void;
   placeholder?: string;
   className?: string;
   /** sales=销量历史页权限；forecast=销售预测页权限 */
   scope?: 'sales' | 'forecast';
-};
+} & (
+  | {
+      multiple?: false;
+      value: string;
+      onChange: (value: string) => void;
+    }
+  | {
+      multiple: true;
+      value: string[];
+      onChange: (value: string[]) => void;
+    }
+);
 
-export function CategorySearchSelect({
-  value,
-  onChange,
-  placeholder = '搜索品类…',
-  className,
-  scope = 'sales',
-}: CategorySearchSelectProps) {
-  const listId = useId();
-  const rootRef = useRef<HTMLDivElement>(null);
-  const [open, setOpen] = useState(false);
-  const [search, setSearch] = useState(value);
-  const [debouncedSearch, setDebouncedSearch] = useState(value);
-
-  useEffect(() => {
-    setSearch(value);
-  }, [value]);
+function useCategoryOptions(scope: 'sales' | 'forecast', search: string, open: boolean) {
+  const [debouncedSearch, setDebouncedSearch] = useState(search);
 
   useEffect(() => {
     const timer = window.setTimeout(() => setDebouncedSearch(search), 250);
@@ -45,6 +41,69 @@ export function CategorySearchSelect({
     staleTime: 30_000,
   });
 
+  return { options, isFetching, debouncedSearch };
+}
+
+function CategoryMultiSearchSelect({
+  value,
+  onChange,
+  placeholder = '搜索品类…',
+  className,
+  scope = 'sales',
+}: {
+  value: string[];
+  onChange: (value: string[]) => void;
+  placeholder?: string;
+  className?: string;
+  scope?: 'sales' | 'forecast';
+}) {
+  const [open, setOpen] = useState(false);
+  const [search, setSearch] = useState('');
+  const { options, isFetching } = useCategoryOptions(scope, search, open);
+
+  return (
+    <ChecklistSearchSelect
+      value={value}
+      onChange={onChange}
+      options={options}
+      isFetching={isFetching}
+      search={search}
+      onSearchChange={setSearch}
+      open={open}
+      onOpenChange={setOpen}
+      placeholder={placeholder}
+      allLabel="全部品类"
+      clearAriaLabel="清除品类"
+      emptyHint="输入关键词或粘贴品类路径"
+      noMatchHint="无匹配品类"
+      className={className}
+    />
+  );
+}
+
+function CategorySingleSearchSelect({
+  value,
+  onChange,
+  placeholder = '搜索品类…',
+  className,
+  scope = 'sales',
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  placeholder?: string;
+  className?: string;
+  scope?: 'sales' | 'forecast';
+}) {
+  const listId = useId();
+  const rootRef = useRef<HTMLDivElement>(null);
+  const [open, setOpen] = useState(false);
+  const [search, setSearch] = useState(value);
+  const { options, isFetching, debouncedSearch } = useCategoryOptions(scope, search, open);
+
+  useEffect(() => {
+    setSearch(value);
+  }, [value]);
+
   useEffect(() => {
     const onDocClick = (event: MouseEvent) => {
       if (!rootRef.current?.contains(event.target as Node)) {
@@ -58,23 +117,22 @@ export function CategorySearchSelect({
   const pick = (next: string) => {
     onChange(next);
     setSearch(next);
-    setDebouncedSearch(next);
     setOpen(false);
   };
 
   const clear = () => {
     onChange('');
     setSearch('');
-    setDebouncedSearch('');
     setOpen(false);
   };
 
   return (
-    <div ref={rootRef} className={cn('relative min-w-56 w-96 max-w-full', className)}>
+    <div ref={rootRef} className={cn('relative min-w-56 w-96 max-w-full', open && 'z-30', className)}>
       <Input
         className="h-9 pr-8"
         placeholder={placeholder}
         value={search}
+        title={search || undefined}
         role="combobox"
         aria-expanded={open}
         aria-controls={listId}
@@ -90,7 +148,6 @@ export function CategorySearchSelect({
           if (e.key === 'Escape') {
             setOpen(false);
             setSearch(value);
-            setDebouncedSearch(value);
           }
         }}
       />
@@ -108,7 +165,7 @@ export function CategorySearchSelect({
         <ul
           id={listId}
           role="listbox"
-          className="absolute z-20 mt-1 max-h-60 w-full overflow-auto rounded-md border border-border bg-card py-1 text-sm shadow-md"
+          className="absolute z-30 mt-1 max-h-96 w-full overflow-auto rounded-md border border-border bg-card py-1 text-sm shadow-md"
         >
           <li>
             <button
@@ -132,7 +189,7 @@ export function CategorySearchSelect({
                   aria-selected={item === value}
                   title={item}
                   className={cn(
-                    'block w-full px-3 py-2 text-left hover:bg-muted/60 truncate',
+                    'block w-full whitespace-normal break-all px-3 py-2 text-left leading-5 hover:bg-muted/60',
                     item === value && 'bg-primary/10 text-primary',
                   )}
                   onMouseDown={(e) => e.preventDefault()}
@@ -152,5 +209,28 @@ export function CategorySearchSelect({
         </ul>
       ) : null}
     </div>
+  );
+}
+
+export function CategorySearchSelect(props: CategorySearchSelectProps) {
+  if (props.multiple) {
+    return (
+      <CategoryMultiSearchSelect
+        value={props.value}
+        onChange={props.onChange}
+        placeholder={props.placeholder}
+        className={props.className}
+        scope={props.scope}
+      />
+    );
+  }
+  return (
+    <CategorySingleSearchSelect
+      value={props.value}
+      onChange={props.onChange}
+      placeholder={props.placeholder}
+      className={props.className}
+      scope={props.scope}
+    />
   );
 }

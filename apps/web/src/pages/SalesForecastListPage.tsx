@@ -41,7 +41,7 @@ export function SalesForecastListPage() {
   const [appliedVersionKeyword, setAppliedVersionKeyword] = useState('');
   const [versionPage, setVersionPage] = useState(1);
   const [versionPageSize, setVersionPageSize] = useState(20);
-  const [generationProjectGroup, setGenerationProjectGroup] = useState('');
+  const [generationProjectGroups, setGenerationProjectGroups] = useState<string[]>([]);
   const [generationSkuCode, setGenerationSkuCode] = useState('');
   const [generationStartMonth, setGenerationStartMonth] = useState(() => formatForecastStartMonth());
   const startMonthOptions = useMemo(() => buildForecastStartMonthOptions(), []);
@@ -123,7 +123,7 @@ export function SalesForecastListPage() {
     mutationFn: async () => {
       setBaselineProgress(null);
       const initial = await api.generateSalesForecastBaseline({
-        projectGroup: generationProjectGroup.trim() || undefined,
+        projectGroups: generationProjectGroups.length ? generationProjectGroups : undefined,
         skuCode: generationSkuCode.trim() || undefined,
         monthCount: FORECAST_HORIZON_MONTHS,
         startMonth: generationStartMonth,
@@ -327,21 +327,20 @@ export function SalesForecastListPage() {
                 </li>
               </ul>
               <p className="mt-2 text-xs text-text-sub">
-                项目组 / 单 SKU 生成会各自产生独立快照（或单 SKU 合并进目标草稿），便于实验对比；正式补货建议用「全平台」全量生成。
+                项目组可多选，一次生成一份包含所选项目组的草稿；不选表示全部项目组。单 SKU 生成会合并进目标草稿。正式补货建议用「全平台」全量生成。
               </p>
             </CardHeader>
             <CardContent className="space-y-4">
               <div className="flex flex-wrap items-end gap-2">
-                <label className="space-y-1 text-sm">
-                  <span className="text-text-sub">项目组</span>
+                <label className="w-full max-w-xl space-y-1 text-sm">
+                  <span className="text-text-sub">项目组（可多选，不选为全部）</span>
                   <ProjectGroupSearchSelect
-                    value={generationProjectGroup}
+                    value={generationProjectGroups}
                     onChange={(next) => {
-                      setGenerationProjectGroup(next);
+                      setGenerationProjectGroups(next);
                       generateBaseline.reset();
                     }}
                     placeholder="搜索项目组…"
-                    className="w-full max-w-md"
                   />
                 </label>
                 <label className="space-y-1 text-sm">

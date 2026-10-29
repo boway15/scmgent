@@ -6,6 +6,7 @@ export type BaselineTaskInput = {
   station?: string;
   platform?: string;
   projectGroup?: string;
+  projectGroups?: string[];
   skuCode?: string;
   versionName?: string;
   monthCount: number;

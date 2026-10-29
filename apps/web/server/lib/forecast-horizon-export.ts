@@ -204,6 +204,7 @@ export async function loadForecastHorizonExportDataset(input: {
   platform?: string;
   skuCode?: string;
   category?: string;
+  categories?: string[];
   profileSegment?: string;
   pendingCalibration?: boolean;
   monthCount?: number;
@@ -227,6 +228,7 @@ export async function loadForecastHorizonExportDataset(input: {
       platform: input.platform,
       skuCode: input.skuCode,
       category: input.category,
+      categories: input.categories,
       profileSegment: input.profileSegment,
       pendingCalibration: input.pendingCalibration,
       page,
@@ -256,6 +258,7 @@ export async function buildForecastHorizonExportCsv(input: {
   platform?: string;
   skuCode?: string;
   category?: string;
+  categories?: string[];
   profileSegment?: string;
   pendingCalibration?: boolean;
   monthCount?: number;

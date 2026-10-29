@@ -47,13 +47,13 @@ export function ForecastDataExplorer({
 }: Props) {
   const [skuCode, setSkuCode] = useState('');
   const [platform, setPlatform] = useState(initialPlatform);
-  const [category, setCategory] = useState('');
+  const [categories, setCategories] = useState<string[]>([]);
   const [profileSegment, setProfileSegment] = useState('');
   const [pendingCalibration, setPendingCalibration] = useState(false);
   const [applied, setApplied] = useState({
     skuCode: '',
     platform: initialPlatform,
-    category: '',
+    categories: [] as string[],
     profileSegment: '',
     pendingCalibration: false,
     versionId: fixedVersionId,
@@ -77,7 +77,7 @@ export function ForecastDataExplorer({
     setApplied({
       skuCode,
       platform,
-      category,
+      categories,
       profileSegment,
       pendingCalibration,
       versionId: fixedVersionId,
@@ -90,7 +90,7 @@ export function ForecastDataExplorer({
     setApplied({
       skuCode,
       platform,
-      category,
+      categories,
       profileSegment,
       pendingCalibration: next,
       versionId: fixedVersionId,
@@ -148,13 +148,14 @@ export function ForecastDataExplorer({
               ))}
             </select>
           </label>
-          <label className="space-y-1 text-sm">
-            <span className="text-text-sub">品类</span>
+          <label className="w-full max-w-xl space-y-1 text-sm">
+            <span className="text-text-sub">品类（可多选）</span>
             <CategorySearchSelect
+              multiple
               scope="forecast"
-              value={category}
-              onChange={setCategory}
-              className="w-full max-w-md"
+              value={categories}
+              onChange={setCategories}
+              placeholder="搜索品类…"
             />
           </label>
           <label className="space-y-1 text-sm">
@@ -169,7 +170,7 @@ export function ForecastDataExplorer({
                 setApplied({
                   skuCode,
                   platform,
-                  category,
+                  categories,
                   profileSegment: next,
                   pendingCalibration: false,
                   versionId: fixedVersionId,

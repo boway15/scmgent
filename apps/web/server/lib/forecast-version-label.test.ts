@@ -34,6 +34,26 @@ describe('forecast-version-label', () => {
       }),
       '6 个月 · 亚马逊 · 单 SKU ABC-123 · 2026-07-06',
     );
+    assert.equal(
+      buildBaselineDraftVersionName({
+        monthCount: 6,
+        platform: 'ALL',
+        projectGroups: ['项目1组', '项目2组'],
+        now,
+      }),
+      '6 个月 · 全平台 · 项目组 项目1组、项目2组 · 2026-07-06',
+    );
+    const longName = buildBaselineDraftVersionName({
+      monthCount: 6,
+      platform: 'ALL',
+      projectGroups: [
+        'Amazon项目6组-第二曲线-US-客厅-电视柜 TV Stands',
+        'Amazon项目7组-第二曲线-US-卧室-床头柜 Nightstands',
+      ],
+      now,
+    });
+    assert.match(longName, /等2个/);
+    assert.match(longName, /2026-07-06$/);
   });
 
   it('parses generation platform from auto version names', () => {

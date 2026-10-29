@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, isNotNull, ilike, sql } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNotNull, ilike, sql, type SQL, type SQLWrapper } from 'drizzle-orm';
 import { db, skus, warehouses, salesForecastVersions, salesHistory, salesHistoryMonthly } from '@scm/db';
 
 /** 统一品类路径分隔符（销量历史常用 `\`，主数据常用 `/`）。 */
@@ -146,8 +146,8 @@ function escapeLikePattern(value: string): string {
 
 /** 与销量历史列表 coalesce 口径一致，支持关键词包含与路径前缀（`\`/`/` 等价）。 */
 export function categoryMatchesFilterCondition(
-  historyCategory: typeof salesHistory.category,
-  skuCategory: typeof skus.category,
+  historyCategory: SQLWrapper,
+  skuCategory: SQLWrapper,
   filter?: string | null,
 ) {
   const normalized = normalizeCategoryPath(filter);
@@ -157,6 +157,53 @@ export function categoryMatchesFilterCondition(
   const effective = sql`replace(coalesce(${historyCategory}, ${skuCategory}), '\\', '/')`;
 
   return sql`${effective} is not null and trim(${effective}) <> '' and ${effective} ilike ${pattern}`;
+}
+
+/** 多选优先；列表为空时回退到单个筛选值。 */
+export function uniqueTrimmedFilters(
+  many?: Array<string | null | undefined> | null,
+  single?: string | null,
+): string[] {
+  const fromList = [
+    ...new Set(
+      (many ?? [])
+        .map((item) => (typeof item === 'string' ? item.trim() : ''))
+        .filter(Boolean),
+    ),
+  ];
+  if (fromList.length) return fromList;
+  const trimmed = single?.trim();
+  return trimmed ? [trimmed] : [];
+}
+
+export function resolveProjectGroupFilters(input: {
+  projectGroup?: string | null;
+  projectGroups?: Array<string | null | undefined> | null;
+}): string[] {
+  return uniqueTrimmedFilters(input.projectGroups, input.projectGroup);
+}
+
+export function resolveCategoryFilters(input: {
+  category?: string | null;
+  categories?: Array<string | null | undefined> | null;
+}): string[] {
+  return uniqueTrimmedFilters(input.categories, input.category);
+}
+
+/** 多个品类取并集，单条仍走原有包含匹配。 */
+export function categoriesMatchFilterCondition(
+  historyCategory: SQLWrapper,
+  skuCategory: SQLWrapper,
+  filters?: Array<string | null | undefined> | null,
+) {
+  const parts: SQL[] = [];
+  for (const filter of uniqueTrimmedFilters(filters)) {
+    const part = categoryMatchesFilterCondition(historyCategory, skuCategory, filter);
+    if (part) parts.push(part);
+  }
+  if (parts.length === 0) return undefined;
+  if (parts.length === 1) return parts[0];
+  return sql`(${sql.join(parts, sql` or `)})`;
 }
 
 function categorySearchPattern(query?: string): string | null {
@@ -276,6 +323,16 @@ export function skuMatchesProjectGroupFilter(
   return projectGroup === normalizedFilter || projectGroup.includes(normalizedFilter);
 }
 
+/** 未选项目组时不过滤；多选时命中任意一个即可。 */
+export function skuMatchesAnyProjectGroupFilter(
+  skuProjectGroup: string | null | undefined,
+  filters?: Array<string | null | undefined> | null,
+): boolean {
+  const normalized = uniqueTrimmedFilters(filters);
+  if (!normalized.length) return true;
+  return normalized.some((filter) => skuMatchesProjectGroupFilter(skuProjectGroup, filter));
+}
+
 /** 项目组搜索：来自 SKU 主数据 project_group 字段。 */
 export async function searchSkuProjectGroups(query?: string, limit = 50): Promise<string[]> {
   const safeLimit = Math.min(Math.max(limit, 1), 200);
@@ -306,20 +363,21 @@ export async function searchSkuProjectGroups(query?: string, limit = 50): Promis
   );
 }
 
-async function countActiveSkusMatchingProjectGroup(filter?: string): Promise<number> {
+async function countActiveSkusMatchingProjectGroup(filters: string[]): Promise<number> {
   const rows = await db
     .select({ projectGroup: skus.projectGroup })
     .from(skus)
     .where(eq(skus.isActive, true));
-  const normalizedFilter = filter?.trim();
-  if (!normalizedFilter) return rows.length;
-  return rows.filter((row) => skuMatchesProjectGroupFilter(row.projectGroup, normalizedFilter)).length;
+  if (!filters.length) return rows.length;
+  return rows.filter((row) => skuMatchesAnyProjectGroupFilter(row.projectGroup, filters)).length;
 }
 
 export async function countActiveSkusForForecast(input: {
   projectGroup?: string;
+  projectGroups?: string[];
   skuCode?: string;
 }): Promise<number> {
+  const filters = resolveProjectGroupFilters(input);
   const skuCode = input.skuCode?.trim();
   if (skuCode) {
     const [row] = await db
@@ -328,9 +386,8 @@ export async function countActiveSkusForForecast(input: {
       .where(and(eq(skus.isActive, true), ilike(skus.code, skuCode)))
       .limit(1);
     if (!row) return 0;
-    const projectGroup = input.projectGroup?.trim();
-    if (!projectGroup) return 1;
-    return skuMatchesProjectGroupFilter(row.projectGroup, projectGroup) ? 1 : 0;
+    if (!filters.length) return 1;
+    return skuMatchesAnyProjectGroupFilter(row.projectGroup, filters) ? 1 : 0;
   }
-  return countActiveSkusMatchingProjectGroup(input.projectGroup);
+  return countActiveSkusMatchingProjectGroup(filters);
 }

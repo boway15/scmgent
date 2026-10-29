@@ -73,7 +73,7 @@ type QueryFilters = {
   versionId?: string;
   skuCode?: string;
   platform?: string;
-  category?: string;
+  categories?: string[];
   profileSegment?: string;
   pendingCalibration?: boolean;
 };
@@ -106,7 +106,7 @@ export function ForecastHorizonPanel({ active, filters, pageSize = 20, onSkuClic
         versionId: filters.versionId,
         skuCode: filters.skuCode || undefined,
         platform: resolveHorizonPlatformScope(filters.platform),
-        category: filters.category || undefined,
+        categories: filters.categories?.length ? filters.categories : undefined,
         profileSegment: filters.profileSegment || undefined,
         pendingCalibration: filters.pendingCalibration || undefined,
         page,
@@ -129,7 +129,7 @@ export function ForecastHorizonPanel({ active, filters, pageSize = 20, onSkuClic
         mode,
         skuCode: filters.skuCode || undefined,
         platform: resolveHorizonPlatformScope(filters.platform),
-        category: filters.category || undefined,
+        categories: filters.categories?.length ? filters.categories : undefined,
         profileSegment: filters.profileSegment || undefined,
         pendingCalibration: filters.pendingCalibration || undefined,
         historyMonthCount: mode === 'wide' ? 0 : PANEL_HISTORY_MONTH_COUNT,

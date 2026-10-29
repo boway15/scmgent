@@ -1,9 +1,14 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { sql } from 'drizzle-orm';
 import {
+  categoriesMatchFilterCondition,
   extractProjectGroupFromCategory,
   normalizeCategoryPath,
+  resolveCategoryFilters,
+  resolveProjectGroupFilters,
   resolveEffectiveSkuCategory,
+  skuMatchesAnyProjectGroupFilter,
   skuMatchesCategoryFilter,
 } from './sku-category.js';
 
@@ -76,5 +81,33 @@ describe('sku-category', () => {
     assert.equal(extractProjectGroupFromCategory('单段品类'), null);
     assert.equal(extractProjectGroupFromCategory(null), null);
     assert.equal(extractProjectGroupFromCategory(''), null);
+  });
+
+  it('matches a sku when any selected project group hits', () => {
+    assert.equal(skuMatchesAnyProjectGroupFilter('项目1组', []), true);
+    assert.equal(skuMatchesAnyProjectGroupFilter('项目1组', ['项目2组', '项目1组']), true);
+    assert.equal(skuMatchesAnyProjectGroupFilter('项目1组-客厅', ['项目1组']), true);
+    assert.equal(skuMatchesAnyProjectGroupFilter('项目1组', ['项目2组']), false);
+    assert.equal(skuMatchesAnyProjectGroupFilter(null, ['项目1组']), false);
+  });
+
+  it('prefers a multi-select list and falls back to the single value', () => {
+    assert.deepEqual(
+      resolveProjectGroupFilters({ projectGroup: 'A', projectGroups: ['B', ' C ', 'B'] }),
+      ['B', 'C'],
+    );
+    assert.deepEqual(resolveProjectGroupFilters({ projectGroup: 'A', projectGroups: [] }), ['A']);
+    assert.deepEqual(resolveCategoryFilters({ categories: ['客厅', '卧室'], category: '全部' }), [
+      '客厅',
+      '卧室',
+    ]);
+    assert.deepEqual(resolveCategoryFilters({ category: '客厅' }), ['客厅']);
+  });
+
+  it('combines multiple category filters into one condition', () => {
+    const single = categoriesMatchFilterCondition(sql`null`, sql`null`, ['客厅']);
+    const multi = categoriesMatchFilterCondition(sql`null`, sql`null`, ['客厅', '卧室']);
+    assert.ok(single);
+    assert.ok(multi);
   });
 });

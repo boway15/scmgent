@@ -87,7 +87,8 @@ export const SCHEDULED_TASKS: ScheduledTask[] = [
     path: '/api/tasks/qc-reinspection-sync',
     cron: '30 8 * * *',
     cronLabel: '每天 08:30',
-    description: '按二次验货视图和工厂全称范围，把新明细写入飞书「需二次验货数据」并更新本地列表',
+    description:
+      '按采购跟进「二次验货」视图同步明细；工厂范围优先读目标表「文本」占位行，否则从视图「工厂名称」自动汇总',
   },
   {
     id: 'inventory_data_issue_scan',

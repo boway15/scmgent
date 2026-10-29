@@ -3,6 +3,7 @@ import { describe, it } from 'node:test';
 import {
   buildReinspectionBitableFields,
   buildReinspectionRefreshFields,
+  collectFactoryNamesFromSource,
   collectFactoryWhitelist,
   formatShanghaiDate,
   selectNewReinspectionSourceIds,
@@ -42,6 +43,20 @@ describe('collectFactoryWhitelist', () => {
         { factoryName: '  ', sourceRecordId: '' },
       ]),
       ['甲公司'],
+    );
+  });
+});
+
+describe('collectFactoryNamesFromSource', () => {
+  it('dedupes trimmed factory names from the source view', () => {
+    assert.deepEqual(
+      collectFactoryNamesFromSource([
+        { factoryName: '甲公司' },
+        { factoryName: ' 甲公司 ' },
+        { factoryName: '乙公司' },
+        { factoryName: '' },
+      ]),
+      ['甲公司', '乙公司'],
     );
   });
 });

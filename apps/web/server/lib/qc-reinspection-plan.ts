@@ -62,6 +62,19 @@ export function collectFactoryWhitelist(
   return names;
 }
 
+/** 飞书目标表无占位行时，从采购跟进「二次验货」视图里的「工厂名称」去重得到范围。 */
+export function collectFactoryNamesFromSource(rows: Array<{ factoryName: string }>): string[] {
+  const names: string[] = [];
+  const seen = new Set<string>();
+  for (const row of rows) {
+    const name = row.factoryName.trim();
+    if (!name || seen.has(name)) continue;
+    seen.add(name);
+    names.push(name);
+  }
+  return names;
+}
+
 function putText(fields: Record<string, string | number>, key: string, value: string) {
   const trimmed = value.trim();
   if (trimmed) fields[key] = trimmed;

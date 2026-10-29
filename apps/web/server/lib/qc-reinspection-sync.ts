@@ -13,6 +13,7 @@ import {
 import {
   buildReinspectionBitableFields,
   buildReinspectionRefreshFields,
+  collectFactoryNamesFromSource,
   collectFactoryWhitelist,
   formatShanghaiDate,
   type QcSourceSnapshot,
@@ -241,15 +242,22 @@ export async function syncQcReinspection() {
     db.select({ factoryName: qcReinspectionFactories.factoryName }).from(qcReinspectionFactories),
   ]);
 
+  const snapshots = sourceRecords.map(snapshotFromSource);
+
   const fromTarget = collectFactoryWhitelist(
     targetRecords.map((record) => ({
       factoryName: textOf(record.fields, '文本'),
       sourceRecordId: textOf(record.fields, '来源记录ID'),
     })),
   );
-  const whitelist = [...new Set([...fromTarget, ...localFactories.map((row) => row.factoryName)])];
+  let whitelist = [...new Set([...fromTarget, ...localFactories.map((row) => row.factoryName)])];
   if (!whitelist.length) {
-    throw new Error('二次验货工厂范围为空。请在「需二次验货数据」的「文本」列保留工厂全称。');
+    whitelist = collectFactoryNamesFromSource(snapshots);
+  }
+  if (!whitelist.length) {
+    throw new Error(
+      '二次验货工厂范围为空：目标表无「文本」占位行、本地无工厂缓存，且采购跟进「二次验货」视图中没有「工厂名称」。',
+    );
   }
 
   const known = new Set(localFactories.map((row) => row.factoryName));
@@ -260,8 +268,6 @@ export async function syncQcReinspection() {
       .values(toSave.map((factoryName) => ({ factoryName })))
       .onConflictDoNothing();
   }
-
-  const snapshots = sourceRecords.map(snapshotFromSource);
   const allowed = new Set(whitelist);
   const matched = snapshots.filter((row) => allowed.has(row.factoryName.trim()));
   const matchedIds = new Set(matched.map((row) => row.recordId));

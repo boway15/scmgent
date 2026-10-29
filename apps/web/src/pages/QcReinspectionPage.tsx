@@ -94,7 +94,7 @@ export function QcReinspectionPage() {
     <div>
       <PageHeader
         title="二次验货"
-        description="从采购跟进「二次验货」视图读入，再写入飞书「需二次验货数据」。首次插入时间只写一次；数据同步时间每次同步都会更新。"
+        description="从采购跟进「二次验货」视图读入并写入飞书「需二次验货数据」。工厂范围：目标表「文本」占位行（无来源记录ID）优先；若无占位行则从视图「工厂名称」自动汇总。首次插入时间只写一次；数据同步时间每次同步都会更新。"
       >
         <Button onClick={() => syncMutation.mutate()} disabled={syncMutation.isPending}>
           {syncMutation.isPending ? '同步中…' : '同步飞书'}

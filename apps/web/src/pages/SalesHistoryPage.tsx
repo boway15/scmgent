@@ -332,7 +332,7 @@ export function SalesHistoryPage() {
                   <col className="w-[12rem]" />
                   <col className="w-[14rem]" />
                   <col className="w-[4.5rem]" />
-                  <col className="w-[4rem]" />
+                  <col className="w-[9.5rem]" />
                   <col className="w-[6rem]" />
                   <col className="w-[6rem]" />
                   <col className="w-[4.5rem]" />
@@ -360,7 +360,9 @@ export function SalesHistoryPage() {
                       <CellText value={row.skuName || '-'} />
                       <CellText value={row.category ?? '-'} className="text-text-sub" />
                       <td className="p-2 font-numeric text-primary">{row.qtySold}</td>
-                      <td className="p-2 font-mono text-text-sub">{row.station ?? '-'}</td>
+                      <td className="p-2 text-text-sub" title={row.station || undefined}>
+                        <span className="block truncate whitespace-nowrap">{row.station || '-'}</span>
+                      </td>
                       <td className="p-2 text-text-sub" title={row.channel ?? undefined}>
                         <span className="block truncate">{row.channel ?? '-'}</span>
                       </td>

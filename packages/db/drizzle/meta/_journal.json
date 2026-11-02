@@ -778,6 +778,13 @@
       "when": 1787919400000,
       "tag": "0129_qc_reinspection_business_key",
       "breakpoints": true
+    },
+    {
+      "idx": 111,
+      "version": "6",
+      "when": 1788005800000,
+      "tag": "0130_sales_history_station_raw",
+      "breakpoints": true
     }
   ]
 }

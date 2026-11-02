@@ -29,7 +29,16 @@ describe('sales-report-parser', () => {
   it('normalizes known station labels', () => {
     assert.equal(normalizeStationFromReport('Amazon美国'), 'US');
     assert.equal(normalizeStationFromReport('TEMU-US'), 'US');
-    assert.equal(normalizeStationFromReport('Amazon德国'), 'DE');
+    assert.equal(normalizeStationFromReport('Amazon德国'), 'EU');
+    assert.equal(normalizeStationFromReport('Amazon法国'), 'EU');
+    assert.equal(normalizeStationFromReport('Amazon意大利'), 'EU');
+    assert.equal(normalizeStationFromReport('Amazon西班牙'), 'EU');
+    assert.equal(normalizeStationFromReport('Amazon比利时'), 'EU');
+    assert.equal(normalizeStationFromReport('Amazon荷兰'), 'EU');
+    assert.equal(normalizeStationFromReport('wayfair欧洲'), 'EU');
+    assert.equal(normalizeStationFromReport('manomano-France'), 'EU');
+    assert.equal(normalizeStationFromReport('Amazon英国'), 'UK');
+    assert.equal(normalizeStationFromReport('wayfair英国'), 'UK');
     assert.equal(normalizeStationFromReport('wayfair'), 'US');
     assert.equal(normalizeStationFromReport(''), 'US');
   });
@@ -75,7 +84,7 @@ describe('sales-report-parser', () => {
       {
         skuCode: 'DJ502952_1',
         skuName: 'Desk',
-        station: 'US',
+        station: 'Amazon美国',
         platformRaw: '亚马逊',
         firstOrderAt: '2023-04-29 07:08:25',
         category: '办公-桌子',
@@ -88,7 +97,7 @@ describe('sales-report-parser', () => {
     assert.equal(result.diagnostics.skuCount, 1);
     assert.equal(result.diagnostics.startDate, '2026-06-26');
     assert.equal(result.diagnostics.endDate, '2026-06-26');
-    assert.deepEqual(result.diagnostics.stationCounts, { US: 1 });
+    assert.deepEqual(result.diagnostics.stationCounts, { Amazon美国: 1 });
     assert.deepEqual(result.diagnostics.platformCounts, { '亚马逊': 1 });
     assert.match(result.diagnostics.errors[0], /missing SKU/);
   });
@@ -108,7 +117,7 @@ describe('sales-report-parser', () => {
       {
         skuCode: 'DJ502952_2',
         skuName: 'Desk Plus',
-        station: 'US',
+        station: 'Amazon美国',
         platformRaw: '亚马逊',
         firstOrderAt: '',
         category: '',
@@ -176,7 +185,7 @@ describe('sales-report-parser', () => {
     assert.deepEqual(result.rows[0], {
       skuCode: 'DJ502530_2',
       skuName: '',
-      station: 'US',
+      station: 'Amazon美国',
       platformRaw: '亚马逊',
       category: '',
       saleYear: 2025,
@@ -186,7 +195,7 @@ describe('sales-report-parser', () => {
     assert.deepEqual(result.rows[1], {
       skuCode: 'DJ502530_2',
       skuName: '',
-      station: 'US',
+      station: 'Amazon美国',
       platformRaw: '亚马逊',
       category: '',
       saleYear: 2026,

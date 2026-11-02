@@ -429,7 +429,7 @@ salesForecastRoutes.post('/sales-forecasts/generate-baseline', requireMenu('data
   }
   const platform = body.platform?.trim() || 'ALL';
   if (platform !== 'ALL' && !skuCode) {
-    return c.json({ message: '生成预测仅支持全平台汇总，不再支持单渠道' }, 400);
+    return c.json({ message: '生成预测仅支持全平台汇总，不再支持单平台' }, 400);
   }
   const estimatedForecastRows =
     activeSkuCount * monthCount * countBaselineForecastPlatforms(platform);

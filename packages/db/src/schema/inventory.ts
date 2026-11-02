@@ -356,8 +356,8 @@ export const salesHistory = pgTable(
     saleDate: date('sale_date').notNull(),
     qtySold: integer('qty_sold').notNull(),
     channel: varchar('channel', { length: 100 }),
-    /** 报表「站点」归桶：US / EU / UK / 其他 */
-    station: varchar('station', { length: 20 }).notNull().default(''),
+    /** 导入原文站点，如 Amazon美国、wayfair英国；不在入库时收成 US / EU / UK */
+    station: varchar('station', { length: 100 }).notNull().default(''),
     /** 实际发货仓 code，如 US-WEST */
     warehouseCode: varchar('warehouse_code', { length: 100 }),
     /** 品类快照，导入时从 SKU 主数据写入 */

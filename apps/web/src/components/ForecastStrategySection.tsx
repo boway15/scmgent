@@ -38,7 +38,7 @@ const ALL_CATEGORY_V41_TIERS = [
   ['T1', '核心稳定高销量', 'A/C: AMAZON d6≥20；B: AMAZON d6≥18；近6月全动销、近2月连续动销、cv6≤0.65~0.70', '0.15*d2 + 0.55*d6 + 0.30*d12，再做趋势/月份/保守系数与上下限截断', '核心 KPI：WMAPE≤20%，Bias±10%'],
   ['T2', '核心高销量', 'A/U: d6门槛更高；B/C: AMAZON d6≥8~10；active6≥5、active2=2、cv6≤0.80~0.90', '0.25*d3 + 0.55*d6 + 0.20*d12，再做趋势/月份/保守系数与上下限截断', '核心 KPI：WMAPE≤25%，Bias±10%'],
   ['T3', '中高销量稳定层', 'A/B/C: AMAZON 中等销量且连续动销；cv6≤0.95~1.05；用于扩大覆盖但不牺牲核心准确率', '0.35*d3 + 0.50*d6 + 0.15*d12，再做趋势/月份/保守系数与上下限截断', '主预测 KPI：WMAPE≤35%，Bias±15%'],
-  ['T3P', '非 AMAZON 优质稳定层', '仅 B/C 的 UNKNOWN/WALMART/TEMU/TIKTOK，要求 d6≥6~8、active6=6、active2=2、cv6≤0.50~0.55', '0.45*d3 + 0.45*d6 + 0.10*d12，非核心渠道更偏近3/6月', '主预测 KPI：WMAPE≤35%，Bias±15%'],
+  ['T3P', '非 AMAZON 优质稳定层', '仅 B/C 的 UNKNOWN/WALMART/TEMU/TIKTOK，要求 d6≥6~8、active6=6、active2=2、cv6≤0.50~0.55', '0.45*d3 + 0.45*d6 + 0.10*d12，非核心平台更偏近3/6月', '主预测 KPI：WMAPE≤35%，Bias±15%'],
   ['T4A', 'AMAZON 边界可预测层', 'A/B/C: 仅 AMAZON，销量较低但仍有连续性；V4.1 对 B/C 要求 active2=2；D 仅极少稳定品可进 T4A', '0.50*d3 + 0.45*d6 + 0.05*d12，低置信并设置更宽 P10/P90', '边界 KPI：WMAPE≤40%，Bias±20%'],
   ['T4B', '稳定连续保底层', '未进 T1–T4A：长历史 active12≥8；新品/短历史近2月连续有销且 active6≥2', '长历史 0.35*d3+0.45*d6+0.20*d12；短历史 0.55*d3+0.45*d6', '保底 KPI：WMAPE≤50%，不计入主准确率'],
   ['T99', '异常/低规律保守保底层', '连续性不足、cv 过高或近端弱信号；近30≈0 时归零', '近端 max(近30,近90,d3)×1.0，远月×0.8×0.9；不进主 KPI', '不计入主准确率统计'],
@@ -58,7 +58,7 @@ function AllCategoryV41StrategySummary() {
         <p className="mt-1 leading-relaxed text-text-sub">
           运行时默认 <span className="font-medium text-text-main">FORECAST_ALGO_MODE=allcat_v41</span>。
           T1–T4A 按 d2/d3/d6/d12 加权生成系统预测；T4B 对连续有销但未达主层门槛的 SKU 给出保守保底预测；T99 有近期动销时写保守保底数，近30=0 归零，Dify 可选覆盖。
-          选择「全平台」生成时，按 V4.1 支持渠道分别写入预测行，列表查询 ALL 为分渠道汇总，不写入 platform=ALL 物理行。销量导入无站点维度，预测统一 station=ALL（全站合并）。
+          选择「全平台」生成时，按 V4.1 支持平台分别写入预测行，列表查询 ALL 为分平台汇总，不写入 platform=ALL 物理行。日销站点按导入原文保存。预测仍按全站合并，station=ALL。
           模型标识 <span className="font-medium text-text-main">allcat_kpi_corefirst_v41</span>。
           {latestDraft ? (
             <>

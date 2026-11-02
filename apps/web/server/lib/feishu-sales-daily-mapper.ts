@@ -1,6 +1,5 @@
 import { extractFieldValue, type BitableRecord } from '../integrations/feishu-bitable.js';
-import { classifyAnalyticsSiteFromReport } from './sales-analytics-dims.js';
-import { normalizeStationFromReport, type DailySalesRow } from './sales-report-parser.js';
+import { preserveImportedSalesStation, type DailySalesRow } from './sales-report-parser.js';
 
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -48,7 +47,7 @@ export function mapFeishuSalesDailyRecords(records: BitableRecord[]): FeishuSale
     rows.push({
       skuCode,
       skuName: extractFieldValue(fields['SKU名称']),
-      station: classifyFeishuSalesSite(stationLabel),
+      station: preserveImportedSalesStation(stationLabel),
       platformRaw: platformLabel
         ? platformRawFromStation(platformLabel)
         : platformRawFromStation(stationLabel),
@@ -64,11 +63,6 @@ export function mapFeishuSalesDailyRecords(records: BitableRecord[]): FeishuSale
     skipped,
     dates: [...dates].sort(),
   };
-}
-
-/** 与日宽表导入相同：先按报表站点归一，再归到 US / EU / UK / 其他。 */
-export function classifyFeishuSalesSite(station: string): DailySalesRow['station'] {
-  return classifyAnalyticsSiteFromReport(normalizeStationFromReport(station));
 }
 
 /** 从「平台」或旧的复合「站点」抽出渠道原名，交给 normalizeSalesPlatformSync。 */

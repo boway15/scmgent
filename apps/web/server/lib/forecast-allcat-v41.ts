@@ -1412,7 +1412,7 @@ export function buildT99ReviewMessage(input: {
   }
   return (
     `T99 ${floorNote}（全品类 V4.1）：${input.skuCode}，商品分类 ${input.productCategory}，平台 ${platformLabel}；` +
-    `波动较大 / 销量连续性不足 / 核心渠道信号不足；` +
+    `波动较大 / 销量连续性不足 / 核心平台信号不足；` +
     `近6月变异系数 cv6=${roundDaily(input.metrics.cv6)}，趋势比 trend=${roundDaily(input.metrics.trendRatio)}`
   );
 }

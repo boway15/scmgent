@@ -1,4 +1,4 @@
-import { eq, and, or, gte, lte, desc, inArray, sql, type SQL } from 'drizzle-orm';
+import { eq, and, gte, lte, desc, inArray, sql, type SQL } from 'drizzle-orm';
 import type { Context } from 'hono';
 import { Hono } from 'hono';
 import { db, salesHistory, salesHistoryMonthly, skus } from '@scm/db';
@@ -53,11 +53,7 @@ function parseSalesFilters(
     );
   }
   if (warehouse) conditions.push(eq(salesHistory.warehouseCode, warehouse));
-  if (station === '其他') {
-    conditions.push(or(eq(salesHistory.station, '其他'), eq(salesHistory.station, '')));
-  } else if (station) {
-    conditions.push(eq(salesHistory.station, station));
-  }
+  if (station) conditions.push(eq(salesHistory.station, station));
   if (category) {
     const categoryCondition = categoryMatchesFilterCondition(
       salesHistory.category,

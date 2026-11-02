@@ -89,21 +89,54 @@ export function detectDailySalesDateColumns(
   });
 }
 
+/** 日销站点入库上限，与 sales_history.station 一致。 */
+export const IMPORTED_SALES_STATION_MAX = 100;
+
+/** 保留导入原文。只去掉首尾空白，不把国家收成 US / EU / UK。 */
+export function preserveImportedSalesStation(raw?: string | null): string {
+  return (raw ?? '').trim().slice(0, IMPORTED_SALES_STATION_MAX);
+}
+
 export function normalizeStationFromReport(raw?: string | null): string {
   const value = raw?.trim();
   if (!value) return 'US';
 
   const upper = value.toUpperCase();
-  if (value.includes('德国') || /\bDE\b/.test(upper) || upper.includes('GERMANY')) {
-    return 'DE';
-  }
   if (value.includes('英国') || /\bUK\b/.test(upper) || /\bGB\b/.test(upper) || upper.includes('UNITED KINGDOM')) {
     return 'UK';
   }
+  // 先认国家。平台名里的 Wayfair / Temu 不能盖住「法国、欧洲」这类站点。
+  if (
+    value.includes('德国') ||
+    value.includes('法国') ||
+    value.includes('意大利') ||
+    value.includes('西班牙') ||
+    value.includes('爱尔兰') ||
+    value.includes('比利时') ||
+    value.includes('荷兰') ||
+    value.includes('波兰') ||
+    value.includes('欧洲') ||
+    upper.includes('GERMANY') ||
+    upper.includes('FRANCE') ||
+    upper.includes('ITALY') ||
+    upper.includes('SPAIN') ||
+    upper.includes('IRELAND') ||
+    upper.includes('BELGIUM') ||
+    upper.includes('NETHERLANDS') ||
+    upper.includes('POLAND') ||
+    upper.includes('EUROPE') ||
+    /\b(DE|FR|IT|ES|IE|BE|NL|PL|EU)\b/.test(upper)
+  ) {
+    return 'EU';
+  }
   if (
     value.includes('美国') ||
+    value.includes('加拿大') ||
+    value.includes('墨西哥') ||
+    value.includes('巴西') ||
     /\bUS\b/.test(upper) ||
     /\bUSA\b/.test(upper) ||
+    upper.includes('CANADA') ||
     upper.includes('WAYFAIR') ||
     upper.includes('WALMART') ||
     value.includes('沃尔玛') ||
@@ -163,7 +196,7 @@ function expandDailySalesWideRow(
     parsedRows.push({
       skuCode,
       skuName: getText(row, ['SKU名称', 'SKU名称 ', 'skuName']),
-      station: normalizeStationFromReport(getText(row, ['站点', 'station'])),
+      station: preserveImportedSalesStation(getText(row, ['站点', 'station'])),
       platformRaw: getText(row, ['平台', 'platform']),
       firstOrderAt: getText(row, ['首单时间', 'firstOrderAt']),
       category: getText(row, ['品类', 'category']),
@@ -266,7 +299,7 @@ export function parseSkuMonthlyWideRows(rows: Array<Record<string, string>>): Sk
       parsedRows.push({
         skuCode,
         skuName: getText(row, ['SKU名称', 'SKU名称 ', 'skuName']),
-        station: normalizeStationFromReport(getText(row, ['站点', 'station'])),
+        station: preserveImportedSalesStation(getText(row, ['站点', 'station'])),
         platformRaw: getText(row, ['平台', 'platform']),
         category: getText(row, ['品类', 'category']),
         saleYear: column.saleYear,

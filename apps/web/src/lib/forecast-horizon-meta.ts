@@ -91,7 +91,7 @@ const HORIZON_PLATFORM_ALIASES: Record<string, string> = {
 /** 合并行展示为全渠道；分渠道行保持渠道码，与导出一致 */
 export function formatForecastChannelLabel(platform?: string | null): string {
   const code = platform?.trim();
-  if (!code || code.toUpperCase() === 'ALL') return '全渠道';
+  if (!code || code.toUpperCase() === 'ALL') return '全平台';
   return code;
 }
 

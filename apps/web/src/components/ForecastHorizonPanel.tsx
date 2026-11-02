@@ -259,7 +259,7 @@ export function ForecastHorizonPanel({ active, filters, pageSize = 20, onSkuClic
           {horizon?.accessoryEmptyReason !== 'excluded_at_generation' &&
           filters.channelView === 'by_channel' &&
           (filters.platforms?.length ?? 0) > 0 ? (
-            <span> 该渠道没有预测行。</span>
+            <span> 该平台没有预测行。</span>
           ) : null}
         </p>
       ) : viewMode === 'future' ? (
@@ -268,7 +268,7 @@ export function ForecastHorizonPanel({ active, filters, pageSize = 20, onSkuClic
             <thead>
               <tr className="border-b border-border text-left text-text-sub">
                 <th className="sticky left-0 z-10 bg-card p-2 font-normal">SKU</th>
-                <th className="p-2 font-normal">渠道</th>
+                <th className="p-2 font-normal">平台</th>
                 <th className="p-2 font-normal">生命周期</th>
                 <th className="p-2 font-normal">分层</th>
                 {(horizon.horizon ?? []).map((col) => (
@@ -329,13 +329,13 @@ export function ForecastHorizonPanel({ active, filters, pageSize = 20, onSkuClic
       ) : viewMode === 'history' ? (
         <div className="overflow-auto">
           <p className="mb-2 text-xs text-text-sub">
-            历史为销量月表折算日均（件/天），按渠道汇总。
+            历史为销量月表折算日均（件/天），按平台汇总。
           </p>
           <table className="min-w-full text-sm">
             <thead>
               <tr className="border-b border-border text-left text-text-sub">
                 <th className="sticky left-0 z-10 bg-card p-2 font-normal">SKU</th>
-                <th className="p-2 font-normal">渠道</th>
+                <th className="p-2 font-normal">平台</th>
                 <th className="p-2 font-normal">生命周期</th>
                 {(horizon.historyHorizon ?? []).map((col) => (
                   <th key={col.monthLabel} className="p-2 font-normal whitespace-nowrap">
@@ -374,7 +374,7 @@ export function ForecastHorizonPanel({ active, filters, pageSize = 20, onSkuClic
               <tr className="border-b border-border text-left text-text-sub">
                 <th className="p-2 font-normal">时段</th>
                 <th className="p-2 font-normal">SKU</th>
-                <th className="p-2 font-normal">渠道</th>
+                <th className="p-2 font-normal">平台</th>
                 <th className="p-2 font-normal">绝对月</th>
                 <th className="p-2 font-normal">生命周期</th>
                 <th className="p-2 font-normal">置信度</th>

@@ -28,6 +28,12 @@ describe('sales-analytics-dims', () => {
     assert.equal(classifyAnalyticsSiteFromReport('DE'), 'EU');
     assert.equal(classifyAnalyticsSiteFromReport('US'), 'US');
     assert.equal(classifyAnalyticsSiteFromReport(''), '其他');
+    assert.equal(classifyAnalyticsSiteFromReport('Amazon法国'), 'EU');
+    assert.equal(classifyAnalyticsSiteFromReport('Amazon比利时'), 'EU');
+    assert.equal(classifyAnalyticsSiteFromReport('manomano-France'), 'EU');
+    assert.equal(classifyAnalyticsSiteFromReport('wayfair'), 'US');
+    assert.equal(classifyAnalyticsSiteFromReport('沃尔玛'), 'US');
+    assert.equal(classifyAnalyticsSiteFromReport('wayfair英国'), 'UK');
   });
 
   it('extracts site from category path tokens', () => {

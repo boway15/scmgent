@@ -86,7 +86,7 @@ describe('parseSkuMonthlyWideRows', () => {
     assert.deepEqual(result.rows[0], {
       skuCode: 'DJ502952_1',
       skuName: '',
-      station: 'US',
+      station: 'Amazon美国',
       platformRaw: '亚马逊',
       category: '',
       saleYear: 2025,

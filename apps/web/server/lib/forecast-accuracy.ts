@@ -110,7 +110,7 @@ export const FORECAST_ACCURACY_DETAIL_CSV_HEADERS = [
   '商品编码',
   '项目组',
   '商品分层',
-  '渠道',
+  '平台',
   '月份',
   '预测日均',
   '实际日均',
@@ -122,7 +122,7 @@ export const FORECAST_ACCURACY_MISS_DETAIL_CSV_HEADERS = [
   '商品编码',
   '项目组',
   '商品分层',
-  '渠道',
+  '平台',
   '月份',
   '预测日均',
   '实际日均',
@@ -1080,7 +1080,7 @@ export async function buildForecastAccuracySkuExportCsv(params: {
       .slice(0, limit);
 
     const csv = buildCsv(
-      ['商品编码', '项目组', '商品分层', '渠道', '漏报行数', '实际日均合计', '原因'],
+      ['商品编码', '项目组', '商品分层', '平台', '漏报行数', '实际日均合计', '原因'],
       skuRows.map((r) => [
         r.skuCode,
         r.projectGroup || '-',
@@ -1164,7 +1164,7 @@ export async function buildForecastAccuracySkuExportCsv(params: {
       '商品编码',
       '项目组',
       '商品分层',
-      '渠道',
+      '平台',
       '可比行数',
       '零销误预测',
       '实际日均合计',

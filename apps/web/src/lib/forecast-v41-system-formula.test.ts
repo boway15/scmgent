@@ -119,8 +119,8 @@ describe('forecast-v41-system-formula', () => {
       monthIndex: 0,
       tier: 'T1',
     });
-    assert.ok(title?.includes('【全渠道合计 · 系统日均】'));
-    assert.ok(title?.includes('参与渠道：2'));
+    assert.ok(title?.includes('【全平台合计 · 系统日均】'));
+    assert.ok(title?.includes('参与平台：2'));
     assert.ok(title?.includes('AMAZON'));
     assert.ok(title?.includes('SHOPIFY'));
     assert.ok(title?.includes('系统 21.00'));

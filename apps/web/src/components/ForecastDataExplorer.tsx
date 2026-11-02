@@ -68,7 +68,7 @@ export function ForecastDataExplorer({
   onSkuClick,
   headerExtra,
   title = '预测数据',
-  description = '先按渠道查询：全渠道是合计，选一个渠道只看该渠道。需要多个渠道各自成行时，再勾选「分渠道」。列表按商品分层（T1→T99）再按 SKU 编码排序。导出与当前查询一致。',
+  description = '先按平台查询：全平台是合计，选一个平台只看该平台。需要多个平台各自成行时，再勾选「分平台」。列表按商品分层（T1→T99）再按 SKU 编码排序。导出与当前查询一致。',
   topSection,
   showPendingCalibrationShortcut = false,
 }: Props) {
@@ -148,7 +148,7 @@ export function ForecastDataExplorer({
   const channelOptions = (platformOptions ?? []).filter((item) => item.code !== 'ALL');
   const channelSummary =
     selectedPlatforms.length === 0
-      ? '全部渠道'
+      ? '全部平台'
       : selectedPlatforms
           .map((code) => channelOptions.find((item) => item.code === code)?.name || code)
           .join('、');
@@ -172,7 +172,7 @@ export function ForecastDataExplorer({
         <ProductScopeSwitch />
         <div className="flex flex-wrap items-end gap-2">
           <label className="space-y-1 text-sm">
-            <span className="text-text-sub">渠道</span>
+            <span className="text-text-sub">平台</span>
             <select
               className="flex h-9 min-w-28 rounded-md border border-border bg-card px-2 text-sm"
               value={primaryPlatform}
@@ -185,7 +185,7 @@ export function ForecastDataExplorer({
                 applyFilters({ split: false, primaryPlatform: next });
               }}
             >
-              <option value="">全渠道</option>
+              <option value="">全平台</option>
               {channelOptions.map((item) => (
                 <option key={item.code} value={item.code}>
                   {item.name || item.code}
@@ -215,11 +215,11 @@ export function ForecastDataExplorer({
                 applyFilters({ split: next, primaryPlatform: nextPrimary, platforms: seeded });
               }}
             />
-            分渠道
+            分平台
           </label>
           {splitChannels ? (
             <div ref={channelMenuRef} className="relative space-y-1 text-sm">
-              <span className="text-text-sub">渠道范围</span>
+              <span className="text-text-sub">平台范围</span>
               <button
                 type="button"
                 className="flex h-9 min-w-36 items-center rounded-md border border-border bg-card px-2 text-left text-sm"
@@ -238,7 +238,7 @@ export function ForecastDataExplorer({
                       applyFilters({ split: true, platforms: [] });
                     }}
                   >
-                    全部渠道
+                    全部平台
                   </button>
                   {channelOptions.map((item) => {
                     const checked = selectedPlatforms.includes(item.code);

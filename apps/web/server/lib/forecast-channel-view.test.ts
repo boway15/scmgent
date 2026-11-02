@@ -57,9 +57,9 @@ describe('resolveForecastChannelQuery', () => {
 });
 
 describe('formatForecastChannelLabel', () => {
-  it('labels the merged row as 全渠道', () => {
-    assert.equal(formatForecastChannelLabel('ALL'), '全渠道');
-    assert.equal(formatForecastChannelLabel(''), '全渠道');
+  it('labels the merged row as 全平台', () => {
+    assert.equal(formatForecastChannelLabel('ALL'), '全平台');
+    assert.equal(formatForecastChannelLabel(''), '全平台');
   });
 
   it('keeps a single channel code', () => {

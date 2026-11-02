@@ -210,7 +210,7 @@ export function v41SeasonBlendWeight(horizonIndex: number): number {
   return Math.min(0.62, 0.28 + k * 0.07);
 }
 
-/** 全渠道合计时的系统列悬停文案（含各渠道贡献） */
+/** 全平台合计时的系统列悬停文案（含各平台贡献） */
 export function buildV41MultiPlatformSystemTitle(input: {
   forecastDailyAvg: number;
   levelDaily?: number | null;
@@ -220,9 +220,9 @@ export function buildV41MultiPlatformSystemTitle(input: {
 }): string {
   const count = input.platformCount ?? input.platformContributions?.length ?? 0;
   const lines = [
-    '【全渠道合计 · 系统日均】',
-    '口径：各渠道先独立走 V4.1（混合×趋势衰减×月折减×分层保守→套限幅），再对系统日均求和。',
-    count > 1 ? `参与渠道：${count}` : '参与渠道：多渠道',
+    '【全平台合计 · 系统日均】',
+    '口径：各平台先独立走 V4.1（混合×趋势衰减×月折减×分层保守→套限幅），再对系统日均求和。',
+    count > 1 ? `参与平台：${count}` : '参与平台：多平台',
     '',
   ];
 
@@ -261,7 +261,7 @@ export function buildV41MultiPlatformSystemTitle(input: {
   );
   lines.push('');
   lines.push('说明：合计行与表格「系统 / 混合水平」一致；不能把合计混合水平再套一遍单渠公式。');
-  lines.push('切换筛选到单渠道后，悬停可查看该渠道逐步公式。');
+  lines.push('切换筛选到单平台后，悬停可查看该平台逐步公式。');
   return lines.join('\n');
 }
 
@@ -406,7 +406,7 @@ export function buildV41SystemBreakdown(input: {
     lines.push('⑧ 跨平台近端抬底');
     lines.push(
       peerFloorApplied
-        ? `   · 同 SKU 其他渠道动销抬底 → ${fmt(roundDaily(peerFloor))}`
+        ? `   · 同 SKU 其他平台动销抬底 → ${fmt(roundDaily(peerFloor))}`
         : `   · 抬底阈值 ${fmt(roundDaily(peerFloor))}，未高于当前结果`,
     );
   }
@@ -526,9 +526,9 @@ function buildV41MultiPlatformLevelTitle(input: {
   const label =
     input.kind === 'seasonal' ? '季节朴素' : input.kind === 'baseline' ? '基线' : '混合水平';
   const lines = [
-    `【全渠道合计 · ${label}】`,
-    `口径：各渠道「${label}」日均求和（与系统列相同的合计方式）。`,
-    count > 1 ? `参与渠道：${count}` : '参与渠道：多渠道',
+    `【全平台合计 · ${label}】`,
+    `口径：各平台「${label}」日均求和（与系统列相同的合计方式）。`,
+    count > 1 ? `参与平台：${count}` : '参与平台：多平台',
     '',
   ];
 
@@ -552,7 +552,7 @@ function buildV41MultiPlatformLevelTitle(input: {
   if (contributions.length > 0) lines.push('────────');
   lines.push(`合计      ${label} ${fmt(input.value)}`);
   lines.push('');
-  lines.push('切换筛选到单渠道后，可悬停查看该渠道逐步公式。');
+  lines.push('切换筛选到单平台后，可悬停查看该平台逐步公式。');
   return lines.join('\n');
 }
 

@@ -10,7 +10,7 @@ import { loadSkuCategoryMap, resolveSkuCategoryFromMaster } from './sku-category
 import { sanitizeDbText } from './import/parse.js';
 import { assessUnknownChannelShare, normalizeSalesPlatformSync } from './sales-platform.js';
 import { schedulePostImportSalesAnalyticsCubeRebuild } from './sales-analytics-cube.js';
-import { classifyAnalyticsSiteFromReport } from './sales-analytics-dims.js';
+import { preserveImportedSalesStation } from './sales-report-parser.js';
 import { yieldToEventLoop } from './yield-event-loop.js';
 
 export type SalesHistoryImportPlanRow = {
@@ -118,7 +118,7 @@ export function buildSalesHistoryImportPlan(
     }
 
     const channel = sanitizeDbText(normalizeSalesPlatformSync(row.platformRaw));
-    const station = classifyAnalyticsSiteFromReport(row.station);
+    const station = preserveImportedSalesStation(row.station);
     const categoryFromImport = row.category.trim() || null;
     const key = `${skuId}::${row.saleDate}::${channel}::${station}`;
     const existing = planned.get(key);

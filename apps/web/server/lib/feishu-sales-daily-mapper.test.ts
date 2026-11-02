@@ -63,21 +63,21 @@ describe('mapFeishuSalesDailyRecords', () => {
 
     const bySku = Object.fromEntries(mapped.rows.map((row) => [row.skuCode, row]));
     assert.equal(bySku.DJ502897.platformRaw, '亚马逊');
-    assert.equal(bySku.DJ502897.station, 'EU');
+    assert.equal(bySku.DJ502897.station, 'Amazon德国');
     assert.equal(bySku.DJ502897.qtySold, 2);
     assert.equal(bySku.DJ502897.skuName, '浴室柜');
     assert.equal(bySku.DJ503897_1_WF.platformRaw, 'wayfair');
-    assert.equal(bySku.DJ503897_1_WF.station, 'US');
-    assert.equal(bySku.DJ1.station, 'UK');
-    assert.equal(bySku.DJ2.station, 'US');
+    assert.equal(bySku.DJ503897_1_WF.station, 'wayfair');
+    assert.equal(bySku.DJ1.station, 'wayfair英国');
+    assert.equal(bySku.DJ2.station, 'wayfair欧洲');
     assert.equal(bySku.DJ3.platformRaw, '沃尔玛');
-    assert.equal(bySku.DJ3.station, 'US');
+    assert.equal(bySku.DJ3.station, '沃尔玛');
     assert.equal(bySku.DJ3.qtySold, 0);
     assert.equal(bySku.DJ4.platformRaw, 'TEMU');
-    assert.equal(bySku.DJ4.station, 'US');
-    assert.equal(bySku.DJ5.station, 'US');
+    assert.equal(bySku.DJ4.station, 'TEMU-US');
+    assert.equal(bySku.DJ5.station, 'Amazon比利时');
     assert.equal(bySku.DJ6.platformRaw, 'manomano');
-    assert.equal(bySku.DJ6.station, 'US');
+    assert.equal(bySku.DJ6.station, 'manomano-France');
     assert.deepEqual(mapped.dates, ['2026-10-17', '2026-10-18', '2026-10-19']);
   });
 
@@ -111,11 +111,11 @@ describe('mapFeishuSalesDailyRecords', () => {
 
     const bySku = Object.fromEntries(mapped.rows.map((row) => [row.skuCode, row]));
     assert.equal(bySku['ETSY-1'].platformRaw, 'etsy');
-    assert.equal(bySku['ETSY-1'].station, 'US');
+    assert.equal(bySku['ETSY-1'].station, '美国');
     assert.equal(bySku['ETSY-2'].platformRaw, 'etsy');
-    assert.equal(bySku['ETSY-2'].station, 'EU');
+    assert.equal(bySku['ETSY-2'].station, 'Amazon德国');
     assert.equal(bySku['EBAY-1'].platformRaw, 'eBay');
-    assert.equal(bySku['EBAY-1'].station, 'UK');
+    assert.equal(bySku['EBAY-1'].station, '英国');
   });
 
   it('skips rows without sku, date, or a numeric qty', () => {

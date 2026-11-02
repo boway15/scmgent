@@ -120,7 +120,7 @@ export function formatT99ReviewMessage(message: string): string {
   const platformLabel = formatForecastPlatformLabel(platform);
   return (
     `T99 系统保守保底（全品类 V4.1）：${skuCode}，商品分类 ${category}，平台 ${platformLabel}；` +
-    `波动较大 / 销量连续性不足 / 核心渠道信号不足；` +
+    `波动较大 / 销量连续性不足 / 核心平台信号不足；` +
     `近6月变异系数 cv6=${cv6}，趋势比 trend=${trend}`
   );
 }

@@ -867,7 +867,7 @@ function buildRecommendations(input: {
   const zeroMissRate = global.comparableRows > 0 ? global.zeroForecastMissRows / global.comparableRows : 0;
 
   if ((dataQuality.unknownChannelQtyRate ?? 0) > 0.05) {
-    recs.push('先治理渠道/平台映射：UNKNOWN 渠道销量占比超过 5%，会直接干扰平台级预测与回测口径。');
+    recs.push('先治理平台映射：UNKNOWN 平台销量占比超过 5%，会直接干扰平台级预测与回测口径。');
   }
   if ((dataQuality.dailyMonthlyAbsDiffRate ?? 0) > 0.01) {
     recs.push('先做日表/月表对账：日销量聚合与月表差异超过 1%，准确率指标可能被导入口径污染。');
@@ -882,7 +882,7 @@ function buildRecommendations(input: {
     recs.push('存在系统性低估：加权 Bias 低于 -10%，优先检查零预测漏报、新品准入与促销/广告特征缺失。');
   }
   if (ghostRate > 0.05) {
-    recs.push('ghost 行占比偏高：actual=0 但 forecast>0 的 SKU 需要生命周期/下架/断货/渠道停售信号。');
+    recs.push('ghost 行占比偏高：actual=0 但 forecast>0 的 SKU 需要生命周期/下架/断货/平台停售信号。');
   }
   if (zeroMissRate > 0.03) {
     recs.push('零预测漏报偏高：actual>0 但 forecast=0 的 SKU 需要 force_forecast、新品冷启动或近 30/90 天准入规则。');
@@ -1345,7 +1345,7 @@ export function formatForecastAccuracyDiagnosticsMarkdown(
   lines.push('');
   lines.push('### 数据质量');
   lines.push(`- 月表：${num(diagnostics.dataQuality.monthlyRows)} 行，${num(diagnostics.dataQuality.monthlySkuCount)} SKU，覆盖 ${diagnostics.dataQuality.monthlyStartMonth ?? '—'} ~ ${diagnostics.dataQuality.monthlyEndMonth ?? '—'}`);
-  lines.push(`- UNKNOWN 渠道：${num(diagnostics.dataQuality.unknownChannelQty)} 件，占比 ${pct(diagnostics.dataQuality.unknownChannelQtyRate)}`);
+  lines.push(`- UNKNOWN 平台：${num(diagnostics.dataQuality.unknownChannelQty)} 件，占比 ${pct(diagnostics.dataQuality.unknownChannelQtyRate)}`);
   lines.push(`- 日/月对账差异：${num(diagnostics.dataQuality.dailyMonthlyAbsDiffQty)} 件，占比 ${pct(diagnostics.dataQuality.dailyMonthlyAbsDiffRate)}（对账行 ${num(diagnostics.dataQuality.dailyMonthlyComparedRows)}）`);
   lines.push('');
   lines.push('### 分层表现');

@@ -16,8 +16,6 @@ import { useProductScope } from '@/lib/product-scope';
 const DEFAULT_PAGE_SIZE = 20;
 type SalesDimension = 'daily' | 'monthly';
 
-const STATION_OPTIONS = ['US', 'EU', 'UK', '其他'] as const;
-
 function CellText({
   value,
   className,
@@ -269,7 +267,7 @@ export function SalesHistoryPage() {
             value={channel}
             onChange={(e) => setChannel(e.target.value)}
           >
-            <option value="">全部渠道</option>
+            <option value="">全部平台</option>
             {(platforms ?? []).map((item) => (
               <option key={item.code} value={item.code}>
                 {item.name || item.code}
@@ -278,18 +276,12 @@ export function SalesHistoryPage() {
           </select>
           {dimension === 'daily' ? (
             <>
-              <select
-                className="h-9 rounded-md border border-border bg-background px-2 text-sm"
+              <Input
+                placeholder="站点原文"
+                className="h-9 w-36"
                 value={station}
                 onChange={(e) => setStation(e.target.value)}
-              >
-                <option value="">全部站点</option>
-                {STATION_OPTIONS.map((s) => (
-                  <option key={s} value={s}>
-                    {s}
-                  </option>
-                ))}
-              </select>
+              />
               <Input
                 placeholder="发货仓"
                 className="h-9 w-32"
@@ -353,7 +345,7 @@ export function SalesHistoryPage() {
                     <th className="p-2 font-normal">品类</th>
                     <th className="p-2 font-normal">销量</th>
                     <th className="p-2 font-normal">站点</th>
-                    <th className="p-2 font-normal">渠道</th>
+                    <th className="p-2 font-normal">平台</th>
                     <th className="p-2 font-normal">发货仓</th>
                     <th className="p-2 font-normal">来源</th>
                   </tr>
@@ -407,7 +399,7 @@ export function SalesHistoryPage() {
                     <th className="p-2 font-normal">名称</th>
                     <th className="p-2 font-normal">品类</th>
                     <th className="p-2 font-normal">月销量</th>
-                    <th className="p-2 font-normal">渠道</th>
+                    <th className="p-2 font-normal">平台</th>
                     <th className="p-2 font-normal">来源</th>
                   </tr>
                 </thead>

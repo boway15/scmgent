@@ -79,13 +79,13 @@ export type HorizonExportDataset = {
   items: ForecastHorizonRow[];
 };
 
-/** 宽表：SKU / 渠道 / 生命周期 / 分层 + 各月生效日均 */
+/** 宽表：SKU / 平台 / 生命周期 / 分层 + 各月生效日均 */
 export function buildForecastHorizonWideCsv(dataset: HorizonExportDataset): {
   csv: string;
   rowCount: number;
 } {
   const monthLabels = dataset.horizon.map((h) => h.monthLabel);
-  const headers = ['SKU', 'SKU名称', '渠道', '生命周期', '分层', ...monthLabels.map(excelKeepYmText)];
+  const headers = ['SKU', 'SKU名称', '平台', '生命周期', '分层', ...monthLabels.map(excelKeepYmText)];
   const rows = dataset.items.map((row) => {
     const byLabel = new Map(row.months.map((cell) => [cell.monthLabel, cell]));
     return [
@@ -117,7 +117,7 @@ export function buildForecastHorizonDetailCsv(dataset: HorizonExportDataset): {
     '时段',
     'SKU',
     '品类',
-    '渠道',
+    '平台',
     '绝对月',
     '生命周期',
     '置信度',

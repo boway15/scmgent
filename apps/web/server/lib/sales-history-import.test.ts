@@ -94,9 +94,9 @@ describe('sales-history-import', () => {
     );
 
     assert.equal(plan.rows.length, 3);
-    assert.equal(plan.rows.find((r) => r.station === 'US')?.qtySold, 2);
-    assert.equal(plan.rows.find((r) => r.station === 'UK')?.qtySold, 3);
-    assert.equal(plan.rows.find((r) => r.station === 'EU')?.qtySold, 4);
+    assert.equal(plan.rows.find((r) => r.station === 'Amazon美国')?.qtySold, 2);
+    assert.equal(plan.rows.find((r) => r.station === 'Amazon英国')?.qtySold, 3);
+    assert.equal(plan.rows.find((r) => r.station === 'Amazon德国')?.qtySold, 4);
   });
 
   it('normalizes Chinese platform labels to standard channel codes', () => {

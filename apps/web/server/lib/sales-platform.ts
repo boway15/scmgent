@@ -185,7 +185,7 @@ export function assessUnknownChannelShare(input: {
   if (total > 0 && ratio > threshold) {
     return {
       ratio,
-      warning: `UNKNOWN 渠道占比 ${(ratio * 100).toFixed(1)}%（${unknown}/${total}）超过阈值 ${(threshold * 100).toFixed(0)}%，请补全 sales_platform_aliases 后回刷`,
+      warning: `UNKNOWN 平台占比 ${(ratio * 100).toFixed(1)}%（${unknown}/${total}）超过阈值 ${(threshold * 100).toFixed(0)}%，请补全 sales_platform_aliases 后回刷`,
     };
   }
   return { ratio };

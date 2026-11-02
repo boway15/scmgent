@@ -47,19 +47,38 @@ export function classifyAnalyticsSiteFromReport(
     value.includes('意大利') ||
     value.includes('西班牙') ||
     value.includes('爱尔兰') ||
+    value.includes('比利时') ||
+    value.includes('荷兰') ||
+    value.includes('波兰') ||
     value.includes('欧洲') ||
-    /\bEU\b/.test(upper) ||
-    upper.includes('GERMANY')
+    upper.includes('GERMANY') ||
+    upper.includes('FRANCE') ||
+    upper.includes('ITALY') ||
+    upper.includes('SPAIN') ||
+    upper.includes('IRELAND') ||
+    upper.includes('BELGIUM') ||
+    upper.includes('NETHERLANDS') ||
+    upper.includes('POLAND') ||
+    upper.includes('EUROPE') ||
+    /\b(DE|FR|IT|ES|IE|BE|NL|PL|EU)\b/.test(upper)
   ) {
     return 'EU';
   }
   if (
     value.includes('美国') ||
-    /\bUS\b/.test(upper) ||
-    /\bUSA\b/.test(upper) ||
     value.includes('加拿大') ||
     value.includes('墨西哥') ||
-    value.includes('巴西')
+    value.includes('巴西') ||
+    /\bUS\b/.test(upper) ||
+    /\bUSA\b/.test(upper) ||
+    upper.includes('CANADA') ||
+    upper.includes('WAYFAIR') ||
+    upper.includes('WALMART') ||
+    value.includes('沃尔玛') ||
+    upper.includes('SHOPIFY') ||
+    upper.includes('TIKTOK') ||
+    upper.includes('EBAY') ||
+    upper.includes('TEMU')
   ) {
     return 'US';
   }

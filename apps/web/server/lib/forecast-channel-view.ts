@@ -17,7 +17,7 @@ const V41_ORDER = new Map(FORECAST_V41_PLATFORM_CODES.map((code, index) => [code
 /** 合并行展示名。分渠道行保持渠道码，与列表、导出同一口径。 */
 export function formatForecastChannelLabel(platform?: string | null): string {
   const code = platform?.trim();
-  if (!code || code.toUpperCase() === 'ALL') return '全渠道';
+  if (!code || code.toUpperCase() === 'ALL') return '全平台';
   return code;
 }
 

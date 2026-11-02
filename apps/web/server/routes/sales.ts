@@ -1,17 +1,37 @@
-import { eq, and, or, gte, lte, desc, sql } from 'drizzle-orm';
+import { eq, and, or, gte, lte, desc, sql, type SQL } from 'drizzle-orm';
+import type { Context } from 'hono';
 import { Hono } from 'hono';
 import { db, salesHistory, salesHistoryMonthly, skus } from '@scm/db';
 import { buildCsv, csvAttachment } from '../lib/csv-export.js';
 import { parseListPagination } from '../lib/list-pagination.js';
 import { searchSkuCategories, categoryMatchesFilterCondition } from '../lib/sku-category.js';
 import { getSalesImportPolicy } from '../lib/sales-import-policy.js';
+import {
+  resolveRequestProjectGroupScope,
+  resolveScopedProjectGroups,
+} from '../lib/data-scope.js';
 
 import { requireMenu } from '../lib/rbac.js';
 import { parseProductScope, productScopeSql } from '../lib/planning-accessory-filter.js';
 
 export const salesRoutes = new Hono();
 
-function parseSalesFilters(c: { req: { query: (k: string) => string | undefined } }) {
+async function resolveSalesHistoryProjectGroupSql(
+  c: Context,
+): Promise<{ empty: boolean; condition?: SQL }> {
+  const scope = await resolveRequestProjectGroupScope(c);
+  const scoped = resolveScopedProjectGroups({
+    scope,
+    projectGroup: c.req.query('projectGroup'),
+    projectGroups: c.req.queries('projectGroups'),
+  });
+  return { empty: scoped.empty, condition: scoped.condition };
+}
+
+function parseSalesFilters(
+  c: { req: { query: (k: string) => string | undefined } },
+  extraConditions: SQL[] = [],
+) {
   const skuCode = c.req.query('skuCode')?.trim();
   const from = c.req.query('from')?.trim();
   const to = c.req.query('to')?.trim();
@@ -39,6 +59,9 @@ function parseSalesFilters(c: { req: { query: (k: string) => string | undefined 
     if (categoryCondition) conditions.push(categoryCondition);
   }
   conditions.push(productScopeSql(parseProductScope(c.req.query('productScope'))));
+  for (const extra of extraConditions) {
+    conditions.push(extra);
+  }
   return conditions;
 }
 
@@ -51,7 +74,10 @@ function parseYearMonth(value: string): { year: number; month: number } | null {
   return { year, month };
 }
 
-function parseMonthlySalesFilters(c: { req: { query: (k: string) => string | undefined } }) {
+function parseMonthlySalesFilters(
+  c: { req: { query: (k: string) => string | undefined } },
+  extraConditions: SQL[] = [],
+) {
   const skuCode = c.req.query('skuCode')?.trim();
   const from = c.req.query('from')?.trim();
   const to = c.req.query('to')?.trim();
@@ -84,15 +110,28 @@ function parseMonthlySalesFilters(c: { req: { query: (k: string) => string | und
   }
 
   conditions.push(productScopeSql(parseProductScope(c.req.query('productScope'))));
+  for (const extra of extraConditions) {
+    conditions.push(extra);
+  }
   return conditions;
 }
 
 salesRoutes.get('/sales/history', requireMenu('data.sales'), async (c) => {
-  const conditions = parseSalesFilters(c);
   const { page, pageSize, offset } = parseListPagination(
     c.req.query('page')?.trim(),
     c.req.query('pageSize')?.trim(),
   );
+  const scopeResult = await resolveSalesHistoryProjectGroupSql(c);
+  if (scopeResult.empty) {
+    return c.json({
+      items: [],
+      summary: { totalQty: 0, rowCount: 0 },
+      total: 0,
+      page,
+      pageSize,
+    });
+  }
+  const conditions = parseSalesFilters(c, scopeResult.condition ? [scopeResult.condition] : []);
   const where = conditions.length ? and(...conditions) : undefined;
 
   const base = db
@@ -148,10 +187,23 @@ salesRoutes.get('/sales/history', requireMenu('data.sales'), async (c) => {
 });
 
 salesRoutes.get('/sales/history/monthly', requireMenu('data.sales'), async (c) => {
-  const conditions = parseMonthlySalesFilters(c);
   const { page, pageSize, offset } = parseListPagination(
     c.req.query('page')?.trim(),
     c.req.query('pageSize')?.trim(),
+  );
+  const scopeResult = await resolveSalesHistoryProjectGroupSql(c);
+  if (scopeResult.empty) {
+    return c.json({
+      items: [],
+      summary: { totalQty: 0, rowCount: 0 },
+      total: 0,
+      page,
+      pageSize,
+    });
+  }
+  const conditions = parseMonthlySalesFilters(
+    c,
+    scopeResult.condition ? [scopeResult.condition] : [],
   );
   const where = conditions.length ? and(...conditions) : undefined;
 
@@ -207,7 +259,28 @@ salesRoutes.get('/sales/history/monthly', requireMenu('data.sales'), async (c) =
 });
 
 salesRoutes.get('/sales/history/export', requireMenu('data.sales'), async (c) => {
-  const conditions = parseSalesFilters(c);
+  const scopeResult = await resolveSalesHistoryProjectGroupSql(c);
+  if (scopeResult.empty) {
+    const scope = parseProductScope(c.req.query('productScope'));
+    const scopeSuffix = scope === 'accessory' ? '-accessory' : '-goods';
+    return csvAttachment(
+      `sales-history-daily-${new Date().toISOString().slice(0, 10)}${scopeSuffix}.csv`,
+      buildCsv(
+        [
+          'sku_code',
+          'sku_name',
+          'category',
+          'sale_date',
+          'qty_sold',
+          'channel',
+          'station',
+          'warehouse_code',
+        ],
+        [],
+      ),
+    );
+  }
+  const conditions = parseSalesFilters(c, scopeResult.condition ? [scopeResult.condition] : []);
   const base = db
     .select({
       skuCode: skus.code,
@@ -259,7 +332,19 @@ salesRoutes.get('/sales/history/export', requireMenu('data.sales'), async (c) =>
 });
 
 salesRoutes.get('/sales/history/monthly/export', requireMenu('data.sales'), async (c) => {
-  const conditions = parseMonthlySalesFilters(c);
+  const scopeResult = await resolveSalesHistoryProjectGroupSql(c);
+  if (scopeResult.empty) {
+    const scope = parseProductScope(c.req.query('productScope'));
+    const scopeSuffix = scope === 'accessory' ? '-accessory' : '-goods';
+    return csvAttachment(
+      `sales-history-monthly-${new Date().toISOString().slice(0, 10)}${scopeSuffix}.csv`,
+      buildCsv(['sku_code', 'sku_name', 'category', 'sale_year', 'month', 'qty_sold', 'channel'], []),
+    );
+  }
+  const conditions = parseMonthlySalesFilters(
+    c,
+    scopeResult.condition ? [scopeResult.condition] : [],
+  );
   const base = db
     .select({
       skuCode: skus.code,
@@ -309,8 +394,15 @@ salesRoutes.get('/sales/import-policy', requireMenu('data.sales'), async (c) => 
 });
 
 salesRoutes.get('/sales/categories', requireMenu('data.sales'), async (c) => {
+  const scope = await resolveRequestProjectGroupScope(c);
+  const scoped = resolveScopedProjectGroups({
+    scope,
+    projectGroup: c.req.query('projectGroup'),
+    projectGroups: c.req.queries('projectGroups'),
+  });
+  if (scoped.empty) return c.json([]);
   const q = c.req.query('q')?.trim();
   const limitRaw = Number.parseInt(c.req.query('limit')?.trim() ?? '50', 10);
   const limit = Number.isFinite(limitRaw) ? limitRaw : 50;
-  return c.json(await searchSkuCategories(q || undefined, limit));
+  return c.json(await searchSkuCategories(q || undefined, limit, scoped.condition));
 });

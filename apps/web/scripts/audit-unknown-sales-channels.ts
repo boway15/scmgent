@@ -39,7 +39,16 @@ function main() {
   if (assessed.warning) console.log(`告警: ${assessed.warning}`);
 
   console.log('\n静态别名自检（常见脏值）:');
-  for (const raw of ['Amazon US', 'TikTok Shop', 'AMZ', 'WM', 'Shopify', '独立站', '乱七八糟平台']) {
+  for (const raw of [
+    'Amazon US',
+    'TikTok Shop',
+    'AMZ',
+    'WM',
+    'Shopify',
+    '独立站',
+    'wayfair',
+    '乱七八糟平台',
+  ]) {
     console.log(`  ${raw} -> ${normalizeSalesPlatformSync(raw)}`);
   }
 

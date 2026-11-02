@@ -62,6 +62,27 @@ export const users = pgTable('users', {
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 });
 
+/** 用户数据范围：dimension=project_group 时 value 为可见项目组；无行表示看全部。 */
+export const userDataScopes = pgTable(
+  'user_data_scopes',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    dimension: varchar('dimension', { length: 50 }).notNull(),
+    value: varchar('value', { length: 200 }).notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    userDimValueUnique: uniqueIndex('user_data_scopes_user_dim_value_idx').on(
+      table.userId,
+      table.dimension,
+      table.value,
+    ),
+  }),
+);
+
 export const rolesRelations = relations(roles, ({ many }) => ({
   users: many(users),
   roleMenus: many(roleMenus),
@@ -82,6 +103,11 @@ export const roleMenusRelations = relations(roleMenus, ({ one }) => ({
   menu: one(menus, { fields: [roleMenus.menuId], references: [menus.id] }),
 }));
 
-export const usersRelations = relations(users, ({ one }) => ({
+export const usersRelations = relations(users, ({ one, many }) => ({
   role: one(roles, { fields: [users.roleId], references: [roles.id] }),
+  dataScopes: many(userDataScopes),
+}));
+
+export const userDataScopesRelations = relations(userDataScopes, ({ one }) => ({
+  user: one(users, { fields: [userDataScopes.userId], references: [users.id] }),
 }));

@@ -1,4 +1,4 @@
-import { and, desc, eq, ilike, inArray, or, sql } from 'drizzle-orm';
+import { and, desc, eq, ilike, inArray, or, sql, type SQL } from 'drizzle-orm';
 import { Hono } from 'hono';
 import {
   db,
@@ -9,7 +9,18 @@ import {
   skus,
 } from '@scm/db';
 import { getCurrentUser } from '../lib/auth-context.js';
-import { DEMAND_PLAN_WAREHOUSE_ALL, parseDemandPlanPilotConfig } from '../lib/demand-plan-config.js';
+import {
+  DEMAND_PLAN_PROJECT_GROUP_ALL,
+  DEMAND_PLAN_WAREHOUSE_ALL,
+  isAllScopeProjectGroup,
+  parseDemandPlanPilotConfig,
+} from '../lib/demand-plan-config.js';
+import {
+  filterProjectGroupOptions,
+  resolveRequestProjectGroupScope,
+  skuInProjectGroupScope,
+  skuProjectGroupCondition,
+} from '../lib/data-scope.js';
 import {
   adoptDemandPlan,
   adoptForecast,
@@ -83,8 +94,20 @@ demandPlanRoutes.get('/demand-plans', menuGuard, async (c) => {
     c.req.query('page')?.trim(),
     c.req.query('pageSize')?.trim(),
   );
+  const scope = await resolveRequestProjectGroupScope(c);
+  if (scope.mode === 'restricted' && scope.groups.length === 0) {
+    return c.json({ items: [], total: 0, page, pageSize });
+  }
   const q = c.req.query('q')?.trim();
   const conditions = [];
+  if (scope.mode === 'restricted') {
+    conditions.push(
+      or(
+        inArray(demandPlanVersions.projectGroup, scope.groups),
+        eq(demandPlanVersions.projectGroup, DEMAND_PLAN_PROJECT_GROUP_ALL),
+      )!,
+    );
+  }
   if (q) {
     const pattern = `%${q}%`;
     conditions.push(
@@ -133,12 +156,14 @@ demandPlanRoutes.get('/demand-plans', menuGuard, async (c) => {
 });
 
 demandPlanRoutes.get('/demand-plans/project-groups', menuGuard, async (c) => {
+  const scope = await resolveRequestProjectGroupScope(c);
   const config = parseDemandPlanPilotConfig(process.env);
   const all = await searchSkuProjectGroups(undefined, 200);
   const configured = config.projectGroups;
-  const items = configured.length
+  const merged = configured.length
     ? [...configured.filter((group) => all.includes(group)), ...configured.filter((group) => !all.includes(group))]
     : all;
+  const items = filterProjectGroupOptions(merged, scope);
   return c.json({ items, horizonWeeks: DEMAND_PLAN_HORIZON_WEEKS });
 });
 
@@ -214,8 +239,10 @@ async function listDemandPlanWeeklyPage(input: {
   page: number;
   pageSize: number;
   offset: number;
+  skuScopeCond?: SQL;
 }) {
   const filters = [eq(demandPlanWeekly.versionId, input.versionId), excludeAccessorySkuSql()];
+  if (input.skuScopeCond) filters.push(input.skuScopeCond);
   if (input.skuCode) {
     filters.push(ilike(skus.code, `%${input.skuCode}%`));
   }
@@ -267,8 +294,10 @@ async function listDemandPlanMonthlyPage(input: {
   page: number;
   pageSize: number;
   offset: number;
+  skuScopeCond?: SQL;
 }) {
   const filters = [eq(demandPlanMonthly.versionId, input.versionId), excludeAccessorySkuSql()];
+  if (input.skuScopeCond) filters.push(input.skuScopeCond);
   if (input.skuCode) {
     filters.push(ilike(skus.code, `%${input.skuCode}%`));
   }
@@ -321,8 +350,10 @@ async function listDemandPlanWeeklyWide(input: {
   page: number;
   pageSize: number;
   offset: number;
+  skuScopeCond?: SQL;
 }) {
   const filters = [eq(demandPlanWeekly.versionId, input.versionId), excludeAccessorySkuSql()];
+  if (input.skuScopeCond) filters.push(input.skuScopeCond);
   if (input.skuCode) {
     filters.push(ilike(skus.code, `%${input.skuCode}%`));
   }
@@ -381,8 +412,10 @@ async function listDemandPlanMonthlyWide(input: {
   page: number;
   pageSize: number;
   offset: number;
+  skuScopeCond?: SQL;
 }) {
   const filters = [eq(demandPlanMonthly.versionId, input.versionId), excludeAccessorySkuSql()];
+  if (input.skuScopeCond) filters.push(input.skuScopeCond);
   if (input.skuCode) {
     filters.push(ilike(skus.code, `%${input.skuCode}%`));
   }
@@ -442,6 +475,15 @@ demandPlanRoutes.get('/demand-plans/:id/sku-detail', menuGuard, async (c) => {
   if (!skuId) {
     return c.json({ message: 'skuId is required' }, 400);
   }
+  const scope = await resolveRequestProjectGroupScope(c);
+  const [skuRow] = await db
+    .select({ projectGroup: skus.projectGroup })
+    .from(skus)
+    .where(eq(skus.id, skuId))
+    .limit(1);
+  if (!skuRow || !skuInProjectGroupScope(skuRow.projectGroup, scope)) {
+    return c.json({ message: 'SKU not found' }, 404);
+  }
   try {
     const detail = await loadDemandPlanSkuDetail({ versionId, skuId });
     return c.json(detail);
@@ -453,12 +495,20 @@ demandPlanRoutes.get('/demand-plans/:id/sku-detail', menuGuard, async (c) => {
 
 demandPlanRoutes.get('/demand-plans/:id', menuGuard, async (c) => {
   const id = c.req.param('id');
+  const scope = await resolveRequestProjectGroupScope(c);
   const [version] = await db
     .select()
     .from(demandPlanVersions)
     .where(eq(demandPlanVersions.id, id))
     .limit(1);
   if (!version) return c.json({ message: '需求计划版本不存在' }, 404);
+  if (
+    scope.mode === 'restricted' &&
+    !isAllScopeProjectGroup(version.projectGroup) &&
+    !scope.groups.includes(version.projectGroup.trim())
+  ) {
+    return c.json({ message: '需求计划版本不存在' }, 404);
+  }
 
   const skuCode = c.req.query('skuCode')?.trim() || undefined;
   const view = parseDemandPlanView(c.req.query('view'));
@@ -468,12 +518,14 @@ demandPlanRoutes.get('/demand-plans/:id', menuGuard, async (c) => {
     view === 'wide' ? 20 : 50,
   );
   const useWeeks = Boolean(version.startWeek);
-  const pageInput = { versionId: id, skuCode, page, pageSize, offset };
+  const skuScopeCond = skuProjectGroupCondition(scope);
+  const pageInput = { versionId: id, skuCode, page, pageSize, offset, skuScopeCond };
   const periods = buildDemandPlanPeriodColumns(version);
 
   const statsFilters = useWeeks
     ? [eq(demandPlanWeekly.versionId, id)]
     : [eq(demandPlanMonthly.versionId, id)];
+  if (skuScopeCond) statsFilters.push(skuScopeCond);
   if (skuCode) {
     statsFilters.push(ilike(skus.code, `%${skuCode}%`));
   }

@@ -148,6 +148,8 @@ describe('forecast-demand', () => {
   it('normalizes platform aliases', () => {
     assert.equal(normalizeSalesPlatform('亚马逊'), 'AMAZON');
     assert.equal(normalizeSalesPlatform(''), 'ALL');
+    assert.equal(normalizeSalesPlatform('wayfair'), 'WAYFAIR');
+    assert.equal(normalizeSalesPlatform('独立站'), 'SHOPIFY');
   });
 
   it('B class near month uses P90 for horizon consumption', () => {

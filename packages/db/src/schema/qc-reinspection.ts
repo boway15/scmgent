@@ -1,3 +1,4 @@
+import { sql } from 'drizzle-orm';
 import { pgTable, uuid, varchar, text, integer, timestamp, uniqueIndex, index } from 'drizzle-orm/pg-core';
 
 /** 需要二次验货的工厂全称。来自飞书目标表「文本」占位行，同步时并入。 */
@@ -38,6 +39,12 @@ export const qcReinspectionRows = pgTable(
   (table) => ({
     sourceRecordUnique: uniqueIndex('qc_reinspection_rows_source_record_id_idx').on(
       table.sourceRecordId,
+    ),
+    businessKeyUnique: uniqueIndex('qc_reinspection_rows_business_key_idx').on(
+      sql`coalesce(${table.purchaseOrderNo}, '')`,
+      sql`coalesce(${table.sku}, '')`,
+      sql`coalesce(${table.demandNo}, '')`,
+      sql`coalesce(${table.transferOrderNo}, '')`,
     ),
     insertedAtIdx: index('qc_reinspection_rows_inserted_at_idx').on(table.insertedAt),
   }),

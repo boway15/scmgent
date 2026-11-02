@@ -14,6 +14,8 @@ export type SalesAnalyticsCubePayload = {
     depts: string[];
     categories: string[];
     platforms: string[];
+    /** 项目组维度列表；有 g 字段的立方才有。 */
+    projectGroups?: string[];
     scopePending?: boolean;
     note?: string;
   };
@@ -24,6 +26,8 @@ export type SalesAnalyticsCubePayload = {
     b: string;
     c: string;
     p: string;
+    /** 项目组（与主数据 project_group 同口径）；旧快照可能缺失。 */
+    g?: string | null;
     v: number[];
     vw: number[];
   }>;

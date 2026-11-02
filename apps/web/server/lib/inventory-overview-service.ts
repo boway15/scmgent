@@ -22,6 +22,7 @@ import {
 } from './inventory-daily-snapshot.js';
 import { productScopeOnSkuAlias, type ProductScope } from './planning-accessory-filter.js';
 import { attachHealthStatusToItems, loadWorstHealthBySkuIds } from './sku-health-aggregate.js';
+import { skuInProjectGroupScope, type ProjectGroupScope } from './data-scope.js';
 
 export type InventoryOverviewQuery = {
   page: number;
@@ -39,6 +40,7 @@ export type InventoryOverviewQuery = {
   snapshotDate?: string;
   productScope?: ProductScope;
   healthStatuses?: InventoryHealth[];
+  projectGroupScope?: ProjectGroupScope;
 };
 
 export type InventoryTurnoverOverviewItem = {
@@ -132,6 +134,15 @@ function payloadContains(column: string, raw?: string) {
 
 type SnapshotListQuery = Omit<InventoryOverviewQuery, 'page' | 'pageSize' | 'offset'>;
 
+function projectGroupScopeOnSkuAlias(scope: ProjectGroupScope | undefined, alias: string) {
+  if (!scope || scope.mode === 'all') return sql``;
+  if (scope.groups.length === 0) return sql`AND false`;
+  return sql`AND ${sql.raw(alias)}.project_group IN (${sql.join(
+    scope.groups.map((g) => sql`${g}`),
+    sql`, `,
+  )})`;
+}
+
 /** 文本条件打在快照 payload 上，产品范围用当前主数据，和页面上的范围开关一致。 */
 function buildSnapshotWhere(query: SnapshotListQuery, snapshotDate: string) {
   const parts = [
@@ -156,6 +167,7 @@ function buildSnapshotWhere(query: SnapshotListQuery, snapshotDate: string) {
     INNER JOIN skus s ON s.id = ids.sku_id
     WHERE ids.snapshot_date = CAST(${snapshotDate} AS date)
     ${productScopeOnSkuAlias(query.productScope ?? 'goods', 's')}
+    ${projectGroupScopeOnSkuAlias(query.projectGroupScope, 's')}
     ${textFilter}
     ${buildWorstHealthSkuFilter(query.healthStatuses)}
   `;
@@ -231,8 +243,9 @@ function buildSkuFilters(query: InventoryOverviewQuery) {
   }
 
   const scopeClause = productScopeOnSkuAlias(query.productScope ?? 'goods', 's');
-  if (!parts.length) return scopeClause;
-  return sql`${scopeClause} AND ${sql.join(parts, sql` AND `)}`;
+  const projectGroupClause = projectGroupScopeOnSkuAlias(query.projectGroupScope, 's');
+  if (!parts.length) return sql`${scopeClause} ${projectGroupClause}`;
+  return sql`${scopeClause} ${projectGroupClause} AND ${sql.join(parts, sql` AND `)}`;
 }
 
 /**
@@ -592,6 +605,7 @@ export async function buildInventoryOverviewRows(query: InventoryOverviewQuery) 
 export async function buildInventoryOverviewItemBySkuId(
   skuId: string,
   snapshotDate?: string,
+  projectGroupScope?: ProjectGroupScope,
 ): Promise<InventoryTurnoverOverviewItem | null> {
   const snapshotSelection = await getPublishedSnapshotDate(snapshotDate);
   if (snapshotSelection.selectedSnapshotDate) {
@@ -600,12 +614,22 @@ export async function buildInventoryOverviewItemBySkuId(
       skuId,
       limit: 1,
     });
-    return (archived?.payload as InventoryTurnoverOverviewItem | undefined) ?? null;
+    const item = (archived?.payload as InventoryTurnoverOverviewItem | undefined) ?? null;
+    if (!item) return null;
+    if (projectGroupScope?.mode === 'restricted') {
+      const skuResult = await db.execute(sql`
+        SELECT project_group AS "projectGroup" FROM skus WHERE id = ${skuId}::uuid LIMIT 1
+      `);
+      const pg = Array.from(skuResult as unknown as Array<{ projectGroup: string | null }>)[0]
+        ?.projectGroup;
+      if (!skuInProjectGroupScope(pg, projectGroupScope)) return null;
+    }
+    return item;
   }
   if (snapshotDate) return null;
 
   const rows = await fetchSkuRows(
-    { page: 1, pageSize: 1, offset: 0 },
+    { page: 1, pageSize: 1, offset: 0, projectGroupScope },
     { limit: 1, offset: 0, skuId },
   );
   const row = rows[0];

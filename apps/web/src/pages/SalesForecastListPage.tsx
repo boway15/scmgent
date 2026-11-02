@@ -51,8 +51,9 @@ export function SalesForecastListPage() {
   const isBacktestStartMonth = generationStartMonth < formatForecastStartMonth();
 
   const { data: versions = [], isLoading } = useQuery({
-    queryKey: ['sales-forecast-versions', 'stats'],
-    queryFn: () => api.getSalesForecastVersions({ includeStats: true }),
+    queryKey: ['sales-forecast-versions', 'stats', 'list'],
+    queryFn: () => api.getSalesForecastVersions({ includeStats: true, statsScope: 'list' }),
+    staleTime: 30_000,
   });
 
   const publishedVersions = useMemo(
@@ -216,7 +217,7 @@ export function SalesForecastListPage() {
   };
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       <PageHeader title="销售预测管理">
         <div className="flex flex-wrap items-center gap-2">
           {latestPublishedVersion ? (
@@ -229,6 +230,20 @@ export function SalesForecastListPage() {
             <span className="inline-flex items-center rounded-md border border-amber-500/30 bg-amber-500/10 px-2 py-1 text-xs text-amber-800 dark:text-amber-200">
               尚无已发布版本，补货未挂载预测
             </span>
+          )}
+          {listTab === 'versions' && (
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => {
+                document.getElementById('forecast-generate-section')?.scrollIntoView({
+                  behavior: 'smooth',
+                  block: 'start',
+                });
+              }}
+            >
+              去生成
+            </Button>
           )}
           <Button
             variant="outline"
@@ -250,7 +265,7 @@ export function SalesForecastListPage() {
         </div>
       </PageHeader>
 
-      <DemandSourceCard />
+      <DemandSourceCard defaultCollapsed />
 
       <div className="flex flex-wrap gap-2">
         {(['versions', 'strategy'] as ListTab[]).map((tab) => (
@@ -267,70 +282,39 @@ export function SalesForecastListPage() {
 
       {listTab === 'versions' && (
         <>
-          <Card className="border-primary/20 bg-primary/5">
-            <CardContent className="space-y-3 py-3 text-sm">
-              <div className="flex flex-wrap items-center gap-3">
-                <span className="font-medium text-text-main">操作流程</span>
-                <span className="text-text-sub">① 生成预测</span>
-                <span className="text-text-sub">→</span>
-                <span className="text-text-sub">② 版本列表选草稿复核</span>
-                <span className="text-text-sub">→</span>
-                <span className="text-text-sub">③ 发布后复盘准确率</span>
-              </div>
-              <p className="text-xs text-text-sub">
-                每次「生成草稿」都会新建一条版本快照（名称含月数、范围），可在列表中并列对比——例如
-                3 个月 vs 6 个月、全量 vs 项目组实验稿。复核满意后发布其中一条；旧草稿可保留或忽略。
-              </p>
-              <p className="text-xs text-text-sub">
-                <span className="text-text-main">单 SKU 生成</span>默认写入最新草稿（局部刷新该 SKU）；
-                若需指定草稿，可在 API 传 <code className="font-mono">targetVersionId</code>。
-                补货挂载请优先发布「全平台 · 全量 SKU」且月数满足计划的草稿。
-              </p>
-              <p className="text-xs text-text-sub">
-                可发布多个版本；若不同发布稿包含同一商品，补货与库存健康按该 SKU
-                <span className="text-text-main"> 最新发布时间 </span>
-                的预测为准（旧发布稿可手动归档）。
-              </p>
-              {resetAllForecast.isSuccess && (
-                <p className="text-xs text-text-sub">
-                  已清空：版本 {resetAllForecast.data.deleted.versions} · 预测行{' '}
-                  {resetAllForecast.data.deleted.forecastMonthly} · 复核{' '}
-                  {resetAllForecast.data.deleted.reviewItems}
-                </p>
-              )}
-              {resetAllForecast.isError && (
-                <p className="text-xs text-destructive">{mutationErrorMessage(resetAllForecast.error)}</p>
-              )}
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader>
+          <Card id="forecast-generate-section" className="border-primary/20">
+            <CardHeader className="space-y-1 pb-2">
               <CardTitle>生成预测</CardTitle>
-              <p className="text-sm text-text-sub">
-                基于「销量历史」已入库的日/月销数据生成预测草稿。选择「全平台」时按 V4.1 支持渠道分别写入，列表查询
-                ALL 为分渠道汇总。
-              </p>
-              <ul className="mt-2 list-disc space-y-1 pl-5 text-xs text-text-sub">
-                <li>
-                  <span className="text-text-main">有预测行</span>：该渠道通过准入并写入预测明细（列表「SKU / 行数」中的
-                  SKU 数为有预测行的去重商品数）。
-                </li>
-                <li>
-                  <span className="text-text-main">仅有复核、无预测行</span>：例如该渠道近 90 天无销量且历史不足，系统跳过预测、仅在后台留痕，界面不再单独展示复核清单。
-                </li>
-                <li>
-                  <span className="text-text-main">未触及</span>：各渠道均无销量记录，生成时直接跳过，不写预测也不留复核。
-                </li>
-                <li>
-                  <span className="text-text-main">T99</span>：有近期动销时系统写保守保底数（近端 max(近30,近90,d3)×1.0，远月×0.8）；近30=0 归零；近30&gt;0.2 时优先 T4B 保底，不轻易归入 T99。
-                </li>
-              </ul>
-              <p className="mt-2 text-xs text-text-sub">
-                项目组可多选，一次生成一份包含所选项目组的草稿；不选表示全部项目组。单 SKU 生成会合并进目标草稿。正式补货建议用「全平台」全量生成。
+              <p className="text-xs text-text-sub">
+                基于销量历史生成草稿（固定 6 个月）· ① 生成 → ② 列表复核 → ③ 发布复盘
               </p>
             </CardHeader>
-            <CardContent className="space-y-4">
+            <CardContent className="space-y-3">
+              <details className="rounded-md border border-border bg-muted/30 p-3 text-xs text-text-sub">
+                <summary className="cursor-pointer font-medium text-text-main">操作流程与生成规则（可选阅读）</summary>
+                <div className="mt-2 space-y-2 leading-relaxed">
+                  <p>
+                    每次「生成草稿」新建一条版本快照，可并列对比不同月数或范围；复核满意后发布，旧草稿可保留。
+                    单 SKU 默认写入最新草稿；补货请优先发布「全平台 · 全量 SKU」草稿。同 SKU 多发布稿时取
+                    <span className="text-text-main">最新发布时间</span>。
+                  </p>
+                  <p>V4.1 全平台按渠道写入。明细先按渠道查询，需要各渠道分行时再勾选「分渠道」。项目组可多选；不选为全部。</p>
+                  <ul className="list-disc space-y-1 pl-5">
+                    <li>
+                      <span className="text-text-main">有预测行</span>：准入通过并写入明细。
+                    </li>
+                    <li>
+                      <span className="text-text-main">仅有复核、无预测行</span>：近端无销量且历史不足，后台留痕。
+                    </li>
+                    <li>
+                      <span className="text-text-main">未触及</span>：无销量记录则跳过。
+                    </li>
+                    <li>
+                      <span className="text-text-main">T99</span>：保守保底；近30=0 归零。
+                    </li>
+                  </ul>
+                </div>
+              </details>
               <div className="flex flex-wrap items-end gap-2">
                 <label className="w-full max-w-xl space-y-1 text-sm">
                   <span className="text-text-sub">项目组（可多选，不选为全部）</span>
@@ -404,6 +388,16 @@ export function SalesForecastListPage() {
               )}
               {generateBaseline.isError && (
                 <p className="text-sm text-destructive">{mutationErrorMessage(generateBaseline.error)}</p>
+              )}
+              {resetAllForecast.isSuccess && (
+                <p className="text-xs text-text-sub">
+                  已清空：版本 {resetAllForecast.data.deleted.versions} · 预测行{' '}
+                  {resetAllForecast.data.deleted.forecastMonthly} · 复核{' '}
+                  {resetAllForecast.data.deleted.reviewItems}
+                </p>
+              )}
+              {resetAllForecast.isError && (
+                <p className="text-xs text-destructive">{mutationErrorMessage(resetAllForecast.error)}</p>
               )}
             </CardContent>
           </Card>

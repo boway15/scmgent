@@ -56,16 +56,26 @@ export type MonthlyForecastRow = {
 const PLATFORM_ALIASES: Record<string, string> = {
   亚马逊: 'AMAZON',
   沃尔玛: 'WALMART',
-  独立站: 'DTC',
+  独立站: 'SHOPIFY',
+  品牌站: 'SHOPIFY',
   全平台: 'ALL',
   ALL: 'ALL',
   AMAZON: 'AMAZON',
   WALMART: 'WALMART',
+  WAYFAIR: 'WAYFAIR',
+  wayfair: 'WAYFAIR',
   EBAY: 'EBAY',
+  eBay: 'EBAY',
   SHOPIFY: 'SHOPIFY',
-  DTC: 'DTC',
+  DTC: 'SHOPIFY',
   TEMU: 'TEMU',
   TIKTOK: 'TIKTOK',
+  ETSY: 'ETSY',
+  MANOMANO: 'MANOMANO',
+  REAL: 'REAL',
+  OTTO: 'OTTO',
+  B2B: 'B2B',
+  B2B小包: 'B2B',
 };
 
 /** 在售平台编码归一化；空值表示 ALL（全平台汇总行） */

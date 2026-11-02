@@ -14,6 +14,7 @@ import {
   FORECAST_HORIZON_MONTHS,
   MAX_FORECAST_MONTH_COUNT,
   buildForwardMonthLabels,
+  formatForecastChannelLabel,
   resolveHorizonPlatformScope,
 } from '@/lib/forecast-horizon-meta';
 import {
@@ -508,7 +509,7 @@ export function ForecastSkuDetailDrawer({
                 {displayRow.skuName || '—'}
               </h2>
               <p className="mt-1 text-sm text-text-sub">
-                {displayRow.platform}
+                {formatForecastChannelLabel(displayRow.platform)}
                 {displayRow.category ? ` · ${displayRow.category}` : ''}
                 {' · '}
                 {formatLifecycleLabel(displayRow.lifecycle)}

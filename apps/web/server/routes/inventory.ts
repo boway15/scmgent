@@ -1,4 +1,9 @@
 import { eq, desc, and, inArray } from 'drizzle-orm';
+import {
+  resolveRequestProjectGroupScope,
+  skuInProjectGroupScope,
+  skuProjectGroupCondition,
+} from '../lib/data-scope.js';
 import { Hono } from 'hono';
 import { db, inventoryRecords, skus, safetyStockConfig, warehouses, channelWarehousePrefs, merchants, salesForecastMonthly } from '@scm/db';
 import { getCurrentUser } from '../lib/auth-context.js';
@@ -79,7 +84,8 @@ function parseQueryFilters(c: { req: { query: (k: string) => string | undefined 
 
 inventoryRoutes.get('/inventory/query/export', requireMenu('inventory.overview'), async (c) => {
   const filters = parseQueryFilters(c);
-  const exported = await buildInventoryQueryExportRows(filters);
+  const projectGroupScope = await resolveRequestProjectGroupScope(c);
+  const exported = await buildInventoryQueryExportRows({ ...filters, projectGroupScope });
   const csv = buildCsv(exported.headers, exported.rows);
   const date = exported.selectedSnapshotDate ?? new Date().toISOString().slice(0, 10);
   return csvAttachment(`inventory-query-${date}-${filters.productScope}.csv`, csv);
@@ -96,12 +102,14 @@ inventoryRoutes.get('/inventory/query', requireMenu('inventory.overview'), async
     20,
   );
   const filters = parseQueryFilters(c);
+  const projectGroupScope = await resolveRequestProjectGroupScope(c);
   return c.json(
     await listInventoryQueryRows({
       page,
       pageSize,
       offset,
       ...filters,
+      projectGroupScope,
     }),
   );
 });
@@ -111,7 +119,8 @@ inventoryRoutes.get(
   requireMenu('inventory.overview'),
   async (c) => {
     const filters = parseQueryFilters(c);
-    const exported = await buildProcurementOpsExportRows(filters);
+    const projectGroupScope = await resolveRequestProjectGroupScope(c);
+    const exported = await buildProcurementOpsExportRows({ ...filters, projectGroupScope });
     const csv = buildCsv(exported.headers, exported.rows);
     const date = exported.selectedSnapshotDate ?? new Date().toISOString().slice(0, 10);
     return csvAttachment(`procurement-ops-${date}-${filters.productScope}.csv`, csv);
@@ -136,12 +145,14 @@ inventoryRoutes.get(
       20,
     );
     const filters = parseQueryFilters(c);
+    const projectGroupScope = await resolveRequestProjectGroupScope(c);
     return c.json(
       await listProcurementOpsRows({
         page,
         pageSize,
         offset,
         ...filters,
+        projectGroupScope,
       }),
     );
   },
@@ -149,6 +160,7 @@ inventoryRoutes.get(
 
 inventoryRoutes.get('/inventory/overview/export', requireMenu('inventory.overview'), async (c) => {
   const filters = parseOverviewFilters(c);
+  const projectGroupScope = await resolveRequestProjectGroupScope(c);
   const full = c.req.query('full') === 'true';
   const columnIds =
     full
@@ -156,7 +168,10 @@ inventoryRoutes.get('/inventory/overview/export', requireMenu('inventory.overvie
       : resolveOverviewColumnIds({ view: filters.view, columns: filters.columns }) ??
         getViewColumnIds('replenish');
 
-  const items = await buildInventoryOverviewExportItems(filters, { fullColumns: full });
+  const items = await buildInventoryOverviewExportItems(
+    { ...filters, projectGroupScope },
+    { fullColumns: full },
+  );
   const headers = columnIds.map((id) => INVENTORY_OVERVIEW_COLUMN_BY_ID.get(id)?.label ?? id);
   const rows = items.map((item) => columnIds.map((colId) => getOverviewCellValue(item, colId)));
 
@@ -183,6 +198,15 @@ inventoryRoutes.get(
     const fields = requestedFields?.length
       ? requestedFields.slice(0, 12)
       : [...DEFAULT_INVENTORY_TREND_FIELDS];
+    const scope = await resolveRequestProjectGroupScope(c);
+    const [sku] = await db
+      .select({ projectGroup: skus.projectGroup })
+      .from(skus)
+      .where(eq(skus.id, skuId))
+      .limit(1);
+    if (!sku || !skuInProjectGroupScope(sku.projectGroup, scope)) {
+      return c.json({ message: 'SKU not found' }, 404);
+    }
     return c.json({ fields, items: await loadInventoryTrend(skuId, fields) });
   },
 );
@@ -190,9 +214,11 @@ inventoryRoutes.get(
 inventoryRoutes.get('/inventory/overview/:skuId', requireMenu('inventory.overview'), async (c) => {
   const skuId = c.req.param('skuId');
   if (!skuId) return c.json({ message: 'skuId required' }, 400);
+  const scope = await resolveRequestProjectGroupScope(c);
   const item = await buildInventoryOverviewItemBySkuId(
     skuId,
     c.req.query('snapshotDate')?.trim() || undefined,
+    scope,
   );
   if (!item) return c.json({ message: 'SKU not found' }, 404);
   return c.json(item);
@@ -206,6 +232,7 @@ inventoryRoutes.get('/inventory/overview', requireMenu('inventory.overview'), as
   );
 
   const filters = parseOverviewFilters(c);
+  const projectGroupScope = await resolveRequestProjectGroupScope(c);
 
   return c.json(
     await buildInventoryOverviewRows({
@@ -213,11 +240,14 @@ inventoryRoutes.get('/inventory/overview', requireMenu('inventory.overview'), as
       pageSize,
       offset,
       ...filters,
+      projectGroupScope,
     }),
   );
 });
 
-inventoryRoutes.get('/inventory/export', async (c) => {
+inventoryRoutes.get('/inventory/export', requireMenu('inventory.overview'), async (c) => {
+  const scope = await resolveRequestProjectGroupScope(c);
+  const scopeCond = skuProjectGroupCondition(scope);
   const warehouseFilter = c.req.query('warehouse');
   const whList = warehouseFilter
     ? [{ code: warehouseFilter }]
@@ -227,10 +257,11 @@ inventoryRoutes.get('/inventory/export', async (c) => {
         .where(eq(warehouses.isActive, true))
         .orderBy(warehouses.sortOrder);
 
+  const skuWhere = scopeCond ? and(eq(skus.isActive, true), scopeCond) : eq(skus.isActive, true);
   const skuRows = await db
     .select({ id: skus.id, code: skus.code, name: skus.name, replenishLight: skus.replenishLight })
     .from(skus)
-    .where(eq(skus.isActive, true))
+    .where(skuWhere)
     .orderBy(skus.code);
 
   const rows: Array<Array<string | number>> = [];
@@ -286,8 +317,10 @@ inventoryRoutes.get('/inventory/export', async (c) => {
   return csvAttachment(`inventory-${new Date().toISOString().slice(0, 10)}.csv`, csv);
 });
 
-inventoryRoutes.get('/inventory/records', async (c) => {
+inventoryRoutes.get('/inventory/records', requireMenu('inventory.overview'), async (c) => {
   const skuId = c.req.query('skuId');
+  const scope = await resolveRequestProjectGroupScope(c);
+  const scopeCond = skuProjectGroupCondition(scope);
 
   const baseQuery = db
     .select({
@@ -305,12 +338,16 @@ inventoryRoutes.get('/inventory/records', async (c) => {
     .innerJoin(skus, eq(skus.id, inventoryRecords.skuId))
     .$dynamic();
 
-  const rows = skuId
-    ? await baseQuery
-        .where(eq(inventoryRecords.skuId, skuId))
-        .orderBy(desc(inventoryRecords.recordedDate))
-        .limit(100)
-    : await baseQuery.orderBy(desc(inventoryRecords.recordedDate)).limit(100);
+  const recordConditions = [
+    ...(scopeCond ? [scopeCond] : []),
+    ...(skuId ? [eq(inventoryRecords.skuId, skuId)] : []),
+  ];
+  const where = recordConditions.length ? and(...recordConditions) : undefined;
+
+  const rows = await baseQuery
+    .where(where)
+    .orderBy(desc(inventoryRecords.recordedDate))
+    .limit(100);
 
   return c.json(rows);
 });

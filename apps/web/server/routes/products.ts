@@ -1,4 +1,4 @@
-import { eq, desc, and, or, sql, ilike, type SQL } from 'drizzle-orm';
+import { eq, desc, and, or, sql, ilike, exists, type SQL } from 'drizzle-orm';
 import { Hono } from 'hono';
 import {
   db,
@@ -18,6 +18,12 @@ import { normalizeReplenishLight } from '../lib/replenish-light.js';
 import { readSkuPackagingFromEncodingMeta, readTurnoverSnapshotAt } from '../lib/inventory-turnover-snapshot.js';
 import { pickLatestIso } from '../lib/pick-latest-iso.js';
 import { isAccessorySku } from '../lib/sku-encoding.js';
+import {
+  resolveRequestProjectGroupScope,
+  resolveScopedProjectGroups,
+  skuInProjectGroupScope,
+  skuProjectGroupCondition,
+} from '../lib/data-scope.js';
 
 export const productRoutes = new Hono();
 
@@ -87,16 +93,27 @@ function buildSkuOverviewWhere(query: {
 
 // --- SPU ---
 
-productRoutes.get('/spus', async (c) => {
+productRoutes.get('/spus', requireMenu('data.products'), async (c) => {
   const { page, pageSize, offset } = parseListPagination(
     c.req.query('page')?.trim(),
     c.req.query('pageSize')?.trim(),
   );
-  const where = buildSpuWhere({
+  const scope = await resolveRequestProjectGroupScope(c);
+  const scopeCond = skuProjectGroupCondition(scope);
+  const baseWhere = buildSpuWhere({
     q: c.req.query('q')?.trim(),
     category: c.req.query('category')?.trim(),
     brand: c.req.query('brand')?.trim(),
   });
+  const scopeExists = scopeCond
+    ? exists(
+        db
+          .select({ id: skus.id })
+          .from(skus)
+          .where(and(eq(skus.spuId, spus.id), scopeCond)),
+      )
+    : undefined;
+  const where = and(baseWhere, scopeExists);
   const [rows, countRow] = await Promise.all([
     db
       .select()
@@ -118,19 +135,24 @@ productRoutes.get('/spus', async (c) => {
   });
 });
 
-productRoutes.get('/spus/:id', async (c) => {
+productRoutes.get('/spus/:id', requireMenu('data.products'), async (c) => {
   const [row] = await db.select().from(spus).where(eq(spus.id, c.req.param('id'))).limit(1);
   if (!row) return c.json({ message: 'SPU not found' }, 404);
 
+  const scope = await resolveRequestProjectGroupScope(c);
+  const scopeCond = skuProjectGroupCondition(scope);
   const skuRows = await db
     .select()
     .from(skus)
-    .where(and(eq(skus.spuId, row.id), eq(skus.isActive, true)))
+    .where(and(eq(skus.spuId, row.id), eq(skus.isActive, true), scopeCond))
     .orderBy(skus.code);
+
+  if (scope.mode === 'restricted' && skuRows.length === 0) {
+    return c.json({ message: 'SPU not found' }, 404);
+  }
 
   return c.json({ ...row, skus: skuRows });
 });
-
 productRoutes.post('/spus', requireMenu('data.products'), async (c) => {
   const body = await c.req.json<{
     code: string;
@@ -284,7 +306,18 @@ productRoutes.put('/merchants/:id', requireMenu('data.products'), async (c) => {
 
 // --- SKU suppliers ---
 
-productRoutes.get('/skus/:skuId/suppliers', async (c) => {
+productRoutes.get('/skus/:skuId/suppliers', requireMenu('data.products'), async (c) => {
+  const skuId = c.req.param('skuId');
+  const scope = await resolveRequestProjectGroupScope(c);
+  const [sku] = await db
+    .select({ id: skus.id, projectGroup: skus.projectGroup })
+    .from(skus)
+    .where(eq(skus.id, skuId))
+    .limit(1);
+  if (!sku || !skuInProjectGroupScope(sku.projectGroup, scope)) {
+    return c.json({ message: 'SKU not found' }, 404);
+  }
+
   const rows = await db
     .select({
       id: skuSuppliers.id,
@@ -300,12 +333,11 @@ productRoutes.get('/skus/:skuId/suppliers', async (c) => {
     })
     .from(skuSuppliers)
     .innerJoin(merchants, eq(merchants.id, skuSuppliers.merchantId))
-    .where(eq(skuSuppliers.skuId, c.req.param('skuId')))
+    .where(eq(skuSuppliers.skuId, skuId))
     .orderBy(desc(skuSuppliers.isDefault), merchants.code);
 
   return c.json(rows);
 });
-
 productRoutes.post('/skus/:skuId/suppliers', requireMenu('data.products'), async (c) => {
   const skuId = c.req.param('skuId');
   const body = await c.req.json<{
@@ -389,21 +421,32 @@ productRoutes.put('/sku-suppliers/:id/default', requireMenu('data.products'), as
 
 // --- Enriched SKU list for product master page ---
 
-productRoutes.get('/products/sku-overview', async (c) => {
+productRoutes.get('/products/sku-overview', requireMenu('data.products'), async (c) => {
   const { page, pageSize, offset } = parseListPagination(
     c.req.query('page')?.trim(),
     c.req.query('pageSize')?.trim(),
   );
-  const where = buildSkuOverviewWhere({
-    q: c.req.query('q')?.trim(),
-    category: c.req.query('category')?.trim(),
-    projectGroup: c.req.query('projectGroup')?.trim(),
-    lifecycle: c.req.query('lifecycle')?.trim(),
-    salesCountry: c.req.query('salesCountry')?.trim(),
-    merchantCode: c.req.query('merchantCode')?.trim(),
-    ownerName: c.req.query('ownerName')?.trim(),
-    developerName: c.req.query('developerName')?.trim(),
-  });
+  const scope = await resolveRequestProjectGroupScope(c);
+  const projectGroup = c.req.query('projectGroup')?.trim();
+  const scoped = resolveScopedProjectGroups({ scope, projectGroup });
+  if (scoped.empty) {
+    return c.json({ items: [], total: 0, page, pageSize });
+  }
+
+  // 受限时用精确 IN；未受限时保留原有 projectGroup 模糊筛选
+  const where = and(
+    buildSkuOverviewWhere({
+      q: c.req.query('q')?.trim(),
+      category: c.req.query('category')?.trim(),
+      projectGroup: scope.mode === 'all' ? projectGroup : undefined,
+      lifecycle: c.req.query('lifecycle')?.trim(),
+      salesCountry: c.req.query('salesCountry')?.trim(),
+      merchantCode: c.req.query('merchantCode')?.trim(),
+      ownerName: c.req.query('ownerName')?.trim(),
+      developerName: c.req.query('developerName')?.trim(),
+    }),
+    scope.mode === 'restricted' ? scoped.condition : undefined,
+  );
 
   const base = db
     .select({

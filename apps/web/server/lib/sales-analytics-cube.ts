@@ -22,6 +22,8 @@ import {
   resolveAnalyticsSite,
   type AnalyticsSite,
 } from './sales-analytics-dims.js';
+import { extractProjectGroupFromCategory } from './sku-category.js';
+import type { ProjectGroupScope } from './data-scope.js';
 
 export type CubeQtyBucket = 'both' | 'month' | 'week';
 
@@ -57,6 +59,7 @@ type EntityAcc = {
   b: string;
   c: string;
   p: string;
+  g: string | null;
   monthQty: Map<string, number>;
   weekQty: Map<string, number>;
 };
@@ -88,8 +91,8 @@ export async function clearStaleRunningCubeSnapshots(
   return updated.length;
 }
 
-function dimKey(s: string, b: string, c: string, p: string): string {
-  return `${s}\0${b}\0${c}\0${p}`;
+function dimKey(s: string, b: string, c: string, p: string, g: string | null): string {
+  return `${s}\0${b}\0${c}\0${p}\0${g ?? ''}`;
 }
 
 function platformDisplayName(
@@ -162,11 +165,12 @@ function accumulateCubeRowsInto(
     const b = extractAnalyticsDept(row.category);
     const c = extractAnalyticsCategoryLeaf(row.category);
     const p = platformDisplayName(row.channel, platformNameByCode);
+    const g = extractProjectGroupFromCategory(row.category);
 
-    const key = dimKey(s, b, c, p);
+    const key = dimKey(s, b, c, p, g);
     let ent = state.entities.get(key);
     if (!ent) {
-      ent = { s, b, c, p, monthQty: new Map(), weekQty: new Map() };
+      ent = { s, b, c, p, g, monthQty: new Map(), weekQty: new Map() };
       state.entities.set(key, ent);
     }
     if (bucket !== 'week') {
@@ -185,9 +189,14 @@ function finalizeCubeAccumulator(state: CubeAccState): SalesAnalyticsCubePayload
     b: ent.b,
     c: ent.c,
     p: ent.p,
+    g: ent.g,
     v: months.map((m) => ent.monthQty.get(m) ?? 0),
     vw: weeks.map((w) => ent.weekQty.get(w) ?? 0),
   }));
+
+  const projectGroups = uniqueSorted(
+    data.map((d) => d.g).filter((g): g is string => Boolean(g?.trim())),
+  );
 
   const meta: SalesAnalyticsCubePayload['meta'] = {
     generatedAt: new Date().toISOString(),
@@ -201,9 +210,58 @@ function finalizeCubeAccumulator(state: CubeAccState): SalesAnalyticsCubePayload
     depts: uniqueSorted(data.map((d) => d.b)),
     categories: uniqueSorted(data.map((d) => d.c)),
     platforms: uniqueSorted(data.map((d) => d.p)),
+    projectGroups,
   };
 
   return { meta, months, weeks, data };
+}
+
+/** 立方是否已带项目组维度 g（旧快照无此字段）。 */
+export function cubeHasProjectGroupDim(cube: SalesAnalyticsCubePayload): boolean {
+  if (cube.data.length === 0) {
+    return Array.isArray(cube.meta.projectGroups);
+  }
+  return cube.data.every((row) => Object.prototype.hasOwnProperty.call(row, 'g'));
+}
+
+/**
+ * 按用户项目组范围裁剪立方。受限且旧快照无 g 时返回 error。
+ * 未分组（g 为空）对受限用户不可见。
+ */
+export function filterCubeByProjectGroupScope(
+  cube: SalesAnalyticsCubePayload,
+  scope: ProjectGroupScope,
+): { ok: true; cube: SalesAnalyticsCubePayload } | { ok: false; error: 'CUBE_SCOPE_STALE' } {
+  if (scope.mode === 'all') return { ok: true, cube };
+
+  if (!cubeHasProjectGroupDim(cube)) {
+    return { ok: false, error: 'CUBE_SCOPE_STALE' };
+  }
+
+  const allowed = new Set(scope.groups);
+  const data = cube.data.filter((row) => {
+    const g = row.g?.trim();
+    return Boolean(g && allowed.has(g));
+  });
+
+  const totalSales = data.reduce(
+    (sum, row) => sum + row.v.reduce((a, b) => a + b, 0),
+    0,
+  );
+
+  const meta: SalesAnalyticsCubePayload['meta'] = {
+    ...cube.meta,
+    totalSales,
+    sites: orderSites(data.map((d) => d.s)),
+    depts: uniqueSorted(data.map((d) => d.b)),
+    categories: uniqueSorted(data.map((d) => d.c)),
+    platforms: uniqueSorted(data.map((d) => d.p)),
+    projectGroups: uniqueSorted(
+      data.map((d) => d.g).filter((g): g is string => Boolean(g?.trim())),
+    ),
+  };
+
+  return { ok: true, cube: { ...cube, meta, data } };
 }
 
 function orderSites(sites: string[]): string[] {

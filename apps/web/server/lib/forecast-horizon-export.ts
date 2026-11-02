@@ -2,6 +2,7 @@
  * 预测 horizon 列表导出：宽表（未来矩阵）与明细表（明细视图）。
  * 字段与前端 ForecastHorizonPanel 列表列对齐。
  */
+import { formatForecastChannelLabel } from './forecast-channel-view.js';
 import { buildCsv, excelKeepYmText } from './csv-export.js';
 import { formatAllCatV41TierLabel, ALLCAT_V41_MODEL } from './forecast-allcat-v41.js';
 import {
@@ -10,6 +11,7 @@ import {
   type ForecastHorizonCell,
   type ForecastHorizonRow,
 } from './forecast-horizon.js';
+import type { ProjectGroupScope } from './data-scope.js';
 
 export const FORECAST_HORIZON_EXPORT_MAX_SKUS = 20_000;
 const PAGE_SIZE = 100;
@@ -89,7 +91,7 @@ export function buildForecastHorizonWideCsv(dataset: HorizonExportDataset): {
     return [
       row.skuCode,
       row.skuName,
-      row.platform,
+      formatForecastChannelLabel(row.platform),
       formatLifecycle(row.lifecycle),
       formatTierLabel(row.profileSegment),
       ...monthLabels.map((label) => {
@@ -150,7 +152,7 @@ function buildHistoryDetailRow(
     '历史',
     row.skuCode,
     row.category ?? '',
-    row.platform,
+    formatForecastChannelLabel(row.platform),
     excelKeepYmText(cell.monthLabel),
     formatLifecycle(row.lifecycle),
     ...pads,
@@ -186,7 +188,7 @@ function buildFutureDetailRow(
     '未来',
     row.skuCode,
     row.category ?? '',
-    row.platform,
+    formatForecastChannelLabel(row.platform),
     excelKeepYmText(cell.monthLabel),
     formatLifecycle(cell.lifecycle ?? row.lifecycle),
     formatConfidence(cell.confidenceLevel),
@@ -202,6 +204,8 @@ export async function loadForecastHorizonExportDataset(input: {
   versionId: string;
   station?: string;
   platform?: string;
+  platforms?: string[];
+  channelView?: string;
   skuCode?: string;
   category?: string;
   categories?: string[];
@@ -210,6 +214,7 @@ export async function loadForecastHorizonExportDataset(input: {
   monthCount?: number;
   historyMonthCount?: number;
   maxSkus?: number;
+  projectGroupScope?: ProjectGroupScope;
 }): Promise<HorizonExportDataset> {
   const maxSkus = Math.min(
     Math.max(1, input.maxSkus ?? FORECAST_HORIZON_EXPORT_MAX_SKUS),
@@ -226,6 +231,8 @@ export async function loadForecastHorizonExportDataset(input: {
       versionId: input.versionId,
       station: input.station,
       platform: input.platform,
+      platforms: input.platforms,
+      channelView: input.channelView,
       skuCode: input.skuCode,
       category: input.category,
       categories: input.categories,
@@ -235,6 +242,7 @@ export async function loadForecastHorizonExportDataset(input: {
       pageSize: PAGE_SIZE,
       monthCount: input.monthCount,
       historyMonthCount: input.historyMonthCount,
+      projectGroupScope: input.projectGroupScope,
     });
     total = result.total;
     if (page === 1) {
@@ -256,6 +264,8 @@ export async function buildForecastHorizonExportCsv(input: {
   versionId: string;
   station?: string;
   platform?: string;
+  platforms?: string[];
+  channelView?: string;
   skuCode?: string;
   category?: string;
   categories?: string[];
@@ -263,6 +273,7 @@ export async function buildForecastHorizonExportCsv(input: {
   pendingCalibration?: boolean;
   monthCount?: number;
   historyMonthCount?: number;
+  projectGroupScope?: ProjectGroupScope;
 }): Promise<{ csv: string; rowCount: number; skuCount: number }> {
   const historyMonthCount =
     input.mode === 'wide' ? 0 : (input.historyMonthCount ?? input.monthCount ?? 6);

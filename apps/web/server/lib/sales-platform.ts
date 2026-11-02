@@ -4,7 +4,8 @@ import { db, salesPlatforms, salesPlatformAliases } from '@scm/db';
 const STATIC_ALIASES: Record<string, string> = {
   亚马逊: 'AMAZON',
   沃尔玛: 'WALMART',
-  独立站: 'DTC',
+  独立站: 'SHOPIFY',
+  品牌站: 'SHOPIFY',
   全平台: 'ALL',
   AMZ: 'AMAZON',
   AMAZON: 'AMAZON',
@@ -13,14 +14,30 @@ const STATIC_ALIASES: Record<string, string> = {
   'AMAZON-US': 'AMAZON',
   WALMART: 'WALMART',
   WM: 'WALMART',
+  WAYFAIR: 'WAYFAIR',
+  wayfair: 'WAYFAIR',
   EBAY: 'EBAY',
+  eBay: 'EBAY',
   SHOPIFY: 'SHOPIFY',
-  DTC: 'DTC',
+  Shopify: 'SHOPIFY',
+  DTC: 'SHOPIFY',
   TEMU: 'TEMU',
+  Temu: 'TEMU',
   TIKTOK: 'TIKTOK',
+  Tiktok: 'TIKTOK',
   TT: 'TIKTOK',
   'TIK TOK': 'TIKTOK',
   'TIKTOK SHOP': 'TIKTOK',
+  ETSY: 'ETSY',
+  etsy: 'ETSY',
+  MANOMANO: 'MANOMANO',
+  manomano: 'MANOMANO',
+  REAL: 'REAL',
+  Real: 'REAL',
+  OTTO: 'OTTO',
+  otto: 'OTTO',
+  B2B: 'B2B',
+  B2B小包: 'B2B',
   ALL: 'ALL',
   未知: 'UNKNOWN',
   UNKNOWN: 'UNKNOWN',
@@ -28,12 +45,6 @@ const STATIC_ALIASES: Record<string, string> = {
 
 /** 导入批次 UNKNOWN 渠道占比告警阈值（0–1） */
 export const SALES_IMPORT_UNKNOWN_CHANNEL_WARN_RATIO = 0.05;
-
-/**
- * 预测 / 销量查询口径：UNKNOWN 平台过滤时额外纳入的独立站等渠道。
- * 仅影响 `channelsForPlatformFilter*`；导入归一化不变（SHOPIFY 仍落库为 SHOPIFY）。
- */
-export const FORECAST_UNKNOWN_BUCKET_CHANNELS = ['SHOPIFY', 'DTC', 'EBAY'] as const;
 
 let aliasCache: Map<string, string> | null = null;
 let aliasCacheAt = 0;
@@ -104,15 +115,6 @@ export function channelsForPlatformFilterSync(code: string): string[] {
       channels.add(alias);
       channels.add(alias.toLowerCase());
       channels.add(alias.toUpperCase());
-    }
-  }
-
-  // 预测口径：独立站等非 V4.1 渠道销量并入 UNKNOWN 查询桶
-  if (upper === 'UNKNOWN') {
-    for (const bucket of FORECAST_UNKNOWN_BUCKET_CHANNELS) {
-      channels.add(bucket);
-      channels.add(bucket.toLowerCase());
-      channels.add(bucket.toUpperCase());
     }
   }
 

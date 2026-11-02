@@ -3,7 +3,6 @@ import assert from 'node:assert/strict';
 import {
   assessUnknownChannelShare,
   channelsForPlatformFilterSync,
-  FORECAST_UNKNOWN_BUCKET_CHANNELS,
   normalizeSalesPlatformSync,
 } from './sales-platform.js';
 
@@ -16,6 +15,19 @@ describe('sales-platform', () => {
     assert.equal(normalizeSalesPlatformSync('WALMART'), 'WALMART');
     assert.equal(normalizeSalesPlatformSync('SHOPIFY'), 'SHOPIFY');
     assert.equal(normalizeSalesPlatformSync(''), 'UNKNOWN');
+    assert.equal(normalizeSalesPlatformSync('wayfair'), 'WAYFAIR');
+    assert.equal(normalizeSalesPlatformSync('Wayfair'), 'WAYFAIR');
+    assert.equal(normalizeSalesPlatformSync('etsy'), 'ETSY');
+    assert.equal(normalizeSalesPlatformSync('manomano'), 'MANOMANO');
+    assert.equal(normalizeSalesPlatformSync('Real'), 'REAL');
+    assert.equal(normalizeSalesPlatformSync('otto'), 'OTTO');
+    assert.equal(normalizeSalesPlatformSync('B2B小包'), 'B2B');
+    assert.equal(normalizeSalesPlatformSync('B2B'), 'B2B');
+    assert.equal(normalizeSalesPlatformSync('独立站'), 'SHOPIFY');
+    assert.equal(normalizeSalesPlatformSync('品牌站'), 'SHOPIFY');
+    assert.equal(normalizeSalesPlatformSync('DTC'), 'SHOPIFY');
+    assert.equal(normalizeSalesPlatformSync('Shopify'), 'SHOPIFY');
+    assert.equal(normalizeSalesPlatformSync('eBay'), 'EBAY');
     assert.equal(normalizeSalesPlatformSync('未知平台XYZ'), 'UNKNOWN');
   });
 
@@ -27,12 +39,17 @@ describe('sales-platform', () => {
     assert.ok(!aliases.includes('SHOPIFY'));
   });
 
-  it('folds indie channels into UNKNOWN forecast query bucket', () => {
-    const aliases = channelsForPlatformFilterSync('UNKNOWN');
-    assert.ok(aliases.includes('UNKNOWN'));
-    assert.ok(aliases.includes('未知'));
-    for (const code of FORECAST_UNKNOWN_BUCKET_CHANNELS) {
-      assert.ok(aliases.includes(code), `expected ${code} in UNKNOWN bucket`);
+  it('keeps UNKNOWN filter free of named platforms and folds DTC into Shopify', () => {
+    const unknown = channelsForPlatformFilterSync('UNKNOWN');
+    for (const code of ['SHOPIFY', 'DTC', 'EBAY', 'WAYFAIR']) {
+      assert.ok(!unknown.includes(code), `UNKNOWN must not include ${code}`);
+    }
+    assert.ok(unknown.includes('UNKNOWN'));
+    assert.ok(unknown.includes('未知'));
+
+    const shopify = channelsForPlatformFilterSync('SHOPIFY');
+    for (const code of ['SHOPIFY', '独立站', 'DTC']) {
+      assert.ok(shopify.includes(code), `SHOPIFY must include ${code}`);
     }
   });
 

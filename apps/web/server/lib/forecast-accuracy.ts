@@ -11,6 +11,7 @@ import { formatForecastMonth } from './forecast-demand.js';
 import { segmentLabel } from './forecast-profile-class.js';
 import { forecastPlatformCondition } from './forecast-platform-scope.js';
 import { buildCsv, excelKeepYmText } from './csv-export.js';
+import { skuProjectGroupCondition, type ProjectGroupScope } from './data-scope.js';
 import {
   computeMonthlyAvgMape,
   computeMonthlyAvgWmape,
@@ -692,7 +693,16 @@ export async function listForecastAccuracy(params?: {
   page?: number;
   pageSize?: number;
   limit?: number;
+  projectGroupScope?: ProjectGroupScope;
 }) {
+  if (
+    params?.projectGroupScope?.mode === 'restricted' &&
+    params.projectGroupScope.groups.length === 0
+  ) {
+    const page = Math.max(1, params?.page ?? 1);
+    const pageSize = Math.min(100, Math.max(1, params?.pageSize ?? params?.limit ?? 20));
+    return { items: [], total: 0, page, pageSize };
+  }
   const page = Math.max(1, params?.page ?? 1);
   const pageSize = Math.min(
     100,
@@ -707,6 +717,10 @@ export async function listForecastAccuracy(params?: {
   const platformCond = forecastPlatformCondition(forecastAccuracyMonthly.platform, params?.platform);
   if (platformCond) conditions.push(platformCond);
   if (params?.versionId) conditions.push(eq(forecastAccuracyMonthly.versionId, params.versionId));
+  const skuScopeCond = params?.projectGroupScope
+    ? skuProjectGroupCondition(params.projectGroupScope)
+    : undefined;
+  if (skuScopeCond) conditions.push(skuScopeCond);
   const where = and(...conditions);
 
   const base = db
@@ -823,7 +837,14 @@ export async function buildForecastAccuracyExportCsv(params: {
   month?: number;
   rowKind?: ForecastAccuracyRowKind;
   limit?: number;
+  projectGroupScope?: ProjectGroupScope;
 }): Promise<{ csv: string; rowCount: number }> {
+  if (
+    params.projectGroupScope?.mode === 'restricted' &&
+    params.projectGroupScope.groups.length === 0
+  ) {
+    return { csv: buildCsv([], []), rowCount: 0 };
+  }
   const limit = Math.min(Math.max(1, params.limit ?? 100_000), 100_000);
   const rowKind = params.rowKind ?? 'predicted';
   const conditions = [
@@ -835,6 +856,10 @@ export async function buildForecastAccuracyExportCsv(params: {
   if (params.station) conditions.push(eq(forecastAccuracyMonthly.station, params.station));
   const platformCond = forecastPlatformCondition(forecastAccuracyMonthly.platform, params.platform);
   if (platformCond) conditions.push(platformCond);
+  const skuScopeCond = params.projectGroupScope
+    ? skuProjectGroupCondition(params.projectGroupScope)
+    : undefined;
+  if (skuScopeCond) conditions.push(skuScopeCond);
   const where = and(...conditions);
 
   const rows = await db
@@ -934,7 +959,14 @@ export async function buildForecastAccuracySkuExportCsv(params: {
   month?: number;
   rowKind?: ForecastAccuracyRowKind;
   limit?: number;
+  projectGroupScope?: ProjectGroupScope;
 }): Promise<{ csv: string; rowCount: number }> {
+  if (
+    params.projectGroupScope?.mode === 'restricted' &&
+    params.projectGroupScope.groups.length === 0
+  ) {
+    return { csv: buildCsv([], []), rowCount: 0 };
+  }
   const limit = Math.min(Math.max(1, params.limit ?? 100_000), 100_000);
   const rowKind = params.rowKind ?? 'predicted';
   const conditions = [
@@ -946,6 +978,10 @@ export async function buildForecastAccuracySkuExportCsv(params: {
   if (params.station) conditions.push(eq(forecastAccuracyMonthly.station, params.station));
   const platformCond = forecastPlatformCondition(forecastAccuracyMonthly.platform, params.platform);
   if (platformCond) conditions.push(platformCond);
+  const skuScopeCond = params.projectGroupScope
+    ? skuProjectGroupCondition(params.projectGroupScope)
+    : undefined;
+  if (skuScopeCond) conditions.push(skuScopeCond);
   const where = and(...conditions);
 
   const rows = await db
@@ -1163,6 +1199,10 @@ export async function summarizeForecastAccuracy(
   if (params?.station) conditions.push(eq(forecastAccuracyMonthly.station, params.station));
   const platformCond = forecastPlatformCondition(forecastAccuracyMonthly.platform, params?.platform);
   if (platformCond) conditions.push(platformCond);
+  const skuScopeCond = params?.projectGroupScope
+    ? skuProjectGroupCondition(params.projectGroupScope)
+    : undefined;
+  if (skuScopeCond) conditions.push(skuScopeCond);
   const where = conditions.length ? and(...conditions) : undefined;
 
   const rows = await db
@@ -1288,4 +1328,5 @@ export type AccuracySummaryOptions = {
   station?: string;
   platform?: string;
   asOf?: Date;
+  projectGroupScope?: ProjectGroupScope;
 };

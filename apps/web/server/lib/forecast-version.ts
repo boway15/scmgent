@@ -258,7 +258,12 @@ function applyGroupedReviewStats(
   stats.reviewPendingSkuCount = pendingSkuIds.size;
 }
 
-async function loadVersionStatsMap(versionIds: string[]): Promise<Map<string, ForecastVersionStats>> {
+export type ForecastVersionStatsScope = 'list' | 'full';
+
+async function loadVersionStatsMap(
+  versionIds: string[],
+  scope: ForecastVersionStatsScope = 'full',
+): Promise<Map<string, ForecastVersionStats>> {
   const map = new Map<string, ForecastVersionStats>();
   if (versionIds.length === 0) return map;
 
@@ -266,22 +271,37 @@ async function loadVersionStatsMap(versionIds: string[]): Promise<Map<string, Fo
     map.set(id, emptyVersionStats());
   }
 
+  const monthlyQuery = db
+    .select({
+      versionId: salesForecastMonthly.versionId,
+      forecastRowCount: sql<number>`count(*)::int`,
+      skuCount: sql<number>`count(distinct ${salesForecastMonthly.skuId})::int`,
+      monthCount: sql<number>`count(distinct (${salesForecastMonthly.forecastYear}, ${salesForecastMonthly.month}))::int`,
+    })
+    .from(salesForecastMonthly)
+    .where(
+      and(
+        inArray(salesForecastMonthly.versionId, versionIds),
+        inArray(salesForecastMonthly.platform, [...FORECAST_V41_PLATFORM_CODES]),
+      ),
+    )
+    .groupBy(salesForecastMonthly.versionId);
+
+  if (scope === 'list') {
+    const monthlyRows = await monthlyQuery;
+    for (const row of monthlyRows) {
+      if (!row.versionId) continue;
+      const stats = map.get(row.versionId) ?? emptyVersionStats();
+      stats.forecastRowCount = row.forecastRowCount;
+      stats.skuCount = row.skuCount;
+      stats.monthCount = row.monthCount;
+      map.set(row.versionId, stats);
+    }
+    return map;
+  }
+
   const [monthlyRows, reviewRows, accuracyRows] = await Promise.all([
-    db
-      .select({
-        versionId: salesForecastMonthly.versionId,
-        forecastRowCount: sql<number>`count(*)::int`,
-        skuCount: sql<number>`count(distinct ${salesForecastMonthly.skuId})::int`,
-        monthCount: sql<number>`count(distinct (${salesForecastMonthly.forecastYear}, ${salesForecastMonthly.month}))::int`,
-      })
-      .from(salesForecastMonthly)
-      .where(
-        and(
-          inArray(salesForecastMonthly.versionId, versionIds),
-          inArray(salesForecastMonthly.platform, [...FORECAST_V41_PLATFORM_CODES]),
-        ),
-      )
-      .groupBy(salesForecastMonthly.versionId),
+    monthlyQuery,
     db
       .select({
         versionId: salesForecastReviewItems.versionId,
@@ -394,9 +414,14 @@ function toVersionListItem(
 
 export async function listForecastVersionsWithStats(
   status?: ForecastVersionStatus,
+  options?: { statsScope?: ForecastVersionStatsScope },
 ): Promise<ForecastVersionListItem[]> {
+  const statsScope = options?.statsScope ?? 'full';
   const versions = await listForecastVersions(status);
-  const statsMap = await loadVersionStatsMap(versions.map((v) => v.id));
+  const statsMap = await loadVersionStatsMap(
+    versions.map((v) => v.id),
+    statsScope,
+  );
   return versions.map((v) => toVersionListItem(v, statsMap.get(v.id) ?? emptyVersionStats()));
 }
 

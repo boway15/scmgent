@@ -1,4 +1,4 @@
-import { and, asc, eq, ilike, inArray, sql } from 'drizzle-orm';
+import { and, asc, eq, ilike, inArray, sql, type SQL } from 'drizzle-orm';
 import { db, salesForecastMonthly, skus } from '@scm/db';
 import {
   buildMonthlyForecastHorizon,
@@ -13,6 +13,7 @@ import {
   type AllCatV41HorizonDisplay,
 } from './forecast-allcat-v41.js';
 import { formatForecastMonth, mapForecastDailyFields, normalizeSalesPlatform, aggregateForecastRows, sumEffectiveForecastDailyAcrossPlatforms } from './forecast-demand.js';
+import { resolveForecastChannelQuery } from './forecast-channel-view.js';
 import { FORECAST_V41_PLATFORM_CODES } from './forecast-platform-scope.js';
 import {
   FORECAST_GLOBAL_STATION,
@@ -25,8 +26,14 @@ import { loadMonthlySalesBySkuIds } from './sales-history-query.js';
 import { MAX_FORECAST_MONTH_COUNT } from './forecast-limits.js';
 import { resolveForecastStartMonthAsOf } from './forecast-start-month.js';
 import { parseProductScope, productScopeSql, type ProductScope } from './planning-accessory-filter.js';
+import { skuProjectGroupCondition, type ProjectGroupScope } from './data-scope.js';
 
 const ALLCAT_V41_PROFILE_SEGMENTS = new Set(['T1', 'T2', 'T3', 'T3P', 'T4A', 'T4B', 'T99']);
+
+function pushSkuProjectGroupScope(conditions: SQL[], scope?: ProjectGroupScope) {
+  const cond = scope ? skuProjectGroupCondition(scope) : undefined;
+  if (cond) conditions.push(cond);
+}
 
 /** 列表展示排序：T1 → T99；未知/空分层靠后 */
 export const ALLCAT_V41_TIER_SORT_ORDER = ['T1', 'T2', 'T3', 'T3P', 'T4A', 'T4B', 'T99'] as const;
@@ -166,11 +173,11 @@ function buildAggregatedAnchorSegmentSql(input: {
   )`;
 }
 
-/** 单渠道锚点分层：该渠道首月 profile_segment */
+/** 分渠道锚点分层：按该行渠道的首月 profile_segment */
 function buildPlatformAnchorSegmentSql(input: {
   versionId: string;
   stationFilter: string;
-  platform: string;
+  platformExpr: ReturnType<typeof sql>;
   skuIdExpr: ReturnType<typeof sql>;
 }) {
   return sql`(
@@ -179,7 +186,7 @@ function buildPlatformAnchorSegmentSql(input: {
     WHERE sfm_anchor.version_id = ${input.versionId}
       AND sfm_anchor.sku_id = ${input.skuIdExpr}
       AND sfm_anchor.station = ${input.stationFilter}
-      AND sfm_anchor.platform = ${input.platform}
+      AND sfm_anchor.platform = ${input.platformExpr}
     ORDER BY sfm_anchor.forecast_year ASC, sfm_anchor.month ASC
     LIMIT 1
   )`;
@@ -937,6 +944,7 @@ async function listForecastHorizonAggregated(input: {
   asOf: Date;
   version: Awaited<ReturnType<typeof getForecastVersionById>>;
   productScope: ProductScope;
+  projectGroupScope?: ProjectGroupScope;
 }): Promise<ForecastHorizonResult> {
   const stationFilter = normalizeForecastStation(input.station);
   const conditions = [
@@ -945,6 +953,7 @@ async function listForecastHorizonAggregated(input: {
     eq(salesForecastMonthly.station, stationFilter),
     productScopeSql(input.productScope),
   ];
+  pushSkuProjectGroupScope(conditions, input.projectGroupScope);
   if (input.skuId?.trim()) {
     conditions.push(eq(salesForecastMonthly.skuId, input.skuId.trim()));
   } else if (input.skuCode?.trim()) {
@@ -1196,6 +1205,10 @@ export async function listForecastHorizon(input: {
   versionId?: string;
   station?: string;
   platform?: string;
+  /** 分渠道视角下要列出的渠道；空表示全部渠道各一行 */
+  platforms?: string[];
+  /** merged：全渠道合计一行；by_channel：每渠道一行。缺省时按 platform 兼容旧查询 */
+  channelView?: string;
   skuId?: string;
   skuCode?: string;
   category?: string;
@@ -1208,6 +1221,7 @@ export async function listForecastHorizon(input: {
   historyMonthCount?: number;
   asOf?: Date;
   productScope?: ProductScope;
+  projectGroupScope?: ProjectGroupScope;
 }): Promise<ForecastHorizonResult> {
   const productScope = parseProductScope(input.productScope);
   const page = Math.max(1, input.page ?? 1);
@@ -1224,7 +1238,11 @@ export async function listForecastHorizon(input: {
       : 0;
 
   const explicitVersionId = input.versionId?.trim() || undefined;
-  if (!explicitVersionId) {
+  if (
+    !explicitVersionId ||
+    (input.projectGroupScope?.mode === 'restricted' &&
+      input.projectGroupScope.groups.length === 0)
+  ) {
     return {
       horizon: [],
       historyHorizon: [],
@@ -1245,8 +1263,12 @@ export async function listForecastHorizon(input: {
     category: input.category,
     categories: input.categories,
   });
-  const platformNormalized = normalizeSalesPlatform(input.platform?.trim() || 'ALL');
-  if (platformNormalized === 'ALL') {
+  const channelQuery = resolveForecastChannelQuery({
+    channelView: input.channelView,
+    platform: input.platform,
+    platforms: input.platforms,
+  });
+  if (channelQuery.channelView === 'merged') {
     return listForecastHorizonAggregated({
       versionId,
       station: stationFilter,
@@ -1263,15 +1285,38 @@ export async function listForecastHorizon(input: {
       asOf,
       version,
       productScope,
+      projectGroupScope: input.projectGroupScope,
     });
+  }
+
+  const platforms = channelQuery.platforms;
+  if (!platforms.length) {
+    return {
+      horizon: [],
+      historyHorizon: buildHistoryMonthLabels(historyMonthCount, asOf),
+      items: [],
+      total: 0,
+      page,
+      pageSize,
+      version: version
+        ? {
+            id: version.id,
+            versionName: version.versionName,
+            status: version.status,
+            station: version.station,
+          }
+        : null,
+      ...horizonAccessoryMeta(version, productScope, 0),
+    };
   }
 
   const conditions = [
     eq(salesForecastMonthly.versionId, versionId),
     eq(salesForecastMonthly.station, stationFilter),
-    eq(salesForecastMonthly.platform, platformNormalized),
+    inArray(salesForecastMonthly.platform, platforms),
     productScopeSql(productScope),
   ];
+  pushSkuProjectGroupScope(conditions, input.projectGroupScope);
   if (input.skuId?.trim()) {
     conditions.push(eq(salesForecastMonthly.skuId, input.skuId.trim()));
   } else if (input.skuCode?.trim()) {
@@ -1318,7 +1363,7 @@ export async function listForecastHorizon(input: {
         buildPlatformAnchorSegmentSql({
           versionId,
           stationFilter,
-          platform: platformNormalized,
+          platformExpr: sql`matched.platform`,
           skuIdExpr: sql`matched.sku_id`,
         }),
       )} ASC,
@@ -1353,7 +1398,7 @@ export async function listForecastHorizon(input: {
     dataHorizon: buildHorizonLabels(monthLabelRows),
     versionId,
     station: stationFilter,
-    platform: platformNormalized,
+    platform: platforms.length === 1 ? platforms[0] : undefined,
     monthCount,
     asOf,
     startMonth: version?.startMonth,
@@ -1414,6 +1459,7 @@ export async function listForecastHorizon(input: {
         eq(salesForecastMonthly.versionId, versionId),
         eq(salesForecastMonthly.station, stationFilter),
         inArray(salesForecastMonthly.skuId, skuIds),
+        inArray(salesForecastMonthly.platform, platforms),
       ),
     )
     .orderBy(asc(skus.code), asc(salesForecastMonthly.forecastYear), asc(salesForecastMonthly.month));

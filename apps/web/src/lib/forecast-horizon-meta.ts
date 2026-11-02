@@ -62,8 +62,16 @@ export const FORECAST_HORIZON_HISTORY_MONTH_OPTIONS = [6, 12, 18, 24] as const;
 export const FORECAST_V41_PLATFORM_CODES = [
   'AMAZON',
   'WALMART',
-  'TEMU',
+  'WAYFAIR',
   'TIKTOK',
+  'TEMU',
+  'SHOPIFY',
+  'EBAY',
+  'ETSY',
+  'MANOMANO',
+  'REAL',
+  'OTTO',
+  'B2B',
   'UNKNOWN',
 ] as const;
 
@@ -75,10 +83,17 @@ export const FORECAST_GENERATION_PLATFORM_CODES = new Set<string>([
 const HORIZON_PLATFORM_ALIASES: Record<string, string> = {
   亚马逊: 'AMAZON',
   沃尔玛: 'WALMART',
-  独立站: 'DTC',
+  独立站: 'SHOPIFY',
   全平台: 'ALL',
   全平台汇总: 'ALL',
 };
+
+/** 合并行展示为全渠道；分渠道行保持渠道码，与导出一致 */
+export function formatForecastChannelLabel(platform?: string | null): string {
+  const code = platform?.trim();
+  if (!code || code.toUpperCase() === 'ALL') return '全渠道';
+  return code;
+}
 
 /** 与列表矩阵一致：空 / ALL 表示全渠道汇总，否则为单渠道标准码 */
 export function resolveHorizonPlatformScope(raw?: string | null): string {

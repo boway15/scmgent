@@ -34,8 +34,42 @@ import {
   filterAlertsByRecommendation,
   parseRecommendYesNoQuery,
 } from '../lib/alert-recommendation-filter.js';
+import {
+  resolveRequestProjectGroupScope,
+  skuInProjectGroupScope,
+  skuProjectGroupCondition,
+  type ProjectGroupScope,
+} from '../lib/data-scope.js';
+import { countSkuNetworkRisk } from '../lib/alert-sku-network-classify.js';
+import type { ClassifiedAlert } from '../lib/alert-action-index.js';
 
 export const alertRoutes = new Hono();
+
+function filterClassifiedByProjectGroupScope(
+  rows: ClassifiedAlert[],
+  scope: ProjectGroupScope,
+): ClassifiedAlert[] {
+  if (scope.mode === 'all') return rows;
+  return rows.filter((row) => skuInProjectGroupScope(row.projectGroup, scope));
+}
+
+async function filterSkuRowsByProjectGroupScope<T extends { skuId: string }>(
+  rows: T[],
+  scope: ProjectGroupScope,
+): Promise<T[]> {
+  if (scope.mode === 'all') return rows;
+  const skuIds = [...new Set(rows.map((row) => row.skuId))];
+  if (!skuIds.length) return [];
+  const allowed = new Set(
+    (
+      await db
+        .select({ id: skus.id })
+        .from(skus)
+        .where(and(inArray(skus.id, skuIds), skuProjectGroupCondition(scope)!))
+    ).map((row) => row.id),
+  );
+  return rows.filter((row) => allowed.has(row.skuId));
+}
 
 function finiteDays(value: number | null | undefined): number | null {
   if (value == null || !Number.isFinite(value)) return null;
@@ -44,7 +78,15 @@ function finiteDays(value: number | null | undefined): number | null {
 
 alertRoutes.get('/alerts/summary', requireMenu('inventory.alert'), async (c) => {
   const productScope = parseProductScope(c.req.query('productScope'));
-  return c.json(await getInventoryRiskCounts(productScope));
+  const scope = await resolveRequestProjectGroupScope(c);
+  if (scope.mode === 'all') {
+    return c.json(await getInventoryRiskCounts(productScope));
+  }
+  const listed = await filterSkuRowsByProjectGroupScope(
+    await listSkuNetworkAlerts({ productScope, action: 'all' }),
+    scope,
+  );
+  return c.json(countSkuNetworkRisk(listed));
 });
 
 alertRoutes.get('/alerts', requireMenu('inventory.alert'), async (c) => {
@@ -69,7 +111,9 @@ alertRoutes.get('/alerts', requireMenu('inventory.alert'), async (c) => {
   const suggestShip = parseRecommendYesNoQuery(c.req.query('suggestShip'));
 
   const productScope = parseProductScope(c.req.query('productScope'));
-  const conditions = [productScopeSql(productScope)];
+  const projectGroupScope = await resolveRequestProjectGroupScope(c);
+  const scopeCond = skuProjectGroupCondition(projectGroupScope);
+  const conditions = [productScopeSql(productScope), ...(scopeCond ? [scopeCond] : [])];
   if (q) {
     const pattern = `%${q}%`;
     conditions.push(or(ilike(skus.code, pattern), ilike(skus.name, pattern))!);
@@ -105,12 +149,15 @@ alertRoutes.get('/alerts', requireMenu('inventory.alert'), async (c) => {
 
   if (view === 'all' || isAlertActionView(view)) {
     if (grain === 'sku') {
-      let listed = await listSkuNetworkAlerts({
-        productScope,
-        action: view === 'all' ? 'all' : view,
-        level,
-        q,
-      });
+      let listed = await filterSkuRowsByProjectGroupScope(
+        await listSkuNetworkAlerts({
+          productScope,
+          action: view === 'all' ? 'all' : view,
+          level,
+          q,
+        }),
+        projectGroupScope,
+      );
       const today = getShanghaiBusinessDate();
       if (suggestOrder !== undefined || suggestShip !== undefined) {
         listed = await filterAlertsByRecommendation(
@@ -273,14 +320,16 @@ alertRoutes.get('/alerts', requireMenu('inventory.alert'), async (c) => {
       });
     }
 
-    const classified = await listClassifiedAlerts({
-      productScope,
-      action: view === 'all' ? 'all' : view,
-      level,
-      priceReason,
-      q,
-    });
-    let listed = classified;
+    let listed = filterClassifiedByProjectGroupScope(
+      await listClassifiedAlerts({
+        productScope,
+        action: view === 'all' ? 'all' : view,
+        level,
+        priceReason,
+        q,
+      }),
+      projectGroupScope,
+    );
     const today = getShanghaiBusinessDate();
     if (suggestOrder !== undefined || suggestShip !== undefined) {
       listed = await filterAlertsByRecommendation(listed, { today, suggestOrder, suggestShip });
@@ -466,7 +515,13 @@ function dedupeAlertsBySku<T extends { skuId: string; level: string | null }>(ro
       .select({ count: sql<number>`count(*)::int` })
       .from(stockAlerts)
       .innerJoin(skus, eq(skus.id, stockAlerts.skuId))
-      .where(and(eq(stockAlerts.isResolved, false), productScopeSql(productScope))),
+      .where(
+        and(
+          eq(stockAlerts.isResolved, false),
+          productScopeSql(productScope),
+          ...(scopeCond ? [scopeCond] : []),
+        ),
+      ),
   ]);
 
   const supplyByKey = await loadAlertListSupply(

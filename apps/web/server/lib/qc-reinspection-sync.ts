@@ -1,7 +1,8 @@
-import { and, count, desc, eq, ilike, isNull, max, or, sql } from 'drizzle-orm';
+import { and, count, desc, eq, ilike, inArray, isNull, max, or, sql } from 'drizzle-orm';
 import { db, qcReinspectionFactories, qcReinspectionRows } from '@scm/db';
 import {
   batchCreateBitableRecords,
+  batchDeleteBitableRecords,
   batchGetBitableRecords,
   batchUpdateBitableRecords,
   ensureBitableFields,
@@ -16,6 +17,8 @@ import {
   collectFactoryNamesFromSource,
   collectFactoryWhitelist,
   formatShanghaiDate,
+  planReinspectionWrites,
+  reinspectionBusinessKey,
   type QcSourceSnapshot,
 } from './qc-reinspection-plan.js';
 
@@ -191,42 +194,95 @@ function rowValues(
   };
 }
 
-async function upsertLocalRow(
-  row: QcSourceSnapshot,
-  bitableRecordId: string | null,
-  insertedAtMs: number,
-  syncedAtMs: number,
+function localBusinessKey(row: {
+  purchaseOrderNo: string | null;
+  sku: string | null;
+  demandNo: string | null;
+  transferOrderNo: string | null;
+}): string {
+  return reinspectionBusinessKey({
+    purchaseOrderNo: row.purchaseOrderNo ?? '',
+    sku: row.sku ?? '',
+    demandNo: row.demandNo ?? '',
+    transferOrderNo: row.transferOrderNo ?? '',
+  });
+}
+
+/** 本地按业务键只留最早一行，并把这一行更新成本次要保留的快照。 */
+async function reconcileLocalRows(
+  desired: Array<{
+    snapshot: QcSourceSnapshot;
+    bitableRecordId: string | null;
+    insertedAtMs: number;
+    syncedAtMs: number;
+  }>,
 ) {
-  const values = rowValues(row, bitableRecordId, insertedAtMs, syncedAtMs);
-  await db
-    .insert(qcReinspectionRows)
-    .values(values)
-    .onConflictDoUpdate({
-      target: qcReinspectionRows.sourceRecordId,
-      set: {
-        bitableRecordId: values.bitableRecordId,
-        supplierShortName: values.supplierShortName,
-        inspectionStatus: values.inspectionStatus,
-        purchaseOrderNo: values.purchaseOrderNo,
-        demandNo: values.demandNo,
-        sku: values.sku,
-        productName: values.productName,
-        cartonCount: values.cartonCount,
-        pieceCount: values.pieceCount,
-        destWarehouse: values.destWarehouse,
-        factoryType: values.factoryType,
-        expectedShipDate: values.expectedShipDate,
-        containerCartonCount: values.containerCartonCount,
-        containerPieceCount: values.containerPieceCount,
-        transferOrderNo: values.transferOrderNo,
-        transferStatus: values.transferStatus,
-        followUpReadyAt: values.followUpReadyAt,
-        goodsReadyAt: values.goodsReadyAt,
-        loadingNote: values.loadingNote,
-        gapDays: values.gapDays,
-        syncedAt: values.syncedAt,
-      },
+  const desiredByKey = new Map<string, (typeof desired)[number]>();
+  for (const item of desired) {
+    const key = reinspectionBusinessKey(item.snapshot);
+    if (!desiredByKey.has(key)) desiredByKey.set(key, item);
+  }
+
+  const localRows = await db.select().from(qcReinspectionRows);
+  const groups = new Map<string, typeof localRows>();
+  for (const row of localRows) {
+    const key = localBusinessKey(row);
+    const group = groups.get(key);
+    if (group) group.push(row);
+    else groups.set(key, [row]);
+  }
+
+  const dropIds = new Set<string>();
+  const keepByKey = new Map<string, string>();
+  for (const [key, rows] of groups) {
+    const sorted = [...rows].sort((a, b) => {
+      const diff = a.insertedAt.getTime() - b.insertedAt.getTime();
+      if (diff !== 0) return diff;
+      return a.id.localeCompare(b.id);
     });
+    const keep = sorted[0];
+    if (!keep) continue;
+    if (desiredByKey.has(key) || sorted.length > 1) keepByKey.set(key, keep.id);
+    for (const extra of sorted.slice(1)) dropIds.add(extra.id);
+  }
+
+  const assignedSourceIds = new Set([...desiredByKey.values()].map((item) => item.snapshot.recordId));
+  const keepIds = new Set(keepByKey.values());
+  for (const row of localRows) {
+    if (keepIds.has(row.id)) continue;
+    if (assignedSourceIds.has(row.sourceRecordId)) dropIds.add(row.id);
+  }
+
+  if (dropIds.size) {
+    await db.delete(qcReinspectionRows).where(inArray(qcReinspectionRows.id, [...dropIds]));
+  }
+
+  const updates = [...desiredByKey.entries()].flatMap(([key, item]) => {
+    const keepId = keepByKey.get(key);
+    if (!keepId || dropIds.has(keepId)) return [];
+    return [{ keepId, item }];
+  });
+
+  for (const { keepId } of updates) {
+    await db
+      .update(qcReinspectionRows)
+      .set({ sourceRecordId: `tmp:${keepId}` })
+      .where(eq(qcReinspectionRows.id, keepId));
+  }
+
+  for (const { keepId, item } of updates) {
+    const values = rowValues(item.snapshot, item.bitableRecordId, item.insertedAtMs, item.syncedAtMs);
+    const { insertedAt: _insertedAt, ...changes } = values;
+    await db.update(qcReinspectionRows).set(changes).where(eq(qcReinspectionRows.id, keepId));
+  }
+
+  for (const [key, item] of desiredByKey) {
+    const keepId = keepByKey.get(key);
+    if (keepId && !dropIds.has(keepId)) continue;
+    await db
+      .insert(qcReinspectionRows)
+      .values(rowValues(item.snapshot, item.bitableRecordId, item.insertedAtMs, item.syncedAtMs));
+  }
 }
 
 export async function syncQcReinspection() {
@@ -270,37 +326,61 @@ export async function syncQcReinspection() {
   }
   const allowed = new Set(whitelist);
   const matched = snapshots.filter((row) => allowed.has(row.factoryName.trim()));
-  const matchedIds = new Set(matched.map((row) => row.recordId));
-  const targetBySourceId = new Map<string, BitableRecord>();
-  for (const record of targetRecords) {
-    const sourceRecordId = textOf(record.fields, '来源记录ID');
-    if (sourceRecordId) targetBySourceId.set(sourceRecordId, record);
-  }
+  const matchedById = new Map(matched.map((row) => [row.recordId, row]));
+  const targetById = new Map(targetRecords.map((record) => [record.record_id, record]));
+
+  const plan = planReinspectionWrites({
+    source: matched.map((row) => ({
+      recordId: row.recordId,
+      purchaseOrderNo: row.purchaseOrderNo,
+      sku: row.sku,
+      demandNo: row.demandNo,
+      transferOrderNo: row.transferOrderNo,
+    })),
+    target: targetRecords.flatMap((record) => {
+      const sourceRecordId = textOf(record.fields, '来源记录ID');
+      if (!sourceRecordId) return [];
+      return [
+        {
+          targetRecordId: record.record_id,
+          sourceRecordId,
+          purchaseOrderNo: textOf(record.fields, '采购单号'),
+          sku: textOf(record.fields, 'SKU'),
+          demandNo: textOf(record.fields, '需求单号'),
+          transferOrderNo: textOf(record.fields, '调拨单号'),
+          firstInsertedAtMs:
+            readEpochMs(record.fields['首次插入时间']) ?? readEpochMs(record.fields['插入时间']),
+        },
+      ];
+    }),
+  });
 
   const syncedAtMs = Date.now();
-  const refreshes: Array<{ recordId: string; fields: Record<string, string | number> }> = [];
-  const creating: QcSourceSnapshot[] = [];
-  for (const row of matched) {
-    const existing = targetBySourceId.get(row.recordId);
-    if (!existing) {
-      creating.push(row);
-      continue;
-    }
+  const refreshIds = new Set(plan.refreshes.map((item) => item.targetRecordId));
+  const deletes = plan.deletes.filter((id) => !refreshIds.has(id));
+  const refreshes = plan.refreshes.flatMap((item) => {
+    const row = matchedById.get(item.sourceRecordId);
+    const existing = targetById.get(item.targetRecordId);
+    if (!row || !existing) return [];
     const existingFirst = readEpochMs(existing.fields['首次插入时间']);
     const backfill =
-      existingFirst != null
-        ? null
-        : (readEpochMs(existing.fields['插入时间']) ?? syncedAtMs);
-    refreshes.push({
-      recordId: existing.record_id,
-      fields: buildReinspectionRefreshFields(row, syncedAtMs, backfill),
-    });
-  }
+      existingFirst != null ? null : (readEpochMs(existing.fields['插入时间']) ?? syncedAtMs);
+    return [
+      {
+        recordId: item.targetRecordId,
+        fields: buildReinspectionRefreshFields(row, syncedAtMs, backfill),
+      },
+    ];
+  });
 
   if (refreshes.length) {
     await batchUpdateBitableRecords(config.appToken, config.targetTableId, refreshes);
   }
 
+  const creating = plan.creates.flatMap((id) => {
+    const row = matchedById.get(id);
+    return row ? [row] : [];
+  });
   const createdIds = creating.length
     ? await batchCreateBitableRecords(
         config.appToken,
@@ -312,9 +392,46 @@ export async function syncQcReinspection() {
     throw new Error(`飞书写入条数不一致：计划 ${creating.length}，实际 ${createdIds.length}`);
   }
 
+  if (deletes.length) {
+    await batchDeleteBitableRecords(config.appToken, config.targetTableId, deletes);
+  }
+
+  const desired: Array<{
+    snapshot: QcSourceSnapshot;
+    bitableRecordId: string | null;
+    insertedAtMs: number;
+    syncedAtMs: number;
+  }> = [];
+  const deletedIds = new Set(deletes);
+
+  for (const item of plan.refreshes) {
+    const row = matchedById.get(item.sourceRecordId);
+    const existing = targetById.get(item.targetRecordId);
+    if (!row || !existing) continue;
+    desired.push({
+      snapshot: row,
+      bitableRecordId: item.targetRecordId,
+      insertedAtMs:
+        readEpochMs(existing.fields['首次插入时间']) ??
+        readEpochMs(existing.fields['插入时间']) ??
+        syncedAtMs,
+      syncedAtMs,
+    });
+  }
+
+  for (let i = 0; i < creating.length; i++) {
+    desired.push({
+      snapshot: creating[i]!,
+      bitableRecordId: createdIds[i] ?? null,
+      insertedAtMs: syncedAtMs,
+      syncedAtMs,
+    });
+  }
+
   for (const record of targetRecords) {
+    if (deletedIds.has(record.record_id) || refreshIds.has(record.record_id)) continue;
     const snapshot = snapshotFromTarget(record);
-    if (!snapshot || matchedIds.has(snapshot.recordId)) continue;
+    if (!snapshot) continue;
     const insertedAtMs =
       readEpochMs(record.fields['首次插入时间']) ??
       readEpochMs(record.fields['插入时间']) ??
@@ -323,22 +440,15 @@ export async function syncQcReinspection() {
       readEpochMs(record.fields['数据同步时间']) ??
       readEpochMs(record.fields['插入时间']) ??
       insertedAtMs;
-    await upsertLocalRow(snapshot, record.record_id, insertedAtMs, previousSyncedAt);
+    desired.push({
+      snapshot,
+      bitableRecordId: record.record_id,
+      insertedAtMs,
+      syncedAtMs: previousSyncedAt,
+    });
   }
 
-  for (const row of matched) {
-    const existing = targetBySourceId.get(row.recordId);
-    if (!existing) continue;
-    const insertedAtMs =
-      readEpochMs(existing.fields['首次插入时间']) ??
-      readEpochMs(existing.fields['插入时间']) ??
-      syncedAtMs;
-    await upsertLocalRow(row, existing.record_id, insertedAtMs, syncedAtMs);
-  }
-
-  for (let i = 0; i < creating.length; i++) {
-    await upsertLocalRow(creating[i]!, createdIds[i] ?? null, syncedAtMs, syncedAtMs);
-  }
+  await reconcileLocalRows(desired);
 
   const backfill = await backfillQcReinspectionTransferOrderNo();
 
@@ -347,6 +457,7 @@ export async function syncQcReinspection() {
     matched: matched.length,
     created: createdIds.length,
     refreshed: refreshes.length,
+    deleted: deletes.length,
     whitelistSize: whitelist.length,
     backfill,
   };
@@ -439,7 +550,29 @@ export async function backfillQcReinspectionTransferOrderNo() {
     }
   }
 
+  const occupied = new Set<string>();
+  const keyedRows = await db
+    .select({
+      purchaseOrderNo: qcReinspectionRows.purchaseOrderNo,
+      sku: qcReinspectionRows.sku,
+      demandNo: qcReinspectionRows.demandNo,
+      transferOrderNo: qcReinspectionRows.transferOrderNo,
+    })
+    .from(qcReinspectionRows);
+  for (const row of keyedRows) {
+    if (!row.transferOrderNo?.trim()) continue;
+    occupied.add(
+      reinspectionBusinessKey({
+        purchaseOrderNo: row.purchaseOrderNo ?? '',
+        sku: row.sku ?? '',
+        demandNo: row.demandNo ?? '',
+        transferOrderNo: row.transferOrderNo,
+      }),
+    );
+  }
+
   const feishuUpdates: Array<{ recordId: string; fields: Record<string, string> }> = [];
+  const feishuDeletes: string[] = [];
   let updatedLocal = 0;
   let matchedBySourceId = 0;
   let matchedByBusinessKey = 0;
@@ -457,6 +590,18 @@ export async function backfillQcReinspectionTransferOrderNo() {
       missingSource += 1;
       continue;
     }
+    const nextKey = reinspectionBusinessKey({
+      purchaseOrderNo: row.purchaseOrderNo ?? '',
+      sku: row.sku ?? '',
+      demandNo: row.demandNo ?? '',
+      transferOrderNo,
+    });
+    if (occupied.has(nextKey)) {
+      await db.delete(qcReinspectionRows).where(eq(qcReinspectionRows.id, row.id));
+      if (row.bitableRecordId) feishuDeletes.push(row.bitableRecordId);
+      continue;
+    }
+    occupied.add(nextKey);
     await db
       .update(qcReinspectionRows)
       .set({ transferOrderNo })
@@ -479,6 +624,11 @@ export async function backfillQcReinspectionTransferOrderNo() {
 
   if (feishuUpdates.length) {
     await batchUpdateBitableRecords(config.appToken, config.targetTableId, feishuUpdates);
+  }
+  const updateIds = new Set(feishuUpdates.map((item) => item.recordId));
+  const deletes = feishuDeletes.filter((id) => !updateIds.has(id));
+  if (deletes.length) {
+    await batchDeleteBitableRecords(config.appToken, config.targetTableId, deletes);
   }
 
   return {

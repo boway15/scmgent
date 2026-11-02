@@ -4,9 +4,17 @@ const BASELINE_PLATFORM_LABEL: Record<string, string> = {
   ALL: '全平台',
   AMAZON: '亚马逊',
   WALMART: '沃尔玛',
+  WAYFAIR: 'Wayfair',
+  TIKTOK: 'TikTok Shop',
   TEMU: 'Temu',
-  TIKTOK: 'TikTok',
-  UNKNOWN: '未知',
+  SHOPIFY: 'Shopify',
+  EBAY: 'eBay',
+  ETSY: 'Etsy',
+  MANOMANO: 'ManoMano',
+  REAL: 'Real',
+  OTTO: 'OTTO',
+  B2B: 'B2B小包',
+  UNKNOWN: '其他',
 };
 
 const BASELINE_PLATFORM_LABEL_REVERSE = new Map(

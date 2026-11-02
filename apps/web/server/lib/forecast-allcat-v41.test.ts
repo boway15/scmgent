@@ -220,6 +220,27 @@ describe('forecast-allcat-v41', () => {
     assert.equal(tier, 'T3P');
   });
 
+  it('classifies B Wayfair stable as T3P', () => {
+    const tier = resolveAllCatV41Tier({
+      productCategory: 'B',
+      platform: 'WAYFAIR',
+      d2: 8,
+      d3: 7,
+      d6: 7,
+      d12: 6,
+      active2: 2,
+      active6: 6,
+      active12: 10,
+      cv6: 0.4,
+      q1: 0,
+      q3: 0,
+      q6: 0,
+      q12: 0,
+      trendRatio: 1,
+    });
+    assert.equal(tier, 'T3P');
+  });
+
   it('classifies last complete month with low but positive sales as T4B', () => {
     const monthlyRows = [
       { saleYear: 2026, month: 5, qtySold: 8 },

@@ -47,6 +47,88 @@ export function selectNewReinspectionSourceIds(input: {
   return ids;
 }
 
+export type ReinspectionIdentity = {
+  purchaseOrderNo: string;
+  sku: string;
+  demandNo: string;
+  transferOrderNo: string;
+};
+
+/** 采购单号 + SKU + 需求单号 + 调拨单号。空值和首尾空格视为同一个键。 */
+export function reinspectionBusinessKey(row: ReinspectionIdentity): string {
+  return [row.purchaseOrderNo, row.sku, row.demandNo, row.transferOrderNo]
+    .map((part) => part.trim())
+    .join('\u001f');
+}
+
+export type ReinspectionTargetIdentity = ReinspectionIdentity & {
+  targetRecordId: string;
+  sourceRecordId: string;
+  firstInsertedAtMs: number | null;
+};
+
+export type ReinspectionWritePlan = {
+  creates: string[];
+  refreshes: Array<{ targetRecordId: string; sourceRecordId: string }>;
+  deletes: string[];
+};
+
+function compareTargetIdentity(a: ReinspectionTargetIdentity, b: ReinspectionTargetIdentity): number {
+  const aTime = a.firstInsertedAtMs ?? Number.POSITIVE_INFINITY;
+  const bTime = b.firstInsertedAtMs ?? Number.POSITIVE_INFINITY;
+  if (aTime !== bTime) return aTime - bTime;
+  return a.targetRecordId.localeCompare(b.targetRecordId);
+}
+
+/**
+ * 同一个业务键只写一行。目标表已有该键时更新最早插入的那条，其余重复行删除。
+ * 源视图里同一个键出现多次时，只保留最后一条。
+ */
+export function planReinspectionWrites(input: {
+  source: Array<ReinspectionIdentity & { recordId: string }>;
+  target: ReinspectionTargetIdentity[];
+}): ReinspectionWritePlan {
+  const sourceByKey = new Map<string, ReinspectionIdentity & { recordId: string }>();
+  for (const row of input.source) {
+    sourceByKey.set(reinspectionBusinessKey(row), row);
+  }
+
+  const targetByKey = new Map<string, ReinspectionTargetIdentity[]>();
+  for (const row of input.target) {
+    const key = reinspectionBusinessKey(row);
+    const group = targetByKey.get(key);
+    if (group) group.push(row);
+    else targetByKey.set(key, [row]);
+  }
+
+  const creates: string[] = [];
+  const refreshes: ReinspectionWritePlan['refreshes'] = [];
+  const deletes: string[] = [];
+
+  for (const [key, source] of sourceByKey) {
+    const group = targetByKey.get(key);
+    if (!group?.length) {
+      creates.push(source.recordId);
+      continue;
+    }
+    const sorted = [...group].sort(compareTargetIdentity);
+    const canonical = sorted[0]!;
+    refreshes.push({
+      targetRecordId: canonical.targetRecordId,
+      sourceRecordId: source.recordId,
+    });
+    for (const extra of sorted.slice(1)) deletes.push(extra.targetRecordId);
+    targetByKey.delete(key);
+  }
+
+  for (const group of targetByKey.values()) {
+    const sorted = [...group].sort(compareTargetIdentity);
+    for (const extra of sorted.slice(1)) deletes.push(extra.targetRecordId);
+  }
+
+  return { creates, refreshes, deletes };
+}
+
 export function collectFactoryWhitelist(
   rows: Array<{ factoryName: string; sourceRecordId: string }>,
 ): string[] {

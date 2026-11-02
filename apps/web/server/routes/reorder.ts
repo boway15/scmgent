@@ -9,6 +9,10 @@ import {
   filterSuggestionQueue,
 } from '../lib/reorder-suggestion-sort.js';
 import { parseProductScope, productScopeSql } from '../lib/planning-accessory-filter.js';
+import {
+  resolveRequestProjectGroupScope,
+  skuProjectGroupCondition,
+} from '../lib/data-scope.js';
 
 export const reorderRoutes = new Hono();
 
@@ -23,7 +27,13 @@ reorderRoutes.get('/reorder/suggestions', requireMenu('pmc.suggestion'), async (
   const warehouse = c.req.query('warehouse')?.trim();
 
   const productScope = parseProductScope(c.req.query('productScope'));
-  const conditions = [isNull(reorderSuggestions.supersededAt), productScopeSql(productScope)];
+  const projectGroupScope = await resolveRequestProjectGroupScope(c);
+  const scopeCond = skuProjectGroupCondition(projectGroupScope);
+  const conditions = [
+    isNull(reorderSuggestions.supersededAt),
+    productScopeSql(productScope),
+    ...(scopeCond ? [scopeCond] : []),
+  ];
   if (status) {
     conditions.push(
       eq(reorderSuggestions.status, status as 'pending' | 'accepted' | 'ignored'),

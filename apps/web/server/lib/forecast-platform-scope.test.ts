@@ -36,7 +36,8 @@ describe('forecast-platform-scope', () => {
 
   it('identifies V4.1 platform membership', () => {
     assert.equal(isForecastV41PlatformCode('AMAZON'), true);
-    assert.equal(isForecastV41PlatformCode('EBAY'), false);
+    assert.equal(isForecastV41PlatformCode('WAYFAIR'), true);
+    assert.equal(isForecastV41PlatformCode('DTC'), false);
   });
 
   it('builds platform SQL filter for ALL and single platform', () => {

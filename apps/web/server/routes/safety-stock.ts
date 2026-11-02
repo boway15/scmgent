@@ -5,6 +5,11 @@ import { parseListPagination } from '../lib/list-pagination.js';
 import { parseProductScope, productScopeSql } from '../lib/planning-accessory-filter.js';
 import { calcReorderPoint, calcReplenishment, type SalesDataPoint } from '../lib/replenishment.js';
 import { requireMenu } from '../lib/rbac.js';
+import {
+  resolveRequestProjectGroupScope,
+  skuInProjectGroupScope,
+  skuProjectGroupCondition,
+} from '../lib/data-scope.js';
 import { loadDailySalesForSku } from '../lib/sales-history-query.js';
 import {
   resolveSuggestionInputs,
@@ -64,7 +69,7 @@ export function calculateSafetyStockValues(params: SafetyStockCalculationInput) 
   };
 }
 
-safetyStockRoutes.get('/safety-stock', async (c) => {
+safetyStockRoutes.get('/safety-stock', requireMenu('inventory.safety'), async (c) => {
   const { page, pageSize, offset } = parseListPagination(
     c.req.query('page')?.trim(),
     c.req.query('pageSize')?.trim(),
@@ -73,7 +78,13 @@ safetyStockRoutes.get('/safety-stock', async (c) => {
   const warehouse = c.req.query('warehouse')?.trim();
 
   const productScope = parseProductScope(c.req.query('productScope'));
-  const conditions = [eq(skus.isActive, true), productScopeSql(productScope)];
+  const scope = await resolveRequestProjectGroupScope(c);
+  const scopeCond = skuProjectGroupCondition(scope);
+  const conditions = [
+    eq(skus.isActive, true),
+    productScopeSql(productScope),
+    ...(scopeCond ? [scopeCond] : []),
+  ];
   if (q) {
     const pattern = `%${q}%`;
     conditions.push(or(ilike(skus.code, pattern), ilike(skus.name, pattern))!);
@@ -150,7 +161,9 @@ function parseSuggestionPairs(raw: string | undefined): Array<{ skuId: string; w
   return pairs;
 }
 
-safetyStockRoutes.get('/safety-stock/suggestions', async (c) => {
+safetyStockRoutes.get('/safety-stock/suggestions', requireMenu('inventory.safety'), async (c) => {
+  const scope = await resolveRequestProjectGroupScope(c);
+  const scopeCond = skuProjectGroupCondition(scope);
   const serviceLevel = Number(c.req.query('serviceLevel') ?? 0.95);
   const sortParam = c.req.query('sort') ?? 'deltaDays_desc';
   const sort =
@@ -178,7 +191,9 @@ safetyStockRoutes.get('/safety-stock/suggestions', async (c) => {
     })
     .from(safetyStockConfig)
     .innerJoin(skus, eq(safetyStockConfig.skuId, skus.id))
-    .where(and(eq(skus.isActive, true), inArray(skus.id, skuIds)));
+    .where(
+      and(eq(skus.isActive, true), inArray(skus.id, skuIds), ...(scopeCond ? [scopeCond] : [])),
+    );
 
   const rowByKey = new Map(
     rows.map((row) => [`${row.skuId}::${row.warehouseCode}`, row] as const),
@@ -209,13 +224,16 @@ safetyStockRoutes.get('/safety-stock/suggestions', async (c) => {
   return c.json({ items: sorted, total: sorted.length });
 });
 
-safetyStockRoutes.get('/safety-stock/:skuId/suggestion', async (c) => {
+safetyStockRoutes.get('/safety-stock/:skuId/suggestion', requireMenu('inventory.safety'), async (c) => {
   const skuId = c.req.param('skuId')!;
   const warehouseCode = resolveWarehouse(c);
   const serviceLevel = Number(c.req.query('serviceLevel') ?? 0.95);
+  const scope = await resolveRequestProjectGroupScope(c);
 
   const [sku] = await db.select().from(skus).where(eq(skus.id, skuId)).limit(1);
-  if (!sku) return c.json({ message: 'SKU not found' }, 404);
+  if (!sku || !skuInProjectGroupScope(sku.projectGroup, scope)) {
+    return c.json({ message: 'SKU not found' }, 404);
+  }
 
   const [policy] = await db
     .select()

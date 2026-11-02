@@ -9,7 +9,10 @@ import {
   formatTierDisplayLabel,
 } from '@/lib/forecast-labels';
 import { resolveAiAssistModeFromMonths } from '@/lib/forecast-detail-columns';
-import { resolveHorizonPlatformScope } from '@/lib/forecast-horizon-meta';
+import {
+  formatForecastChannelLabel,
+  resolveHorizonPlatformScope,
+} from '@/lib/forecast-horizon-meta';
 import { isAllCatV41ForecastCell, isT99ForecastTier } from '@/lib/forecast-horizon-display';
 import { cn } from '@/lib/utils';
 import type { ForecastHorizonRow } from '@/components/ForecastSkuDetailDrawer';
@@ -73,6 +76,8 @@ type QueryFilters = {
   versionId?: string;
   skuCode?: string;
   platform?: string;
+  platforms?: string[];
+  channelView?: 'merged' | 'by_channel';
   categories?: string[];
   profileSegment?: string;
   pendingCalibration?: boolean;
@@ -105,7 +110,14 @@ export function ForecastHorizonPanel({ active, filters, pageSize = 20, onSkuClic
       api.getSalesForecastHorizon({
         versionId: filters.versionId,
         skuCode: filters.skuCode || undefined,
-        platform: resolveHorizonPlatformScope(filters.platform),
+        channelView: filters.channelView,
+        platforms:
+          filters.channelView === 'by_channel' && filters.platforms?.length
+            ? filters.platforms
+            : undefined,
+        platform: filters.channelView
+          ? undefined
+          : resolveHorizonPlatformScope(filters.platform),
         categories: filters.categories?.length ? filters.categories : undefined,
         profileSegment: filters.profileSegment || undefined,
         pendingCalibration: filters.pendingCalibration || undefined,
@@ -128,7 +140,14 @@ export function ForecastHorizonPanel({ active, filters, pageSize = 20, onSkuClic
         versionId: filters.versionId,
         mode,
         skuCode: filters.skuCode || undefined,
-        platform: resolveHorizonPlatformScope(filters.platform),
+        channelView: filters.channelView,
+        platforms:
+          filters.channelView === 'by_channel' && filters.platforms?.length
+            ? filters.platforms
+            : undefined,
+        platform: filters.channelView
+          ? undefined
+          : resolveHorizonPlatformScope(filters.platform),
         categories: filters.categories?.length ? filters.categories : undefined,
         profileSegment: filters.profileSegment || undefined,
         pendingCalibration: filters.pendingCalibration || undefined,
@@ -142,13 +161,21 @@ export function ForecastHorizonPanel({ active, filters, pageSize = 20, onSkuClic
     }
   };
 
+  const clickPlatform = (row: ForecastHorizonRow) => {
+    if (filters.channelView === 'by_channel') return row.platform;
+    if (filters.channelView === 'merged') return 'ALL';
+    return resolveHorizonPlatformScope(filters.platform);
+  };
+
+  const channelLabel = (platform: string) => formatForecastChannelLabel(platform);
+
   const renderSkuCell = (row: ForecastHorizonRow) => {
     if (onSkuClick) {
       return (
         <button
           type="button"
           className="text-left hover:text-primary"
-          onClick={() => onSkuClick(row, { platform: resolveHorizonPlatformScope(filters.platform) })}
+          onClick={() => onSkuClick(row, { platform: clickPlatform(row) })}
         >
           <div className="font-medium text-primary underline-offset-2 hover:underline">{row.skuCode}</div>
           <div className="max-w-[140px] truncate text-xs text-text-sub" title={row.skuName}>
@@ -230,9 +257,9 @@ export function ForecastHorizonPanel({ active, filters, pageSize = 20, onSkuClic
             ? FORECAST_EMPTY_EXCLUDED
             : '暂无预测数据。'}
           {horizon?.accessoryEmptyReason !== 'excluded_at_generation' &&
-          filters.platform?.trim() &&
-          resolveHorizonPlatformScope(filters.platform) !== 'ALL' ? (
-            <span> 可尝试将渠道改为「全渠道汇总」，或确认该渠道在销量历史中已有数据。</span>
+          filters.channelView === 'by_channel' &&
+          (filters.platforms?.length ?? 0) > 0 ? (
+            <span> 该渠道没有预测行。</span>
           ) : null}
         </p>
       ) : viewMode === 'future' ? (
@@ -255,7 +282,7 @@ export function ForecastHorizonPanel({ active, filters, pageSize = 20, onSkuClic
               {horizon.items.map((row) => (
                 <tr key={`${row.skuId}:${row.station}:${row.platform}`} className="border-b border-border/60">
                   <td className="sticky left-0 z-10 bg-card p-2">{renderSkuCell(row)}</td>
-                  <td className="p-2">{row.platform}</td>
+                  <td className="p-2">{channelLabel(row.platform)}</td>
                   <td className="p-2 text-text-sub">{formatLifecycleLabel(row.lifecycle)}</td>
                   <td className="p-2 text-xs text-text-sub whitespace-nowrap" title={row.profileSegment ?? undefined}>
                     {row.profileSegment
@@ -321,7 +348,7 @@ export function ForecastHorizonPanel({ active, filters, pageSize = 20, onSkuClic
               {horizon.items.map((row) => (
                 <tr key={`hist-${row.skuId}:${row.station}:${row.platform}`} className="border-b border-border/60">
                   <td className="sticky left-0 z-10 bg-card p-2">{renderSkuCell(row)}</td>
-                  <td className="p-2">{row.platform}</td>
+                  <td className="p-2">{channelLabel(row.platform)}</td>
                   <td className="p-2 text-text-sub">{formatLifecycleLabel(row.lifecycle)}</td>
                   {(row.historyMonths ?? []).map((cell) => (
                     <td
@@ -389,7 +416,7 @@ export function ForecastHorizonPanel({ active, filters, pageSize = 20, onSkuClic
                           type="button"
                           className="text-left text-primary hover:underline"
                           onClick={() =>
-                            onSkuClick(row, { platform: resolveHorizonPlatformScope(filters.platform) })
+                            onSkuClick(row, { platform: clickPlatform(row) })
                           }
                         >
                           {row.skuCode}
@@ -401,7 +428,7 @@ export function ForecastHorizonPanel({ active, filters, pageSize = 20, onSkuClic
                         {row.category ?? '-'}
                       </div>
                     </td>
-                    <td className="p-2 whitespace-nowrap">{row.platform}</td>
+                    <td className="p-2 whitespace-nowrap">{channelLabel(row.platform)}</td>
                     <td className="p-2 font-numeric whitespace-nowrap">{cell.monthLabel}</td>
                     <td className="p-2">{formatLifecycleLabel(row.lifecycle)}</td>
                     {historyPadding.map((pad, idx) => (
@@ -424,7 +451,7 @@ export function ForecastHorizonPanel({ active, filters, pageSize = 20, onSkuClic
                           type="button"
                           className="text-left text-primary hover:underline"
                           onClick={() =>
-                            onSkuClick(row, { platform: resolveHorizonPlatformScope(filters.platform) })
+                            onSkuClick(row, { platform: clickPlatform(row) })
                           }
                         >
                           {row.skuCode}
@@ -436,7 +463,7 @@ export function ForecastHorizonPanel({ active, filters, pageSize = 20, onSkuClic
                         {row.category ?? '-'}
                       </div>
                     </td>
-                    <td className="p-2 whitespace-nowrap">{row.platform}</td>
+                    <td className="p-2 whitespace-nowrap">{channelLabel(row.platform)}</td>
                     <td className="p-2 font-numeric whitespace-nowrap">{cell.monthLabel}</td>
                     <td className="p-2">{formatLifecycleLabel(cell.lifecycle ?? row.lifecycle)}</td>
                     <td className="p-2">{formatConfidenceLabel(cell.confidenceLevel)}</td>

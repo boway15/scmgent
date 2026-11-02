@@ -1,6 +1,6 @@
 import { eq, desc } from 'drizzle-orm';
 import { Hono } from 'hono';
-import { db, skus, spus } from '@scm/db';
+import { db, skus } from '@scm/db';
 import { upsertSkuSupplierFromImport } from '../lib/product-master.js';
 import { requireMenu } from '../lib/rbac.js';
 import { normalizeReplenishLight } from '../lib/replenish-light.js';
@@ -13,24 +13,34 @@ import {
   normalizeCommercialStatus,
 } from '../lib/commercial-status.js';
 import { extractProjectGroupFromCategory } from '../lib/sku-category.js';
+import {
+  resolveRequestProjectGroupScope,
+  skuInProjectGroupScope,
+  skuProjectGroupCondition,
+} from '../lib/data-scope.js';
 
 export const skuRoutes = new Hono();
 
-skuRoutes.get('/skus', async (c) => {
+skuRoutes.get('/skus', requireMenu('data.products'), async (c) => {
+  const scope = await resolveRequestProjectGroupScope(c);
+  const scopeCond = skuProjectGroupCondition(scope);
   const rows = await db
     .select()
     .from(skus)
+    .where(scopeCond)
     .orderBy(desc(skus.createdAt))
     .limit(200);
   return c.json(rows);
 });
 
-skuRoutes.get('/skus/:id', async (c) => {
+skuRoutes.get('/skus/:id', requireMenu('data.products'), async (c) => {
+  const scope = await resolveRequestProjectGroupScope(c);
   const [row] = await db.select().from(skus).where(eq(skus.id, c.req.param('id'))).limit(1);
-  if (!row) return c.json({ message: 'SKU not found' }, 404);
+  if (!row || !skuInProjectGroupScope(row.projectGroup, scope)) {
+    return c.json({ message: 'SKU not found' }, 404);
+  }
   return c.json(row);
 });
-
 skuRoutes.post('/skus', requireMenu('data.products'), async (c) => {
   const body = await c.req.json<{
     code: string;

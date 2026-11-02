@@ -120,6 +120,28 @@ describe('sales-history-import', () => {
     assert.equal(plan.rows[0]?.channel, 'AMAZON');
   });
 
+  it('normalizes wayfair platformRaw to WAYFAIR channel', () => {
+    const plan = buildSalesHistoryImportPlan(
+      [
+        {
+          skuCode: 'SKU1',
+          skuName: 'Shelf',
+          station: 'US',
+          platformRaw: 'wayfair',
+          firstOrderAt: '',
+          category: '',
+          saleDate: '2026-06-26',
+          qtySold: 1,
+        },
+      ],
+      new Map([['SKU1', 'sku-1']]),
+      new Map([['sku-1', null]]),
+    );
+
+    assert.equal(plan.rows[0]?.channel, 'WAYFAIR');
+    assert.equal(plan.rows[0]?.station, 'US');
+  });
+
   it('prefers category from xiaoshou row over sku master snapshot', () => {
     const plan = buildSalesHistoryImportPlan(
       [

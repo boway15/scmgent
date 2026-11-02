@@ -6,6 +6,7 @@ import {
   collectFactoryNamesFromSource,
   collectFactoryWhitelist,
   formatShanghaiDate,
+  planReinspectionWrites,
   selectNewReinspectionSourceIds,
 } from './qc-reinspection-plan.js';
 
@@ -44,6 +45,152 @@ describe('collectFactoryWhitelist', () => {
       ]),
       ['甲公司'],
     );
+  });
+});
+
+describe('planReinspectionWrites', () => {
+  const sourceRow = {
+    recordId: 'rec-new',
+    purchaseOrderNo: 'PO1',
+    sku: 'SKU1',
+    demandNo: 'D1',
+    transferOrderNo: 'DB1',
+  };
+
+  it('updates the existing row when purchase, sku, demand and transfer order match', () => {
+    const plan = planReinspectionWrites({
+      source: [sourceRow],
+      target: [
+        {
+          targetRecordId: 'tgt-1',
+          sourceRecordId: 'rec-old',
+          purchaseOrderNo: 'PO1',
+          sku: 'SKU1',
+          demandNo: 'D1',
+          transferOrderNo: 'DB1',
+          firstInsertedAtMs: 1,
+        },
+      ],
+    });
+
+    assert.deepEqual(plan.creates, []);
+    assert.deepEqual(plan.refreshes, [{ targetRecordId: 'tgt-1', sourceRecordId: 'rec-new' }]);
+    assert.deepEqual(plan.deletes, []);
+  });
+
+  it('keeps the earliest row and drops later copies of the same key', () => {
+    const plan = planReinspectionWrites({
+      source: [sourceRow],
+      target: [
+        {
+          targetRecordId: 'tgt-later',
+          sourceRecordId: 'rec-a',
+          purchaseOrderNo: 'PO1',
+          sku: 'SKU1',
+          demandNo: 'D1',
+          transferOrderNo: 'DB1',
+          firstInsertedAtMs: 20,
+        },
+        {
+          targetRecordId: 'tgt-earlier',
+          sourceRecordId: 'rec-b',
+          purchaseOrderNo: ' PO1 ',
+          sku: 'SKU1',
+          demandNo: 'D1',
+          transferOrderNo: 'DB1',
+          firstInsertedAtMs: 10,
+        },
+      ],
+    });
+
+    assert.deepEqual(plan.creates, []);
+    assert.deepEqual(plan.refreshes, [{ targetRecordId: 'tgt-earlier', sourceRecordId: 'rec-new' }]);
+    assert.deepEqual(plan.deletes, ['tgt-later']);
+  });
+
+  it('creates a row when the transfer order differs', () => {
+    const plan = planReinspectionWrites({
+      source: [sourceRow],
+      target: [
+        {
+          targetRecordId: 'tgt-1',
+          sourceRecordId: 'rec-old',
+          purchaseOrderNo: 'PO1',
+          sku: 'SKU1',
+          demandNo: 'D1',
+          transferOrderNo: 'DB2',
+          firstInsertedAtMs: 1,
+        },
+      ],
+    });
+
+    assert.deepEqual(plan.creates, ['rec-new']);
+    assert.deepEqual(plan.refreshes, []);
+    assert.deepEqual(plan.deletes, []);
+  });
+
+  it('writes one row when the source view repeats the same key', () => {
+    const plan = planReinspectionWrites({
+      source: [
+        { ...sourceRow, recordId: 'rec-1' },
+        { ...sourceRow, recordId: 'rec-2', transferOrderNo: '  DB1  ' },
+      ],
+      target: [],
+    });
+
+    assert.deepEqual(plan.creates, ['rec-2']);
+    assert.deepEqual(plan.refreshes, []);
+    assert.deepEqual(plan.deletes, []);
+  });
+
+  it('treats a blank transfer order as the same key', () => {
+    const plan = planReinspectionWrites({
+      source: [{ ...sourceRow, transferOrderNo: ' ' }],
+      target: [
+        {
+          targetRecordId: 'tgt-1',
+          sourceRecordId: 'rec-old',
+          purchaseOrderNo: 'PO1',
+          sku: 'SKU1',
+          demandNo: 'D1',
+          transferOrderNo: '',
+          firstInsertedAtMs: 1,
+        },
+      ],
+    });
+
+    assert.deepEqual(plan.creates, []);
+    assert.deepEqual(plan.refreshes, [{ targetRecordId: 'tgt-1', sourceRecordId: 'rec-new' }]);
+  });
+
+  it('drops leftover copies that are no longer in the source', () => {
+    const plan = planReinspectionWrites({
+      source: [],
+      target: [
+        {
+          targetRecordId: 'tgt-1',
+          sourceRecordId: 'rec-a',
+          purchaseOrderNo: 'PO1',
+          sku: 'SKU1',
+          demandNo: 'D1',
+          transferOrderNo: 'DB1',
+          firstInsertedAtMs: 1,
+        },
+        {
+          targetRecordId: 'tgt-2',
+          sourceRecordId: 'rec-b',
+          purchaseOrderNo: 'PO1',
+          sku: 'SKU1',
+          demandNo: 'D1',
+          transferOrderNo: 'DB1',
+          firstInsertedAtMs: 2,
+        },
+      ],
+    });
+
+    assert.deepEqual(plan.creates, []);
+    assert.deepEqual(plan.refreshes, []);
+    assert.deepEqual(plan.deletes, ['tgt-2']);
   });
 });
 

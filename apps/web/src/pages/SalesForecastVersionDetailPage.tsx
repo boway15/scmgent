@@ -320,7 +320,7 @@ export function SalesForecastVersionDetailPage() {
           description={
             activeView === 'review'
               ? '常规商品与 T99 在同一矩阵展示；T99 为系统保守保底（断销时为 0）；可用分层筛选或「待校准（T99）」快捷按钮定位未校准 SKU，点击 SKU 在抽屉中 AI 辅助或人工校准。'
-              : '未来矩阵为预测日均，历史矩阵为销量折算实际日均。点击 SKU 查看因子与逐月详情。'
+              : '先按渠道查询。未来矩阵为预测日均，历史矩阵为销量折算实际日均。点击 SKU 查看当前渠道的因子与逐月详情，导出与列表一致。'
           }
           onSkuClick={handleSkuClick}
         />

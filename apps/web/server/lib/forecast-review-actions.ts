@@ -1,6 +1,7 @@
 import { and, eq, inArray, sql } from 'drizzle-orm';
 import { db, salesForecastReviewItems, skus } from '@scm/db';
 import { getForecastVersionById } from './forecast-version.js';
+import { skuProjectGroupCondition, type ProjectGroupScope } from './data-scope.js';
 
 export type ReviewItemStats = {
   /** 原始复核记录行数（同 SKU×渠道 多类型时可能 > total） */
@@ -42,7 +43,11 @@ function mapGroupedSeverity(rank: number): GroupedReviewItem['severity'] {
   return 'info';
 }
 
-function reviewWhere(versionId?: string, status?: string) {
+function reviewWhere(
+  versionId?: string,
+  status?: string,
+  projectGroupScope?: ProjectGroupScope,
+) {
   const conditions = [];
   if (versionId?.trim()) {
     conditions.push(eq(salesForecastReviewItems.versionId, versionId.trim()));
@@ -50,16 +55,38 @@ function reviewWhere(versionId?: string, status?: string) {
   if (status) {
     conditions.push(eq(salesForecastReviewItems.status, status));
   }
+  const skuScopeCond = projectGroupScope
+    ? skuProjectGroupCondition(projectGroupScope)
+    : undefined;
+  if (skuScopeCond) conditions.push(skuScopeCond);
   return conditions.length ? and(...conditions) : undefined;
 }
 
-export async function getReviewItemStats(versionId?: string): Promise<ReviewItemStats> {
-  const where = reviewWhere(versionId);
+export async function getReviewItemStats(
+  versionId?: string,
+  projectGroupScope?: ProjectGroupScope,
+): Promise<ReviewItemStats> {
+  if (
+    projectGroupScope?.mode === 'restricted' &&
+    projectGroupScope.groups.length === 0
+  ) {
+    return {
+      totalRecords: 0,
+      total: 0,
+      pending: 0,
+      pendingSkuCount: 0,
+      reviewed: 0,
+      ignored: 0,
+      pendingBySeverity: { critical: 0, warning: 0, info: 0 },
+    };
+  }
+  const where = reviewWhere(versionId, undefined, projectGroupScope);
 
   const [recordCountRow, groupedRows] = await Promise.all([
     db
       .select({ count: sql<number>`count(*)::int` })
       .from(salesForecastReviewItems)
+      .innerJoin(skus, eq(skus.id, salesForecastReviewItems.skuId))
       .where(where),
     db
       .select({
@@ -69,6 +96,7 @@ export async function getReviewItemStats(versionId?: string): Promise<ReviewItem
         platform: salesForecastReviewItems.platform,
       })
       .from(salesForecastReviewItems)
+      .innerJoin(skus, eq(skus.id, salesForecastReviewItems.skuId))
       .where(where)
       .groupBy(
         salesForecastReviewItems.versionId,
@@ -115,8 +143,15 @@ export async function listGroupedReviewItems(input: {
   severity?: 'critical' | 'warning' | 'info';
   page: number;
   pageSize: number;
+  projectGroupScope?: ProjectGroupScope;
 }): Promise<{ items: GroupedReviewItem[]; total: number }> {
-  const where = reviewWhere(input.versionId, input.status);
+  if (
+    input.projectGroupScope?.mode === 'restricted' &&
+    input.projectGroupScope.groups.length === 0
+  ) {
+    return { items: [], total: 0 };
+  }
+  const where = reviewWhere(input.versionId, input.status, input.projectGroupScope);
   const offset = (input.page - 1) * input.pageSize;
 
   const [countRow] = await db
@@ -124,6 +159,7 @@ export async function listGroupedReviewItems(input: {
       count: sql<number>`count(distinct (${salesForecastReviewItems.skuId}, ${salesForecastReviewItems.station}, ${salesForecastReviewItems.platform}))::int`,
     })
     .from(salesForecastReviewItems)
+    .innerJoin(skus, eq(skus.id, salesForecastReviewItems.skuId))
     .where(where);
 
   const rows = await db

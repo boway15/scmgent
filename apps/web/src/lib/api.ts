@@ -1490,6 +1490,27 @@ export const api = {
       method: 'PATCH',
       body: JSON.stringify({ password }),
     }),
+  searchUserProjectGroups: (q?: string) => {
+    const qs = new URLSearchParams();
+    if (q?.trim()) qs.set('q', q.trim());
+    const query = qs.toString();
+    return request<{ items: string[] }>(`/api/users/project-groups${query ? `?${query}` : ''}`);
+  },
+  getUserDataScopes: (id: string) =>
+    request<{
+      dimension: string;
+      projectGroups: string[];
+      mode: 'all' | 'restricted';
+    }>(`/api/users/${id}/data-scopes`),
+  updateUserDataScopes: (id: string, projectGroups: string[]) =>
+    request<{
+      dimension: string;
+      projectGroups: string[];
+      mode: 'all' | 'restricted';
+    }>(`/api/users/${id}/data-scopes`, {
+      method: 'PUT',
+      body: JSON.stringify({ projectGroups }),
+    }),
   getAuditLogs: (params?: {
     page?: number;
     pageSize?: number;
@@ -4529,6 +4550,8 @@ export const api = {
     versionId?: string;
     station?: string;
     platform?: string;
+    platforms?: string[];
+    channelView?: 'merged' | 'by_channel';
     skuId?: string;
     skuCode?: string;
     category?: string;
@@ -4545,6 +4568,8 @@ export const api = {
     if (params?.versionId) qs.set('versionId', params.versionId);
     if (params?.station) qs.set('station', params.station);
     if (params?.platform != null && params.platform !== '') qs.set('platform', params.platform);
+    if (params?.channelView) qs.set('channelView', params.channelView);
+    appendRepeatedQuery(qs, 'platforms', params?.platforms);
     if (params?.skuId) qs.set('skuId', params.skuId);
     if (params?.skuCode) qs.set('skuCode', params.skuCode);
     appendRepeatedQuery(qs, 'categories', params?.categories);
@@ -4625,6 +4650,8 @@ export const api = {
     mode: 'wide' | 'detail';
     station?: string;
     platform?: string;
+    platforms?: string[];
+    channelView?: 'merged' | 'by_channel';
     skuCode?: string;
     category?: string;
     categories?: string[];
@@ -4639,6 +4666,8 @@ export const api = {
     qs.set('mode', params.mode);
     if (params.station) qs.set('station', params.station);
     if (params.platform != null && params.platform !== '') qs.set('platform', params.platform);
+    if (params.channelView) qs.set('channelView', params.channelView);
+    appendRepeatedQuery(qs, 'platforms', params.platforms);
     if (params.skuCode) qs.set('skuCode', params.skuCode);
     appendRepeatedQuery(qs, 'categories', params.categories);
     if (!params.categories?.length && params.category) qs.set('category', params.category);
@@ -4670,10 +4699,13 @@ export const api = {
   getSalesForecastVersions: (params?: {
     status?: 'draft' | 'published' | 'archived';
     includeStats?: boolean;
+    /** 列表页仅需 SKU/行数/月数，跳过复核与准确率聚合 */
+    statsScope?: 'list' | 'full';
   }) => {
     const qs = new URLSearchParams();
     if (params?.status) qs.set('status', params.status);
     if (params?.includeStats) qs.set('includeStats', '1');
+    if (params?.includeStats && params.statsScope) qs.set('statsScope', params.statsScope);
     const query = qs.toString();
     if (params?.includeStats) {
       return request<ForecastVersionListItem[]>(

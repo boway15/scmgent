@@ -407,7 +407,20 @@ export type AllCatV41ForecastResult = {
   forecastDailyP90: number;
 };
 
-const NON_AMAZON_PLATFORMS = new Set(['UNKNOWN', 'WALMART', 'TEMU', 'TIKTOK']);
+const NON_AMAZON_PLATFORMS = new Set([
+  'WALMART',
+  'WAYFAIR',
+  'TIKTOK',
+  'TEMU',
+  'SHOPIFY',
+  'EBAY',
+  'ETSY',
+  'MANOMANO',
+  'REAL',
+  'OTTO',
+  'B2B',
+  'UNKNOWN',
+]);
 
 function monthKey(year: number, month: number): string {
   return `${year}-${String(month).padStart(2, '0')}`;
@@ -1374,7 +1387,7 @@ export function computeAllCatV41ForecastForMonth(input: {
 
 function formatAllCatV41PlatformLabel(platform: string): string {
   const normalized = platform.trim().toUpperCase() || 'UNKNOWN';
-  return normalized === 'UNKNOWN' ? '未知' : platform.trim();
+  return normalized === 'UNKNOWN' ? '其他' : platform.trim();
 }
 
 export function buildT99ReviewMessage(input: {

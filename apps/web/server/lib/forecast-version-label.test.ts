@@ -62,9 +62,33 @@ describe('forecast-version-label', () => {
       'AMAZON',
     );
     assert.equal(
+      parseBaselinePlatformFromVersionName('6 个月 · Wayfair · 全量 SKU · 2026-07-06'),
+      'WAYFAIR',
+    );
+    assert.equal(
+      parseBaselinePlatformFromVersionName('6 个月 · 其他 · 全量 SKU · 2026-07-06'),
+      'UNKNOWN',
+    );
+    assert.equal(
       parseBaselinePlatformFromVersionName('6 个月 · 全平台 · 全量 SKU · 2026-07-06'),
       null,
     );
     assert.equal(parseBaselinePlatformFromVersionName('DRAFT-123'), null);
+  });
+
+  it('labels new catalog platforms in draft version names', () => {
+    const now = new Date('2026-07-06T10:00:00.000Z');
+    assert.equal(
+      buildBaselineDraftVersionName({ monthCount: 6, platform: 'WAYFAIR', now }),
+      '6 个月 · Wayfair · 全量 SKU · 2026-07-06',
+    );
+    assert.equal(
+      buildBaselineDraftVersionName({ monthCount: 6, platform: 'UNKNOWN', now }),
+      '6 个月 · 其他 · 全量 SKU · 2026-07-06',
+    );
+    assert.equal(
+      buildBaselineDraftVersionName({ monthCount: 6, platform: 'TIKTOK', now }),
+      '6 个月 · TikTok Shop · 全量 SKU · 2026-07-06',
+    );
   });
 });

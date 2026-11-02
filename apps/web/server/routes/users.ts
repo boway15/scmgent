@@ -6,6 +6,11 @@ import { hashPassword } from '../lib/password.js';
 import { writeAuditLog } from '../lib/audit-log.js';
 import { clearMenuCache } from '../lib/rbac.js';
 import { parseListPagination } from '../lib/list-pagination.js';
+import {
+  listUserProjectGroupScopes,
+  replaceUserProjectGroupScopes,
+} from '../lib/data-scope.js';
+import { searchSkuProjectGroups } from '../lib/sku-category.js';
 
 export const userRoutes = new Hono();
 
@@ -58,6 +63,13 @@ userRoutes.get('/users', requireSuperAdmin, async (c) => {
     page,
     pageSize,
   });
+});
+
+/** 静态路径须在 /users/:id 之前注册，避免被当成 id。 */
+userRoutes.get('/users/project-groups', requireSuperAdmin, async (c) => {
+  const q = c.req.query('q')?.trim();
+  const items = await searchSkuProjectGroups(q, 200);
+  return c.json({ items });
 });
 
 userRoutes.patch('/users/:id', requireSuperAdmin, async (c) => {
@@ -153,4 +165,51 @@ userRoutes.patch('/users/:id/password', requireSuperAdmin, async (c) => {
   });
 
   return c.json({ ok: true });
+});
+
+userRoutes.get('/users/:id/data-scopes', requireSuperAdmin, async (c) => {
+  const userId = c.req.param('id');
+  const [target] = await db.select({ id: users.id }).from(users).where(eq(users.id, userId)).limit(1);
+  if (!target) return c.json({ message: 'User not found' }, 404);
+
+  const projectGroups = await listUserProjectGroupScopes(userId);
+  return c.json({
+    dimension: 'project_group',
+    projectGroups,
+    mode: projectGroups.length === 0 ? 'all' : 'restricted',
+  });
+});
+
+userRoutes.put('/users/:id/data-scopes', requireSuperAdmin, async (c) => {
+  const userId = c.req.param('id');
+  const body = await c.req.json<{ projectGroups?: string[] }>();
+  const [target] = await db
+    .select({ id: users.id, email: users.email })
+    .from(users)
+    .where(eq(users.id, userId))
+    .limit(1);
+  if (!target) return c.json({ message: 'User not found' }, 404);
+
+  const before = await listUserProjectGroupScopes(userId);
+  const projectGroups = await replaceUserProjectGroupScopes(
+    userId,
+    Array.isArray(body.projectGroups) ? body.projectGroups : [],
+  );
+
+  await writeAuditLog(c, {
+    action: 'user.data_scopes.update',
+    resourceType: 'user',
+    resourceId: userId,
+    detail: {
+      targetEmail: target.email,
+      before,
+      after: projectGroups,
+    },
+  });
+
+  return c.json({
+    dimension: 'project_group',
+    projectGroups,
+    mode: projectGroups.length === 0 ? 'all' : 'restricted',
+  });
 });

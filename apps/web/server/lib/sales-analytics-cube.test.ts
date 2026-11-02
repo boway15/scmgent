@@ -1,6 +1,12 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { accumulateCubeRows, bucketForDailySale } from './sales-analytics-cube.js';
+import {
+  accumulateCubeRows,
+  bucketForDailySale,
+  cubeHasProjectGroupDim,
+  filterCubeByProjectGroupScope,
+} from './sales-analytics-cube.js';
+import type { SalesAnalyticsCubePayload } from '@scm/db';
 
 describe('accumulateCubeRows', () => {
   it('rolls daily rows into month and week vectors by selling site/b/c/p', () => {
@@ -116,5 +122,85 @@ describe('accumulateCubeRows', () => {
       12,
     );
     assert.equal(payload.weeks.some((week) => week.startsWith('2024-')), false);
+  });
+
+  it('writes project group dimension g on each entity', () => {
+    const payload = accumulateCubeRows(
+      [
+        {
+          saleDate: '2026-01-05',
+          qtySold: 10,
+          station: 'US',
+          channel: '亚马逊',
+          category: '部\\Amazon项目1组-第一曲线-US\\书桌',
+        },
+      ],
+      new Map(),
+      new Map([['AMAZON', '亚马逊']]),
+    );
+    assert.equal(cubeHasProjectGroupDim(payload), true);
+    assert.ok(payload.data.every((row) => Object.prototype.hasOwnProperty.call(row, 'g')));
+    assert.equal(payload.data[0]?.g, 'Amazon项目1组-第一曲线-US');
+    assert.deepEqual(payload.meta.projectGroups, ['Amazon项目1组-第一曲线-US']);
+  });
+});
+
+describe('filterCubeByProjectGroupScope', () => {
+  const sample: SalesAnalyticsCubePayload = {
+    meta: {
+      generatedAt: '2026-01-01T00:00:00.000Z',
+      dateStart: '2026-01-01',
+      dateEnd: '2026-02-01',
+      weekStart: null,
+      weekEnd: null,
+      recordCount: 3,
+      totalSales: 18,
+      sites: ['US', 'EU'],
+      depts: ['组A', '组B'],
+      categories: ['书桌'],
+      platforms: ['亚马逊'],
+      projectGroups: ['组A', '组B'],
+    },
+    months: ['2026-01', '2026-02'],
+    weeks: [],
+    data: [
+      { s: 'US', b: '组A', c: '书桌', p: '亚马逊', g: '组A', v: [10, 0], vw: [] },
+      { s: 'EU', b: '组B', c: '书桌', p: '亚马逊', g: '组B', v: [0, 8], vw: [] },
+      { s: 'US', b: '(未分组)', c: '书桌', p: '亚马逊', g: null, v: [1, 0], vw: [] },
+    ],
+  };
+
+  it('passes through when scope is all', () => {
+    const result = filterCubeByProjectGroupScope(sample, { mode: 'all' });
+    assert.equal(result.ok, true);
+    if (result.ok) assert.equal(result.cube, sample);
+  });
+
+  it('filters rows and recalculates meta for restricted scope', () => {
+    const result = filterCubeByProjectGroupScope(sample, {
+      mode: 'restricted',
+      groups: ['组A'],
+    });
+    assert.equal(result.ok, true);
+    if (!result.ok) return;
+    assert.equal(result.cube.data.length, 1);
+    assert.equal(result.cube.data[0]?.g, '组A');
+    assert.equal(result.cube.meta.totalSales, 10);
+    assert.deepEqual(result.cube.meta.projectGroups, ['组A']);
+    assert.deepEqual(result.cube.meta.sites, ['US']);
+  });
+
+  it('rejects stale cubes without g for restricted users', () => {
+    const stale: SalesAnalyticsCubePayload = {
+      ...sample,
+      meta: { ...sample.meta, projectGroups: undefined },
+      data: sample.data.map(({ g: _g, ...rest }) => rest),
+    };
+    const result = filterCubeByProjectGroupScope(stale, {
+      mode: 'restricted',
+      groups: ['组A'],
+    });
+    assert.equal(result.ok, false);
+    if (!result.ok) assert.equal(result.error, 'CUBE_SCOPE_STALE');
   });
 });

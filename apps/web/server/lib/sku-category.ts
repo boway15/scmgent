@@ -225,7 +225,11 @@ function mergeDistinctCategories(values: Array<string | null | undefined>, limit
 }
 
 /** 品类搜索：与列表 coalesce(销量快照, SKU 主数据) 一致，支持 `\`/`/` 与关键词包含。 */
-export async function searchSkuCategories(query?: string, limit = 50): Promise<string[]> {
+export async function searchSkuCategories(
+  query?: string,
+  limit = 50,
+  skuScopeCond?: SQL,
+): Promise<string[]> {
   const safeLimit = Math.min(Math.max(limit, 1), 200);
   const pattern = categorySearchPattern(query);
   const fetchLimit = safeLimit * 4;
@@ -261,6 +265,10 @@ export async function searchSkuCategories(query?: string, limit = 50): Promise<s
       )
     : and(eq(skus.isActive, true), isNotNull(skus.category), sql`trim(${skus.category}) <> ''`);
 
+  const dailyWhere = skuScopeCond ? and(dailyMatch, skuScopeCond) : dailyMatch;
+  const monthlyWhere = skuScopeCond ? and(monthlyMatch, skuScopeCond) : monthlyMatch;
+  const skuWhere = skuScopeCond ? and(skuMatch, skuScopeCond) : skuMatch;
+
   const [dailyRows, monthlyRows, skuRows] = await Promise.all([
     db
       .selectDistinct({
@@ -268,7 +276,7 @@ export async function searchSkuCategories(query?: string, limit = 50): Promise<s
       })
       .from(salesHistory)
       .innerJoin(skus, eq(skus.id, salesHistory.skuId))
-      .where(dailyMatch)
+      .where(dailyWhere)
       .limit(fetchLimit),
     db
       .selectDistinct({
@@ -276,12 +284,12 @@ export async function searchSkuCategories(query?: string, limit = 50): Promise<s
       })
       .from(salesHistoryMonthly)
       .innerJoin(skus, eq(skus.id, salesHistoryMonthly.skuId))
-      .where(monthlyMatch)
+      .where(monthlyWhere)
       .limit(fetchLimit),
     db
       .selectDistinct({ category: skus.category })
       .from(skus)
-      .where(skuMatch)
+      .where(skuWhere)
       .limit(fetchLimit),
   ]);
 

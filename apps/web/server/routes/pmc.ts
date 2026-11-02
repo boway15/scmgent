@@ -5,10 +5,14 @@ import { analysisOnlyResponse } from '../lib/analysis-only.js';
 import { buildPmcPlanCsv, buildPmcPlanXlsx } from '../lib/pmc-export.js';
 import { requireMenu } from '../lib/rbac.js';
 import { parseListPagination } from '../lib/list-pagination.js';
+import {
+  resolveRequestProjectGroupScope,
+  skuProjectGroupCondition,
+} from '../lib/data-scope.js';
 
 export const pmcRoutes = new Hono();
 
-pmcRoutes.get('/pmc/plans', async (c) => {
+pmcRoutes.get('/pmc/plans', requireMenu('pmc.list'), async (c) => {
   const { page, pageSize, offset } = parseListPagination(
     c.req.query('page')?.trim(),
     c.req.query('pageSize')?.trim(),
@@ -56,10 +60,16 @@ pmcRoutes.get('/pmc/plans', async (c) => {
   });
 });
 
-pmcRoutes.get('/pmc/plans/:id', async (c) => {
+pmcRoutes.get('/pmc/plans/:id', requireMenu('pmc.list'), async (c) => {
   const planId = c.req.param('id');
   const [plan] = await db.select().from(pmcPlans).where(eq(pmcPlans.id, planId)).limit(1);
   if (!plan) return c.json({ message: 'Plan not found' }, 404);
+
+  const scope = await resolveRequestProjectGroupScope(c);
+  const scopeCond = skuProjectGroupCondition(scope);
+  const itemWhere = scopeCond
+    ? and(eq(pmcPlanItems.planId, planId), scopeCond)
+    : eq(pmcPlanItems.planId, planId);
 
   const items = await db
     .select({
@@ -75,8 +85,16 @@ pmcRoutes.get('/pmc/plans/:id', async (c) => {
     })
     .from(pmcPlanItems)
     .innerJoin(skus, eq(skus.id, pmcPlanItems.skuId))
-    .where(eq(pmcPlanItems.planId, planId))
+    .where(itemWhere)
     .orderBy(pmcPlanItems.sortOrder);
+
+  if (scope.mode === 'restricted' && items.length === 0) {
+    return c.json({ message: 'Plan not found' }, 404);
+  }
+
+  const trackingWhere = scopeCond
+    ? and(eq(purchaseDrafts.sourceRefId, planId), scopeCond)
+    : eq(purchaseDrafts.sourceRefId, planId);
 
   const tracking = await db
     .select({
@@ -92,16 +110,22 @@ pmcRoutes.get('/pmc/plans/:id', async (c) => {
     })
     .from(purchaseDrafts)
     .innerJoin(skus, eq(skus.id, purchaseDrafts.skuId))
-    .where(eq(purchaseDrafts.sourceRefId, planId))
+    .where(trackingWhere)
     .orderBy(desc(purchaseDrafts.createdAt));
 
   return c.json({ ...plan, items, purchaseTracking: tracking });
 });
 
-pmcRoutes.get('/pmc/plans/:id/export', async (c) => {
+pmcRoutes.get('/pmc/plans/:id/export', requireMenu('pmc.list'), async (c) => {
   const planId = c.req.param('id');
   const [plan] = await db.select().from(pmcPlans).where(eq(pmcPlans.id, planId)).limit(1);
   if (!plan) return c.json({ message: 'Plan not found' }, 404);
+
+  const scope = await resolveRequestProjectGroupScope(c);
+  const scopeCond = skuProjectGroupCondition(scope);
+  const itemWhere = scopeCond
+    ? and(eq(pmcPlanItems.planId, planId), scopeCond)
+    : eq(pmcPlanItems.planId, planId);
 
   const items = await db
     .select({
@@ -115,8 +139,12 @@ pmcRoutes.get('/pmc/plans/:id/export', async (c) => {
     })
     .from(pmcPlanItems)
     .innerJoin(skus, eq(skus.id, pmcPlanItems.skuId))
-    .where(eq(pmcPlanItems.planId, planId))
+    .where(itemWhere)
     .orderBy(pmcPlanItems.sortOrder);
+
+  if (scope.mode === 'restricted' && items.length === 0) {
+    return c.json({ message: 'Plan not found' }, 404);
+  }
 
   const format = c.req.query('format')?.toLowerCase();
   if (format === 'xlsx') {

@@ -1,4 +1,4 @@
-import { eq, and, desc, sql, inArray } from 'drizzle-orm';
+import { eq, and, desc, sql, inArray, or } from 'drizzle-orm';
 import type { Context, Next } from 'hono';
 import { Hono } from 'hono';
 import {
@@ -114,6 +114,14 @@ import {
 import { loadMonthlySalesBySkuIds } from '../lib/sales-history-query.js';
 import { FORECAST_HORIZON_MONTHS } from '../lib/forecast-limits.js';
 import { getVersionQtyTotals } from '../lib/forecast-qty-totals.js';
+import {
+  filterProjectGroupOptions,
+  resolveRequestProjectGroupScope,
+  resolveScopedProjectGroups,
+  skuInProjectGroupScope,
+  skuProjectGroupCondition,
+  type ProjectGroupScope,
+} from '../lib/data-scope.js';
 
 export const salesForecastRoutes = new Hono();
 
@@ -199,12 +207,54 @@ async function requireForecastWrite(c: Context, next: Next) {
 
 const MAX_SCOPE_FILTERS = 50;
 
+async function resolveForecastRouteProjectGroupScope(c: Context): Promise<{
+  empty: boolean;
+  scope: ProjectGroupScope;
+}> {
+  const userScope = await resolveRequestProjectGroupScope(c);
+  const scoped = resolveScopedProjectGroups({
+    scope: userScope,
+    projectGroup: c.req.query('projectGroup'),
+    projectGroups: c.req.queries('projectGroups'),
+  });
+  if (scoped.empty) {
+    return { empty: true, scope: { mode: 'restricted', groups: [] } };
+  }
+  const scope: ProjectGroupScope =
+    scoped.groups.length > 0 ? { mode: 'restricted', groups: scoped.groups } : userScope;
+  return { empty: false, scope };
+}
+
+function seasonalityProjectGroupScopeCondition(scope: ProjectGroupScope) {
+  if (scope.mode === 'all') return undefined;
+  if (scope.groups.length === 0) return sql`false`;
+  return or(
+    eq(salesForecastSeasonality.dimensionType, 'category'),
+    and(
+      eq(salesForecastSeasonality.dimensionType, 'project_group'),
+      inArray(salesForecastSeasonality.dimensionValue, scope.groups),
+    ),
+  );
+}
+
 async function countActiveSkus(input: {
   projectGroup?: string;
   projectGroups?: string[];
   skuCode?: string;
 }): Promise<number> {
   return countActiveSkusForForecast(input);
+}
+
+function readPlatformsQuery(c: Context): string[] {
+  const raw = c.req.queries('platforms') ?? [];
+  return [
+    ...new Set(
+      raw
+        .flatMap((item) => item.split(','))
+        .map((item) => item.trim())
+        .filter(Boolean),
+    ),
+  ];
 }
 
 function readCategoryQuery(c: Context): { categories: string[] } | { error: string } {
@@ -327,10 +377,12 @@ salesForecastRoutes.get('/sales-forecast/categories', requireMenu('data.forecast
 });
 
 salesForecastRoutes.get('/sales-forecast/project-groups', requireMenu('data.forecast'), async (c) => {
+  const scope = await resolveRequestProjectGroupScope(c);
   const q = c.req.query('q')?.trim();
   const limitRaw = Number.parseInt(c.req.query('limit')?.trim() ?? '50', 10);
   const limit = Number.isFinite(limitRaw) ? limitRaw : 50;
-  return c.json(await searchSkuProjectGroups(q || undefined, limit));
+  const options = await searchSkuProjectGroups(q || undefined, limit);
+  return c.json(filterProjectGroupOptions(options, scope));
 });
 
 salesForecastRoutes.post('/sales-forecasts/generate-baseline', requireMenu('data.forecast'), requireForecastWrite, async (c) => {
@@ -579,6 +631,8 @@ salesForecastRoutes.get(
 );
 
 salesForecastRoutes.get('/sales-forecasts/review-items', requireMenu('data.forecast'), async (c) => {
+  const { empty: scopeEmpty, scope: projectGroupScope } =
+    await resolveForecastRouteProjectGroupScope(c);
   const versionId = c.req.query('versionId')?.trim();
   const statusQuery = c.req.query('status')?.trim();
   const severityQuery = c.req.query('severity')?.trim();
@@ -596,6 +650,19 @@ salesForecastRoutes.get('/sales-forecasts/review-items', requireMenu('data.forec
     c.req.query('pageSize')?.trim(),
   );
 
+  if (scopeEmpty) {
+    return c.json({
+      groupBy,
+      items: [],
+      total: 0,
+      page,
+      pageSize,
+      versionSummary: versionId ? await getVersionForecastSummary(versionId) : null,
+      contexts: {},
+      monthlyForecasts: {},
+    });
+  }
+
   if (groupBy === 'sku_platform') {
     const grouped = await listGroupedReviewItems({
       versionId,
@@ -603,6 +670,7 @@ salesForecastRoutes.get('/sales-forecasts/review-items', requireMenu('data.forec
       severity,
       page,
       pageSize,
+      projectGroupScope,
     });
 
     let versionSummary = null;
@@ -647,6 +715,8 @@ salesForecastRoutes.get('/sales-forecasts/review-items', requireMenu('data.forec
   if (versionId) conditions.push(eq(salesForecastReviewItems.versionId, versionId));
   if (status) conditions.push(eq(salesForecastReviewItems.status, status));
   if (severity) conditions.push(eq(salesForecastReviewItems.severity, severity));
+  const skuScopeCond = skuProjectGroupCondition(projectGroupScope);
+  if (skuScopeCond) conditions.push(skuScopeCond);
   const where = conditions.length ? and(...conditions) : undefined;
 
   const base = db
@@ -679,6 +749,7 @@ salesForecastRoutes.get('/sales-forecasts/review-items', requireMenu('data.forec
     db
       .select({ count: sql<number>`count(*)::int` })
       .from(salesForecastReviewItems)
+      .innerJoin(skus, eq(skus.id, salesForecastReviewItems.skuId))
       .where(where),
   ]);
 
@@ -722,8 +793,20 @@ salesForecastRoutes.get('/sales-forecasts/review-items', requireMenu('data.forec
 });
 
 salesForecastRoutes.get('/sales-forecasts/review-items/stats', requireMenu('data.forecast'), async (c) => {
+  const { empty: scopeEmpty, scope: projectGroupScope } =
+    await resolveForecastRouteProjectGroupScope(c);
   const versionId = c.req.query('versionId')?.trim() || undefined;
-  const stats = await getReviewItemStats(versionId);
+  const stats = scopeEmpty
+    ? {
+        totalRecords: 0,
+        total: 0,
+        pending: 0,
+        pendingSkuCount: 0,
+        reviewed: 0,
+        ignored: 0,
+        pendingBySeverity: { critical: 0, warning: 0, info: 0 },
+      }
+    : await getReviewItemStats(versionId, projectGroupScope);
   return c.json(stats);
 });
 
@@ -767,6 +850,7 @@ salesForecastRoutes.get('/sales-forecasts/sku-detail', requireMenu('data.forecas
           unit: skus.unit,
           leadTimeDays: skus.leadTimeDays,
           moq: skus.moq,
+          projectGroup: skus.projectGroup,
         })
         .from(skus)
         .where(eq(skus.id, skuId))
@@ -788,12 +872,18 @@ salesForecastRoutes.get('/sales-forecasts/sku-detail', requireMenu('data.forecas
           unit: skus.unit,
           leadTimeDays: skus.leadTimeDays,
           moq: skus.moq,
+          projectGroup: skus.projectGroup,
         })
         .from(skus)
         .where(eq(skus.code, skuCode!.toUpperCase()))
         .limit(1);
 
   if (!skuRow) {
+    return c.json({ message: 'SKU not found' }, 404);
+  }
+
+  const { scope: projectGroupScope } = await resolveForecastRouteProjectGroupScope(c);
+  if (!skuInProjectGroupScope(skuRow.projectGroup, projectGroupScope)) {
     return c.json({ message: 'SKU not found' }, 404);
   }
 
@@ -1077,6 +1167,8 @@ salesForecastRoutes.patch('/sales-forecasts/review-items/:id', requireMenu('data
 });
 
 salesForecastRoutes.get('/sales-forecasts/trends', requireMenu('data.forecast'), async (c) => {
+  const { empty: scopeEmpty, scope: projectGroupScope } =
+    await resolveForecastRouteProjectGroupScope(c);
   const dimensionQuery = c.req.query('dimensionType')?.trim();
   if (dimensionQuery && !isOneOf(dimensionQuery, SEASONALITY_DIMENSION_TYPES)) {
     return c.json({ message: 'dimensionType must be one of category, project_group' }, 400);
@@ -1089,8 +1181,14 @@ salesForecastRoutes.get('/sales-forecasts/trends', requireMenu('data.forecast'),
     c.req.query('pageSize')?.trim(),
   );
 
+  if (scopeEmpty) {
+    return c.json({ items: [], total: 0, page, pageSize });
+  }
+
   const conditions = [];
   if (dimensionType) conditions.push(eq(salesForecastSeasonality.dimensionType, dimensionType));
+  const scopeCond = seasonalityProjectGroupScopeCondition(projectGroupScope);
+  if (scopeCond) conditions.push(scopeCond);
   const where = conditions.length ? and(...conditions) : undefined;
 
   const base = db.select().from(salesForecastSeasonality).$dynamic();
@@ -1119,6 +1217,7 @@ salesForecastRoutes.get('/sales-forecasts/trends', requireMenu('data.forecast'),
 });
 
 salesForecastRoutes.get('/sales-forecasts/trends/horizon', requireMenu('data.forecast'), async (c) => {
+  const { scope: projectGroupScope } = await resolveForecastRouteProjectGroupScope(c);
   const dimensionQuery = c.req.query('dimensionType')?.trim();
   if (dimensionQuery && !isOneOf(dimensionQuery, SEASONALITY_DIMENSION_TYPES)) {
     return c.json({ message: 'dimensionType must be one of category, project_group' }, 400);
@@ -1143,14 +1242,19 @@ salesForecastRoutes.get('/sales-forecasts/trends/horizon', requireMenu('data.for
     pageSize,
     monthCount,
     historyMonthCount,
+    projectGroupScope,
   });
   return c.json(result);
 });
 
 salesForecastRoutes.get('/sales-forecasts/horizon', requireMenu('data.forecast'), async (c) => {
+  const { empty: scopeEmpty, scope: projectGroupScope } =
+    await resolveForecastRouteProjectGroupScope(c);
   const versionId = c.req.query('versionId')?.trim() || undefined;
   const station = c.req.query('station')?.trim() || undefined;
   const platform = c.req.query('platform')?.trim() || undefined;
+  const platforms = readPlatformsQuery(c);
+  const channelView = c.req.query('channelView')?.trim() || undefined;
   const skuCode = c.req.query('skuCode')?.trim() || undefined;
   const skuId = c.req.query('skuId')?.trim() || undefined;
   const categoryQuery = readCategoryQuery(c);
@@ -1166,10 +1270,26 @@ salesForecastRoutes.get('/sales-forecasts/horizon', requireMenu('data.forecast')
     c.req.query('pageSize')?.trim(),
   );
 
+  if (scopeEmpty) {
+    return c.json({
+      horizon: [],
+      historyHorizon: [],
+      items: [],
+      total: 0,
+      page,
+      pageSize,
+      version: null,
+      excludeAccessories: true,
+      accessoryEmptyReason: null,
+    });
+  }
+
   const result = await listForecastHorizon({
     versionId,
     station,
     platform,
+    platforms,
+    channelView,
     skuId,
     skuCode,
     categories: categoryQuery.categories,
@@ -1180,11 +1300,14 @@ salesForecastRoutes.get('/sales-forecasts/horizon', requireMenu('data.forecast')
     monthCount,
     historyMonthCount,
     productScope: parseProductScope(c.req.query('productScope')),
+    projectGroupScope,
   });
   return c.json(result);
 });
 
 salesForecastRoutes.get('/sales-forecasts/horizon/export', requireMenu('data.forecast'), async (c) => {
+  const { empty: scopeEmpty, scope: projectGroupScope } =
+    await resolveForecastRouteProjectGroupScope(c);
   const versionId = c.req.query('versionId')?.trim();
   if (!versionId) {
     return c.json({ message: 'versionId is required' }, 400);
@@ -1205,18 +1328,23 @@ salesForecastRoutes.get('/sales-forecasts/horizon/export', requireMenu('data.for
   const categoryQuery = readCategoryQuery(c);
   if ('error' in categoryQuery) return c.json({ message: categoryQuery.error }, 400);
 
-  const { csv } = await buildForecastHorizonExportCsv({
-    mode,
-    versionId,
-    station: c.req.query('station')?.trim() || undefined,
-    platform: c.req.query('platform')?.trim() || undefined,
-    skuCode: c.req.query('skuCode')?.trim() || undefined,
-    categories: categoryQuery.categories,
-    profileSegment: c.req.query('profileSegment')?.trim() || undefined,
-    pendingCalibration: pendingCalibration || undefined,
-    monthCount,
-    historyMonthCount,
-  });
+  const { csv } = scopeEmpty
+    ? { csv: '' }
+    : await buildForecastHorizonExportCsv({
+        mode,
+        versionId,
+        station: c.req.query('station')?.trim() || undefined,
+        platform: c.req.query('platform')?.trim() || undefined,
+        platforms: readPlatformsQuery(c),
+        channelView: c.req.query('channelView')?.trim() || undefined,
+        skuCode: c.req.query('skuCode')?.trim() || undefined,
+        categories: categoryQuery.categories,
+        profileSegment: c.req.query('profileSegment')?.trim() || undefined,
+        pendingCalibration: pendingCalibration || undefined,
+        monthCount,
+        historyMonthCount,
+        projectGroupScope,
+      });
 
   const stamp = new Date().toISOString().slice(0, 10);
   const safeName = version.versionNo.replace(/[^\w\u4e00-\u9fff-]+/g, '_').slice(0, 48);
@@ -1281,7 +1409,9 @@ salesForecastRoutes.get('/sales-forecast-versions', requireMenu('data.forecast')
   const status = statusQuery;
   const includeStats = c.req.query('includeStats')?.trim() === '1';
   if (includeStats) {
-    const rows = await listForecastVersionsWithStats(status);
+    const statsScopeRaw = c.req.query('statsScope')?.trim();
+    const statsScope = statsScopeRaw === 'full' ? 'full' : 'list';
+    const rows = await listForecastVersionsWithStats(status, { statsScope });
     return c.json(rows);
   }
   const rows = await listForecastVersions(status);
@@ -1674,6 +1804,7 @@ salesForecastRoutes.post(
   },
 );
 salesForecastRoutes.get('/sales-forecasts/accuracy/summary', requireMenu('data.forecast'), async (c) => {
+  const { scope: projectGroupScope } = await resolveForecastRouteProjectGroupScope(c);
   const parsedYear = parseOptionalIntegerQuery(c.req.query('year')?.trim(), 'year');
   if (parsedYear.error) return c.json({ message: parsedYear.error }, 400);
   const parsedMonth = parseOptionalIntegerQuery(c.req.query('month')?.trim(), 'month', {
@@ -1688,11 +1819,14 @@ salesForecastRoutes.get('/sales-forecasts/accuracy/summary', requireMenu('data.f
     month: parsedMonth.value,
     station: c.req.query('station')?.trim(),
     platform: c.req.query('platform')?.trim(),
+    projectGroupScope,
   });
   return c.json(summary);
 });
 
 salesForecastRoutes.get('/sales-forecasts/accuracy', requireMenu('data.forecast'), async (c) => {
+  const { empty: scopeEmpty, scope: projectGroupScope } =
+    await resolveForecastRouteProjectGroupScope(c);
   const parsedYear = parseOptionalIntegerQuery(c.req.query('year')?.trim(), 'year');
   if (parsedYear.error) return c.json({ message: parsedYear.error }, 400);
   const parsedMonth = parseOptionalIntegerQuery(c.req.query('month')?.trim(), 'month', {
@@ -1710,17 +1844,20 @@ salesForecastRoutes.get('/sales-forecasts/accuracy', requireMenu('data.forecast'
     c.req.query('pageSize')?.trim(),
   );
 
-  const result = await listForecastAccuracy({
-    year,
-    month,
-    station,
-    platform,
-    versionId,
-    page,
-    pageSize,
-    rowKind:
-      c.req.query('rowKind')?.trim().toLowerCase() === 'miss' ? 'miss' : 'predicted',
-  });
+  const result = scopeEmpty
+    ? { items: [], total: 0, page, pageSize }
+    : await listForecastAccuracy({
+        year,
+        month,
+        station,
+        platform,
+        versionId,
+        page,
+        pageSize,
+        rowKind:
+          c.req.query('rowKind')?.trim().toLowerCase() === 'miss' ? 'miss' : 'predicted',
+        projectGroupScope,
+      });
   const summary = buildForecastAccuracyDigest(result.items, result.total);
   return c.json({
     items: result.items,
@@ -1732,6 +1869,8 @@ salesForecastRoutes.get('/sales-forecasts/accuracy', requireMenu('data.forecast'
 });
 
 salesForecastRoutes.get('/sales-forecasts/accuracy/export', requireMenu('data.forecast'), async (c) => {
+  const { empty: scopeEmpty, scope: projectGroupScope } =
+    await resolveForecastRouteProjectGroupScope(c);
   const parsedYear = parseOptionalIntegerQuery(c.req.query('year')?.trim(), 'year');
   if (parsedYear.error) return c.json({ message: parsedYear.error }, 400);
   const parsedMonth = parseOptionalIntegerQuery(c.req.query('month')?.trim(), 'month', {
@@ -1761,10 +1900,19 @@ salesForecastRoutes.get('/sales-forecasts/accuracy/export', requireMenu('data.fo
     platform: c.req.query('platform')?.trim(),
   };
 
-  const { csv, rowCount } =
-    groupBy === 'sku'
-      ? await buildForecastAccuracySkuExportCsv({ ...baseExportParams, rowKind })
-      : await buildForecastAccuracyExportCsv({ ...baseExportParams, rowKind });
+  const { csv, rowCount } = scopeEmpty
+    ? { csv: '', rowCount: 0 }
+    : groupBy === 'sku'
+      ? await buildForecastAccuracySkuExportCsv({
+          ...baseExportParams,
+          rowKind,
+          projectGroupScope,
+        })
+      : await buildForecastAccuracyExportCsv({
+          ...baseExportParams,
+          rowKind,
+          projectGroupScope,
+        });
 
   const stamp = new Date().toISOString().slice(0, 10);
   const safeName = version.versionNo.replace(/[^\w\u4e00-\u9fff-]+/g, '_').slice(0, 48);
@@ -1780,6 +1928,8 @@ salesForecastRoutes.get('/sales-forecasts/accuracy/export', requireMenu('data.fo
 });
 
 salesForecastRoutes.get('/sales-forecasts', requireMenu('data.forecast'), async (c) => {
+  const { empty: scopeEmpty, scope: projectGroupScope } =
+    await resolveForecastRouteProjectGroupScope(c);
   const skuCode = c.req.query('skuCode')?.trim();
   const station = c.req.query('station')?.trim();
   const platform = c.req.query('platform')?.trim();
@@ -1793,8 +1943,14 @@ salesForecastRoutes.get('/sales-forecasts', requireMenu('data.forecast'), async 
     c.req.query('pageSize')?.trim(),
   );
 
+  if (scopeEmpty) {
+    return c.json({ items: [], total: 0, page, pageSize });
+  }
+
   const conditions = [];
   if (skuCode) conditions.push(eq(skus.code, skuCode));
+  const skuScopeCond = skuProjectGroupCondition(projectGroupScope);
+  if (skuScopeCond) conditions.push(skuScopeCond);
   if (station) conditions.push(eq(salesForecastMonthly.station, station));
   if (platform) {
     const code = await resolveSalesPlatformCode(platform);

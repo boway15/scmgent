@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -14,6 +14,8 @@ type VersionOption = {
   versionName: string;
   status: string;
 };
+
+type ChannelView = 'merged' | 'by_channel';
 
 type Props = {
   active: boolean;
@@ -31,9 +33,34 @@ type Props = {
   showPendingCalibrationShortcut?: boolean;
 };
 
+function initialChannelSelection(initialPlatform: string): {
+  split: boolean;
+  primaryPlatform: string;
+  platforms: string[];
+} {
+  const code = initialPlatform.trim();
+  if (!code || code.toUpperCase() === 'ALL') {
+    return { split: false, primaryPlatform: '', platforms: [] };
+  }
+  return { split: false, primaryPlatform: code, platforms: [code] };
+}
+
+function channelQuery(input: {
+  split: boolean;
+  primaryPlatform: string;
+  platforms: string[];
+}): { channelView: ChannelView; platforms: string[] } {
+  if (!input.split) {
+    const code = input.primaryPlatform.trim();
+    if (!code) return { channelView: 'merged', platforms: [] };
+    return { channelView: 'by_channel', platforms: [code] };
+  }
+  return { channelView: 'by_channel', platforms: input.platforms };
+}
+
 export function ForecastDataExplorer({
   active,
-  platforms,
+  platforms: platformOptions,
   pageSize = 20,
   fixedVersionId,
   fixedVersionLabel,
@@ -41,18 +68,23 @@ export function ForecastDataExplorer({
   onSkuClick,
   headerExtra,
   title = '预测数据',
-  description = '列表按商品分层（T1→T99）再按 SKU 编码排序。未来矩阵为预测日均，历史矩阵为销量折算实际日均，明细可同时查看历史与未来。支持导出宽表 / 明细 CSV。点击 SKU 查看因子与逐月详情。',
+  description = '先按渠道查询：全渠道是合计，选一个渠道只看该渠道。需要多个渠道各自成行时，再勾选「分渠道」。列表按商品分层（T1→T99）再按 SKU 编码排序。导出与当前查询一致。',
   topSection,
   showPendingCalibrationShortcut = false,
 }: Props) {
+  const initialChannel = initialChannelSelection(initialPlatform);
   const [skuCode, setSkuCode] = useState('');
-  const [platform, setPlatform] = useState(initialPlatform);
+  const [splitChannels, setSplitChannels] = useState(initialChannel.split);
+  const [primaryPlatform, setPrimaryPlatform] = useState(initialChannel.primaryPlatform);
+  const [selectedPlatforms, setSelectedPlatforms] = useState<string[]>(initialChannel.platforms);
+  const [channelOpen, setChannelOpen] = useState(false);
+  const channelMenuRef = useRef<HTMLDivElement>(null);
   const [categories, setCategories] = useState<string[]>([]);
   const [profileSegment, setProfileSegment] = useState('');
   const [pendingCalibration, setPendingCalibration] = useState(false);
   const [applied, setApplied] = useState({
     skuCode: '',
-    platform: initialPlatform,
+    ...channelQuery(initialChannel),
     categories: [] as string[],
     profileSegment: '',
     pendingCalibration: false,
@@ -60,23 +92,39 @@ export function ForecastDataExplorer({
   });
 
   useEffect(() => {
-    setApplied((current) => ({ ...current, versionId: fixedVersionId }));
-  }, [fixedVersionId]);
+    if (!channelOpen) return;
+    const onDocClick = (event: MouseEvent) => {
+      if (!channelMenuRef.current?.contains(event.target as Node)) setChannelOpen(false);
+    };
+    document.addEventListener('mousedown', onDocClick);
+    return () => document.removeEventListener('mousedown', onDocClick);
+  }, [channelOpen]);
 
   useEffect(() => {
-    const nextPlatform = initialPlatform.trim();
-    setPlatform(nextPlatform);
+    const next = initialChannelSelection(initialPlatform);
+    setSplitChannels(next.split);
+    setPrimaryPlatform(next.primaryPlatform);
+    setSelectedPlatforms(next.platforms);
     setApplied((current) => ({
       ...current,
-      platform: nextPlatform,
+      ...channelQuery(next),
       versionId: fixedVersionId,
     }));
   }, [initialPlatform, fixedVersionId]);
 
-  const applyFilters = () => {
+  const applyFilters = (next?: {
+    split?: boolean;
+    primaryPlatform?: string;
+    platforms?: string[];
+  }) => {
+    const query = channelQuery({
+      split: next?.split ?? splitChannels,
+      primaryPlatform: next?.primaryPlatform ?? primaryPlatform,
+      platforms: next?.platforms ?? selectedPlatforms,
+    });
     setApplied({
       skuCode,
-      platform,
+      ...query,
       categories,
       profileSegment,
       pendingCalibration,
@@ -89,13 +137,21 @@ export function ForecastDataExplorer({
     setPendingCalibration(next);
     setApplied({
       skuCode,
-      platform,
+      ...channelQuery({ split: splitChannels, primaryPlatform, platforms: selectedPlatforms }),
       categories,
       profileSegment,
       pendingCalibration: next,
       versionId: fixedVersionId,
     });
   };
+
+  const channelOptions = (platformOptions ?? []).filter((item) => item.code !== 'ALL');
+  const channelSummary =
+    selectedPlatforms.length === 0
+      ? '全部渠道'
+      : selectedPlatforms
+          .map((code) => channelOptions.find((item) => item.code === code)?.name || code)
+          .join('、');
 
   if (!active) return null;
 
@@ -116,6 +172,98 @@ export function ForecastDataExplorer({
         <ProductScopeSwitch />
         <div className="flex flex-wrap items-end gap-2">
           <label className="space-y-1 text-sm">
+            <span className="text-text-sub">渠道</span>
+            <select
+              className="flex h-9 min-w-28 rounded-md border border-border bg-card px-2 text-sm"
+              value={primaryPlatform}
+              disabled={splitChannels}
+              onChange={(e) => {
+                const next = e.target.value;
+                setPrimaryPlatform(next);
+                setSplitChannels(false);
+                setChannelOpen(false);
+                applyFilters({ split: false, primaryPlatform: next });
+              }}
+            >
+              <option value="">全渠道</option>
+              {channelOptions.map((item) => (
+                <option key={item.code} value={item.code}>
+                  {item.name || item.code}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="mb-2 flex h-9 items-center gap-1.5 text-sm text-text-sub">
+            <input
+              type="checkbox"
+              checked={splitChannels}
+              onChange={(e) => {
+                const next = e.target.checked;
+                const seeded =
+                  next && selectedPlatforms.length === 0 && primaryPlatform
+                    ? [primaryPlatform]
+                    : selectedPlatforms;
+                const nextPrimary = next
+                  ? primaryPlatform
+                  : seeded.length === 1
+                    ? seeded[0]!
+                    : '';
+                setSplitChannels(next);
+                setSelectedPlatforms(seeded);
+                setPrimaryPlatform(nextPrimary);
+                setChannelOpen(false);
+                applyFilters({ split: next, primaryPlatform: nextPrimary, platforms: seeded });
+              }}
+            />
+            分渠道
+          </label>
+          {splitChannels ? (
+            <div ref={channelMenuRef} className="relative space-y-1 text-sm">
+              <span className="text-text-sub">渠道范围</span>
+              <button
+                type="button"
+                className="flex h-9 min-w-36 items-center rounded-md border border-border bg-card px-2 text-left text-sm"
+                aria-expanded={channelOpen}
+                onClick={() => setChannelOpen((open) => !open)}
+              >
+                <span className="max-w-52 truncate">{channelSummary}</span>
+              </button>
+              {channelOpen ? (
+                <div className="absolute z-20 mt-1 max-h-64 w-52 overflow-auto rounded-md border border-border bg-card p-2 shadow-card">
+                  <button
+                    type="button"
+                    className="mb-1 text-xs text-text-sub"
+                    onClick={() => {
+                      setSelectedPlatforms([]);
+                      applyFilters({ split: true, platforms: [] });
+                    }}
+                  >
+                    全部渠道
+                  </button>
+                  {channelOptions.map((item) => {
+                    const checked = selectedPlatforms.includes(item.code);
+                    return (
+                      <label key={item.code} className="flex cursor-pointer items-center gap-2 py-1 text-sm">
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={() => {
+                            const next = checked
+                              ? selectedPlatforms.filter((code) => code !== item.code)
+                              : [...selectedPlatforms, item.code];
+                            setSelectedPlatforms(next);
+                            applyFilters({ split: true, platforms: next });
+                          }}
+                        />
+                        <span>{item.name || item.code}</span>
+                      </label>
+                    );
+                  })}
+                </div>
+              ) : null}
+            </div>
+          ) : null}
+          <label className="space-y-1 text-sm">
             <span className="text-text-sub">SKU</span>
             <Input
               placeholder="SKU"
@@ -124,29 +272,6 @@ export function ForecastDataExplorer({
               onChange={(e) => setSkuCode(e.target.value)}
               onKeyDown={(e) => e.key === 'Enter' && applyFilters()}
             />
-          </label>
-          <label className="space-y-1 text-sm">
-            <span className="text-text-sub">渠道</span>
-            <select
-              className="flex h-9 min-w-28 rounded-md border border-border bg-card px-2 text-sm"
-              value={platform}
-              onChange={(e) => {
-                const next = e.target.value;
-                setPlatform(next);
-                setApplied((current) => ({
-                  ...current,
-                  platform: next,
-                  versionId: fixedVersionId,
-                }));
-              }}
-            >
-              <option value="">全渠道汇总</option>
-              {(platforms ?? []).filter((p) => p.code !== 'ALL').map((p) => (
-                <option key={p.code} value={p.code}>
-                  {p.name || p.code}
-                </option>
-              ))}
-            </select>
           </label>
           <label className="w-full max-w-xl space-y-1 text-sm">
             <span className="text-text-sub">品类（可多选）</span>
@@ -169,7 +294,11 @@ export function ForecastDataExplorer({
                 setPendingCalibration(false);
                 setApplied({
                   skuCode,
-                  platform,
+                  ...channelQuery({
+                    split: splitChannels,
+                    primaryPlatform,
+                    platforms: selectedPlatforms,
+                  }),
                   categories,
                   profileSegment: next,
                   pendingCalibration: false,
@@ -184,7 +313,7 @@ export function ForecastDataExplorer({
               ))}
             </select>
           </label>
-          <Button variant="outline" onClick={applyFilters}>
+          <Button variant="outline" onClick={() => applyFilters()}>
             查询
           </Button>
           {showPendingCalibrationShortcut && (

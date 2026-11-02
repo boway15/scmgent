@@ -307,7 +307,7 @@ describe('forecast-collaboration', () => {
   });
 
   it('expands ALL baseline platforms for multi-channel generation', () => {
-    assert.equal(resolveBaselineForecastPlatforms('ALL').length, 5);
+    assert.equal(resolveBaselineForecastPlatforms('ALL').length, 13);
     assert.deepEqual(resolveBaselineForecastPlatforms('AMAZON'), ['AMAZON']);
   });
 

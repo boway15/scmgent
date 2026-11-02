@@ -2,12 +2,18 @@ import { eq, desc, and, inArray } from 'drizzle-orm';
 import { Hono } from 'hono';
 import { db, skus, inventoryHealthSnapshots } from '@scm/db';
 import { requireMenu } from '../lib/rbac.js';
+import {
+  resolveRequestProjectGroupScope,
+  skuInProjectGroupScope,
+  skuProjectGroupCondition,
+} from '../lib/data-scope.js';
 import { computeAllInventoryHealth } from '../lib/inventory-health-service.js';
 import { getLatestHealthSnapshots, saveHealthSnapshots } from '../lib/inventory-health-store.js';
 
 export const inventoryHealthRoutes = new Hono();
 
 inventoryHealthRoutes.get('/inventory/health', requireMenu('inventory.overview'), async (c) => {
+  const scope = await resolveRequestProjectGroupScope(c);
   const warehouseCode = c.req.query('warehouse');
   const healthStatus = c.req.query('healthStatus');
   const recompute = c.req.query('recompute') === 'true';
@@ -28,16 +34,19 @@ inventoryHealthRoutes.get('/inventory/health', requireMenu('inventory.overview')
   }
 
   const skuIds = [...new Set(snapshots.map((s) => s.skuId))];
+  const scopeCond = skuProjectGroupCondition(scope);
   const skuMap = new Map(
     (
       await db
-        .select({ id: skus.id, code: skus.code, name: skus.name })
+        .select({ id: skus.id, code: skus.code, name: skus.name, projectGroup: skus.projectGroup })
         .from(skus)
-        .where(inArray(skus.id, skuIds))
+        .where(scopeCond ? and(inArray(skus.id, skuIds), scopeCond) : inArray(skus.id, skuIds))
     ).map((s) => [s.id, s]),
   );
 
-  const items = snapshots.map((s) => {
+  const items = snapshots
+    .filter((s) => skuMap.has(s.skuId))
+    .map((s) => {
     const sku = skuMap.get(s.skuId);
     return {
       ...s,
@@ -67,6 +76,16 @@ inventoryHealthRoutes.get('/inventory/health/history', requireMenu('inventory.ov
   const warehouseCode = c.req.query('warehouse');
   if (!skuId || !warehouseCode) {
     return c.json({ message: 'skuId and warehouse required' }, 400);
+  }
+
+  const scope = await resolveRequestProjectGroupScope(c);
+  const [sku] = await db
+    .select({ projectGroup: skus.projectGroup })
+    .from(skus)
+    .where(eq(skus.id, skuId))
+    .limit(1);
+  if (!sku || !skuInProjectGroupScope(sku.projectGroup, scope)) {
+    return c.json({ message: 'SKU not found' }, 404);
   }
 
   const rows = await db

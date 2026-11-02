@@ -1,3 +1,4 @@
+import { useState, type ReactNode } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -15,24 +16,65 @@ function daysSince(dateOnly: string): number {
   );
 }
 
-export function DemandSourceCard() {
+type DemandSourceCardProps = {
+  /** 预测列表页默认折叠，减少首屏高度 */
+  defaultCollapsed?: boolean;
+};
+
+export function DemandSourceCard({ defaultCollapsed = false }: DemandSourceCardProps) {
+  const [detailsOpen, setDetailsOpen] = useState(false);
+  const fetchEnabled = !defaultCollapsed || detailsOpen;
+
   const query = useQuery({
     queryKey: ['planning-demand-source'],
     queryFn: api.getPlanningDemandSource,
     staleTime: 5 * 60_000,
+    enabled: fetchEnabled,
   });
 
+  if (defaultCollapsed && !detailsOpen) {
+    return (
+      <details
+        className="rounded-lg border border-primary/20 bg-primary/5 shadow-card"
+        onToggle={(event) => setDetailsOpen((event.target as HTMLDetailsElement).open)}
+      >
+        <summary className="cursor-pointer list-none px-4 py-2.5 text-sm [&::-webkit-details-marker]:hidden">
+          <span className="font-medium text-text-main">补货当前需求口径</span>
+          <span className="ml-2 text-xs text-text-sub">点击展开（与版本列表并行加载，不占用首屏）</span>
+        </summary>
+      </details>
+    );
+  }
+
+  const collapsedShell = (inner: ReactNode, summaryExtra?: string) => (
+    <details
+      open
+      className="rounded-lg border border-primary/20 bg-primary/5 shadow-card"
+      onToggle={(event) => setDetailsOpen((event.target as HTMLDetailsElement).open)}
+    >
+      <summary className="cursor-pointer list-none px-4 py-2.5 text-sm [&::-webkit-details-marker]:hidden">
+        <span className="font-medium text-text-main">补货当前需求口径</span>
+        {summaryExtra ? <span className="ml-2 text-text-sub">{summaryExtra}</span> : null}
+      </summary>
+      <div className="border-t border-primary/10 px-4 pb-3 pt-2">{inner}</div>
+    </details>
+  );
+
   if (query.isLoading) {
+    const loading = <p className="text-sm text-text-sub">加载补货当前需求口径中...</p>;
+    if (defaultCollapsed) return collapsedShell(loading, '加载中…');
     return (
       <Card className="border-primary/20 bg-primary/5 shadow-card">
-        <CardContent className="py-3 text-sm text-text-sub">加载补货当前需求口径中...</CardContent>
+        <CardContent className="py-2">{loading}</CardContent>
       </Card>
     );
   }
   if (query.isError || !query.data) {
+    const failed = <p className="text-sm text-text-sub">补货口径加载失败</p>;
+    if (defaultCollapsed) return collapsedShell(failed, '加载失败');
     return (
       <Card className="shadow-card">
-        <CardContent className="py-3 text-sm text-text-sub">补货口径加载失败</CardContent>
+        <CardContent className="py-2">{failed}</CardContent>
       </Card>
     );
   }
@@ -48,12 +90,12 @@ export function DemandSourceCard() {
   const salesLagDays = salesHistoryMaxDate ? daysSince(salesHistoryMaxDate) : null;
   const salesStale = salesLagDays == null || salesLagDays > SALES_HISTORY_STALE_DAYS;
 
-  return (
-    <Card className="border-primary/20 bg-primary/5 shadow-card">
-      <CardHeader className="pb-2">
-        <CardTitle className="text-base">补货当前需求口径</CardTitle>
-      </CardHeader>
-      <CardContent className="grid gap-4 text-sm sm:grid-cols-3">
+  const summaryLine = latest
+    ? `${latest.versionName} · 动销预测 ${latestHealth.sellingForecastSkus} / 历史 ${latestHealth.sellingHistoricalSkus}`
+    : '无已发布预测 · 补货按历史销量';
+
+  const detailBody = (
+    <div className="grid gap-4 text-sm sm:grid-cols-3">
         <div>
           <p className="text-text-sub">月度销售预测</p>
           {latest ? (
@@ -147,7 +189,19 @@ export function DemandSourceCard() {
             去导入销量
           </Link>
         </p>
-      </CardContent>
+    </div>
+  );
+
+  if (defaultCollapsed) {
+    return collapsedShell(detailBody, summaryLine);
+  }
+
+  return (
+    <Card className="border-primary/20 bg-primary/5 shadow-card">
+      <CardHeader className="pb-2">
+        <CardTitle className="text-base">补货当前需求口径</CardTitle>
+      </CardHeader>
+      <CardContent>{detailBody}</CardContent>
     </Card>
   );
 }

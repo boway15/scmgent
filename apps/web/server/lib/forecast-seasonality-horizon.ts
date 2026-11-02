@@ -1,9 +1,10 @@
 import { db, salesForecastSeasonality, salesForecastSourceBatches, salesHistoryMonthly, skus } from '@scm/db';
-import { and, desc, eq, ilike, sql } from 'drizzle-orm';
+import { and, desc, eq, ilike, inArray, or, sql } from 'drizzle-orm';
 import {
   buildMonthlyForecastHorizon,
   clipCombinedSeasonality,
 } from './forecast-baseline.js';
+import type { ProjectGroupScope } from './data-scope.js';
 import { computeSeasonalityFactorAtAnchor } from './forecast-collaboration.js';
 import { buildMonthlyTrendRowsFromSkuMonthly } from './forecast-seasonality-rebuild.js';
 import { MAX_FORECAST_MONTH_COUNT } from './forecast-limits.js';
@@ -25,6 +26,18 @@ export type SeasonalityHorizonRow = {
   months: SeasonalityHorizonCell[];
   historyMonths: SeasonalityHorizonCell[];
 };
+
+function seasonalityProjectGroupScopeCondition(scope?: ProjectGroupScope) {
+  if (!scope || scope.mode === 'all') return undefined;
+  if (scope.groups.length === 0) return sql`false`;
+  return or(
+    eq(salesForecastSeasonality.dimensionType, 'category'),
+    and(
+      eq(salesForecastSeasonality.dimensionType, 'project_group'),
+      inArray(salesForecastSeasonality.dimensionValue, scope.groups),
+    ),
+  );
+}
 
 export type SeasonalityHorizonResult = {
   horizon: Array<{ forecastYear: number; month: number; monthLabel: string; calendarMonth: number }>;
@@ -171,6 +184,7 @@ export async function listSeasonalityHorizon(input: {
   monthCount?: number;
   historyMonthCount?: number;
   asOf?: Date;
+  projectGroupScope?: ProjectGroupScope;
 }): Promise<SeasonalityHorizonResult> {
   const page = Math.max(1, input.page ?? 1);
   const pageSize = Math.min(100, Math.max(1, input.pageSize ?? 20));
@@ -179,6 +193,21 @@ export async function listSeasonalityHorizon(input: {
   const asOf = input.asOf ?? new Date();
   const offset = (page - 1) * pageSize;
 
+  if (
+    input.projectGroupScope?.mode === 'restricted' &&
+    input.projectGroupScope.groups.length === 0
+  ) {
+    return {
+      horizon: [],
+      historyHorizon: [],
+      items: [],
+      total: 0,
+      page,
+      pageSize,
+      sourceBatch: null,
+    };
+  }
+
   const conditions = [];
   if (input.dimensionType) {
     conditions.push(eq(salesForecastSeasonality.dimensionType, input.dimensionType));
@@ -186,6 +215,8 @@ export async function listSeasonalityHorizon(input: {
   if (input.search?.trim()) {
     conditions.push(ilike(salesForecastSeasonality.dimensionValue, `%${input.search.trim()}%`));
   }
+  const scopeCond = seasonalityProjectGroupScopeCondition(input.projectGroupScope);
+  if (scopeCond) conditions.push(scopeCond);
   const where = conditions.length ? and(...conditions) : undefined;
 
   const [dimensionRows, countRow, factorRows, latestBatch] = await Promise.all([

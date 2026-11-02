@@ -8,7 +8,10 @@ import {
   PROCUREMENT_OPS_DEFAULT_VISIBLE_HEADERS,
   PROCUREMENT_OPS_HEADERS,
 } from './procurement-ops-headers.js';
+import { inArray, or } from 'drizzle-orm';
+import { db, skus } from '@scm/db';
 import { matchesProductScope, type ProductScope } from './planning-accessory-filter.js';
+import { skuInProjectGroupScope, type ProjectGroupScope } from './data-scope.js';
 
 export type ProcurementOpsListItem = {
   skuId: string | null;
@@ -54,6 +57,38 @@ export function filterProcurementOpsItems(
   });
 }
 
+async function filterItemsByProjectGroupScope(
+  items: ProcurementOpsListItem[],
+  scope?: ProjectGroupScope,
+): Promise<ProcurementOpsListItem[]> {
+  if (!scope || scope.mode === 'all') return items;
+  const skuIds = [...new Set(items.map((item) => item.skuId).filter((id): id is string => !!id))];
+  const skuCodes = [...new Set(items.map((item) => item.skuCode).filter(Boolean))];
+  const rowWhere = or(
+    ...(skuIds.length ? [inArray(skus.id, skuIds)] : []),
+    ...(skuCodes.length ? [inArray(skus.code, skuCodes)] : []),
+  );
+  if (!rowWhere) return [];
+
+  const pgById = new Map<string, string | null>();
+  const pgByCode = new Map<string, string | null>();
+  for (const row of await db
+    .select({ id: skus.id, code: skus.code, projectGroup: skus.projectGroup })
+    .from(skus)
+    .where(rowWhere)) {
+    pgById.set(row.id, row.projectGroup);
+    pgByCode.set(row.code, row.projectGroup);
+  }
+
+  return items.filter((item) => {
+    const pg =
+      (item.skuId ? pgById.get(item.skuId) : undefined) ??
+      pgByCode.get(item.skuCode) ??
+      null;
+    return skuInProjectGroupScope(pg, scope);
+  });
+}
+
 function resolveColumns(stored: string[], items: ProcurementOpsListItem[]): string[] {
   if (stored.length) return stored;
   const fromItems = new Set<string>();
@@ -74,6 +109,7 @@ export async function listProcurementOpsRows(input: {
   salesCountry?: string;
   lifecycle?: string;
   productScope?: ProductScope;
+  projectGroupScope?: ProjectGroupScope;
 }) {
   const meta = await getPublishedProcurementOpsSnapshotDate(input.snapshotDate);
   if (!meta.selectedSnapshotDate) {
@@ -95,19 +131,22 @@ export async function listProcurementOpsRows(input: {
   const loaded = await loadProcurementOpsSnapshots({
     snapshotDate: meta.selectedSnapshotDate,
   });
-  const filtered = filterProcurementOpsItems(
-    loaded.map((row) => ({
-      skuId: row.skuId,
-      skuCode: row.skuCode,
-      payload: row.payload,
-    })),
-    {
-      q: input.q,
-      category: input.category,
-      salesCountry: input.salesCountry,
-      lifecycle: input.lifecycle,
-      productScope: input.productScope,
-    },
+  const filtered = await filterItemsByProjectGroupScope(
+    filterProcurementOpsItems(
+      loaded.map((row) => ({
+        skuId: row.skuId,
+        skuCode: row.skuCode,
+        payload: row.payload,
+      })),
+      {
+        q: input.q,
+        category: input.category,
+        salesCountry: input.salesCountry,
+        lifecycle: input.lifecycle,
+        productScope: input.productScope,
+      },
+    ),
+    input.projectGroupScope,
   );
 
   const total = filtered.length;
@@ -137,6 +176,7 @@ export async function buildProcurementOpsExportRows(input: {
   salesCountry?: string;
   lifecycle?: string;
   productScope?: ProductScope;
+  projectGroupScope?: ProjectGroupScope;
   columns?: string[];
 }) {
   const result = await listProcurementOpsRows({

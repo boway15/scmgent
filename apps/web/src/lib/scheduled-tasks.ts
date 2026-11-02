@@ -88,7 +88,7 @@ export const SCHEDULED_TASKS: ScheduledTask[] = [
     cron: '30 8 * * *',
     cronLabel: '每天 08:30',
     description:
-      '按采购跟进「二次验货」视图同步明细；工厂范围优先读目标表「文本」占位行，否则从视图「工厂名称」自动汇总',
+      '按采购跟进「二次验货」视图同步；采购单号+SKU+需求单号+调拨单号已存在则只更新，不新增',
   },
   {
     id: 'inventory_data_issue_scan',

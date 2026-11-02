@@ -5,8 +5,16 @@ import { normalizeSalesPlatform } from './forecast-demand.js';
 export const FORECAST_V41_PLATFORM_CODES = [
   'AMAZON',
   'WALMART',
-  'TEMU',
+  'WAYFAIR',
   'TIKTOK',
+  'TEMU',
+  'SHOPIFY',
+  'EBAY',
+  'ETSY',
+  'MANOMANO',
+  'REAL',
+  'OTTO',
+  'B2B',
   'UNKNOWN',
 ] as const;
 

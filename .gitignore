@@ -23,6 +23,9 @@ login.json
 /tmp_*.mjs
 /tmp_*.js
 /tmp_*.ts
+.tmp-workbuddy-practice/
+.tmp-rules-baseline*.json
+.tmp-ai-miss-analysis.sql
 
 # 根目录与 web 下本地导出 CSV（业务数据，勿提交）
 /*.csv

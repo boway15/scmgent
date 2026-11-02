@@ -7,6 +7,7 @@ import { ForecastHorizonPanel } from '@/components/ForecastHorizonPanel';
 import { FORECAST_ALLCAT_V41_TIER_OPTIONS } from '@/lib/forecast-labels';
 import type { ForecastHorizonRow } from '@/components/ForecastSkuDetailDrawer';
 import { ProductScopeSwitch } from '@/components/ProductScopeSwitch';
+import { SegmentedControl } from '@/components/SegmentedControl';
 
 type VersionOption = {
   id: string;
@@ -68,7 +69,7 @@ export function ForecastDataExplorer({
   onSkuClick,
   headerExtra,
   title = '预测数据',
-  description = '先按平台查询：全平台是合计，选一个平台只看该平台。需要多个平台各自成行时，再勾选「分平台」。列表按商品分层（T1→T99）再按 SKU 编码排序。导出与当前查询一致。',
+  description = '合计时一个 SKU 一行；选「全部」是各平台加总，选一个平台只看该平台。切换「分平台」后每个平台各占一行。SKU 可一次填多个，用逗号或空格分隔。列表按商品分层（T1→T99）再按 SKU 编码排序。导出与当前查询一致。',
   topSection,
   showPendingCalibrationShortcut = false,
 }: Props) {
@@ -145,6 +146,23 @@ export function ForecastDataExplorer({
     });
   };
 
+  const setGrain = (nextSplit: boolean) => {
+    if (nextSplit) {
+      const seeded =
+        selectedPlatforms.length === 0 && primaryPlatform ? [primaryPlatform] : selectedPlatforms;
+      setSplitChannels(true);
+      setSelectedPlatforms(seeded);
+      setChannelOpen(false);
+      applyFilters({ split: true, platforms: seeded });
+      return;
+    }
+    const nextPrimary = selectedPlatforms.length === 1 ? selectedPlatforms[0]! : '';
+    setSplitChannels(false);
+    setPrimaryPlatform(nextPrimary);
+    setChannelOpen(false);
+    applyFilters({ split: false, primaryPlatform: nextPrimary });
+  };
+
   const channelOptions = (platformOptions ?? []).filter((item) => item.code !== 'ALL');
   const channelSummary =
     selectedPlatforms.length === 0
@@ -171,55 +189,21 @@ export function ForecastDataExplorer({
         {topSection}
         <ProductScopeSwitch />
         <div className="flex flex-wrap items-end gap-2">
-          <label className="space-y-1 text-sm">
-            <span className="text-text-sub">平台</span>
-            <select
-              className="flex h-9 min-w-28 rounded-md border border-border bg-card px-2 text-sm"
-              value={primaryPlatform}
-              disabled={splitChannels}
-              onChange={(e) => {
-                const next = e.target.value;
-                setPrimaryPlatform(next);
-                setSplitChannels(false);
-                setChannelOpen(false);
-                applyFilters({ split: false, primaryPlatform: next });
-              }}
-            >
-              <option value="">全平台</option>
-              {channelOptions.map((item) => (
-                <option key={item.code} value={item.code}>
-                  {item.name || item.code}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="mb-2 flex h-9 items-center gap-1.5 text-sm text-text-sub">
-            <input
-              type="checkbox"
-              checked={splitChannels}
-              onChange={(e) => {
-                const next = e.target.checked;
-                const seeded =
-                  next && selectedPlatforms.length === 0 && primaryPlatform
-                    ? [primaryPlatform]
-                    : selectedPlatforms;
-                const nextPrimary = next
-                  ? primaryPlatform
-                  : seeded.length === 1
-                    ? seeded[0]!
-                    : '';
-                setSplitChannels(next);
-                setSelectedPlatforms(seeded);
-                setPrimaryPlatform(nextPrimary);
-                setChannelOpen(false);
-                applyFilters({ split: next, primaryPlatform: nextPrimary, platforms: seeded });
-              }}
+          <div className="space-y-1 text-sm">
+            <span className="block text-text-sub">平台展示</span>
+            <SegmentedControl
+              aria-label="平台展示"
+              value={splitChannels ? 'split' : 'merged'}
+              options={[
+                { id: 'merged', label: '合计' },
+                { id: 'split', label: '分平台' },
+              ]}
+              onChange={(next) => setGrain(next === 'split')}
             />
-            分平台
-          </label>
+          </div>
           {splitChannels ? (
             <div ref={channelMenuRef} className="relative space-y-1 text-sm">
-              <span className="text-text-sub">平台范围</span>
+              <span className="block text-text-sub">平台</span>
               <button
                 type="button"
                 className="flex h-9 min-w-36 items-center rounded-md border border-border bg-card px-2 text-left text-sm"
@@ -262,12 +246,33 @@ export function ForecastDataExplorer({
                 </div>
               ) : null}
             </div>
-          ) : null}
+          ) : (
+            <label className="space-y-1 text-sm">
+              <span className="text-text-sub">平台</span>
+              <select
+                className="flex h-9 min-w-28 rounded-md border border-border bg-card px-2 text-sm"
+                value={primaryPlatform}
+                onChange={(e) => {
+                  const next = e.target.value;
+                  setPrimaryPlatform(next);
+                  setChannelOpen(false);
+                  applyFilters({ split: false, primaryPlatform: next });
+                }}
+              >
+                <option value="">全部</option>
+                {channelOptions.map((item) => (
+                  <option key={item.code} value={item.code}>
+                    {item.name || item.code}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
           <label className="space-y-1 text-sm">
             <span className="text-text-sub">SKU</span>
             <Input
-              placeholder="SKU"
-              className="h-9 w-36"
+              placeholder="多个用逗号或空格分隔"
+              className="h-9 w-56"
               value={skuCode}
               onChange={(e) => setSkuCode(e.target.value)}
               onKeyDown={(e) => e.key === 'Enter' && applyFilters()}

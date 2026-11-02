@@ -298,7 +298,7 @@ export function SalesForecastListPage() {
                     单 SKU 默认写入最新草稿；补货请优先发布「全平台 · 全量 SKU」草稿。同 SKU 多发布稿时取
                     <span className="text-text-main">最新发布时间</span>。
                   </p>
-                  <p>V4.1 全平台按平台写入。明细先按平台查询，需要各平台分行时再勾选「分平台」。项目组可多选；不选为全部。</p>
+                  <p>V4.1 全平台按平台写入。明细默认看合计，需要各平台分行时切换「分平台」。项目组可多选；不选为全部。</p>
                   <ul className="list-disc space-y-1 pl-5">
                     <li>
                       <span className="text-text-main">有预测行</span>：准入通过并写入明细。

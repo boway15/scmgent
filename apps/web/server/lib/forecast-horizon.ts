@@ -14,6 +14,7 @@ import {
 } from './forecast-allcat-v41.js';
 import { formatForecastMonth, mapForecastDailyFields, normalizeSalesPlatform, aggregateForecastRows, sumEffectiveForecastDailyAcrossPlatforms } from './forecast-demand.js';
 import { resolveForecastChannelQuery } from './forecast-channel-view.js';
+import { parseForecastSkuQuery } from './forecast-sku-query.js';
 import { FORECAST_V41_PLATFORM_CODES } from './forecast-platform-scope.js';
 import {
   FORECAST_GLOBAL_STATION,
@@ -32,6 +33,19 @@ const ALLCAT_V41_PROFILE_SEGMENTS = new Set(['T1', 'T2', 'T3', 'T3P', 'T4A', 'T4
 
 function pushSkuProjectGroupScope(conditions: SQL[], scope?: ProjectGroupScope) {
   const cond = scope ? skuProjectGroupCondition(scope) : undefined;
+  if (cond) conditions.push(cond);
+}
+
+/** 单个词沿用模糊匹配；多个词按编码精确匹配，避免互相包含。 */
+function skuCodeFilterSql(skuCode?: string): SQL | undefined {
+  const query = parseForecastSkuQuery(skuCode);
+  if (query.kind === 'fuzzy') return ilike(skus.code, `%${query.token}%`);
+  if (query.kind === 'exact') return inArray(sql`upper(${skus.code})`, query.codes);
+  return undefined;
+}
+
+function pushSkuCodeFilter(conditions: SQL[], skuCode?: string) {
+  const cond = skuCodeFilterSql(skuCode);
   if (cond) conditions.push(cond);
 }
 
@@ -956,8 +970,8 @@ async function listForecastHorizonAggregated(input: {
   pushSkuProjectGroupScope(conditions, input.projectGroupScope);
   if (input.skuId?.trim()) {
     conditions.push(eq(salesForecastMonthly.skuId, input.skuId.trim()));
-  } else if (input.skuCode?.trim()) {
-    conditions.push(ilike(skus.code, `%${input.skuCode.trim()}%`));
+  } else {
+    pushSkuCodeFilter(conditions, input.skuCode);
   }
   const categoryCondition = forecastCategoryFilterSql(input.categories);
   if (categoryCondition) conditions.push(categoryCondition);
@@ -1319,8 +1333,8 @@ export async function listForecastHorizon(input: {
   pushSkuProjectGroupScope(conditions, input.projectGroupScope);
   if (input.skuId?.trim()) {
     conditions.push(eq(salesForecastMonthly.skuId, input.skuId.trim()));
-  } else if (input.skuCode?.trim()) {
-    conditions.push(ilike(skus.code, `%${input.skuCode.trim()}%`));
+  } else {
+    pushSkuCodeFilter(conditions, input.skuCode);
   }
   const categoryCondition = forecastCategoryFilterSql(categoryFilters);
   if (categoryCondition) conditions.push(categoryCondition);

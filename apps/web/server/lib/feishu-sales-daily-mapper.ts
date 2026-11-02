@@ -38,6 +38,7 @@ export function mapFeishuSalesDailyRecords(records: BitableRecord[]): FeishuSale
     const skuCode = extractFieldValue(fields.Sku ?? fields.SKU);
     const saleDate = extractFieldValue(fields['付款日期(站点)']);
     const stationLabel = extractFieldValue(fields['站点']);
+    const platformLabel = extractFieldValue(fields['平台']);
     const qty = parseQty(extractFieldValue(fields['销量']));
     if (!skuCode || !ISO_DATE.test(saleDate) || !stationLabel || qty == null) {
       skipped += 1;
@@ -48,7 +49,9 @@ export function mapFeishuSalesDailyRecords(records: BitableRecord[]): FeishuSale
       skuCode,
       skuName: extractFieldValue(fields['SKU名称']),
       station: classifyFeishuSalesSite(stationLabel),
-      platformRaw: platformRawFromStation(stationLabel),
+      platformRaw: platformLabel
+        ? platformRawFromStation(platformLabel)
+        : platformRawFromStation(stationLabel),
       firstOrderAt: extractFieldValue(fields['首单时间']),
       category: extractFieldValue(fields['品类']),
       saleDate,
@@ -68,6 +71,7 @@ export function classifyFeishuSalesSite(station: string): DailySalesRow['station
   return classifyAnalyticsSiteFromReport(normalizeStationFromReport(station));
 }
 
+/** 从「平台」或旧的复合「站点」抽出渠道原名，交给 normalizeSalesPlatformSync。 */
 export function platformRawFromStation(station: string): string {
   const value = station.trim();
   const lower = value.toLowerCase();
@@ -76,6 +80,8 @@ export function platformRawFromStation(station: string): string {
   if (lower.startsWith('tiktok') || lower.startsWith('tik tok')) return 'Tiktok';
   if (value.includes('沃尔玛') || lower.includes('walmart')) return '沃尔玛';
   if (lower.startsWith('shopify')) return 'Shopify';
+  if (lower.startsWith('etsy')) return 'etsy';
+  if (lower.startsWith('ebay')) return 'eBay';
   if (lower.startsWith('temu')) return 'TEMU';
   if (lower.startsWith('otto')) return 'OTTO';
   if (lower.startsWith('real')) return 'Real';

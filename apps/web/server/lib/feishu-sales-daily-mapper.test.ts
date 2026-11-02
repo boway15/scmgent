@@ -81,6 +81,43 @@ describe('mapFeishuSalesDailyRecords', () => {
     assert.deepEqual(mapped.dates, ['2026-10-17', '2026-10-18', '2026-10-19']);
   });
 
+  it('reads channel from the 平台 field and keeps station from 站点', () => {
+    const mapped = mapFeishuSalesDailyRecords([
+      record({
+        Sku: 'ETSY-1',
+        '付款日期(站点)': '2026-10-19',
+        站点: '美国',
+        平台: 'Etsy',
+        销量: '2',
+      }),
+      record({
+        Sku: 'ETSY-2',
+        '付款日期(站点)': '2026-10-19',
+        站点: 'Amazon德国',
+        平台: 'etsy美国',
+        销量: '1',
+      }),
+      {
+        record_id: 'rec-select',
+        fields: {
+          Sku: 'EBAY-1',
+          '付款日期(站点)': '2026-10-19',
+          站点: '英国',
+          平台: { name: 'eBay' },
+          销量: '3',
+        },
+      },
+    ]);
+
+    const bySku = Object.fromEntries(mapped.rows.map((row) => [row.skuCode, row]));
+    assert.equal(bySku['ETSY-1'].platformRaw, 'etsy');
+    assert.equal(bySku['ETSY-1'].station, 'US');
+    assert.equal(bySku['ETSY-2'].platformRaw, 'etsy');
+    assert.equal(bySku['ETSY-2'].station, 'EU');
+    assert.equal(bySku['EBAY-1'].platformRaw, 'eBay');
+    assert.equal(bySku['EBAY-1'].station, 'UK');
+  });
+
   it('skips rows without sku, date, or a numeric qty', () => {
     const mapped = mapFeishuSalesDailyRecords([
       record({ Sku: '', '付款日期(站点)': '2026-10-19', 站点: 'Amazon美国', 销量: '1' }),

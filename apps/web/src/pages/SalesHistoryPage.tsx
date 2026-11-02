@@ -63,6 +63,11 @@ export function SalesHistoryPage() {
   const [monthFrom, setMonthFrom] = useState(defaultMonthlyFrom);
   const [monthTo, setMonthTo] = useState(defaultMonthlyTo);
   const [channel, setChannel] = useState('');
+  const { data: platforms } = useQuery({
+    queryKey: ['sales-history-platforms'],
+    queryFn: () => api.getSalesHistoryPlatforms(),
+    staleTime: 60_000,
+  });
   const [warehouse, setWarehouse] = useState('');
   const [station, setStation] = useState('');
   const [category, setCategory] = useState('');
@@ -259,12 +264,18 @@ export function SalesHistoryPage() {
               />
             </>
           )}
-          <Input
-            placeholder="渠道"
-            className="h-9 w-32"
+          <select
+            className="h-9 min-w-28 rounded-md border border-border bg-background px-2 text-sm"
             value={channel}
             onChange={(e) => setChannel(e.target.value)}
-          />
+          >
+            <option value="">全部渠道</option>
+            {(platforms ?? []).map((item) => (
+              <option key={item.code} value={item.code}>
+                {item.name || item.code}
+              </option>
+            ))}
+          </select>
           {dimension === 'daily' ? (
             <>
               <select

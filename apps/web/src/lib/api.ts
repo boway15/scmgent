@@ -4125,6 +4125,8 @@ export const api = {
       `/api/sales-platforms${qs}`,
     );
   },
+  getSalesHistoryPlatforms: () =>
+    request<Array<{ code: string; name: string }>>('/api/sales/platforms'),
   getSalesHistoryCategories: () => request<string[]>('/api/sales/categories'),
   getSalesImportPolicy: () =>
     request<{

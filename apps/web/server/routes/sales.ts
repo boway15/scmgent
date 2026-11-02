@@ -1,4 +1,4 @@
-import { eq, and, or, gte, lte, desc, sql, type SQL } from 'drizzle-orm';
+import { eq, and, or, gte, lte, desc, inArray, sql, type SQL } from 'drizzle-orm';
 import type { Context } from 'hono';
 import { Hono } from 'hono';
 import { db, salesHistory, salesHistoryMonthly, skus } from '@scm/db';
@@ -6,6 +6,7 @@ import { buildCsv, csvAttachment } from '../lib/csv-export.js';
 import { parseListPagination } from '../lib/list-pagination.js';
 import { searchSkuCategories, categoryMatchesFilterCondition } from '../lib/sku-category.js';
 import { getSalesImportPolicy } from '../lib/sales-import-policy.js';
+import { channelsForPlatformFilterSync, listActiveSalesPlatforms } from '../lib/sales-platform.js';
 import {
   resolveRequestProjectGroupScope,
   resolveScopedProjectGroups,
@@ -43,7 +44,14 @@ function parseSalesFilters(
   if (skuCode) conditions.push(eq(skus.code, skuCode));
   if (from) conditions.push(gte(salesHistory.saleDate, from));
   if (to) conditions.push(lte(salesHistory.saleDate, to));
-  if (channel) conditions.push(eq(salesHistory.channel, channel));
+  if (channel) {
+    const aliases = channelsForPlatformFilterSync(channel);
+    conditions.push(
+      aliases.length === 1
+        ? eq(salesHistory.channel, aliases[0]!)
+        : inArray(salesHistory.channel, aliases),
+    );
+  }
   if (warehouse) conditions.push(eq(salesHistory.warehouseCode, warehouse));
   if (station === '其他') {
     conditions.push(or(eq(salesHistory.station, '其他'), eq(salesHistory.station, '')));
@@ -86,7 +94,14 @@ function parseMonthlySalesFilters(
   const conditions = [];
 
   if (skuCode) conditions.push(eq(skus.code, skuCode));
-  if (channel) conditions.push(eq(salesHistoryMonthly.channel, channel));
+  if (channel) {
+    const aliases = channelsForPlatformFilterSync(channel);
+    conditions.push(
+      aliases.length === 1
+        ? eq(salesHistoryMonthly.channel, aliases[0]!)
+        : inArray(salesHistoryMonthly.channel, aliases),
+    );
+  }
   if (category) {
     const categoryCondition = categoryMatchesFilterCondition(
       salesHistoryMonthly.category,
@@ -386,6 +401,15 @@ salesRoutes.get('/sales/history/monthly/export', requireMenu('data.sales'), asyn
   return csvAttachment(
     `sales-history-monthly-${new Date().toISOString().slice(0, 10)}${scopeSuffix}.csv`,
     csv,
+  );
+});
+
+salesRoutes.get('/sales/platforms', requireMenu('data.sales'), async (c) => {
+  const rows = await listActiveSalesPlatforms();
+  return c.json(
+    rows
+      .filter((row) => row.code !== 'ALL')
+      .map((row) => ({ code: row.code, name: row.name })),
   );
 });
 

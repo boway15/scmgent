@@ -23,6 +23,7 @@ import {
   normalizeSalesPlatform,
   parseForecastMonth,
 } from '../lib/forecast-demand.js';
+import { roundDaily } from '../lib/forecast-baseline.js';
 import { resolveSalesPlatformCode, listActiveSalesPlatforms } from '../lib/sales-platform.js';
 import { countBaselineForecastPlatforms } from '../lib/forecast-platform-scope.js';
 import {
@@ -56,6 +57,7 @@ import {
   createForecastAccuracyReviewQueue,
 } from '../lib/forecast-accuracy-diagnostics.js';
 import { buildForecastHorizonExportCsv, type ForecastHorizonExportMode } from '../lib/forecast-horizon-export.js';
+import { runForecastCalibrationImport } from '../lib/forecast-calibration-import.js';
 import { runWalkForwardAccuracyBacktest } from '../lib/forecast-walkforward-backtest.js';
 import { csvAttachment } from '../lib/csv-export.js';
 import {
@@ -1313,7 +1315,17 @@ salesForecastRoutes.get('/sales-forecasts/horizon/export', requireMenu('data.for
   }
 
   const modeRaw = c.req.query('mode')?.trim().toLowerCase();
-  const mode: ForecastHorizonExportMode = modeRaw === 'detail' ? 'detail' : 'wide';
+  const mode: ForecastHorizonExportMode =
+    modeRaw === 'detail' ? 'detail' : modeRaw === 'calibration' ? 'calibration' : 'wide';
+  if (mode === 'calibration') {
+    const channelView = c.req.query('channelView')?.trim().toLowerCase();
+    if (channelView !== 'by_channel') {
+      return c.json(
+        { message: '导出校准表须使用分平台视图：在矩阵筛选区将「平台展示」切换为「分平台」' },
+        400,
+      );
+    }
+  }
   const version = await getForecastVersionById(versionId);
   if (!version) {
     return c.json({ message: 'Forecast version not found' }, 404);
@@ -1327,8 +1339,8 @@ salesForecastRoutes.get('/sales-forecasts/horizon/export', requireMenu('data.for
   const categoryQuery = readCategoryQuery(c);
   if ('error' in categoryQuery) return c.json({ message: categoryQuery.error }, 400);
 
-  const { csv } = scopeEmpty
-    ? { csv: '' }
+  const built = scopeEmpty
+    ? { csv: '', rowCount: 0 }
     : await buildForecastHorizonExportCsv({
         mode,
         versionId,
@@ -1341,15 +1353,92 @@ salesForecastRoutes.get('/sales-forecasts/horizon/export', requireMenu('data.for
         profileSegment: c.req.query('profileSegment')?.trim() || undefined,
         pendingCalibration: pendingCalibration || undefined,
         monthCount,
-        historyMonthCount,
+        historyMonthCount: mode === 'calibration' ? 0 : historyMonthCount,
         projectGroupScope,
       });
 
+  if (mode === 'calibration' && !scopeEmpty && built.rowCount === 0) {
+    return c.json({ message: '当前筛选下无分平台预测行，请调整筛选或确认已生成预测' }, 400);
+  }
+
   const stamp = new Date().toISOString().slice(0, 10);
   const safeName = version.versionNo.replace(/[^\w\u4e00-\u9fff-]+/g, '_').slice(0, 48);
-  const suffix = mode === 'detail' ? 'detail' : 'wide';
-  return csvAttachment(`forecast-horizon-${suffix}-${safeName}-${stamp}.csv`, csv);
+  const suffix = mode === 'detail' ? 'detail' : mode === 'calibration' ? 'calibration' : 'wide';
+  return csvAttachment(`forecast-horizon-${suffix}-${safeName}-${stamp}.csv`, built.csv);
 });
+
+async function readCalibrationImportCsvBuffer(c: Context): Promise<Buffer | Response> {
+  const contentType = c.req.header('content-type') ?? '';
+  if (contentType.includes('multipart/form-data')) {
+    const form = await c.req.formData();
+    const file = form.get('file');
+    if (!(file instanceof File)) {
+      return c.json({ message: 'file is required' }, 400);
+    }
+    return Buffer.from(await file.arrayBuffer());
+  }
+  const body = await c.req.json<{ csv?: string }>().catch(() => ({ csv: undefined }));
+  const csv = body.csv?.trim();
+  if (!csv) {
+    return c.json({ message: 'csv or file is required' }, 400);
+  }
+  return Buffer.from(csv, 'utf8');
+}
+
+async function handleCalibrationImport(c: Context, commit: boolean) {
+  const versionId = c.req.param('id')?.trim();
+  if (!versionId) return c.json({ message: 'version id required' }, 400);
+
+  const bufferOrResponse = await readCalibrationImportCsvBuffer(c);
+  if (bufferOrResponse instanceof Response) return bufferOrResponse;
+
+  try {
+    const result = await runForecastCalibrationImport({
+      versionId,
+      csvBuffer: bufferOrResponse,
+      commit,
+    });
+    if (commit && result.hasBlockingIssues) {
+      return c.json(
+        { message: '导入存在错误，未写入', ...result },
+        400,
+      );
+    }
+    if (commit && result.applied != null && result.applied > 0) {
+      const user = await getCurrentUser(c);
+      await writeAuditLog(c, {
+        action: 'sales_forecast.calibration_import',
+        resourceType: 'sales_forecast_version',
+        resourceId: versionId,
+        detail: {
+          updated: result.updated,
+          skipped: result.skipped,
+          errors: result.errors,
+          applied: result.applied,
+        },
+        user,
+      });
+    }
+    return c.json(result);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Calibration import failed';
+    return c.json({ message }, 400);
+  }
+}
+
+salesForecastRoutes.post(
+  '/sales-forecast-versions/:id/calibration-import/preview',
+  requireMenu('data.forecast'),
+  requireForecastWrite,
+  (c) => handleCalibrationImport(c, false),
+);
+
+salesForecastRoutes.post(
+  '/sales-forecast-versions/:id/calibration-import/commit',
+  requireMenu('data.forecast'),
+  requireForecastWrite,
+  (c) => handleCalibrationImport(c, true),
+);
 
 salesForecastRoutes.post(
   '/sales-forecasts/trends/rebuild',
@@ -2097,7 +2186,7 @@ salesForecastRoutes.put('/sales-forecasts/:id', requireMenu('data.forecast'), re
     if (manualDailyAvg.value === undefined) {
       return c.json({ message: 'manualDailyAvg must be a finite number' }, 400);
     }
-    manualPatch = String(manualDailyAvg.value);
+    manualPatch = String(roundDaily(manualDailyAvg.value));
   }
 
   if (body.confidenceLevel !== undefined && !isOneOf(body.confidenceLevel, CONFIDENCE_LEVELS)) {
@@ -2113,6 +2202,19 @@ salesForecastRoutes.put('/sales-forecasts/:id', requireMenu('data.forecast'), re
   if (!existing) return c.json({ message: 'Forecast row not found' }, 404);
   if (existing.versionId) await assertVersionIsDraft(existing.versionId);
 
+  if (
+    existing.platform === 'ALL' &&
+    manualPatch !== undefined
+  ) {
+    return c.json(
+      {
+        message:
+          '全平台预测行不可直接校准，请在分平台视图编辑或使用「导入校准」写回各渠道',
+      },
+      400,
+    );
+  }
+
   const platformCode = body.platform != null ? await resolveSalesPlatformCode(body.platform) : existing.platform;
   if (body.platform != null && !platformCode) {
     return c.json({ message: `Unknown platform: ${body.platform}` }, 400);
@@ -2127,10 +2229,10 @@ salesForecastRoutes.put('/sales-forecasts/:id', requireMenu('data.forecast'), re
   };
 
   if (forecastDailyAvg.value !== undefined) {
-    patch.forecastDailyAvg = String(forecastDailyAvg.value);
+    patch.forecastDailyAvg = String(roundDaily(forecastDailyAvg.value));
   }
   if (baselineDailyAvg.value !== undefined) {
-    patch.baselineDailyAvg = String(baselineDailyAvg.value);
+    patch.baselineDailyAvg = String(roundDaily(baselineDailyAvg.value));
   }
   if (manualPatch !== undefined) {
     patch.manualDailyAvg = manualPatch;

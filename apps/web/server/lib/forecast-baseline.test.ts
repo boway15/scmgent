@@ -198,7 +198,7 @@ describe('forecast-baseline', () => {
       }),
       1,
     );
-    assert.equal(roundDaily(1.23456), 1.2346);
+    assert.equal(roundDaily(1.23456), 1.23);
   });
 
   it('applies only finite positive trend factors within bounds', () => {

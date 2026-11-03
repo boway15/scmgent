@@ -2129,8 +2129,8 @@ async function upsertForecastMonthlyRow(input: ForecastMonthlyDraft) {
     .limit(1);
 
   const values = {
-    forecastDailyAvg: String(input.forecastDailyAvg),
-    baselineDailyAvg: String(input.baselineDailyAvg),
+    forecastDailyAvg: String(roundDaily(input.forecastDailyAvg)),
+    baselineDailyAvg: String(roundDaily(input.baselineDailyAvg)),
     lifecycle: input.lifecycle,
     confidenceLevel: input.confidenceLevel,
     horizonFactors: input.horizonFactors ?? null,
@@ -2141,9 +2141,9 @@ async function upsertForecastMonthlyRow(input: ForecastMonthlyDraft) {
       input.continuity12m != null ? String(input.continuity12m) : null,
     cv12m: input.cv12m != null ? String(input.cv12m) : null,
     forecastDailyP10:
-      input.forecastDailyP10 != null ? String(input.forecastDailyP10) : null,
+      input.forecastDailyP10 != null ? String(roundDaily(input.forecastDailyP10)) : null,
     forecastDailyP90:
-      input.forecastDailyP90 != null ? String(input.forecastDailyP90) : null,
+      input.forecastDailyP90 != null ? String(roundDaily(input.forecastDailyP90)) : null,
     forecastModel: input.forecastModel ?? null,
     source: 'import' as const,
     versionId: input.versionId,

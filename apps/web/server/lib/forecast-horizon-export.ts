@@ -16,7 +16,7 @@ import type { ProjectGroupScope } from './data-scope.js';
 export const FORECAST_HORIZON_EXPORT_MAX_SKUS = 20_000;
 const PAGE_SIZE = 100;
 
-export type ForecastHorizonExportMode = 'wide' | 'detail';
+export type ForecastHorizonExportMode = 'wide' | 'detail' | 'calibration';
 
 const LIFECYCLE_LABEL: Record<string, string> = {
   mature: '成熟',
@@ -126,6 +126,7 @@ export function buildForecastHorizonDetailCsv(dataset: HorizonExportDataset): {
     '生效日均',
     '系统预测',
     '校准值',
+    '调整原因',
   ];
 
   const rows: Array<Array<string | number | null | undefined>> = [];
@@ -157,6 +158,7 @@ function buildHistoryDetailRow(
     formatLifecycle(row.lifecycle),
     ...pads,
     formatDaily(cell.actualDailyAvg),
+    '',
     '',
     '',
   ];
@@ -197,7 +199,20 @@ function buildFutureDetailRow(
     formatDaily(cellEffective(cell)),
     formatDaily(cell.forecastDailyAvg),
     cell.manualDailyAvg != null ? formatDaily(cell.manualDailyAvg) : '',
+    cell.adjustReason?.trim() ?? '',
   ];
+}
+
+/** 运营校准宽表：与导出宽表相同生效日均，仅分平台行（platform ≠ ALL） */
+export function buildForecastCalibrationImportCsv(dataset: HorizonExportDataset): {
+  csv: string;
+  rowCount: number;
+} {
+  const filtered: HorizonExportDataset = {
+    ...dataset,
+    items: dataset.items.filter((row) => row.platform !== 'ALL'),
+  };
+  return buildForecastHorizonWideCsv(filtered);
 }
 
 export async function loadForecastHorizonExportDataset(input: {
@@ -276,7 +291,9 @@ export async function buildForecastHorizonExportCsv(input: {
   projectGroupScope?: ProjectGroupScope;
 }): Promise<{ csv: string; rowCount: number; skuCount: number }> {
   const historyMonthCount =
-    input.mode === 'wide' ? 0 : (input.historyMonthCount ?? input.monthCount ?? 6);
+    input.mode === 'wide' || input.mode === 'calibration'
+      ? 0
+      : (input.historyMonthCount ?? input.monthCount ?? 6);
   const monthCount = input.monthCount ?? 6;
 
   const dataset = await loadForecastHorizonExportDataset({
@@ -288,7 +305,9 @@ export async function buildForecastHorizonExportCsv(input: {
   const built =
     input.mode === 'wide'
       ? buildForecastHorizonWideCsv(dataset)
-      : buildForecastHorizonDetailCsv(dataset);
+      : input.mode === 'calibration'
+        ? buildForecastCalibrationImportCsv(dataset)
+        : buildForecastHorizonDetailCsv(dataset);
 
   return {
     csv: built.csv,

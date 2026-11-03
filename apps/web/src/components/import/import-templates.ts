@@ -107,7 +107,7 @@ export const IMPORT_TYPE_REDIRECT: Record<string, string> = {
   skus: '/data/products?import=1',
   merchants: '/data/products?import=1&tab=merchant',
   sales: '/data/sales?import=1',
-  sales_forecast: '/data/forecast',
+  sales_forecast: '/data/forecast?calibrationImport=1',
   safety_stock: '/inventory/safety?import=1',
   pmc_plans: '/pmc/list?import=1',
 };

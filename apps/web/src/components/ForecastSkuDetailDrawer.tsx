@@ -15,8 +15,10 @@ import {
   MAX_FORECAST_MONTH_COUNT,
   buildForwardMonthLabels,
   formatForecastChannelLabel,
+  isMergedForecastChannel,
   resolveHorizonPlatformScope,
 } from '@/lib/forecast-horizon-meta';
+import { appendPlatformBreakdownToTitle } from '@/lib/forecast-platform-breakdown';
 import {
   isAllCatV41ForecastCell,
   isT99ForecastTier,
@@ -77,6 +79,12 @@ export type ForecastHorizonMonthCell = {
   forecastModel?: string | null;
   aiAssistRationale?: string | null;
   aiAssistMode?: 'auto' | 'human' | null;
+  platformBreakdown?: Array<{
+    platform: string;
+    forecastDailyAvg: number;
+    manualDailyAvg: number | null;
+    effectiveDailyAvg: number;
+  }>;
 };
 
 export type ForecastHorizonRow = {
@@ -136,12 +144,15 @@ function CalibrationCells({
   editable,
   onSaved,
   systemCellTitle,
+  effectiveHoverTitle,
 }: {
   cell: ForecastHorizonMonthCell;
   editable: boolean;
   onSaved: () => void;
   /** V4.1 等：悬停「系统」列展示计算拆解 */
   systemCellTitle?: string;
+  /** 合计视角悬停「生效」列展示分平台明细 */
+  effectiveHoverTitle?: string;
 }) {
   const [manualInput, setManualInput] = useState(
     cell.manualDailyAvg != null ? String(cell.manualDailyAvg) : '',
@@ -226,7 +237,13 @@ function CalibrationCells({
           {hasCalibration ? formatFactor(cell.manualDailyAvg) : '—'}
         </td>
         <td className="p-2 font-numeric whitespace-nowrap">
-          <span className={cn(hasCalibration && 'font-medium text-amber-700 dark:text-amber-300')}>
+          <span
+            className={cn(
+              hasCalibration && 'font-medium text-amber-700 dark:text-amber-300',
+              effectiveHoverTitle && 'cursor-help',
+            )}
+            title={effectiveHoverTitle}
+          >
             {formatFactor(effective)}
           </span>
           {cell.adjustReason ? (
@@ -318,7 +335,9 @@ function CalibrationCells({
             hasCalibration || manualInput.trim()
               ? 'text-amber-700 dark:text-amber-300'
               : 'text-primary',
+            effectiveHoverTitle && 'cursor-help',
           )}
+          title={effectiveHoverTitle}
         >
           {formatFactor(isDirty ? previewEffective : effective)}
         </span>
@@ -376,6 +395,7 @@ export function ForecastSkuDetailDrawer({
   const platformScope = resolveHorizonPlatformScope(
     horizonPlatform ?? row?.platform,
   );
+  const mergedChannelView = isMergedForecastChannel(platformScope);
 
   const horizonMonthCount = Math.min(
     MAX_FORECAST_MONTH_COUNT,
@@ -431,7 +451,7 @@ export function ForecastSkuDetailDrawer({
       : null;
   const isLoading = detailLoading || horizonLoading;
   const versionIsDraft = horizonRowData?.version?.status === 'draft';
-  const canEditCalibration = calibrationEditable && versionIsDraft;
+  const canEditCalibration = calibrationEditable && versionIsDraft && !mergedChannelView;
   const profileSegment =
     displayRow?.profileSegment ?? detail?.context?.profileSegment ?? null;
   const monthCells = (displayRow?.months ?? []) as ForecastHorizonMonthCell[];
@@ -614,7 +634,7 @@ export function ForecastSkuDetailDrawer({
                     未来 {displayRow.months.length} 月预测明细
                   </h3>
                   <p className="text-xs text-text-sub">
-                    系统预测由 V4.1 分层 KPI 或 AI 辅助生成；校准列留空则沿用系统值，失焦或回车保存。
+                    系统预测由 V4.1 分层 KPI 或 AI 辅助生成；分平台行校准时留空则沿用系统值，失焦或回车保存。
                     {useV41DetailColumns
                       ? v41AnchoredSnapshot
                         ? ' 走步特征 d6/趋势比/锚定见下方基线因子；表中仅展示按月变化的季节朴素与混合水平。'
@@ -625,7 +645,11 @@ export function ForecastSkuDetailDrawer({
                     {isT99ForecastTier(profileSegment)
                       ? ' T99 为系统保守保底（断销时为 0）；锚定/季节/混合水平仅供诊断，与列表矩阵一致。'
                       : null}
-                    {canEditCalibration ? ' 当前为草稿，可编辑校准。' : ' 已发布版本只读。'}
+                    {canEditCalibration
+                      ? ' 当前为草稿且为分平台视角，可编辑校准。'
+                      : mergedChannelView && versionIsDraft
+                        ? ' 合计/全平台为各渠道加总展示，不可在此编辑校准；请切换矩阵「分平台」或「导入校准」。'
+                        : ' 已发布版本只读。'}
                     {' 已发生月份展示实际日均，便于对照生效值；未来月份为 -。'}
                   </p>
                   <div className="overflow-auto">
@@ -943,6 +967,14 @@ export function ForecastSkuDetailDrawer({
                               editable={canEditCalibration}
                               onSaved={invalidateForecast}
                               systemCellTitle={v41SystemTitle}
+                              effectiveHoverTitle={
+                                mergedChannelView
+                                  ? appendPlatformBreakdownToTitle(
+                                      `合计生效 ${formatFactor(effectiveDaily(cell))}`,
+                                      cell.platformBreakdown,
+                                    )
+                                  : undefined
+                              }
                             />
                             <td className="p-2 align-middle font-numeric whitespace-nowrap">
                               {(() => {

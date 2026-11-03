@@ -135,6 +135,19 @@ export function SalesForecastListPage() {
     }
   }, [searchParams, versions, navigate, setSearchParams]);
 
+  useEffect(() => {
+    if (searchParams.get('calibrationImport') !== '1') return;
+    const draft = versions.find((v) => v.status === 'draft');
+    if (draft) {
+      navigate(`/data/forecast/${draft.id}?view=review&calibrationImport=1`, { replace: true });
+      return;
+    }
+    setSearchParams((prev) => {
+      prev.delete('calibrationImport');
+      return prev;
+    }, { replace: true });
+  }, [searchParams, versions, navigate, setSearchParams]);
+
   const generateBaseline = useMutation({
     mutationFn: async () => {
       setBaselineProgress(null);

@@ -217,7 +217,8 @@ const SECTIONS: HelpSection[] = [
           </li>
           <li>
             <Link to="/data/forecast" className="text-primary hover:underline">销售预测</Link>
-            ：月度日均宽表
+            ：销量历史等见上文；<strong>运营校准 CSV 导入</strong>见{' '}
+            <a href="#forecast-review" className="text-primary hover:underline">§9 销售预测与运营校准</a>
           </li>
           <li>
             <Link to="/inventory/safety?import=1" className="text-primary hover:underline">安全库存</Link>
@@ -232,8 +233,47 @@ const SECTIONS: HelpSection[] = [
     ),
   },
   {
+    id: 'forecast-review',
+    title: '9. 销售预测与运营校准',
+    body: (
+      <>
+        <p>
+          PMC 在{' '}
+          <Link to="/data/forecast" className="text-primary hover:underline">销售预测</Link>
+          生成<strong>草稿版本</strong>后，运营可在「复核与发布 → 复核数据矩阵」中确认或调整预测；发布后补货与需求计划读取<strong>已发布版本</strong>。
+        </p>
+        <h3 className="mt-4 font-medium text-text-main">推荐协作流程</h3>
+        <ol className="mt-2 list-decimal space-y-2 pl-5 text-text-sub">
+          <li>PMC：版本列表 →「生成预测」，得到草稿（如 DRAFT-…）。</li>
+          <li>
+            矩阵上方将<strong>平台展示切为「分平台」</strong>（勿用「合计」），按需筛选 SKU/分层/T99 待校准。
+          </li>
+          <li>
+            点击「<strong>导出校准表</strong>」（推荐，分平台宽表、各月生效日均与「导出宽表」一致）或「导出明细」，把 CSV 发给运营修改。
+          </li>
+          <li>
+            运营<strong>只填写有异议行的「校准值」</strong>；未改的行留空即可。可选填「调整原因」，留空则系统写入「导入」。
+          </li>
+          <li>草稿矩阵点击「导入校准」→ 预览并校验 → 确认导入 → PMC 在版本详情「发布草稿」。</li>
+        </ol>
+        <h3 className="mt-4 font-medium text-text-main">导入规则（摘要）</h3>
+        <ul className="mt-2 list-disc space-y-1 pl-5 text-text-sub">
+          <li>仅<strong>草稿版本</strong>可导入；只写入校准日均，不覆盖系统预测。</li>
+          <li>文件须与「导出明细」一致（含「时段=未来」行）；平台列须为 AMAZON 等分平台码，<strong>「全平台」行会拒绝</strong>。</li>
+          <li>
+            宽表/校准表/明细：空 → 跳过；数值与<strong>系统预测</strong>相同 → 跳过（不写入校准）；仅与系统不一致时写入校准值，备注「导入」。
+          </li>
+        </ul>
+        <p className="mt-3 text-text-sub">
+          设计说明见{' '}
+          <code className="rounded bg-muted px-1">docs/superpowers/specs/2026-11-03-forecast-calibration-import-design.md</code>
+        </p>
+      </>
+    ),
+  },
+  {
     id: 'fob',
-    title: '9. FOB 分账',
+    title: '10. FOB 分账',
     body: (
       <p>
         头程物流费用分摊：创建 FOB 分账单 → 导入拖车/海运费 CSV → 执行分摊计算。
@@ -244,7 +284,7 @@ const SECTIONS: HelpSection[] = [
   },
   {
     id: 'ai',
-    title: '10. AI 助手',
+    title: '11. AI 助手',
     body: (
       <p>
         未配置 Dify 时使用<strong>本地 FAQ</strong>，可解答安全库存、ROP、亮灯机制、PMC 流程等。
@@ -258,7 +298,7 @@ const SECTIONS: HelpSection[] = [
   },
   {
     id: 'production',
-    title: '11. 生产环境检查',
+    title: '12. 生产环境检查',
     body: (
       <>
         <p>
@@ -280,7 +320,7 @@ const SECTIONS: HelpSection[] = [
   },
   {
     id: 'faq',
-    title: '12. 常见问题',
+    title: '13. 常见问题',
     body: (
       <dl className="space-y-4">
         <div>
@@ -298,6 +338,13 @@ const SECTIONS: HelpSection[] = [
         <div>
           <dt className="font-medium text-text-main">如何迁移到妙搭？</dt>
           <dd className="mt-1 text-text-sub">执行 <code className="rounded bg-muted px-1">pnpm zip:miaoda</code>，按 docs/miaoda-import-checklist.md 导入 Schema 与自动化任务。</dd>
+        </div>
+        <div>
+          <dt className="font-medium text-text-main">预测校准导入报「全平台」错误？</dt>
+          <dd className="mt-1 text-text-sub">
+            请在复核矩阵将「平台展示」改为「分平台」后重新「导出明细」，再导入。合计视图导出的「全平台」行无法写库。详见{' '}
+            <a href="#forecast-review" className="text-primary hover:underline">销售预测与运营校准</a>。
+          </dd>
         </div>
       </dl>
     ),

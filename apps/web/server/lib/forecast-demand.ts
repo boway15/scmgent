@@ -5,6 +5,7 @@ import {
   calcSuggestedOrderDate,
   type CoverageReplenishmentResult,
 } from './replenishment-coverage.js';
+import { roundDaily } from './forecast-baseline.js';
 import { isIsoWeekPeriod, isoWeekKeyFromUtcDate } from './planning-calendar.js';
 
 export function resolveEffectiveForecastDailyAvg(
@@ -21,13 +22,13 @@ export function mapForecastDailyFields(input: {
   forecastDailyAvg: number | string;
   manualDailyAvg?: number | string | null;
 }) {
-  const systemForecastDailyAvg = Number(input.forecastDailyAvg);
+  const systemForecastDailyAvg = roundDaily(Number(input.forecastDailyAvg));
   const manual =
     input.manualDailyAvg != null && input.manualDailyAvg !== ''
       ? Number(input.manualDailyAvg)
       : null;
   const manualDailyAvg =
-    manual != null && Number.isFinite(manual) && manual >= 0 ? manual : null;
+    manual != null && Number.isFinite(manual) && manual >= 0 ? roundDaily(manual) : null;
   return {
     forecastDailyAvg: systemForecastDailyAvg,
     manualDailyAvg,

@@ -94,6 +94,11 @@ export function formatForecastChannelLabel(platform?: string | null): string {
   return code;
 }
 
+/** 合计 / 全平台视角（非单渠道行） */
+export function isMergedForecastChannel(platform?: string | null): boolean {
+  return resolveHorizonPlatformScope(platform) === 'ALL';
+}
+
 /** 与列表矩阵一致：空 / ALL 表示全渠道汇总，否则为单渠道标准码 */
 export function resolveHorizonPlatformScope(raw?: string | null): string {
   const trimmed = raw?.trim();

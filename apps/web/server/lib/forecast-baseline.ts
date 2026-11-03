@@ -1036,12 +1036,16 @@ export function computeForecastDailyAvgForMonth(input: {
   };
 }
 
+/** 预测日均对外展示、导出与入库统一精度（与 Excel toFixed(2) 一致） */
+export const FORECAST_DAILY_DECIMALS = 2;
+
 export function roundDaily(value: number): number {
   if (!Number.isFinite(value)) {
     return 0;
   }
 
-  return Math.round(value * 10_000) / 10_000;
+  const factor = 10 ** FORECAST_DAILY_DECIMALS;
+  return Math.round(value * factor) / factor;
 }
 
 /** When the current calendar month is incomplete, cap recent windows at the prior month-end. */

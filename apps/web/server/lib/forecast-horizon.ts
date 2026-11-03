@@ -333,6 +333,14 @@ export type ForecastHorizonMonth = {
   monthLabel: string;
 };
 
+/** 合计视角悬停：各渠道系统/校准/生效日均（不落库） */
+export type ForecastPlatformDailyBreakdown = {
+  platform: string;
+  forecastDailyAvg: number;
+  manualDailyAvg: number | null;
+  effectiveDailyAvg: number;
+};
+
 export type ForecastHorizonCell = {
   id: string;
   forecastYear: number;
@@ -362,6 +370,8 @@ export type ForecastHorizonCell = {
   aiAssistRationale?: string | null;
   /** AI 辅助模式：auto | human */
   aiAssistMode?: 'auto' | 'human' | null;
+  /** 多平台合计时各渠道生效明细（矩阵/抽屉悬停） */
+  platformBreakdown?: ForecastPlatformDailyBreakdown[];
 };
 
 export type ForecastHistoryCell = {
@@ -910,6 +920,22 @@ function aggregateHorizonCellsForIdentity(input: {
     );
     const baselineDailyAvg = baselineSum > 0 ? baselineSum : null;
 
+    const platformBreakdown: ForecastPlatformDailyBreakdown[] | undefined =
+      orderedPlatformRows.length > 1
+        ? orderedPlatformRows.map((row) => {
+            const daily = mapForecastDailyFields({
+              forecastDailyAvg: row.forecastDailyAvg,
+              manualDailyAvg: row.manualDailyAvg,
+            });
+            return {
+              platform: normalizeSalesPlatform(row.platform),
+              forecastDailyAvg: daily.forecastDailyAvg,
+              manualDailyAvg: daily.manualDailyAvg,
+              effectiveDailyAvg: daily.effectiveDailyAvg,
+            };
+          })
+        : undefined;
+
     const aiAssist = parseAiAssistMeta(primaryRow.horizonFactors);
     return {
       id: primaryRow.id,
@@ -919,6 +945,7 @@ function aggregateHorizonCellsForIdentity(input: {
       forecastDailyAvg,
       manualDailyAvg,
       effectiveDailyAvg,
+      platformBreakdown,
       adjustReason: primaryRow.adjustReason ?? null,
       baselineDailyAvg,
       lifecycle: primaryRow.lifecycle,

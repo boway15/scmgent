@@ -32,6 +32,8 @@ type Props = {
   description?: string;
   topSection?: React.ReactNode;
   showPendingCalibrationShortcut?: boolean;
+  calibrationImportEnabled?: boolean;
+  initialCalibrationImportOpen?: boolean;
 };
 
 function initialChannelSelection(initialPlatform: string): {
@@ -72,6 +74,8 @@ export function ForecastDataExplorer({
   description = '合计时一个 SKU 一行；选「全部」是各平台加总，选一个平台只看该平台。切换「分平台」后每个平台各占一行。SKU 可一次填多个，用逗号或空格分隔。列表按商品分层（T1→T99）再按 SKU 编码排序。导出与当前查询一致。',
   topSection,
   showPendingCalibrationShortcut = false,
+  calibrationImportEnabled = false,
+  initialCalibrationImportOpen = false,
 }: Props) {
   const initialChannel = initialChannelSelection(initialPlatform);
   const [skuCode, setSkuCode] = useState('');
@@ -347,6 +351,8 @@ export function ForecastDataExplorer({
                     })
                 : undefined
             }
+            calibrationImportEnabled={calibrationImportEnabled}
+            initialCalibrationImportOpen={initialCalibrationImportOpen}
           />
         )}
       </CardContent>

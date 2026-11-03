@@ -1186,6 +1186,40 @@ export type ForecastVersionBasic = {
   publishedAt?: string | null;
 };
 
+export type ForecastCalibrationImportResult = {
+  versionId: string;
+  format?: 'detail' | 'wide';
+  rowCount: number;
+  considered: number;
+  updated: number;
+  skipped: number;
+  errors: number;
+  skipBreakdown: {
+    empty_calibration: number;
+    unchanged: number;
+    ignored_period: number;
+  };
+  samples: {
+    updated: Array<{
+      sku: string;
+      platform: string;
+      month: string;
+      from: number | null;
+      to: number;
+      adjustReason: string;
+    }>;
+    skipped: Array<{
+      sku: string;
+      platform: string;
+      month: string;
+      reason: string;
+    }>;
+    errors: Array<{ row: number; message: string }>;
+  };
+  hasBlockingIssues: boolean;
+  applied?: number;
+};
+
 export type SkuMonthlyForecastCell = {
   forecastYear: number;
   month: number;
@@ -4649,7 +4683,7 @@ export const api = {
   },
   exportSalesForecastHorizon: async (params: {
     versionId: string;
-    mode: 'wide' | 'detail';
+    mode: 'wide' | 'detail' | 'calibration';
     station?: string;
     platform?: string;
     platforms?: string[];
@@ -4681,8 +4715,52 @@ export const api = {
     const res = await apiFetch(apiUrl(`/api/sales-forecasts/horizon/export?${qs}`));
     await downloadAttachment(
       res,
-      params.mode === 'detail' ? 'forecast-horizon-detail.csv' : 'forecast-horizon-wide.csv',
+      params.mode === 'detail'
+        ? 'forecast-horizon-detail.csv'
+        : params.mode === 'calibration'
+          ? 'forecast-calibration-import.csv'
+          : 'forecast-horizon-wide.csv',
     );
+  },
+  previewForecastCalibrationImport: async (versionId: string, input: { csv?: string; file?: File }) => {
+    let res: Response;
+    if (input.file) {
+      const form = new FormData();
+      form.append('file', input.file);
+      res = await apiFetch(apiUrl(`/api/sales-forecast-versions/${versionId}/calibration-import/preview`), {
+        method: 'POST',
+        body: form,
+      });
+    } else {
+      res = await apiFetch(apiUrl(`/api/sales-forecast-versions/${versionId}/calibration-import/preview`), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ csv: input.csv ?? '' }),
+      });
+    }
+    const payload = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(payload.message ?? '预览失败');
+    return payload as ForecastCalibrationImportResult;
+  },
+  commitForecastCalibrationImport: async (versionId: string, input: { csv?: string; file?: File }) => {
+    let res: Response;
+    if (input.file) {
+      const form = new FormData();
+      form.append('file', input.file);
+      res = await apiFetch(apiUrl(`/api/sales-forecast-versions/${versionId}/calibration-import/commit`), {
+        method: 'POST',
+        body: form,
+      });
+    } else {
+      res = await apiFetch(apiUrl(`/api/sales-forecast-versions/${versionId}/calibration-import/commit`), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ csv: input.csv ?? '' }),
+      });
+    }
+    const payload = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(payload.message ?? '导入失败');
+    return payload as ForecastCalibrationImportResult & { applied?: number };
   },
   resetAllSalesForecastData: () =>
     request<{

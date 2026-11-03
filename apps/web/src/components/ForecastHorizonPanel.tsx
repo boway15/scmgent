@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import { Button } from '@/components/ui/button';
@@ -13,11 +13,13 @@ import {
   formatForecastChannelLabel,
   resolveHorizonPlatformScope,
 } from '@/lib/forecast-horizon-meta';
+import { appendPlatformBreakdownToTitle } from '@/lib/forecast-platform-breakdown';
 import { isAllCatV41ForecastCell, isT99ForecastTier } from '@/lib/forecast-horizon-display';
 import { cn } from '@/lib/utils';
 import type { ForecastHorizonRow } from '@/components/ForecastSkuDetailDrawer';
 import { useProductScope } from '@/lib/product-scope';
 import { FORECAST_EMPTY_EXCLUDED } from '@/lib/product-scope-copy';
+import { ForecastCalibrationImportDialog } from '@/components/ForecastCalibrationImportDialog';
 
 export type ForecastHorizonViewMode = 'future' | 'history' | 'detail';
 
@@ -39,6 +41,7 @@ const cellDailyTitle = (cell: {
   forecastDailyAvg: number;
   manualDailyAvg?: number | null;
   effectiveDailyAvg?: number;
+  platformBreakdown?: ForecastHorizonRow['months'][0]['platformBreakdown'];
   horizonFactors?: ForecastHorizonRow['months'][0]['horizonFactors'];
   allCatV41Factors?: ForecastHorizonRow['months'][0]['allCatV41Factors'];
   baselineDailyAvg: number | null;
@@ -70,6 +73,16 @@ const cellDailyTitle = (cell: {
   return parts.join(' · ');
 };
 
+const effectiveCellTitle = (
+  cell: Parameters<typeof cellDailyTitle>[0],
+  profileSegment: string | null | undefined,
+  mergedChannel: boolean,
+) => {
+  const base = cellDailyTitle(cell, profileSegment);
+  if (!mergedChannel) return base;
+  return appendPlatformBreakdownToTitle(base, cell.platformBreakdown);
+};
+
 const formatPct = (value: number) => `${Math.round(value * 100)}%`;
 
 type QueryFilters = {
@@ -88,14 +101,28 @@ type Props = {
   filters: QueryFilters;
   pageSize?: number;
   onSkuClick?: (row: ForecastHorizonRow, ctx: { platform: string }) => void;
+  calibrationImportEnabled?: boolean;
+  initialCalibrationImportOpen?: boolean;
 };
 
-export function ForecastHorizonPanel({ active, filters, pageSize = 20, onSkuClick }: Props) {
+export function ForecastHorizonPanel({
+  active,
+  filters,
+  pageSize = 20,
+  onSkuClick,
+  calibrationImportEnabled = false,
+  initialCalibrationImportOpen = false,
+}: Props) {
   const { productScope } = useProductScope();
   const [viewMode, setViewMode] = useState<ForecastHorizonViewMode>('future');
   const [page, setPage] = useState(1);
   const [pageSizeState, setPageSizeState] = useState(pageSize);
-  const [exporting, setExporting] = useState<'wide' | 'detail' | null>(null);
+  const [exporting, setExporting] = useState<'wide' | 'detail' | 'calibration' | null>(null);
+  const [importOpen, setImportOpen] = useState(initialCalibrationImportOpen);
+
+  useEffect(() => {
+    if (initialCalibrationImportOpen) setImportOpen(true);
+  }, [initialCalibrationImportOpen]);
 
   const { data: horizon, isLoading } = useQuery({
     queryKey: [
@@ -132,8 +159,26 @@ export function ForecastHorizonPanel({ active, filters, pageSize = 20, onSkuClic
     refetchOnMount: 'always',
   });
 
-  const handleExport = async (mode: 'wide' | 'detail') => {
+  const importNeedsByChannel =
+    calibrationImportEnabled && filters.channelView !== 'by_channel';
+
+  const handleExport = async (mode: 'wide' | 'detail' | 'calibration') => {
     if (!filters.versionId) return;
+    if (mode === 'calibration') {
+      if (filters.channelView !== 'by_channel') {
+        window.alert('请先将「平台展示」切换为「分平台」，再导出校准表。');
+        return;
+      }
+    } else if (
+      mode === 'detail' &&
+      calibrationImportEnabled &&
+      importNeedsByChannel &&
+      !window.confirm(
+        '当前为「合计」视图，导出明细中的「全平台」行无法用于「导入校准」。\n\n建议：先将平台展示切换为「分平台」，再导出明细或「导出校准表」。\n\n仍要导出当前文件吗？',
+      )
+    ) {
+      return;
+    }
     setExporting(mode);
     try {
       await api.exportSalesForecastHorizon({
@@ -246,8 +291,35 @@ export function ForecastHorizonPanel({ active, filters, pageSize = 20, onSkuClic
           >
             {exporting === 'detail' ? '导出中…' : '导出明细'}
           </Button>
+          {calibrationImportEnabled && filters.versionId && (
+            <>
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={!canExport || exporting != null || importNeedsByChannel}
+                title={
+                  importNeedsByChannel ? '请先切换为「分平台」' : '仅含导入所需列，推荐发给运营'
+                }
+                onClick={() => void handleExport('calibration')}
+              >
+                {exporting === 'calibration' ? '导出中…' : '导出校准表'}
+              </Button>
+              <Button size="sm" variant="outline" onClick={() => setImportOpen(true)}>
+                导入校准
+              </Button>
+            </>
+          )}
         </div>
       </div>
+
+      {calibrationImportEnabled && filters.versionId && (
+        <ForecastCalibrationImportDialog
+          open={importOpen}
+          versionId={filters.versionId}
+          showChannelHint={importNeedsByChannel}
+          onClose={() => setImportOpen(false)}
+        />
+      )}
 
       {isLoading ? (
         <p className="text-text-sub">加载中…</p>
@@ -309,7 +381,15 @@ export function ForecastHorizonPanel({ active, filters, pageSize = 20, onSkuClic
                         'p-2 text-center font-numeric',
                         effective > 0 ? (calibrated ? 'text-amber-700 dark:text-amber-300' : 'text-primary') : 'text-text-sub',
                       )}
-                      title={cell ? cellDailyTitle(cell, row.profileSegment) : '暂无预测'}
+                      title={
+                        cell
+                          ? effectiveCellTitle(
+                              cell,
+                              row.profileSegment,
+                              filters.channelView === 'merged',
+                            )
+                          : '暂无预测'
+                      }
                     >
                       {cell ? formatFactor(effective) : '—'}
                       {calibrated && (
@@ -495,7 +575,17 @@ export function ForecastHorizonPanel({ active, filters, pageSize = 20, onSkuClic
                         </td>
                       </>
                     )}
-                    <td className="p-2 font-numeric text-primary font-medium">
+                    <td
+                      className="p-2 font-numeric text-primary font-medium cursor-help"
+                      title={
+                        filters.channelView === 'merged'
+                          ? appendPlatformBreakdownToTitle(
+                              `生效 ${formatFactor(cellEffective(cell))}`,
+                              cell.platformBreakdown,
+                            )
+                          : undefined
+                      }
+                    >
                       {formatFactor(cellEffective(cell))}
                     </td>
                     <td className="p-2 font-numeric text-text-sub">

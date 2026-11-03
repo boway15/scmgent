@@ -247,8 +247,8 @@ export function ForecastDataExplorer({
               ) : null}
             </div>
           ) : (
-            <label className="space-y-1 text-sm">
-              <span className="text-text-sub">平台</span>
+            <div className="flex flex-col gap-1 text-sm">
+              <span className="block text-text-sub">平台</span>
               <select
                 className="flex h-9 min-w-28 rounded-md border border-border bg-card px-2 text-sm"
                 value={primaryPlatform}
@@ -266,10 +266,10 @@ export function ForecastDataExplorer({
                   </option>
                 ))}
               </select>
-            </label>
+            </div>
           )}
-          <label className="space-y-1 text-sm">
-            <span className="text-text-sub">SKU</span>
+          <div className="flex flex-col gap-1 text-sm">
+            <span className="block text-text-sub">SKU</span>
             <Input
               placeholder="多个用逗号或空格分隔"
               className="h-9 w-56"
@@ -277,9 +277,9 @@ export function ForecastDataExplorer({
               onChange={(e) => setSkuCode(e.target.value)}
               onKeyDown={(e) => e.key === 'Enter' && applyFilters()}
             />
-          </label>
-          <label className="w-64 shrink-0 space-y-1 text-sm">
-            <span className="text-text-sub">品类（可多选）</span>
+          </div>
+          <div className="flex w-64 shrink-0 flex-col gap-1 text-sm">
+            <span className="block text-text-sub">品类（可多选）</span>
             <CategorySearchSelect
               multiple
               scope="forecast"
@@ -287,11 +287,11 @@ export function ForecastDataExplorer({
               onChange={setCategories}
               placeholder="搜索品类…"
             />
-          </label>
-          <label className="space-y-1 text-sm">
-            <span className="text-text-sub">分层</span>
+          </div>
+          <div className="flex flex-col gap-1 text-sm">
+            <span className="block text-text-sub">分层</span>
             <select
-              className="h-9 rounded-md border border-border bg-card px-3 text-sm"
+              className="flex h-9 min-w-28 rounded-md border border-border bg-card px-2 text-sm"
               value={profileSegment}
               onChange={(e) => {
                 const next = e.target.value;
@@ -317,7 +317,7 @@ export function ForecastDataExplorer({
                 </option>
               ))}
             </select>
-          </label>
+          </div>
           <Button variant="outline" onClick={() => applyFilters()}>
             查询
           </Button>

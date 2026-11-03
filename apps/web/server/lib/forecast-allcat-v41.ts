@@ -414,7 +414,6 @@ const NON_AMAZON_PLATFORMS = new Set([
   'TEMU',
   'SHOPIFY',
   'EBAY',
-  'ETSY',
   'MANOMANO',
   'REAL',
   'OTTO',

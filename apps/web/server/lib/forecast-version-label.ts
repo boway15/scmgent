@@ -1,4 +1,5 @@
 import { normalizeSalesPlatform } from './forecast-demand.js';
+import { splitForecastSkuCodes } from './forecast-sku-query.js';
 
 const BASELINE_PLATFORM_LABEL: Record<string, string> = {
   ALL: '全平台',
@@ -64,13 +65,17 @@ export function buildBaselineDraftVersionName(input: {
   const monthCount = Math.max(1, Math.floor(input.monthCount));
   const platformCode = normalizeSalesPlatform(input.platform?.trim() || 'ALL');
   const platformLabel = BASELINE_PLATFORM_LABEL[platformCode] ?? platformCode;
-  const skuCode = input.skuCode?.trim().toUpperCase();
+  const skuCodes = splitForecastSkuCodes(input.skuCode);
   const projectGroups = distinctScopeLabels(input.projectGroups, input.projectGroup);
   const date = (input.now ?? new Date()).toISOString().slice(0, 10);
 
   let scopeLabel = '全量 SKU';
-  if (skuCode) {
-    scopeLabel = `单 SKU ${skuCode}`;
+  if (skuCodes.length === 1) {
+    scopeLabel = `单 SKU ${skuCodes[0]}`;
+  } else if (skuCodes.length > 1) {
+    const joined = skuCodes.join('、');
+    scopeLabel =
+      joined.length <= 60 ? `SKU ${joined}` : `SKU ${skuCodes[0]} 等${skuCodes.length}个`;
   } else if (projectGroups.length === 1) {
     scopeLabel = `项目组 ${projectGroups[0]}`;
   } else if (projectGroups.length > 1) {

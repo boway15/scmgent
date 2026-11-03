@@ -10,7 +10,7 @@ import { ForecastDataExplorer } from '@/components/ForecastDataExplorer';
 import { ForecastSkuDetailDrawer, type ForecastHorizonRow } from '@/components/ForecastSkuDetailDrawer';
 import { ForecastAccuracyDiagnosticsPanel } from '@/components/ForecastAccuracyDiagnosticsPanel';
 import { ForecastVersionStatusBadge } from '@/components/ForecastVersionStatusBadge';
-import { resolveHorizonPlatformScope } from '@/lib/forecast-horizon-meta';
+import { formatForecastStartMonth, resolveHorizonPlatformScope } from '@/lib/forecast-horizon-meta';
 import { formatForecastVersionTitle, mutationErrorMessage, buildForecastVersionDetailSearch, resolveForecastExplorerPlatform } from '@/lib/forecast-version-utils';
 import { formatTierDisplayLabel } from '@/lib/forecast-labels';
 
@@ -24,6 +24,17 @@ const VIEW_LABEL: Record<DetailView, string> = {
 };
 
 const LIST_PAGE_SIZE = 20;
+const SKU_SCOPE_DRAFT_MAX = 50;
+
+function isSkuScopeDraft(version: {
+  versionName?: string | null;
+  stats?: { skuCount?: number };
+}): boolean {
+  const name = version.versionName ?? '';
+  if (/(^|·\s*)(单\s*)?SKU\s/.test(name) || name.includes('单 SKU ')) return true;
+  const skuCount = version.stats?.skuCount ?? 0;
+  return skuCount > 0 && skuCount <= SKU_SCOPE_DRAFT_MAX;
+}
 
 function isViewAllowed(view: DetailView, status: string): boolean {
   if (view === 'data') return true;
@@ -135,13 +146,50 @@ export function SalesForecastVersionDetailPage() {
     enabled: activeView === 'accuracy' && Boolean(versionId),
   });
 
+  const { data: publishedVersions = [] } = useQuery({
+    queryKey: ['sales-forecast-versions', 'published-for-merge'],
+    queryFn: () => api.getSalesForecastVersions({ status: 'published' }),
+    enabled: Boolean(versionId) && version?.status === 'draft',
+    staleTime: 30_000,
+  });
+
+  const isBacktestDraft = Boolean(
+    version?.status === 'draft' &&
+      version.startMonth &&
+      version.startMonth < formatForecastStartMonth(),
+  );
+  const preferMergeToPublished =
+    Boolean(version?.status === 'draft') &&
+    !isBacktestDraft &&
+    isSkuScopeDraft(version ?? {}) &&
+    publishedVersions.some((item) => item.id !== versionId);
+
   const publishVersion = useMutation({
     mutationFn: () => api.publishSalesForecastVersion(versionId),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['sales-forecast-versions'] });
-      qc.invalidateQueries({ queryKey: ['sales-forecast-version', versionId] });
-      qc.invalidateQueries({ queryKey: ['sales-forecasts'] });
+      void qc.invalidateQueries({ queryKey: ['sales-forecast-versions'] });
+      void qc.invalidateQueries({ queryKey: ['sales-forecast-version', versionId] });
+      void qc.invalidateQueries({ queryKey: ['sales-forecasts'] });
+      void qc.invalidateQueries({ queryKey: ['planning-demand-source'] });
       setSearchParams({ view: 'data' });
+    },
+  });
+
+  const mergeToPublished = useMutation({
+    mutationFn: () => api.mergeSalesForecastVersionToPublished(versionId),
+    onSuccess: async (result) => {
+      await Promise.all([
+        qc.invalidateQueries({ queryKey: ['sales-forecast-versions'] }),
+        qc.invalidateQueries({ queryKey: ['sales-forecast-version'] }),
+        qc.invalidateQueries({ queryKey: ['sales-forecasts'] }),
+        qc.invalidateQueries({ queryKey: ['sales-forecast-review-items'] }),
+        qc.invalidateQueries({ queryKey: ['planning-demand-source'] }),
+      ]);
+      navigate(
+        `/data/forecast/${result.targetVersionId}${buildForecastVersionDetailSearch({
+          view: 'data',
+        })}`,
+      );
     },
   });
 
@@ -228,6 +276,11 @@ export function SalesForecastVersionDetailPage() {
               已发布 · 同 SKU 冲突时以最新发布为准
             </span>
           )}
+          {isBacktestDraft && (
+            <span className="inline-flex items-center rounded-md bg-muted px-2 py-1 text-xs text-text-sub">
+              回测草稿（仅供准确率复盘）
+            </span>
+          )}
           <Link to="/data/forecast" className="text-sm text-primary hover:underline">
             返回列表
           </Link>
@@ -269,10 +322,47 @@ export function SalesForecastVersionDetailPage() {
       {activeView === 'review' && showReviewActions && (
         <Card>
           <CardContent className="space-y-4 py-4">
+            {isBacktestDraft ? (
+              <p className="text-sm text-text-sub">
+                开始月早于当月，本草稿仅供准确率复盘，不可发布或合入补货基线。
+              </p>
+            ) : null}
             <div className="flex flex-wrap items-center gap-2">
-              <Button size="sm" disabled={publishVersion.isPending} onClick={() => publishVersion.mutate()}>
-                {publishVersion.isPending ? '发布中…' : '发布草稿'}
-              </Button>
+              {preferMergeToPublished ? (
+                <>
+                  <Button
+                    size="sm"
+                    disabled={mergeToPublished.isPending || publishVersion.isPending}
+                    onClick={() => {
+                      if (
+                        window.confirm(
+                          '将本草稿中的 SKU 预测合入当前已发布生效基线，并归档本试算草稿。确定继续？',
+                        )
+                      ) {
+                        mergeToPublished.mutate();
+                      }
+                    }}
+                  >
+                    {mergeToPublished.isPending ? '合入中…' : '合入当前生效预测'}
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={publishVersion.isPending || mergeToPublished.isPending}
+                    onClick={() => publishVersion.mutate()}
+                  >
+                    {publishVersion.isPending ? '发布中…' : '作为独立版本发布'}
+                  </Button>
+                </>
+              ) : (
+                <Button
+                  size="sm"
+                  disabled={isBacktestDraft || publishVersion.isPending}
+                  onClick={() => publishVersion.mutate()}
+                >
+                  {publishVersion.isPending ? '发布中…' : '发布草稿'}
+                </Button>
+              )}
               <Button
                 size="sm"
                 variant="outline"
@@ -295,10 +385,20 @@ export function SalesForecastVersionDetailPage() {
                 查看全部数据明细
               </Button>
             </div>
+            {mergeToPublished.isSuccess && (
+              <p className="text-sm text-primary">
+                {mergeToPublished.data.mode === 'merged'
+                  ? `已合入生效基线：${mergeToPublished.data.mergedSkuCount} 个 SKU / ${mergeToPublished.data.mergedForecastRows} 行`
+                  : '当前无已发布基线，已将本草稿直接发布为生效版本'}
+              </p>
+            )}
             {publishVersion.isError && (
               <pre className="whitespace-pre-wrap rounded-md border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">
                 {mutationErrorMessage(publishVersion.error)}
               </pre>
+            )}
+            {mergeToPublished.isError && (
+              <p className="text-sm text-destructive">{mutationErrorMessage(mergeToPublished.error)}</p>
             )}
             {deleteDraftVersion.isError && (
               <p className="text-sm text-destructive">{mutationErrorMessage(deleteDraftVersion.error)}</p>

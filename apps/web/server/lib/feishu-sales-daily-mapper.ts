@@ -74,7 +74,6 @@ export function platformRawFromStation(station: string): string {
   if (lower.startsWith('tiktok') || lower.startsWith('tik tok')) return 'Tiktok';
   if (value.includes('沃尔玛') || lower.includes('walmart')) return '沃尔玛';
   if (lower.startsWith('shopify')) return 'Shopify';
-  if (lower.startsWith('etsy')) return 'etsy';
   if (lower.startsWith('ebay')) return 'eBay';
   if (lower.startsWith('temu')) return 'TEMU';
   if (lower.startsWith('otto')) return 'OTTO';

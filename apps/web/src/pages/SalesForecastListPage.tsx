@@ -26,6 +26,17 @@ import {
 type ListTab = 'versions' | 'strategy';
 type StatusFilter = 'all' | 'draft' | 'published' | 'archived';
 
+function splitGenerationSkuCodes(raw: string): string[] {
+  return [
+    ...new Set(
+      raw
+        .split(/[\s,，;；]+/)
+        .map((part) => part.trim())
+        .filter(Boolean),
+    ),
+  ];
+}
+
 const LIST_TAB_LABEL: Record<ListTab, string> = {
   versions: '版本列表',
   strategy: '预测策略',
@@ -49,6 +60,10 @@ export function SalesForecastListPage() {
   const [generationSummary, setGenerationSummary] = useState<string | null>(null);
   const [excludeAccessories, setExcludeAccessories] = useState(true);
   const isBacktestStartMonth = generationStartMonth < formatForecastStartMonth();
+  const generationSkuCodes = useMemo(
+    () => splitGenerationSkuCodes(generationSkuCode),
+    [generationSkuCode],
+  );
 
   const { data: versions = [], isLoading } = useQuery({
     queryKey: ['sales-forecast-versions', 'stats', 'list'],
@@ -294,9 +309,10 @@ export function SalesForecastListPage() {
                 <summary className="cursor-pointer font-medium text-text-main">操作流程与生成规则（可选阅读）</summary>
                 <div className="mt-2 space-y-2 leading-relaxed">
                   <p>
-                    每次「生成草稿」新建一条版本快照，可并列对比不同月数或范围；复核满意后发布，旧草稿可保留。
-                    单 SKU 默认写入最新草稿；补货请优先发布「全平台 · 全量 SKU」草稿。同 SKU 多发布稿时取
-                    <span className="text-text-main">最新发布时间</span>。
+                    每次「生成草稿」均新建独立版本快照（含只填 SKU 的试算），可并列对比不同范围；复核满意后，全量/项目组稿可「发布」，指定
+                    SKU 试算稿可「合入当前生效预测」。补货请优先发布「全平台 · 全量 SKU」草稿。同 SKU 多发布稿时取
+                    <span className="text-text-main">最新发布时间</span>
+                    ；SKU 可一次填多个（逗号或空格分隔）。开始月早于当月的回测草稿仅供准确率复盘，不可发布或合入补货。
                   </p>
                   <p>V4.1 全平台按平台写入。明细默认看合计，需要各平台分行时切换「分平台」。项目组可多选；不选为全部。</p>
                   <ul className="list-disc space-y-1 pl-5">
@@ -316,7 +332,7 @@ export function SalesForecastListPage() {
                 </div>
               </details>
               <div className="flex flex-wrap items-end gap-2">
-                <label className="w-full max-w-xl space-y-1 text-sm">
+                <label className="w-56 shrink-0 space-y-1 text-sm">
                   <span className="text-text-sub">项目组（可多选，不选为全部）</span>
                   <ProjectGroupSearchSelect
                     value={generationProjectGroups}
@@ -327,11 +343,11 @@ export function SalesForecastListPage() {
                     placeholder="搜索项目组…"
                   />
                 </label>
-                <label className="space-y-1 text-sm">
-                  <span className="text-text-sub">单 SKU（可选）</span>
+                <label className="w-72 shrink-0 space-y-1 text-sm">
+                  <span className="text-text-sub">SKU（可选，可多个）</span>
                   <Input
-                    placeholder="如 ABC-123"
-                    className="h-9 w-36"
+                    placeholder="多个用逗号或空格分隔"
+                    className="h-9 w-full"
                     value={generationSkuCode}
                     onChange={(e) => {
                       setGenerationSkuCode(e.target.value);
@@ -376,7 +392,13 @@ export function SalesForecastListPage() {
                     generateBaseline.mutate();
                   }}
                 >
-                  {generateBaseline.isPending ? '生成中…' : generationSkuCode.trim() ? '生成单 SKU' : '生成草稿'}
+                  {generateBaseline.isPending
+                    ? '生成中…'
+                    : generationSkuCodes.length > 1
+                      ? `生成 ${generationSkuCodes.length} 个 SKU`
+                      : generationSkuCodes.length === 1
+                        ? '生成单 SKU'
+                        : '生成草稿'}
                 </Button>
               </div>
               {isBacktestStartMonth && (

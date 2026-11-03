@@ -17,7 +17,10 @@ describe('sales-platform', () => {
     assert.equal(normalizeSalesPlatformSync(''), 'UNKNOWN');
     assert.equal(normalizeSalesPlatformSync('wayfair'), 'WAYFAIR');
     assert.equal(normalizeSalesPlatformSync('Wayfair'), 'WAYFAIR');
-    assert.equal(normalizeSalesPlatformSync('etsy'), 'ETSY');
+    assert.equal(normalizeSalesPlatformSync('etsy'), 'UNKNOWN');
+    assert.equal(normalizeSalesPlatformSync('Etsy'), 'UNKNOWN');
+    assert.equal(normalizeSalesPlatformSync('Shein'), 'UNKNOWN');
+    assert.equal(normalizeSalesPlatformSync('Shein美国'), 'UNKNOWN');
     assert.equal(normalizeSalesPlatformSync('manomano'), 'MANOMANO');
     assert.equal(normalizeSalesPlatformSync('Real'), 'REAL');
     assert.equal(normalizeSalesPlatformSync('otto'), 'OTTO');

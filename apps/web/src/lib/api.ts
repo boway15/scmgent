@@ -4785,6 +4785,22 @@ export const api = {
     }
     return res.json() as Promise<{ version: unknown; issues: unknown[] }>;
   },
+  mergeSalesForecastVersionToPublished: (id: string) =>
+    request<{
+      mode: 'merged' | 'published';
+      draftVersionId: string;
+      targetVersionId: string;
+      targetVersion: {
+        id: string;
+        versionNo: string;
+        versionName: string;
+        status: string;
+        startMonth?: string | null;
+      };
+      mergedSkuCount: number;
+      mergedForecastRows: number;
+      mergedReviewItems: number;
+    }>(`/api/sales-forecast-versions/${id}/merge-to-published`, { method: 'POST' }),
   getSalesForecastReviewSummary: (id: string) =>
     request<{ summary: string; issues: unknown[] }>(
       `/api/sales-forecast-versions/${id}/review-summary`,

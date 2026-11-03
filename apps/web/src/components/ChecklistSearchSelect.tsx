@@ -32,6 +32,10 @@ type ChecklistSearchSelectProps = {
   emptyHint: string;
   noMatchHint: string;
   className?: string;
+  /** summary：仅输入框展示已选数量，不在表单区展开 Tag（适合工具栏） */
+  selectedDisplay?: 'tags' | 'summary';
+  /** 全选时最多保留项数（与后端 scope 上限对齐时可传 50） */
+  maxSelection?: number;
 };
 
 export function ChecklistSearchSelect({
@@ -49,6 +53,8 @@ export function ChecklistSearchSelect({
   emptyHint,
   noMatchHint,
   className,
+  selectedDisplay = 'tags',
+  maxSelection,
 }: ChecklistSearchSelectProps) {
   const listId = useId();
   const rootRef = useRef<HTMLDivElement>(null);
@@ -57,6 +63,8 @@ export function ChecklistSearchSelect({
   const [panelStyle, setPanelStyle] = useState<{ top: number; left: number; width: number } | null>(
     null,
   );
+  const [capHint, setCapHint] = useState(false);
+  const capHintTimerRef = useRef<number | null>(null);
   const selected = new Set(value);
   const optionSet = new Set(options);
   const pinned = value.filter((item) => !optionSet.has(item));
@@ -87,6 +95,26 @@ export function ChecklistSearchSelect({
     return () => document.removeEventListener('mousedown', onDocClick);
   }, [onOpenChange]);
 
+  useEffect(
+    () => () => {
+      if (capHintTimerRef.current != null) {
+        window.clearTimeout(capHintTimerRef.current);
+      }
+    },
+    [],
+  );
+
+  const flashCapHint = () => {
+    setCapHint(true);
+    if (capHintTimerRef.current != null) {
+      window.clearTimeout(capHintTimerRef.current);
+    }
+    capHintTimerRef.current = window.setTimeout(() => {
+      setCapHint(false);
+      capHintTimerRef.current = null;
+    }, 3000);
+  };
+
   useEffect(() => {
     if (!open) return;
     placePanel();
@@ -103,13 +131,38 @@ export function ChecklistSearchSelect({
   }, [open]);
 
   const toggle = (item: string) => {
-    onChange(selected.has(item) ? value.filter((current) => current !== item) : [...value, item]);
+    if (selected.has(item)) {
+      onChange(value.filter((current) => current !== item));
+      return;
+    }
+    if (maxSelection && value.length >= maxSelection) {
+      flashCapHint();
+      return;
+    }
+    onChange([...value, item]);
   };
 
   const clear = () => {
     onChange([]);
     onSearchChange('');
+    setCapHint(false);
+    if (capHintTimerRef.current != null) {
+      window.clearTimeout(capHintTimerRef.current);
+      capHintTimerRef.current = null;
+    }
   };
+
+  const selectAllVisible = () => {
+    if (!rows.length) return;
+    const merged = [...new Set([...value, ...rows])];
+    if (maxSelection && merged.length > maxSelection) {
+      flashCapHint();
+    }
+    onChange(maxSelection ? merged.slice(0, maxSelection) : merged);
+  };
+
+  const showTagsBelow = selectedDisplay === 'tags' && value.length > 0;
+  const summaryMode = selectedDisplay === 'summary';
 
   return (
     <div ref={rootRef} className={cn('relative w-full', open && 'z-30', className)}>
@@ -155,7 +208,12 @@ export function ChecklistSearchSelect({
           ×
         </button>
       ) : null}
-      {value.length ? (
+      {summaryMode && capHint && maxSelection ? (
+        <p className="absolute left-0 top-full z-20 mt-0.5 whitespace-nowrap text-xs text-primary">
+          已达上限 {maxSelection} 个
+        </p>
+      ) : null}
+      {showTagsBelow ? (
         <div className="mt-1 flex flex-wrap gap-1">
           {value.map((item) => (
             <span
@@ -191,17 +249,40 @@ export function ChecklistSearchSelect({
           }
           className="fixed z-50 max-h-80 overflow-auto overflow-x-hidden rounded-md border border-border bg-card py-1 text-sm shadow-md"
         >
-          <li>
-            <button
-              type="button"
-              role="option"
-              className="block w-full px-3 py-2 text-left hover:bg-muted/60"
-              onMouseDown={(e) => e.preventDefault()}
-              onClick={clear}
-            >
-              {allLabel}
-            </button>
-          </li>
+          {summaryMode ? (
+            <li className="sticky top-0 z-10 flex gap-2 border-b border-border/60 bg-card px-3 py-2">
+              <button
+                type="button"
+                className="rounded-md border border-border px-2 py-1 text-xs hover:bg-muted/60 disabled:cursor-not-allowed disabled:opacity-50"
+                disabled={!rows.length}
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={selectAllVisible}
+              >
+                全选
+              </button>
+              <button
+                type="button"
+                className="rounded-md border border-border px-2 py-1 text-xs hover:bg-muted/60 disabled:cursor-not-allowed disabled:opacity-50"
+                disabled={!value.length}
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={clear}
+              >
+                清空
+              </button>
+            </li>
+          ) : (
+            <li>
+              <button
+                type="button"
+                role="option"
+                className="block w-full px-3 py-2 text-left hover:bg-muted/60"
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={clear}
+              >
+                {allLabel}
+              </button>
+            </li>
+          )}
           {isFetching && !rows.length ? (
             <li className="px-3 py-2 text-text-hint">搜索中…</li>
           ) : rows.length ? (

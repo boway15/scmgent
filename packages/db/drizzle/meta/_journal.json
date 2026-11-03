@@ -785,6 +785,13 @@
       "when": 1788005800000,
       "tag": "0130_sales_history_station_raw",
       "breakpoints": true
+    },
+    {
+      "idx": 112,
+      "version": "6",
+      "when": 1788092200000,
+      "tag": "0131_deactivate_etsy_channel",
+      "breakpoints": true
     }
   ]
 }

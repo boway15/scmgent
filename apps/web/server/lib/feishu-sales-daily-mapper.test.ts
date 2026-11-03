@@ -84,17 +84,17 @@ describe('mapFeishuSalesDailyRecords', () => {
   it('reads channel from the 平台 field and keeps station from 站点', () => {
     const mapped = mapFeishuSalesDailyRecords([
       record({
-        Sku: 'ETSY-1',
+        Sku: 'SHEIN-1',
         '付款日期(站点)': '2026-10-19',
         站点: '美国',
-        平台: 'Etsy',
+        平台: 'Shein',
         销量: '2',
       }),
       record({
-        Sku: 'ETSY-2',
+        Sku: 'SHEIN-2',
         '付款日期(站点)': '2026-10-19',
         站点: 'Amazon德国',
-        平台: 'etsy美国',
+        平台: 'Shein美国',
         销量: '1',
       }),
       {
@@ -110,10 +110,10 @@ describe('mapFeishuSalesDailyRecords', () => {
     ]);
 
     const bySku = Object.fromEntries(mapped.rows.map((row) => [row.skuCode, row]));
-    assert.equal(bySku['ETSY-1'].platformRaw, 'etsy');
-    assert.equal(bySku['ETSY-1'].station, '美国');
-    assert.equal(bySku['ETSY-2'].platformRaw, 'etsy');
-    assert.equal(bySku['ETSY-2'].station, 'Amazon德国');
+    assert.equal(bySku['SHEIN-1'].platformRaw, 'Shein');
+    assert.equal(bySku['SHEIN-1'].station, '美国');
+    assert.equal(bySku['SHEIN-2'].platformRaw, 'Shein美国');
+    assert.equal(bySku['SHEIN-2'].station, 'Amazon德国');
     assert.equal(bySku['EBAY-1'].platformRaw, 'eBay');
     assert.equal(bySku['EBAY-1'].station, '英国');
   });

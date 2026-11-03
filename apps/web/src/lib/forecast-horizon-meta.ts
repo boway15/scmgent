@@ -67,7 +67,6 @@ export const FORECAST_V41_PLATFORM_CODES = [
   'TEMU',
   'SHOPIFY',
   'EBAY',
-  'ETSY',
   'MANOMANO',
   'REAL',
   'OTTO',

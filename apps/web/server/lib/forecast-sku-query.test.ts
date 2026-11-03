@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseForecastSkuQuery } from './forecast-sku-query.js';
+import { parseForecastSkuQuery, splitForecastSkuCodes } from './forecast-sku-query.js';
 
 describe('parseForecastSkuQuery', () => {
   it('treats blank input as no filter', () => {
@@ -17,5 +17,11 @@ describe('parseForecastSkuQuery', () => {
       kind: 'exact',
       codes: ['SKU-A', 'SKU-B', 'SKU-C', 'SKU-D'],
     });
+  });
+
+  it('splits generation codes as exact uppercase tokens', () => {
+    assert.deepEqual(splitForecastSkuCodes('  '), []);
+    assert.deepEqual(splitForecastSkuCodes(' abc-123 '), ['ABC-123']);
+    assert.deepEqual(splitForecastSkuCodes('sku-a, sku-b，SKU-A'), ['SKU-A', 'SKU-B']);
   });
 });

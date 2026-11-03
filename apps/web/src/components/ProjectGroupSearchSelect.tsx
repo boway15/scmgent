@@ -48,6 +48,8 @@ export function ProjectGroupSearchSelect({
       emptyHint="输入关键词搜索项目组"
       noMatchHint="无匹配项目组"
       className={className}
+      selectedDisplay="summary"
+      maxSelection={50}
     />
   );
 }

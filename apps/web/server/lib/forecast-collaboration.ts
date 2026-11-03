@@ -20,6 +20,7 @@ import {
   resolveProjectGroupFilters,
   skuMatchesAnyProjectGroupFilter,
 } from './sku-category.js';
+import { splitForecastSkuCodes } from './forecast-sku-query.js';
 import { isAccessorySku } from './sku-encoding.js';
 import {
   FORECAST_GLOBAL_STATION,
@@ -956,7 +957,7 @@ async function generateBaselineForStationPlatform(input: {
   const station = resolveForecastGenerationStation(input.station);
   const platform = normalizeSalesPlatform(input.platform);
   const projectGroupFilters = resolveProjectGroupFilters(input);
-  const skuCodeFilter = input.skuCode?.trim().toUpperCase() || undefined;
+  const skuCodes = splitForecastSkuCodes(input.skuCode);
   let version = input.existingVersionId ? await getForecastVersionById(input.existingVersionId) : null;
   if (input.existingVersionId && !version) {
     throw new Error('Forecast version not found');
@@ -1043,17 +1044,21 @@ async function generateBaselineForStationPlatform(input: {
     );
   }
 
-  if (skuCodeFilter) {
-    skuRows = skuRows.filter((sku) => sku.code.trim().toUpperCase() === skuCodeFilter);
-    if (skuRows.length === 0) {
-      throw new Error(`SKU ${input.skuCode?.trim()} 不存在、未启用，或与所选项目组不匹配`);
+  if (skuCodes.length) {
+    const wanted = new Set(skuCodes);
+    skuRows = skuRows.filter((sku) => wanted.has(sku.code.trim().toUpperCase()));
+    const found = new Set(skuRows.map((sku) => sku.code.trim().toUpperCase()));
+    const missing = skuCodes.filter((code) => !found.has(code));
+    if (missing.length) {
+      throw new Error(`SKU ${missing.join('、')} 不存在、未启用，或与所选项目组不匹配`);
     }
     if (
       excludeAccessories &&
       skuRows.every((sku) => isAccessorySku({ code: sku.code, skuKind: sku.skuKind }))
     ) {
+      const label = skuCodes.length === 1 ? `SKU ${skuCodes[0]}` : '所选 SKU';
       throw new Error(
-        `SKU ${input.skuCode?.trim()} 为配件（编码变化段含 P，或主数据标记为配件），不参与本次销售预测`,
+        `${label} 为配件（编码变化段含 P，或主数据标记为配件），不参与本次销售预测`,
       );
     }
   }

@@ -70,7 +70,6 @@ const PLATFORM_ALIASES: Record<string, string> = {
   DTC: 'SHOPIFY',
   TEMU: 'TEMU',
   TIKTOK: 'TIKTOK',
-  ETSY: 'ETSY',
   MANOMANO: 'MANOMANO',
   REAL: 'REAL',
   OTTO: 'OTTO',

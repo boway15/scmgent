@@ -36,7 +36,8 @@ import {
   assertVersionIsDraft,
   getPrimaryPublishedVersionId,
   getForecastVersionById,
-  getLatestDraftVersion,
+  mergeDraftIntoPrimaryPublished,
+  assertForecastVersionEligibleForReplenishment,
 } from '../lib/forecast-version.js';
 import { buildBaselineDraftVersionName } from '../lib/forecast-version-label.js';
 import {
@@ -84,8 +85,9 @@ import {
   runForecastAccuracyBacktestTask,
 } from '../lib/forecast-accuracy-backtest-task.js';
 import { getTaskRunById, startTaskRun } from '../lib/task-runs.js';
+import { splitForecastSkuCodes } from '../lib/forecast-sku-query.js';
 import {
-  countActiveSkusForForecast,
+  inspectActiveSkusForForecast,
   resolveProjectGroupFilters,
   searchSkuCategories,
   searchSkuProjectGroups,
@@ -235,14 +237,6 @@ function seasonalityProjectGroupScopeCondition(scope: ProjectGroupScope) {
       inArray(salesForecastSeasonality.dimensionValue, scope.groups),
     ),
   );
-}
-
-async function countActiveSkus(input: {
-  projectGroup?: string;
-  projectGroups?: string[];
-  skuCode?: string;
-}): Promise<number> {
-  return countActiveSkusForForecast(input);
 }
 
 function readPlatformsQuery(c: Context): string[] {
@@ -411,7 +405,11 @@ salesForecastRoutes.post('/sales-forecasts/generate-baseline', requireMenu('data
   } catch (err) {
     return c.json({ message: err instanceof Error ? err.message : 'startMonth 无效' }, 400);
   }
-  const skuCode = body.skuCode?.trim() || undefined;
+  const skuCodes = splitForecastSkuCodes(body.skuCode);
+  if (skuCodes.length > MAX_SCOPE_FILTERS) {
+    return c.json({ message: `SKU 最多填写 ${MAX_SCOPE_FILTERS} 个` }, 400);
+  }
+  const skuCode = skuCodes.length ? skuCodes.join(',') : undefined;
   const projectGroups = resolveProjectGroupFilters({
     projectGroup: body.projectGroup,
     projectGroups: Array.isArray(body.projectGroups) ? body.projectGroups : undefined,
@@ -419,13 +417,16 @@ salesForecastRoutes.post('/sales-forecasts/generate-baseline', requireMenu('data
   if (projectGroups.length > MAX_SCOPE_FILTERS) {
     return c.json({ message: `项目组最多选择 ${MAX_SCOPE_FILTERS} 个` }, 400);
   }
-  const perStationSkuCount = await countActiveSkus({
+  const skuScope = await inspectActiveSkusForForecast({
     projectGroups: projectGroups.length ? projectGroups : undefined,
     skuCode,
   });
-  const activeSkuCount = perStationSkuCount;
-  if (skuCode && activeSkuCount === 0) {
-    return c.json({ message: `SKU ${skuCode} 不存在、未启用，或与所选项目组不匹配` }, 404);
+  const activeSkuCount = skuScope.activeSkuCount;
+  if (skuCodes.length && skuScope.missingCodes.length) {
+    return c.json(
+      { message: `SKU ${skuScope.missingCodes.join('、')} 不存在、未启用，或与所选项目组不匹配` },
+      404,
+    );
   }
   const platform = body.platform?.trim() || 'ALL';
   if (platform !== 'ALL' && !skuCode) {
@@ -448,30 +449,28 @@ salesForecastRoutes.post('/sales-forecasts/generate-baseline', requireMenu('data
   let existingVersionId: string | undefined;
   let forceNewVersion: boolean;
   let targetDraftStartMonth: string | null = null;
-  if (skuCode) {
-    forceNewVersion = false;
-    if (targetVersionId) {
-      const target = await getForecastVersionById(targetVersionId);
-      if (!target) return c.json({ message: '目标草稿版本不存在' }, 404);
-      if (target.status !== 'draft') {
-        return c.json({ message: '仅可向草稿版本写入单 SKU 预测' }, 400);
-      }
-      existingVersionId = targetVersionId;
-      targetDraftStartMonth = target.startMonth?.trim() || null;
-    } else {
-      const latestDraft = await getLatestDraftVersion();
-      existingVersionId = latestDraft?.id;
-      targetDraftStartMonth = latestDraft?.startMonth?.trim() || null;
+  if (targetVersionId) {
+    // 仅显式指定目标草稿时才局部写入（详情页重算）；列表页一律新建独立草稿
+    if (!skuCode) {
+      return c.json({ message: '指定目标草稿时必须填写 SKU' }, 400);
     }
+    const target = await getForecastVersionById(targetVersionId);
+    if (!target) return c.json({ message: '目标草稿版本不存在' }, 404);
+    if (target.status !== 'draft') {
+      return c.json({ message: '仅可向草稿版本写入指定 SKU 预测' }, 400);
+    }
+    forceNewVersion = false;
+    existingVersionId = targetVersionId;
+    targetDraftStartMonth = target.startMonth?.trim() || null;
   } else {
     forceNewVersion = true;
     existingVersionId = undefined;
   }
 
-  // 单 SKU 写入草稿且请求未显式传 startMonth：沿用草稿开始月，避免默认「当月」误改版本地平线
+  // 向已有草稿写入且请求未显式传 startMonth：沿用草稿开始月，避免默认「当月」误改版本地平线
   const effectiveStartMonth =
     body.startMonth?.trim() ||
-    (skuCode ? targetDraftStartMonth : null) ||
+    (existingVersionId ? targetDraftStartMonth : null) ||
     startMonthResolved.startMonth;
   let effectiveAsOf = startMonthResolved.asOf;
   if (effectiveStartMonth !== startMonthResolved.startMonth) {
@@ -1468,6 +1467,18 @@ salesForecastRoutes.post(
   async (c) => {
     const user = await getCurrentUser(c);
     const versionId = c.req.param('id');
+    const version = await getForecastVersionById(versionId);
+    if (!version) return c.json({ message: 'Version not found' }, 404);
+    try {
+      assertForecastVersionEligibleForReplenishment(version.startMonth);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : '不可发布';
+      const status =
+        err && typeof err === 'object' && 'status' in err && typeof err.status === 'number'
+          ? err.status
+          : 400;
+      return c.json({ message }, status as 400);
+    }
     const rows = await loadVersionRows(versionId);
     const issues = validateForecastRows(rows);
     if (hasBlockingForecastIssues(issues)) {
@@ -1483,6 +1494,40 @@ salesForecastRoutes.post(
       user,
     });
     return c.json({ version: published, issues });
+  },
+);
+
+salesForecastRoutes.post(
+  '/sales-forecast-versions/:id/merge-to-published',
+  requireMenu('data.forecast'),
+  requireForecastWrite,
+  async (c) => {
+    const user = await getCurrentUser(c);
+    const versionId = c.req.param('id');
+    try {
+      const result = await mergeDraftIntoPrimaryPublished(versionId, user.id);
+      await writeAuditLog(c, {
+        action: 'forecast_version.merge_to_published',
+        resourceType: 'sales_forecast_version',
+        resourceId: versionId,
+        detail: {
+          mode: result.mode,
+          targetVersionId: result.targetVersionId,
+          mergedSkuCount: result.mergedSkuCount,
+          mergedForecastRows: result.mergedForecastRows,
+          mergedReviewItems: result.mergedReviewItems,
+        },
+        user,
+      });
+      return c.json(result);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : '合入失败';
+      const status =
+        err && typeof err === 'object' && 'status' in err && typeof err.status === 'number'
+          ? err.status
+          : 500;
+      return c.json({ message }, status as 400 | 404 | 500);
+    }
   },
 );
 

@@ -38,6 +38,15 @@ describe('forecast-version-label', () => {
       buildBaselineDraftVersionName({
         monthCount: 6,
         platform: 'ALL',
+        skuCode: 'abc-1, def-2',
+        now,
+      }),
+      '6 个月 · 全平台 · SKU ABC-1、DEF-2 · 2026-07-06',
+    );
+    assert.equal(
+      buildBaselineDraftVersionName({
+        monthCount: 6,
+        platform: 'ALL',
         projectGroups: ['项目1组', '项目2组'],
         now,
       }),

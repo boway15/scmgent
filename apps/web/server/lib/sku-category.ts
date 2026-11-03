@@ -1,5 +1,6 @@
 import { and, desc, eq, inArray, isNotNull, ilike, sql, type SQL, type SQLWrapper } from 'drizzle-orm';
 import { db, skus, warehouses, salesForecastVersions, salesHistory, salesHistoryMonthly } from '@scm/db';
+import { splitForecastSkuCodes } from './forecast-sku-query.js';
 
 /** 统一品类路径分隔符（销量历史常用 `\`，主数据常用 `/`）。 */
 export function normalizeCategoryPath(value: string | null | undefined): string {
@@ -380,22 +381,31 @@ async function countActiveSkusMatchingProjectGroup(filters: string[]): Promise<n
   return rows.filter((row) => skuMatchesAnyProjectGroupFilter(row.projectGroup, filters)).length;
 }
 
-export async function countActiveSkusForForecast(input: {
+export async function inspectActiveSkusForForecast(input: {
   projectGroup?: string;
   projectGroups?: string[];
   skuCode?: string;
-}): Promise<number> {
+}): Promise<{ activeSkuCount: number; missingCodes: string[] }> {
   const filters = resolveProjectGroupFilters(input);
-  const skuCode = input.skuCode?.trim();
-  if (skuCode) {
-    const [row] = await db
-      .select({ id: skus.id, projectGroup: skus.projectGroup })
-      .from(skus)
-      .where(and(eq(skus.isActive, true), ilike(skus.code, skuCode)))
-      .limit(1);
-    if (!row) return 0;
-    if (!filters.length) return 1;
-    return skuMatchesAnyProjectGroupFilter(row.projectGroup, filters) ? 1 : 0;
+  const skuCodes = splitForecastSkuCodes(input.skuCode);
+  if (!skuCodes.length) {
+    return {
+      activeSkuCount: await countActiveSkusMatchingProjectGroup(filters),
+      missingCodes: [],
+    };
   }
-  return countActiveSkusMatchingProjectGroup(filters);
+
+  const rows = await db
+    .select({ code: skus.code, projectGroup: skus.projectGroup })
+    .from(skus)
+    .where(and(eq(skus.isActive, true), inArray(sql`upper(${skus.code})`, skuCodes)));
+  const matched = new Set<string>();
+  for (const row of rows) {
+    if (filters.length && !skuMatchesAnyProjectGroupFilter(row.projectGroup, filters)) continue;
+    matched.add(row.code.trim().toUpperCase());
+  }
+  return {
+    activeSkuCount: matched.size,
+    missingCodes: skuCodes.filter((code) => !matched.has(code)),
+  };
 }

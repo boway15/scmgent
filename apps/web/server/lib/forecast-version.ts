@@ -10,6 +10,37 @@ import {
 import { FORECAST_V41_PLATFORM_CODES } from './forecast-platform-scope.js';
 import { parseBaselinePlatformFromVersionName } from './forecast-version-label.js';
 import { invalidateAlertActionCache } from './alert-action-index.js';
+import { invalidatePlanningDemandSourceCache } from './planning-demand-source.js';
+import { isForecastStartMonthBacktest } from './forecast-start-month.js';
+
+export const FORECAST_BACKTEST_REPLENISHMENT_BLOCKED_MESSAGE =
+  '历史回测版本（开始月早于当月）仅供准确率复盘，不可发布或合入补货基线';
+
+/** 开始月早于当月 → 回测稿，禁止进入补货生效链路 */
+export function isForecastVersionBacktestForReplenishment(
+  startMonth: string | null | undefined,
+  now = new Date(),
+): boolean {
+  const month = startMonth?.trim();
+  if (!month) return false;
+  return isForecastStartMonthBacktest(month, now);
+}
+
+export function assertForecastVersionEligibleForReplenishment(
+  startMonth: string | null | undefined,
+  now = new Date(),
+): void {
+  if (isForecastVersionBacktestForReplenishment(startMonth, now)) {
+    throw Object.assign(new Error(FORECAST_BACKTEST_REPLENISHMENT_BLOCKED_MESSAGE), {
+      status: 400 as const,
+    });
+  }
+}
+
+function invalidateForecastDownstreamCaches(): void {
+  invalidateAlertActionCache();
+  invalidatePlanningDemandSourceCache();
+}
 
 export type ForecastVersionStatus = 'draft' | 'published' | 'archived';
 
@@ -115,6 +146,7 @@ export async function publishForecastVersion(versionId: string, publishedBy: str
 
   if (!version) throw new Error('Forecast version not found');
   if (version.status !== 'draft') throw new Error('Only draft versions can be published');
+  assertForecastVersionEligibleForReplenishment(version.startMonth);
 
   const [published] = await db
     .update(salesForecastVersions)
@@ -127,7 +159,7 @@ export async function publishForecastVersion(versionId: string, publishedBy: str
     .where(eq(salesForecastVersions.id, versionId))
     .returning();
 
-  invalidateAlertActionCache();
+  invalidateForecastDownstreamCaches();
   return published;
 }
 
@@ -137,8 +169,197 @@ export async function archiveForecastVersion(versionId: string) {
     .set({ status: 'archived', updatedAt: new Date() })
     .where(eq(salesForecastVersions.id, versionId))
     .returning();
-  if (row) invalidateAlertActionCache();
+  if (row) invalidateForecastDownstreamCaches();
   return row;
+}
+
+export type MergeDraftIntoPublishedResult = {
+  mode: 'merged' | 'published';
+  draftVersionId: string;
+  targetVersionId: string;
+  targetVersion: typeof salesForecastVersions.$inferSelect;
+  mergedSkuCount: number;
+  mergedForecastRows: number;
+  mergedReviewItems: number;
+};
+
+/**
+ * 将指定 SKU 试算草稿合入当前主已发布版本；若尚无已发布版本则直接发布该草稿。
+ * 合入后草稿归档，避免碎片 published 版本污染补货拼图。
+ */
+export async function mergeDraftIntoPrimaryPublished(
+  draftVersionId: string,
+  userId: string,
+): Promise<MergeDraftIntoPublishedResult> {
+  const draft = await getForecastVersionById(draftVersionId);
+  if (!draft) {
+    throw Object.assign(new Error('预测版本不存在'), { status: 404 as const });
+  }
+  if (draft.status !== 'draft') {
+    throw Object.assign(new Error('仅草稿版本可合入已发布基线'), { status: 400 as const });
+  }
+  assertForecastVersionEligibleForReplenishment(draft.startMonth);
+
+  const primaryId = await getPrimaryPublishedVersionId(draft.station ?? undefined);
+  const primaryCandidate = await getForecastVersionById(primaryId);
+  // getPrimaryPublishedVersionId 在无 published 时也会回落 LEGACY id；须确认真实存在且为 published
+  if (
+    !primaryCandidate ||
+    primaryCandidate.status !== 'published' ||
+    primaryCandidate.id === draft.id
+  ) {
+    const published = await publishForecastVersion(draftVersionId, userId);
+    const skuRows = await db
+      .selectDistinct({ skuId: salesForecastMonthly.skuId })
+      .from(salesForecastMonthly)
+      .where(eq(salesForecastMonthly.versionId, published.id));
+    const forecastRowCount = await db
+      .select({ id: salesForecastMonthly.id })
+      .from(salesForecastMonthly)
+      .where(eq(salesForecastMonthly.versionId, published.id));
+    const reviewCount = await db
+      .select({ id: salesForecastReviewItems.id })
+      .from(salesForecastReviewItems)
+      .where(eq(salesForecastReviewItems.versionId, published.id));
+    return {
+      mode: 'published',
+      draftVersionId,
+      targetVersionId: published.id,
+      targetVersion: published,
+      mergedSkuCount: skuRows.length,
+      mergedForecastRows: forecastRowCount.length,
+      mergedReviewItems: reviewCount.length,
+    };
+  }
+
+  const primary = primaryCandidate;
+  const draftStart = draft.startMonth?.trim() || null;
+  const primaryStart = primary.startMonth?.trim() || null;
+  if (draftStart && primaryStart && draftStart !== primaryStart) {
+    throw Object.assign(
+      new Error(
+        `草稿开始月 ${draftStart} 与当前生效基线开始月 ${primaryStart} 不一致，请先生成同开始月的草稿再合入，或直接发布为独立版本`,
+      ),
+      { status: 400 as const },
+    );
+  }
+
+  const result = await db.transaction(async (tx) => {
+    const draftSkuRows = await tx
+      .selectDistinct({ skuId: salesForecastMonthly.skuId })
+      .from(salesForecastMonthly)
+      .where(eq(salesForecastMonthly.versionId, draftVersionId));
+    const skuIds = draftSkuRows.map((row) => row.skuId);
+    if (!skuIds.length) {
+      throw Object.assign(new Error('草稿无预测明细，无法合入'), { status: 400 as const });
+    }
+
+    await tx
+      .delete(salesForecastReviewItems)
+      .where(
+        and(
+          eq(salesForecastReviewItems.versionId, primary.id),
+          inArray(salesForecastReviewItems.skuId, skuIds),
+        ),
+      );
+    await tx
+      .delete(salesForecastMonthly)
+      .where(
+        and(eq(salesForecastMonthly.versionId, primary.id), inArray(salesForecastMonthly.skuId, skuIds)),
+      );
+
+    const monthlyRows = await tx
+      .select()
+      .from(salesForecastMonthly)
+      .where(eq(salesForecastMonthly.versionId, draftVersionId));
+    const reviewRows = await tx
+      .select()
+      .from(salesForecastReviewItems)
+      .where(eq(salesForecastReviewItems.versionId, draftVersionId));
+
+    const now = new Date();
+    if (monthlyRows.length) {
+      await tx.insert(salesForecastMonthly).values(
+        monthlyRows.map((row) => ({
+          skuId: row.skuId,
+          station: row.station,
+          platform: row.platform,
+          forecastYear: row.forecastYear,
+          month: row.month,
+          forecastDailyAvg: row.forecastDailyAvg,
+          baselineDailyAvg: row.baselineDailyAvg,
+          manualDailyAvg: row.manualDailyAvg,
+          adjustReason: row.adjustReason,
+          confidenceLevel: row.confidenceLevel,
+          versionId: primary.id,
+          lifecycle: row.lifecycle,
+          horizonFactors: row.horizonFactors,
+          forecastProfileClass: row.forecastProfileClass,
+          profileSegment: row.profileSegment,
+          horizonBand: row.horizonBand,
+          continuity12m: row.continuity12m,
+          cv12m: row.cv12m,
+          forecastDailyP10: row.forecastDailyP10,
+          forecastDailyP90: row.forecastDailyP90,
+          forecastModel: row.forecastModel,
+          ownerName: row.ownerName,
+          source: row.source,
+          importBatchId: row.importBatchId,
+          updatedAt: now,
+          createdAt: now,
+        })),
+      );
+    }
+
+    if (reviewRows.length) {
+      await tx.insert(salesForecastReviewItems).values(
+        reviewRows.map((row) => ({
+          versionId: primary.id,
+          skuId: row.skuId,
+          station: row.station,
+          platform: row.platform,
+          issueType: row.issueType,
+          severity: row.severity,
+          message: row.message,
+          suggestedDailyAvg: row.suggestedDailyAvg,
+          reviewedDailyAvg: row.reviewedDailyAvg,
+          status: row.status,
+          reviewerId: row.reviewerId,
+          reviewedAt: row.reviewedAt,
+          createdAt: now,
+        })),
+      );
+    }
+
+    const [updatedPrimary] = await tx
+      .update(salesForecastVersions)
+      .set({ updatedAt: now })
+      .where(eq(salesForecastVersions.id, primary.id))
+      .returning();
+
+    await tx
+      .update(salesForecastVersions)
+      .set({ status: 'archived', updatedAt: now })
+      .where(eq(salesForecastVersions.id, draftVersionId));
+
+    return {
+      targetVersion: updatedPrimary ?? primary,
+      mergedSkuCount: skuIds.length,
+      mergedForecastRows: monthlyRows.length,
+      mergedReviewItems: reviewRows.length,
+    };
+  });
+
+  invalidateForecastDownstreamCaches();
+  return {
+    mode: 'merged',
+    draftVersionId,
+    targetVersionId: primary.id,
+    targetVersion: result.targetVersion,
+    mergedSkuCount: result.mergedSkuCount,
+    mergedForecastRows: result.mergedForecastRows,
+    mergedReviewItems: result.mergedReviewItems,
+  };
 }
 
 export type DeleteDraftForecastVersionResult = {

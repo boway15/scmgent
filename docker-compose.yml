@@ -1,8 +1,25 @@
+# 宿主机 16GB 专用机（日常只跑 Docker + Tunnel，Cursor 仅发版/排障时用）：
+# Windows 留约 3～4GB，WSL2 上限 12GB（%USERPROFILE%\.wslconfig → memory=12GB processors=6）。
+# 容器上限合计约 9.1GB，余量给构建与页缓存；排障临时开 Cursor 时若吃紧可 wsl --shutdown 后改回 10GB。
 services:
   postgres:
     image: postgres:16-alpine
     # 准确率诊断漏报 UNION 等重查询需要更大共享内存（默认 64MB 易 OOM）
     shm_size: 256mb
+    mem_limit: 3072m
+    cpus: "2.0"
+    command:
+      - postgres
+      - -c
+      - shared_buffers=512MB
+      - -c
+      - effective_cache_size=2048MB
+      - -c
+      - work_mem=16MB
+      - -c
+      - maintenance_work_mem=128MB
+      - -c
+      - max_connections=40
     environment:
       POSTGRES_DB: scm_dev
       POSTGRES_USER: scm
@@ -23,6 +40,8 @@ services:
       context: .
       dockerfile: Dockerfile
     image: scm-agent-web:latest
+    mem_limit: 6144m
+    cpus: "4.0"
     ports:
       # 宿主机与容器均使用 8081（不占用常被 Dify 等占用的 8080）
       - "0.0.0.0:8081:8081"
@@ -52,7 +71,7 @@ services:
       ENFORCE_RBAC: "true"
       # 允许 .env 的 CRON_SECRET 生效；未设置时本地默认值
       CRON_SECRET: ${CRON_SECRET:-dev-cron-secret-local}
-      NODE_OPTIONS: "--max-old-space-size=4096"
+      NODE_OPTIONS: "--max-old-space-size=3584"
       # DIFY_BASE_URL / DIFY_API_KEY_* 由 .env 注入；容器内 127.0.0.1 会在代码中改写为 host.docker.internal
       RUNNING_IN_DOCKER: "true"
       COSTING_DATA_DIR: /data/costing
@@ -90,6 +109,8 @@ services:
     build:
       context: ./deploy/cron
     image: scm-agent-cron:latest
+    mem_limit: 128m
+    cpus: "0.25"
     env_file:
       - .env
     environment:

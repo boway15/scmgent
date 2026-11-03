@@ -22,5 +22,5 @@ pnpm exec tsx src/seed.ts || true
 
 echo "[entrypoint] Starting web server on port ${PORT:-8081}..."
 cd /app/apps/web
-export NODE_OPTIONS="${NODE_OPTIONS:---max-old-space-size=4096}"
+export NODE_OPTIONS="${NODE_OPTIONS:---max-old-space-size=3584}"
 exec pnpm exec tsx server/index.ts

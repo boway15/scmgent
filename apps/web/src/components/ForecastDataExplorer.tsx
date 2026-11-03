@@ -278,7 +278,7 @@ export function ForecastDataExplorer({
               onKeyDown={(e) => e.key === 'Enter' && applyFilters()}
             />
           </div>
-          <div className="flex w-64 shrink-0 flex-col gap-1 text-sm">
+          <div className="w-56 shrink-0 space-y-1 text-sm">
             <span className="block text-text-sub">品类（可多选）</span>
             <CategorySearchSelect
               multiple

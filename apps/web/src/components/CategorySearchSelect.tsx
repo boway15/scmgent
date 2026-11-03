@@ -77,6 +77,8 @@ function CategoryMultiSearchSelect({
       emptyHint="输入关键词或粘贴品类路径"
       noMatchHint="无匹配品类"
       className={className}
+      selectedDisplay="summary"
+      maxSelection={50}
     />
   );
 }

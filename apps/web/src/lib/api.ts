@@ -1220,6 +1220,18 @@ export type ForecastCalibrationImportResult = {
   applied?: number;
 };
 
+export type ForecastCalibrationClearResult = {
+  versionId: string;
+  rowsWithManual: number;
+  cleared?: number;
+  samples: Array<{
+    sku: string;
+    platform: string;
+    month: string;
+    manualDailyAvg: number;
+  }>;
+};
+
 export type SkuMonthlyForecastCell = {
   forecastYear: number;
   month: number;
@@ -4762,6 +4774,16 @@ export const api = {
     if (!res.ok) throw new Error(payload.message ?? '导入失败');
     return payload as ForecastCalibrationImportResult & { applied?: number };
   },
+  previewForecastCalibrationClear: (versionId: string) =>
+    request<ForecastCalibrationClearResult>(
+      `/api/sales-forecast-versions/${versionId}/calibration-clear/preview`,
+      { method: 'POST', body: JSON.stringify({}) },
+    ),
+  commitForecastCalibrationClear: (versionId: string) =>
+    request<ForecastCalibrationClearResult>(
+      `/api/sales-forecast-versions/${versionId}/calibration-clear/commit`,
+      { method: 'POST', body: JSON.stringify({}) },
+    ),
   resetAllSalesForecastData: () =>
     request<{
       deleted: {

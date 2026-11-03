@@ -1,6 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { api, type ForecastCalibrationImportResult } from '@/lib/api';
+import {
+  api,
+  type ForecastCalibrationClearResult,
+  type ForecastCalibrationImportResult,
+} from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { CalibrationImportByChannelHint } from '@/components/CalibrationImportByChannelHint';
 
@@ -33,6 +37,7 @@ export function ForecastCalibrationImportDialog({
   const qc = useQueryClient();
   const [csv, setCsv] = useState('');
   const [preview, setPreview] = useState<ForecastCalibrationImportResult | null>(null);
+  const [clearPreview, setClearPreview] = useState<ForecastCalibrationClearResult | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -49,6 +54,7 @@ export function ForecastCalibrationImportDialog({
     if (!open) {
       setCsv('');
       setPreview(null);
+      setClearPreview(null);
     }
   }, [open]);
 
@@ -63,8 +69,23 @@ export function ForecastCalibrationImportDialog({
       api.commitForecastCalibrationImport(versionId, input),
     onSuccess: async (data) => {
       setPreview(data);
+      setClearPreview(null);
       await qc.invalidateQueries({ queryKey: ['sales-forecast-horizon'] });
       await qc.invalidateQueries({ queryKey: ['sales-forecast-version', versionId] });
+      await qc.invalidateQueries({ queryKey: ['sales-forecast-sku-detail'] });
+      await qc.invalidateQueries({ queryKey: ['sales-forecast-horizon-row'] });
+    },
+  });
+
+  const clearCommitMutation = useMutation({
+    mutationFn: () => api.commitForecastCalibrationClear(versionId),
+    onSuccess: async (data) => {
+      setClearPreview(data);
+      setPreview(null);
+      await qc.invalidateQueries({ queryKey: ['sales-forecast-horizon'] });
+      await qc.invalidateQueries({ queryKey: ['sales-forecast-version', versionId] });
+      await qc.invalidateQueries({ queryKey: ['sales-forecast-sku-detail'] });
+      await qc.invalidateQueries({ queryKey: ['sales-forecast-horizon-row'] });
     },
   });
 
@@ -125,7 +146,7 @@ export function ForecastCalibrationImportDialog({
           />
         </div>
 
-        <div className="flex flex-wrap gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <Button
             variant="outline"
             size="sm"
@@ -136,6 +157,7 @@ export function ForecastCalibrationImportDialog({
                 window.alert('请先上传 CSV 或粘贴内容');
                 return;
               }
+              setClearPreview(null);
               previewMutation.mutate(input);
             }}
           >
@@ -152,6 +174,35 @@ export function ForecastCalibrationImportDialog({
             onClick={() => commitMutation.mutate(lastInput())}
           >
             {commitMutation.isPending ? '导入中…' : '确认导入'}
+          </Button>
+          <span className="hidden sm:inline text-border">|</span>
+          <Button
+            variant="outline"
+            size="sm"
+            className="text-destructive hover:text-destructive"
+            disabled={clearCommitMutation.isPending || previewMutation.isPending}
+            onClick={async () => {
+              try {
+                const stat = await api.previewForecastCalibrationClear(versionId);
+                setClearPreview(stat);
+                setPreview(null);
+                previewMutation.reset();
+                commitMutation.reset();
+                if (stat.rowsWithManual === 0) {
+                  window.alert('当前草稿没有已写入的分平台校准，无需撤销。');
+                  return;
+                }
+                const ok = window.confirm(
+                  `将清空本草稿内 ${stat.rowsWithManual} 条分平台校准（manual_daily_avg 与备注），生效恢复为系统预测。\n\n此操作不可从本弹窗自动恢复，请确认。`,
+                );
+                if (!ok) return;
+                clearCommitMutation.mutate();
+              } catch (err) {
+                window.alert(err instanceof Error ? err.message : '统计失败');
+              }
+            }}
+          >
+            {clearCommitMutation.isPending ? '撤销中…' : '撤销全部校准'}
           </Button>
         </div>
 
@@ -191,6 +242,26 @@ export function ForecastCalibrationImportDialog({
 
         {commitMutation.isSuccess && commitMutation.data?.applied != null && (
           <p className="text-sm text-primary">已写入 {commitMutation.data.applied} 条校准。</p>
+        )}
+
+        {clearPreview && clearPreview.rowsWithManual > 0 && !clearCommitMutation.isSuccess && (
+          <p className="text-sm text-text-sub">
+            当前草稿共有 {clearPreview.rowsWithManual} 条分平台校准可撤销（不含全平台行）。
+          </p>
+        )}
+
+        {clearCommitMutation.isSuccess && clearCommitMutation.data?.cleared != null && (
+          <p className="text-sm text-primary">
+            已撤销 {clearCommitMutation.data.cleared} 条校准，生效已恢复为系统预测。
+          </p>
+        )}
+
+        {clearCommitMutation.isError && (
+          <p className="text-sm text-destructive">
+            {clearCommitMutation.error instanceof Error
+              ? clearCommitMutation.error.message
+              : '撤销失败'}
+          </p>
         )}
       </div>
     </dialog>

@@ -1,8 +1,12 @@
-import { and, eq, inArray } from 'drizzle-orm';
+import { and, eq, inArray, isNotNull, ne, sql } from 'drizzle-orm';
 import { db, salesForecastMonthly, skus } from '@scm/db';
 import { roundDaily } from './forecast-baseline.js';
 import { isForecastV41PlatformCode } from './forecast-platform-scope.js';
-import { normalizeSalesPlatform, parseForecastMonth } from './forecast-demand.js';
+import {
+  formatForecastMonth,
+  normalizeSalesPlatform,
+  parseForecastMonth,
+} from './forecast-demand.js';
 import { assertVersionIsDraft } from './forecast-version.js';
 import { wideCsvBufferToRowObjects } from './sales-report-parser.js';
 
@@ -571,4 +575,99 @@ export async function runForecastCalibrationImport(input: {
   });
 
   return { ...result, applied: pendingUpdates.length };
+}
+
+export type ForecastCalibrationClearSample = {
+  sku: string;
+  platform: string;
+  month: string;
+  manualDailyAvg: number;
+};
+
+export type ForecastCalibrationClearResult = {
+  versionId: string;
+  rowsWithManual: number;
+  cleared?: number;
+  samples: ForecastCalibrationClearSample[];
+};
+
+function calibrationClearWhere(versionId: string) {
+  return and(
+    eq(salesForecastMonthly.versionId, versionId),
+    ne(salesForecastMonthly.platform, 'ALL'),
+    isNotNull(salesForecastMonthly.manualDailyAvg),
+  );
+}
+
+/** 清空草稿版本内全部分平台 manual_daily_avg（preview 仅统计，commit 执行 UPDATE） */
+export async function clearForecastVersionCalibrations(input: {
+  versionId: string;
+  commit: boolean;
+}): Promise<ForecastCalibrationClearResult> {
+  await assertVersionIsDraft(input.versionId);
+
+  const where = calibrationClearWhere(input.versionId);
+  const [countRow] = await db
+    .select({ count: sql<number>`count(*)::int` })
+    .from(salesForecastMonthly)
+    .where(where);
+  const rowsWithManual = countRow?.count ?? 0;
+
+  const sampleRows =
+    rowsWithManual > 0
+      ? await db
+          .select({
+            skuCode: skus.code,
+            platform: salesForecastMonthly.platform,
+            forecastYear: salesForecastMonthly.forecastYear,
+            month: salesForecastMonthly.month,
+            manualDailyAvg: salesForecastMonthly.manualDailyAvg,
+          })
+          .from(salesForecastMonthly)
+          .innerJoin(skus, eq(skus.id, salesForecastMonthly.skuId))
+          .where(where)
+          .orderBy(skus.code, salesForecastMonthly.platform, salesForecastMonthly.forecastYear, salesForecastMonthly.month)
+          .limit(SAMPLE_LIMIT)
+      : [];
+
+  const samples: ForecastCalibrationClearSample[] = sampleRows.map((row) => ({
+    sku: row.skuCode,
+    platform: normalizeSalesPlatform(row.platform),
+    month: formatForecastMonth(row.forecastYear, row.month),
+    manualDailyAvg: roundDaily(Number(row.manualDailyAvg)),
+  }));
+
+  if (!input.commit) {
+    return {
+      versionId: input.versionId,
+      rowsWithManual,
+      samples,
+    };
+  }
+
+  if (rowsWithManual === 0) {
+    return {
+      versionId: input.versionId,
+      rowsWithManual: 0,
+      cleared: 0,
+      samples: [],
+    };
+  }
+
+  const now = new Date();
+  await db
+    .update(salesForecastMonthly)
+    .set({
+      manualDailyAvg: null,
+      adjustReason: null,
+      updatedAt: now,
+    })
+    .where(where);
+
+  return {
+    versionId: input.versionId,
+    rowsWithManual,
+    cleared: rowsWithManual,
+    samples,
+  };
 }

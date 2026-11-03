@@ -57,7 +57,10 @@ import {
   createForecastAccuracyReviewQueue,
 } from '../lib/forecast-accuracy-diagnostics.js';
 import { buildForecastHorizonExportCsv, type ForecastHorizonExportMode } from '../lib/forecast-horizon-export.js';
-import { runForecastCalibrationImport } from '../lib/forecast-calibration-import.js';
+import {
+  clearForecastVersionCalibrations,
+  runForecastCalibrationImport,
+} from '../lib/forecast-calibration-import.js';
 import { runWalkForwardAccuracyBacktest } from '../lib/forecast-walkforward-backtest.js';
 import { csvAttachment } from '../lib/csv-export.js';
 import {
@@ -1438,6 +1441,43 @@ salesForecastRoutes.post(
   requireMenu('data.forecast'),
   requireForecastWrite,
   (c) => handleCalibrationImport(c, true),
+);
+
+async function handleCalibrationClear(c: Context, commit: boolean) {
+  const versionId = c.req.param('id')?.trim();
+  if (!versionId) return c.json({ message: 'version id required' }, 400);
+
+  try {
+    const result = await clearForecastVersionCalibrations({ versionId, commit });
+    if (commit && (result.cleared ?? 0) > 0) {
+      const user = await getCurrentUser(c);
+      await writeAuditLog(c, {
+        action: 'sales_forecast.calibration_clear',
+        resourceType: 'sales_forecast_version',
+        resourceId: versionId,
+        detail: { cleared: result.cleared, rowsWithManual: result.rowsWithManual },
+        user,
+      });
+    }
+    return c.json(result);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Clear calibration failed';
+    return c.json({ message }, 400);
+  }
+}
+
+salesForecastRoutes.post(
+  '/sales-forecast-versions/:id/calibration-clear/preview',
+  requireMenu('data.forecast'),
+  requireForecastWrite,
+  (c) => handleCalibrationClear(c, false),
+);
+
+salesForecastRoutes.post(
+  '/sales-forecast-versions/:id/calibration-clear/commit',
+  requireMenu('data.forecast'),
+  requireForecastWrite,
+  (c) => handleCalibrationClear(c, true),
 );
 
 salesForecastRoutes.post(

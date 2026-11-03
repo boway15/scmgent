@@ -58,7 +58,7 @@ const SECTIONS: HelpSection[] = [
           ：飞书采购镜像，每日同步为三池在途 / 未发。
         </li>
         <li>
-          <Link to="/inventory/planning-dashboard" className="text-primary hover:underline">规划驾驶舱</Link>
+          <Link to="/inventory/planning-dashboard" className="text-primary hover:underline">库存看板</Link>
           ：查看库存风险、预测覆盖与今日待办。
         </li>
       </ol>

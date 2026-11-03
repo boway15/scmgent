@@ -30,7 +30,7 @@ export function buildPlanningDashboardCards(
       label: '运营 SKU',
       value: String(operational),
       href: '/inventory/overview',
-      hint: '近 30 天出现在周转表，或近 90 天有销量；驾驶舱 KPI 分母',
+      hint: '近 30 天出现在周转表，或近 90 天有销量；看板 KPI 分母',
     },
     {
       label: '启用 SKU',
@@ -102,7 +102,7 @@ export function PlanningDashboardPage() {
 
   return (
     <div className="space-y-6">
-      <PageHeader title="规划驾驶舱" description="SKU 构成与按可售天数分档的库存风险" />
+      <PageHeader title="库存看板" description="SKU 构成与按可售天数分档的库存风险" />
 
       <ProductScopeSwitch />
 
@@ -136,7 +136,7 @@ export function PlanningDashboardPage() {
           />
         ) : null}
         {dashboard.data ? (
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
             {compositionCards.map((card) => (
               <Link key={card.label} to={card.href}>
                 <Card
@@ -178,7 +178,7 @@ export function PlanningDashboardPage() {
           />
         ) : null}
         {risk.data ? (
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
             {INVENTORY_RISK_SCENES.map((scene) => {
               const value = risk.data?.[scene.view] ?? 0;
               return (

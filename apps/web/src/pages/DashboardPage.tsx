@@ -66,7 +66,7 @@ export function DashboardPage() {
               <span className="font-medium text-text-main">
                 库存风险、补货建议、预测覆盖与补货口径
               </span>
-              <span className="text-primary">进入规划驾驶舱 →</span>
+              <span className="text-primary">进入库存看板 →</span>
             </CardContent>
           </Card>
         </Link>

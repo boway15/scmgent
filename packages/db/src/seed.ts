@@ -35,7 +35,7 @@ const MENU_SEEDS: MenuSeed[] = [
     children: [
       {
         code: 'inventory.planning_dashboard',
-        name: '规划驾驶舱',
+        name: '库存看板',
         path: '/inventory/planning-dashboard',
         sortOrder: 10,
         isLeaf: true,

@@ -792,6 +792,13 @@
       "when": 1788092200000,
       "tag": "0131_deactivate_etsy_channel",
       "breakpoints": true
+    },
+    {
+      "idx": 113,
+      "version": "6",
+      "when": 1788178600000,
+      "tag": "0132_planning_dashboard_menu_rename",
+      "breakpoints": true
     }
   ]
 }

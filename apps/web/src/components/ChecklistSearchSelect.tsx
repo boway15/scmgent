@@ -3,6 +3,20 @@ import { placeFixedPopover } from '@/components/costing/place-fixed-popover';
 import { Input } from '@/components/ui/input';
 import { cn } from '@/lib/utils';
 
+function BreakablePath({ text }: { text: string }) {
+  const parts = text.split(/([/\-])/);
+  return parts.map((part, index) =>
+    part === '/' || part === '-' ? (
+      <span key={index}>
+        {part}
+        <wbr />
+      </span>
+    ) : (
+      <span key={index}>{part}</span>
+    ),
+  );
+}
+
 type ChecklistSearchSelectProps = {
   value: string[];
   onChange: (value: string[]) => void;
@@ -52,7 +66,7 @@ export function ChecklistSearchSelect({
     const anchor = anchorRef.current;
     if (!anchor) return;
     const rect = anchor.getBoundingClientRect();
-    const width = Math.max(rect.width, 360);
+    const width = rect.width;
     const pos = placeFixedPopover({
       trigger: rect,
       panelWidth: width,
@@ -149,7 +163,9 @@ export function ChecklistSearchSelect({
               title={item}
               className="inline-flex max-w-full items-start gap-1 rounded-md bg-primary/10 px-2 py-1 text-xs leading-5 text-primary"
             >
-              <span className="min-w-0 whitespace-normal break-all text-left">{item}</span>
+              <span className="min-w-0 whitespace-normal break-words text-left">
+                <BreakablePath text={item} />
+              </span>
               <button
                 type="button"
                 className="shrink-0 leading-5"
@@ -173,7 +189,7 @@ export function ChecklistSearchSelect({
               ? { top: panelStyle.top, left: panelStyle.left, width: panelStyle.width }
               : undefined
           }
-          className="fixed z-50 max-h-80 overflow-auto rounded-md border border-border bg-card py-1 text-sm shadow-md"
+          className="fixed z-50 max-h-80 overflow-auto overflow-x-hidden rounded-md border border-border bg-card py-1 text-sm shadow-md"
         >
           <li>
             <button
@@ -216,7 +232,9 @@ export function ChecklistSearchSelect({
                     >
                       ✓
                     </span>
-                    <span className="min-w-0 flex-1 whitespace-normal break-all leading-5">{item}</span>
+                    <span className="min-w-0 flex-1 whitespace-normal break-words leading-5">
+                      <BreakablePath text={item} />
+                    </span>
                   </button>
                 </li>
               );

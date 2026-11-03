@@ -189,7 +189,7 @@ function CategorySingleSearchSelect({
                   aria-selected={item === value}
                   title={item}
                   className={cn(
-                    'block w-full whitespace-normal break-all px-3 py-2 text-left leading-5 hover:bg-muted/60',
+                    'block w-full whitespace-normal break-words px-3 py-2 text-left leading-5 hover:bg-muted/60',
                     item === value && 'bg-primary/10 text-primary',
                   )}
                   onMouseDown={(e) => e.preventDefault()}

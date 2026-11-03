@@ -278,7 +278,7 @@ export function ForecastDataExplorer({
               onKeyDown={(e) => e.key === 'Enter' && applyFilters()}
             />
           </label>
-          <label className="w-full max-w-xl space-y-1 text-sm">
+          <label className="w-64 shrink-0 space-y-1 text-sm">
             <span className="text-text-sub">品类（可多选）</span>
             <CategorySearchSelect
               multiple

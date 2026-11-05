@@ -1,5 +1,14 @@
+import { useState } from 'react';
+import { useMutation } from '@tanstack/react-query';
 import type { DemandPlanSkuDetail, DemandPlanSkuWeeklyForecast } from '@/lib/api';
-import { formatDemandPlanDaily } from '@/lib/demand-plan-utils';
+import { api } from '@/lib/api';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import {
+  demandPlanPeriodHeaderTitle,
+  formatDemandPlanDaily,
+  formatDemandPlanPeriodLabel,
+} from '@/lib/demand-plan-utils';
 import {
   formatConfidenceLabel,
   formatTierDisplayLabel,
@@ -35,12 +44,98 @@ import { aiAssistBadgeClass } from '@/components/ForecastAssistPanel';
 import { cn } from '@/lib/utils';
 
 type Props = {
+  versionId: string;
   forecastVersion: DemandPlanSkuDetail['forecastVersion'];
   forecastHorizon: DemandPlanSkuDetail['forecastHorizon'];
   forecastContext: DemandPlanSkuDetail['forecastContext'];
   weekRows: DemandPlanSkuWeeklyForecast[];
   productCategory?: string | null;
+  planCalibrationEditable?: boolean;
+  onPlanCalibrationSaved?: () => void;
 };
+
+function PlanWeekCalibrationCell({
+  versionId,
+  row,
+  editable,
+  onSaved,
+}: {
+  versionId: string;
+  row: DemandPlanSkuWeeklyForecast;
+  editable: boolean;
+  onSaved?: () => void;
+}) {
+  const [manualInput, setManualInput] = useState(
+    row.planManualDailyAvg != null ? row.planManualDailyAvg : '',
+  );
+  const [reasonInput, setReasonInput] = useState(row.planAdjustReason ?? '');
+
+  const save = useMutation({
+    mutationFn: () => {
+      if (!row.planWeekId) {
+        throw new Error('该周计划行不存在，无法校准');
+      }
+      const trimmed = manualInput.trim();
+      const manualDailyAvg = trimmed === '' ? null : Number(trimmed);
+      if (manualDailyAvg != null && !Number.isFinite(manualDailyAvg)) {
+        throw new Error('请输入有效数字');
+      }
+      return api.updateDemandPlanWeek(versionId, row.planWeekId, {
+        manualDailyAvg,
+        adjustReason: reasonInput.trim(),
+      });
+    },
+    onSuccess: () => onSaved?.(),
+  });
+
+  if (!editable || !row.planWeekId) {
+    return (
+      <span className={row.planManualDailyAvg != null ? 'text-amber-700 dark:text-amber-300' : ''}>
+        {row.planManualDailyAvg ? formatDemandPlanDaily(row.planManualDailyAvg) : '—'}
+      </span>
+    );
+  }
+
+  const savedManual = row.planManualDailyAvg ?? '';
+  const isDirty =
+    manualInput.trim() !== savedManual.trim() ||
+    reasonInput.trim() !== (row.planAdjustReason ?? '').trim();
+
+  return (
+    <div className="flex min-w-[8rem] flex-col gap-1">
+      <Input
+        className="h-8 font-numeric text-sm"
+        inputMode="decimal"
+        placeholder="系统"
+        value={manualInput}
+        onChange={(event) => setManualInput(event.target.value)}
+      />
+      <Input
+        className="h-7 text-xs"
+        placeholder="调整原因"
+        value={reasonInput}
+        onChange={(event) => setReasonInput(event.target.value)}
+      />
+      {isDirty ? (
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          className="h-7 text-xs"
+          disabled={save.isPending}
+          onClick={() => save.mutate()}
+        >
+          {save.isPending ? '保存中…' : '保存'}
+        </Button>
+      ) : null}
+      {save.isError ? (
+        <span className="text-xs text-destructive">
+          {save.error instanceof Error ? save.error.message : '保存失败'}
+        </span>
+      ) : null}
+    </div>
+  );
+}
 
 const formatFactor = (value: number | null | undefined) =>
   value == null || !Number.isFinite(value) ? '-' : value.toFixed(2);
@@ -51,14 +146,24 @@ const formatNumber = (value: number | null | undefined) =>
   value == null || !Number.isFinite(value) ? '-' : value.toFixed(2);
 
 export function DemandPlanWeeklyForecastTable({
+  versionId,
   forecastVersion,
   forecastHorizon,
   forecastContext,
   weekRows,
   productCategory,
+  planCalibrationEditable = false,
+  onPlanCalibrationSaved,
 }: Props) {
   const monthCells = forecastHorizon?.months ?? [];
-  const profileSegment = forecastHorizon?.profileSegment ?? forecastContext?.profileSegment ?? null;
+  const planStoredTier =
+    weekRows.find((row) => row.planBlendMeta?.profileSegment?.trim())?.planBlendMeta?.profileSegment ??
+    null;
+  const profileSegment =
+    forecastHorizon?.profileSegment ??
+    forecastContext?.profileSegment ??
+    planStoredTier ??
+    null;
   const aiAssistMode = resolveAiAssistModeFromMonths(monthCells);
   const profileSegmentLabel = formatTierDisplayLabel(profileSegment, aiAssistMode);
   const useV41DetailColumns = monthCells.some((cell) => isAllCatV41ForecastCell(cell));
@@ -99,12 +204,15 @@ export function DemandPlanWeeklyForecastTable({
           : isAiAssistDetail
             ? ' AI 辅助预测展示品类季节趋势与预测结果。'
             : ' legacy 模式展示近端/同比混合权重与品类季节趋势系数。'}
-        {' 已发生周展示实际日均；未来周为 -。'}
+        {' 已发生周展示实际日均，便于对照计划生效；未来周为 -。周次与矩阵宽表一致（版本开始周起 26 周）。'}
         {forecastVersion ? (
           <span className="ml-1 font-mono">预测版本 {forecastVersion.versionNo}</span>
         ) : (
-          <span className="ml-1">暂无已发布销量预测。</span>
+          <span className="ml-1">暂无已发布销量预测（计划列仍可对齐矩阵）。</span>
         )}
+        {planCalibrationEditable ? (
+          <span className="ml-1 text-text-main">草稿可在此校准计划人工日均。</span>
+        ) : null}
       </p>
       <div className="overflow-auto">
         <table className="min-w-full text-sm">
@@ -209,8 +317,13 @@ export function DemandPlanWeeklyForecastTable({
               />
               <ForecastColumnHeader
                 className="whitespace-nowrap"
-                label="实际日均"
-                help={getForecastHorizonColumnHelp('actual', columnHelpCtx)}
+                label="计划系统"
+                help="周需求计划系统日均（近窗 U × 月形状混合），与矩阵宽表一致。"
+              />
+              <ForecastColumnHeader
+                className="whitespace-nowrap"
+                label="计划校准"
+                help="草稿可改人工日均；与长表、校准导入写入同一字段。"
               />
               <ForecastColumnHeader
                 className="whitespace-nowrap"
@@ -219,8 +332,15 @@ export function DemandPlanWeeklyForecastTable({
               />
               <ForecastColumnHeader
                 className="whitespace-nowrap"
+                label="实际日均"
+                help={getForecastHorizonColumnHelp('actual', columnHelpCtx)}
+                helpAlign="end"
+              />
+              <ForecastColumnHeader
+                className="whitespace-nowrap"
                 label="Champion"
                 help={DEMAND_PLAN_CHAMPION_COLUMN_HELP}
+                helpAlign="end"
               />
             </tr>
           </thead>
@@ -260,9 +380,12 @@ export function DemandPlanWeeklyForecastTable({
 
               return (
                 <tr key={row.weekKey} className="border-b border-border/60">
-                  <td className="w-0 p-2 font-mono whitespace-nowrap">
+                  <td
+                    className="w-0 p-2 font-mono whitespace-nowrap"
+                    title={demandPlanPeriodHeaderTitle(row.weekKey, 'week')}
+                  >
                     <span className="inline-flex items-center gap-1">
-                      {row.weekKey}
+                      {formatDemandPlanPeriodLabel(row.weekKey, 'week')}
                       {row.aiAssistRationale ? (
                         <span
                           className={aiAssistBadgeClass(row.aiAssistMode)}
@@ -406,17 +529,17 @@ export function DemandPlanWeeklyForecastTable({
                       {formatNumber(row.effectiveDailyAvg)}
                     </span>
                   </td>
-                  <td className="p-2 align-middle font-numeric whitespace-nowrap">
-                    {row.actualDailyAvg == null ? (
-                      '-'
-                    ) : (
-                      <span className="inline-flex items-center gap-1">
-                        <span>{formatNumber(row.actualDailyAvg)}</span>
-                        {row.actualInProgress ? (
-                          <span className="text-[10px] font-normal text-text-sub">进行中</span>
-                        ) : null}
-                      </span>
-                    )}
+                  <td className="p-2 font-numeric whitespace-nowrap text-text-sub">
+                    {row.planSystemDailyAvg ? formatDemandPlanDaily(row.planSystemDailyAvg) : '—'}
+                  </td>
+                  <td className="p-2 align-top whitespace-nowrap">
+                    <PlanWeekCalibrationCell
+                      key={`${row.weekKey}-${row.planManualDailyAvg ?? ''}-${row.planAdjustReason ?? ''}`}
+                      versionId={versionId}
+                      row={row}
+                      editable={planCalibrationEditable}
+                      onSaved={onPlanCalibrationSaved}
+                    />
                   </td>
                   <td
                     className={cn(
@@ -429,6 +552,18 @@ export function DemandPlanWeeklyForecastTable({
                     )}
                   >
                     {row.planEffectiveDailyAvg ? formatDemandPlanDaily(row.planEffectiveDailyAvg) : '—'}
+                  </td>
+                  <td className="p-2 align-middle font-numeric whitespace-nowrap">
+                    {row.actualDailyAvg == null ? (
+                      '-'
+                    ) : (
+                      <span className="inline-flex items-center gap-1">
+                        <span>{formatNumber(row.actualDailyAvg)}</span>
+                        {row.actualInProgress ? (
+                          <span className="text-[10px] font-normal text-text-sub">进行中</span>
+                        ) : null}
+                      </span>
+                    )}
                   </td>
                   <td className="p-2 font-numeric text-text-sub">
                     {row.championForecastDaily ? formatDemandPlanDaily(row.championForecastDaily) : '—'}
@@ -479,6 +614,44 @@ export function DemandPlanWeeklyForecastTable({
           ) : null}
         </div>
       )}
+
+      <details className="rounded-md border border-border bg-muted/20 p-3 text-sm">
+        <summary className="cursor-pointer font-medium text-text-main">周系统合成（blend_meta）</summary>
+        {weekRows.some((row) => row.planBlendMeta) ? (
+          <div className="mt-2 max-h-48 overflow-auto">
+            <table className="min-w-full text-xs">
+              <thead>
+                <tr className="text-left text-text-sub">
+                  <th className="p-1 font-normal">周</th>
+                  <th className="p-1 font-normal">idx</th>
+                  <th className="p-1 font-normal">U</th>
+                  <th className="p-1 font-normal">w近</th>
+                  <th className="p-1 font-normal">w远</th>
+                  <th className="p-1 font-normal">F_w</th>
+                </tr>
+              </thead>
+              <tbody>
+                {weekRows.map((row) => {
+                  const meta = row.planBlendMeta;
+                  if (!meta) return null;
+                  return (
+                    <tr key={`blend-${row.weekKey}`} className="border-t border-border/40 font-numeric">
+                      <td className="p-1 font-mono">{formatDemandPlanPeriodLabel(row.weekKey, 'week')}</td>
+                      <td className="p-1">{meta.weekIndex}</td>
+                      <td className="p-1">{formatNumber(meta.U)}</td>
+                      <td className="p-1">{formatPct(meta.wNear)}</td>
+                      <td className="p-1">{formatPct(meta.wYoy)}</td>
+                      <td className="p-1">{formatNumber(meta.weekForecastDaily)}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <p className="mt-2 text-xs text-text-sub">历史版本无明细；重新生成草稿后可见 U / weekIndex / 混合权重。</p>
+        )}
+      </details>
     </section>
   );
 }

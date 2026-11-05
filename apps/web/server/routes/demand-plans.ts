@@ -1,5 +1,5 @@
 import { and, desc, eq, ilike, inArray, or, sql, type SQL } from 'drizzle-orm';
-import { Hono } from 'hono';
+import { Hono, type Context } from 'hono';
 import {
   db,
   demandPlanMonthly,
@@ -35,13 +35,54 @@ import { parseListPagination } from '../lib/list-pagination.js';
 import { DEMAND_PLAN_HORIZON_WEEKS } from '../lib/planning-calendar.js';
 import { requireMenu, requireWrite } from '../lib/rbac.js';
 import { loadDemandPlanSkuDetail } from '../lib/demand-plan-sku-detail.js';
+import { resolveDemandPlanChampionForecastVersion } from '../lib/demand-plan-champion.js';
 import { resolvePublishedVersionIdForSku } from '../lib/forecast-published-resolve.js';
-import { searchSkuProjectGroups } from '../lib/sku-category.js';
-import { excludeAccessorySkuSql } from '../lib/planning-accessory-filter.js';
+import {
+  categoriesMatchFilterCondition,
+  resolveCategoryFilters,
+  searchSkuProjectGroups,
+} from '../lib/sku-category.js';
+import {
+  excludeAccessorySkuSql,
+  parseProductScope,
+  productScopeSql,
+  type ProductScope,
+} from '../lib/planning-accessory-filter.js';
+import {
+  buildDemandPlanListRowKeys,
+  demandPlanStoredRowMetaBySku,
+  enrichDemandPlanWideRows,
+  filterSkusByProfileSegment,
+  resolveDemandPlanChannelQuery,
+  sortDemandPlanSkus,
+  paginateDemandPlanLongPairs,
+  type DemandPlanSkuRef,
+} from '../lib/demand-plan-enrich.js';
+import { loadPublishedForecastSkuMetaBySkuIds } from '../lib/forecast-published-resolve.js';
+import {
+  buildDemandPlanHorizonExportCsv,
+  loadDemandPlanHorizonExportDataset,
+  type DemandPlanHorizonExportMode,
+} from '../lib/demand-plan-horizon-export.js';
+import {
+  buildDemandPlanAccuracyExportCsv,
+  buildDemandPlanAccuracyRows,
+  paginateDemandPlanAccuracySkuSummaries,
+} from '../lib/demand-plan-accuracy-export.js';
+import { buildDemandPlanReviewSummary } from '../lib/demand-plan-review-summary.js';
+import {
+  clearDemandPlanVersionCalibrations,
+  runDemandPlanCalibrationImport,
+} from '../lib/demand-plan-calibration-import.js';
+import { csvAttachment } from '../lib/csv-export.js';
+import { writeAuditLog } from '../lib/audit-log.js';
+import { parseForecastSkuQuery } from '../lib/forecast-sku-query.js';
+import { resolveHorizonProfileSegmentFilter } from '../lib/forecast-horizon.js';
 
 export function parseGenerateBody(body: unknown): {
   projectGroup?: string;
   versionName?: string;
+  startWeek?: string;
 } {
   const rec = body && typeof body === 'object' ? (body as Record<string, unknown>) : {};
   const projectGroupRaw = typeof rec.projectGroup === 'string' ? rec.projectGroup.trim() : '';
@@ -50,7 +91,9 @@ export function parseGenerateBody(body: unknown): {
     typeof rec.versionName === 'string' && rec.versionName.trim()
       ? rec.versionName.trim()
       : undefined;
-  return { projectGroup, versionName };
+  const startWeek =
+    typeof rec.startWeek === 'string' && rec.startWeek.trim() ? rec.startWeek.trim() : undefined;
+  return { projectGroup, versionName, startWeek };
 }
 
 export function parsePublishBody(body: unknown): { adopt: boolean } {
@@ -207,8 +250,85 @@ type DemandPlanPeriodRow = {
   unconstrainedRecentDaily: string | null;
   championForecastDaily: string | null;
   source: string;
+  blendMeta?: import('@scm/db').DemandPlanWeekBlendMeta | null;
   inStockDayRatio?: string | null;
 };
+
+const MAX_SCOPE_FILTERS = 50;
+
+function readDemandPlanPlatformsQuery(c: Context): string[] {
+  const fromMulti = c.req.queries('platforms') ?? [];
+  const fromSingle = c.req.query('platforms')?.trim();
+  const raw = fromMulti.length
+    ? fromMulti
+    : fromSingle
+      ? [fromSingle]
+      : [];
+  return [
+    ...new Set(
+      raw
+        .flatMap((item) => item.split(','))
+        .map((item) => item.trim())
+        .filter(Boolean),
+    ),
+  ];
+}
+
+function readDemandPlanCategoryQuery(c: Context): { categories: string[] } | { error: string } {
+  const fromMulti = [
+    ...new Set((c.req.queries('categories') ?? []).map((item) => item.trim()).filter(Boolean)),
+  ];
+  const single = c.req.query('category')?.trim();
+  const categories = fromMulti.length ? fromMulti : single ? [single] : [];
+  if (categories.length > MAX_SCOPE_FILTERS) {
+    return { error: `品类最多选择 ${MAX_SCOPE_FILTERS} 个` };
+  }
+  return { categories };
+}
+
+function demandPlanSkuCodeFilterSql(skuCode?: string): SQL | undefined {
+  const query = parseForecastSkuQuery(skuCode);
+  if (query.kind === 'fuzzy') return ilike(skus.code, `%${query.token}%`);
+  if (query.kind === 'exact') return inArray(sql`upper(${skus.code})`, query.codes);
+  return undefined;
+}
+
+function demandPlanCategoryFilterSql(categories?: string[]): SQL | undefined {
+  const filters = resolveCategoryFilters({ categories });
+  if (!filters.length) return undefined;
+  return categoriesMatchFilterCondition(sql<string | null>`null`, skus.category, filters);
+}
+
+function parseDemandPlanListQuery(c: Context):
+  | {
+      channelView?: string;
+      platforms: string[];
+      profileSegment?: string;
+      pendingCalibration: boolean;
+      categories: string[];
+      productScope: ProductScope;
+    }
+  | { error: string } {
+  const channelView = c.req.query('channelView')?.trim() || undefined;
+  const platforms = readDemandPlanPlatformsQuery(c);
+  const pendingCalibration = c.req.query('pendingCalibration')?.trim() === 'true';
+  const profileSegmentRaw = c.req.query('profileSegment')?.trim() || undefined;
+  const profileSegment =
+    resolveHorizonProfileSegmentFilter({
+      profileSegment: profileSegmentRaw,
+      pendingCalibration,
+    }) ?? undefined;
+  const categoryQuery = readDemandPlanCategoryQuery(c);
+  if ('error' in categoryQuery) return categoryQuery;
+  return {
+    channelView,
+    platforms,
+    profileSegment,
+    pendingCalibration,
+    categories: categoryQuery.categories,
+    productScope: parseProductScope(c.req.query('productScope')),
+  };
+}
 
 function buildWideItems(
   skuPage: Array<{ skuId: string; skuCode: string | null }>,
@@ -240,49 +360,93 @@ async function listDemandPlanWeeklyPage(input: {
   pageSize: number;
   offset: number;
   skuScopeCond?: SQL;
+  channelView?: string;
+  platforms?: string[];
+  profileSegment?: string;
+  categories?: string[];
+  productScope?: ProductScope;
+  periods: string[];
 }) {
-  const filters = [eq(demandPlanWeekly.versionId, input.versionId), excludeAccessorySkuSql()];
-  if (input.skuScopeCond) filters.push(input.skuScopeCond);
-  if (input.skuCode) {
-    filters.push(ilike(skus.code, `%${input.skuCode}%`));
-  }
-  const where = and(...filters);
-  const [items, [countRow], [skuCountRow]] = await Promise.all([
-    db
-      .select({
-        id: demandPlanWeekly.id,
-        skuId: demandPlanWeekly.skuId,
-        skuCode: skus.code,
-        warehouseCode: demandPlanWeekly.warehouseCode,
-        period: demandPlanWeekly.period,
-        systemDailyAvg: demandPlanWeekly.systemDailyAvg,
-        manualDailyAvg: demandPlanWeekly.manualDailyAvg,
-        adjustReason: demandPlanWeekly.adjustReason,
-        unconstrainedRecentDaily: demandPlanWeekly.unconstrainedRecentDaily,
-        championForecastDaily: demandPlanWeekly.championForecastDaily,
-        source: demandPlanWeekly.source,
-      })
-      .from(demandPlanWeekly)
-      .innerJoin(skus, eq(skus.id, demandPlanWeekly.skuId))
-      .where(where)
-      .orderBy(skus.code, demandPlanWeekly.period)
-      .limit(input.pageSize)
-      .offset(input.offset),
-    db
-      .select({ count: sql<number>`count(*)::int` })
-      .from(demandPlanWeekly)
-      .innerJoin(skus, eq(skus.id, demandPlanWeekly.skuId))
-      .where(where),
-    db
-      .select({ count: sql<number>`count(distinct ${demandPlanWeekly.skuId})::int` })
-      .from(demandPlanWeekly)
-      .innerJoin(skus, eq(skus.id, demandPlanWeekly.skuId))
-      .where(where),
+  const channel = resolveDemandPlanChannelQuery({
+    channelView: input.channelView,
+    platforms: input.platforms,
+  });
+  const allSkus = await listDemandPlanWeeklySkuRefs(input);
+  const skuIdsAll = allSkus.map((row) => row.skuId);
+  const [metaBySku, storedMetaBySku] = await Promise.all([
+    loadPublishedForecastSkuMetaBySkuIds(skuIdsAll),
+    loadDemandPlanStoredRowMetaForSkus(input.versionId, skuIdsAll),
   ]);
+  const filtered = filterSkusByProfileSegment(
+    allSkus,
+    metaBySku,
+    input.profileSegment,
+    storedMetaBySku,
+  );
+  const sorted = sortDemandPlanSkus(filtered, metaBySku, storedMetaBySku);
+  const rowKeys = buildDemandPlanListRowKeys(sorted, channel);
+  const { pairs, total } = paginateDemandPlanLongPairs({
+    rowKeys,
+    periods: input.periods,
+    offset: input.offset,
+    pageSize: input.pageSize,
+  });
+  const pageRowKeys = [...new Map(pairs.map((pair) => [`${pair.rowKey.skuId}::${pair.rowKey.platform}`, pair.rowKey])).values()];
+  const skuIds = [...new Set(pageRowKeys.map((key) => key.skuId))];
+  const rows: DemandPlanPeriodRow[] = skuIds.length
+    ? await db
+        .select({
+          id: demandPlanWeekly.id,
+          skuId: demandPlanWeekly.skuId,
+          skuCode: skus.code,
+          warehouseCode: demandPlanWeekly.warehouseCode,
+          period: demandPlanWeekly.period,
+          systemDailyAvg: demandPlanWeekly.systemDailyAvg,
+          manualDailyAvg: demandPlanWeekly.manualDailyAvg,
+          adjustReason: demandPlanWeekly.adjustReason,
+          unconstrainedRecentDaily: demandPlanWeekly.unconstrainedRecentDaily,
+          championForecastDaily: demandPlanWeekly.championForecastDaily,
+          source: demandPlanWeekly.source,
+          blendMeta: demandPlanWeekly.blendMeta,
+        })
+        .from(demandPlanWeekly)
+        .innerJoin(skus, eq(skus.id, demandPlanWeekly.skuId))
+        .where(and(eq(demandPlanWeekly.versionId, input.versionId), inArray(demandPlanWeekly.skuId, skuIds)))
+        .orderBy(skus.code, demandPlanWeekly.period)
+    : [];
+  const skuCodeById = new Map(sorted.map((row) => [row.skuId, row.skuCode ?? '—']));
+  const skuNameById = new Map(sorted.map((row) => [row.skuId, row.skuName ?? null]));
+  const wideRows = enrichDemandPlanWideRows({
+    rowKeys: pageRowKeys,
+    skuCodeById,
+    skuNameById,
+    rows,
+    metaBySku,
+    storedMetaBySku,
+    channel,
+  });
+  const wideByKey = new Map(
+    wideRows.map((row) => [`${row.skuId}::${row.platform}`, row] as const),
+  );
+  const items = pairs
+    .map(({ rowKey, period }) => {
+      const wide = wideByKey.get(`${rowKey.skuId}::${rowKey.platform}`);
+      const cell = wide?.cells[period];
+      if (!wide || !cell) return null;
+      return {
+        ...cell,
+        skuCode: wide.skuCode,
+        skuName: wide.skuName,
+        platform: wide.platform,
+        profileSegment: wide.profileSegment,
+        lifecycle: wide.lifecycle,
+      };
+    })
+    .filter((row): row is NonNullable<typeof row> => row != null);
   return {
     items,
-    total: countRow?.count ?? 0,
-    skuTotal: skuCountRow?.count ?? 0,
+    total,
+    skuTotal: sorted.length,
     page: input.page,
     pageSize: input.pageSize,
   };
@@ -344,6 +508,35 @@ async function listDemandPlanMonthlyPage(input: {
   };
 }
 
+async function listDemandPlanWeeklySkuRefs(input: {
+  versionId: string;
+  skuCode?: string;
+  skuScopeCond?: SQL;
+  categories?: string[];
+  productScope?: ProductScope;
+}): Promise<DemandPlanSkuRef[]> {
+  const filters: SQL[] = [
+    eq(demandPlanWeekly.versionId, input.versionId),
+    productScopeSql(input.productScope ?? 'goods'),
+  ];
+  if (input.skuScopeCond) filters.push(input.skuScopeCond);
+  const skuCond = demandPlanSkuCodeFilterSql(input.skuCode);
+  if (skuCond) filters.push(skuCond);
+  const categoryCond = demandPlanCategoryFilterSql(input.categories);
+  if (categoryCond) filters.push(categoryCond);
+  const where = and(...filters);
+  return db
+    .select({
+      skuId: demandPlanWeekly.skuId,
+      skuCode: skus.code,
+      skuName: skus.name,
+    })
+    .from(demandPlanWeekly)
+    .innerJoin(skus, eq(skus.id, demandPlanWeekly.skuId))
+    .where(where)
+    .groupBy(demandPlanWeekly.skuId, skus.code, skus.name);
+}
+
 async function listDemandPlanWeeklyWide(input: {
   versionId: string;
   skuCode?: string;
@@ -351,33 +544,32 @@ async function listDemandPlanWeeklyWide(input: {
   pageSize: number;
   offset: number;
   skuScopeCond?: SQL;
+  channelView?: string;
+  platforms?: string[];
+  profileSegment?: string;
+  categories?: string[];
+  productScope?: ProductScope;
 }) {
-  const filters = [eq(demandPlanWeekly.versionId, input.versionId), excludeAccessorySkuSql()];
-  if (input.skuScopeCond) filters.push(input.skuScopeCond);
-  if (input.skuCode) {
-    filters.push(ilike(skus.code, `%${input.skuCode}%`));
-  }
-  const where = and(...filters);
-  const [skuPage, [skuCountRow]] = await Promise.all([
-    db
-      .select({
-        skuId: demandPlanWeekly.skuId,
-        skuCode: skus.code,
-      })
-      .from(demandPlanWeekly)
-      .innerJoin(skus, eq(skus.id, demandPlanWeekly.skuId))
-      .where(where)
-      .groupBy(demandPlanWeekly.skuId, skus.code)
-      .orderBy(skus.code)
-      .limit(input.pageSize)
-      .offset(input.offset),
-    db
-      .select({ count: sql<number>`count(distinct ${demandPlanWeekly.skuId})::int` })
-      .from(demandPlanWeekly)
-      .innerJoin(skus, eq(skus.id, demandPlanWeekly.skuId))
-      .where(where),
+  const channel = resolveDemandPlanChannelQuery({
+    channelView: input.channelView,
+    platforms: input.platforms,
+  });
+  const allSkus = await listDemandPlanWeeklySkuRefs(input);
+  const skuIdsAll = allSkus.map((row) => row.skuId);
+  const [metaBySku, storedMetaBySku] = await Promise.all([
+    loadPublishedForecastSkuMetaBySkuIds(skuIdsAll),
+    loadDemandPlanStoredRowMetaForSkus(input.versionId, skuIdsAll),
   ]);
-  const skuIds = skuPage.map((row) => row.skuId);
+  const filtered = filterSkusByProfileSegment(
+    allSkus,
+    metaBySku,
+    input.profileSegment,
+    storedMetaBySku,
+  );
+  const sorted = sortDemandPlanSkus(filtered, metaBySku, storedMetaBySku);
+  const rowKeys = buildDemandPlanListRowKeys(sorted, channel);
+  const pageKeys = rowKeys.slice(input.offset, input.offset + input.pageSize);
+  const skuIds = [...new Set(pageKeys.map((key) => key.skuId))];
   const rows: DemandPlanPeriodRow[] = skuIds.length
     ? await db
         .select({
@@ -392,15 +584,26 @@ async function listDemandPlanWeeklyWide(input: {
           unconstrainedRecentDaily: demandPlanWeekly.unconstrainedRecentDaily,
           championForecastDaily: demandPlanWeekly.championForecastDaily,
           source: demandPlanWeekly.source,
+          blendMeta: demandPlanWeekly.blendMeta,
         })
         .from(demandPlanWeekly)
         .innerJoin(skus, eq(skus.id, demandPlanWeekly.skuId))
         .where(and(eq(demandPlanWeekly.versionId, input.versionId), inArray(demandPlanWeekly.skuId, skuIds)))
         .orderBy(skus.code, demandPlanWeekly.period)
     : [];
+  const skuCodeById = new Map(sorted.map((row) => [row.skuId, row.skuCode ?? '—']));
+  const skuNameById = new Map(sorted.map((row) => [row.skuId, row.skuName ?? null]));
   return {
-    items: buildWideItems(skuPage, rows),
-    total: skuCountRow?.count ?? 0,
+    items: enrichDemandPlanWideRows({
+      rowKeys: pageKeys,
+      skuCodeById,
+      skuNameById,
+      rows,
+      metaBySku,
+      storedMetaBySku,
+      channel,
+    }),
+    total: rowKeys.length,
     page: input.page,
     pageSize: input.pageSize,
   };
@@ -469,12 +672,422 @@ async function listDemandPlanMonthlyWide(input: {
   };
 }
 
+async function readDemandPlanCalibrationImportCsvBuffer(c: Context): Promise<Buffer | Response> {
+  const contentType = c.req.header('content-type') ?? '';
+  if (contentType.includes('multipart/form-data')) {
+    const form = await c.req.formData();
+    const file = form.get('file');
+    if (!(file instanceof File)) {
+      return c.json({ message: 'file is required' }, 400);
+    }
+    return Buffer.from(await file.arrayBuffer());
+  }
+  const body = await c.req.json<{ csv?: string }>().catch(() => ({ csv: undefined }));
+  const csv = body.csv?.trim();
+  if (!csv) {
+    return c.json({ message: 'csv or file is required' }, 400);
+  }
+  return Buffer.from(csv, 'utf8');
+}
+
+async function loadWeeklyRowsForExport(versionId: string, skuIds: string[]) {
+  if (!skuIds.length) return [];
+  return db
+    .select({
+      id: demandPlanWeekly.id,
+      skuId: demandPlanWeekly.skuId,
+      skuCode: skus.code,
+      warehouseCode: demandPlanWeekly.warehouseCode,
+      period: demandPlanWeekly.period,
+      systemDailyAvg: demandPlanWeekly.systemDailyAvg,
+      manualDailyAvg: demandPlanWeekly.manualDailyAvg,
+      adjustReason: demandPlanWeekly.adjustReason,
+      unconstrainedRecentDaily: demandPlanWeekly.unconstrainedRecentDaily,
+      championForecastDaily: demandPlanWeekly.championForecastDaily,
+      source: demandPlanWeekly.source,
+      blendMeta: demandPlanWeekly.blendMeta,
+    })
+    .from(demandPlanWeekly)
+    .innerJoin(skus, eq(skus.id, demandPlanWeekly.skuId))
+    .where(and(eq(demandPlanWeekly.versionId, versionId), inArray(demandPlanWeekly.skuId, skuIds)))
+    .orderBy(skus.code, demandPlanWeekly.period);
+}
+
+async function loadDemandPlanStoredRowMetaForSkus(versionId: string, skuIds: string[]) {
+  if (!skuIds.length) return demandPlanStoredRowMetaBySku([]);
+  const rows = await db
+    .select({
+      skuId: demandPlanWeekly.skuId,
+      blendMeta: demandPlanWeekly.blendMeta,
+    })
+    .from(demandPlanWeekly)
+    .where(and(eq(demandPlanWeekly.versionId, versionId), inArray(demandPlanWeekly.skuId, skuIds)))
+    .orderBy(demandPlanWeekly.skuId, demandPlanWeekly.period);
+  return demandPlanStoredRowMetaBySku(rows);
+}
+
+demandPlanRoutes.get('/demand-plans/horizon/export', menuGuard, async (c) => {
+  const versionId = c.req.query('versionId')?.trim();
+  if (!versionId) {
+    return c.json({ message: 'versionId is required' }, 400);
+  }
+  const [version] = await db
+    .select()
+    .from(demandPlanVersions)
+    .where(eq(demandPlanVersions.id, versionId))
+    .limit(1);
+  if (!version) {
+    return c.json({ message: '需求计划版本不存在' }, 404);
+  }
+  if (!version.startWeek) {
+    return c.json({ message: '仅周粒度需求计划支持矩阵导出' }, 400);
+  }
+
+  const modeRaw = c.req.query('mode')?.trim().toLowerCase();
+  const mode: DemandPlanHorizonExportMode =
+    modeRaw === 'detail' ? 'detail' : modeRaw === 'calibration' ? 'calibration' : 'wide';
+  if (mode === 'calibration') {
+    const channelView = c.req.query('channelView')?.trim().toLowerCase();
+    if (channelView !== 'by_channel') {
+      return c.json(
+        { message: '导出校准表须使用分平台视图：在矩阵筛选区将「合计/分平台」切换为「分平台」' },
+        400,
+      );
+    }
+  }
+
+  const scope = await resolveRequestProjectGroupScope(c);
+  if (
+    scope.mode === 'restricted' &&
+    !isAllScopeProjectGroup(version.projectGroup) &&
+    !scope.groups.includes(version.projectGroup.trim())
+  ) {
+    return c.json({ message: '需求计划版本不存在' }, 404);
+  }
+
+  const listQuery = parseDemandPlanListQuery(c);
+  if ('error' in listQuery) {
+    return c.json({ message: listQuery.error }, 400);
+  }
+  const skuCode = c.req.query('skuCode')?.trim() || undefined;
+  const skuScopeCond = skuProjectGroupCondition(scope);
+  const periods = buildDemandPlanPeriodColumns(version);
+
+  const dataset = await loadDemandPlanHorizonExportDataset({
+    versionId,
+    skuCode,
+    channelView: listQuery.channelView,
+    platforms: listQuery.platforms,
+    profileSegment: listQuery.profileSegment,
+    categories: listQuery.categories,
+    productScope: listQuery.productScope,
+    skuScopeCond,
+    periods,
+    listWeeklySkuRefs: listDemandPlanWeeklySkuRefs,
+    listWeeklyRows: ({ versionId: vid, skuIds }) => loadWeeklyRowsForExport(vid, skuIds),
+    listStoredRowMeta: ({ versionId: vid, skuIds }) =>
+      loadDemandPlanStoredRowMetaForSkus(vid, skuIds),
+  });
+
+  const built = buildDemandPlanHorizonExportCsv(mode, dataset);
+  if (mode === 'calibration' && built.rowCount === 0) {
+    return c.json({ message: '当前筛选下无分平台计划行，请调整筛选或确认已生成计划' }, 400);
+  }
+
+  const stamp = new Date().toISOString().slice(0, 10);
+  const safeName = version.versionNo.replace(/[^\w\u4e00-\u9fff-]+/g, '_').slice(0, 48);
+  const suffix = mode === 'detail' ? 'detail' : mode === 'calibration' ? 'calibration' : 'wide';
+  return csvAttachment(`demand-plan-horizon-${suffix}-${safeName}-${stamp}.csv`, built.csv);
+});
+
+demandPlanRoutes.get('/demand-plans/:id/accuracy/export', menuGuard, async (c) => {
+  const versionId = c.req.param('id')?.trim();
+  if (!versionId) return c.json({ message: 'version id required' }, 400);
+
+  const [version] = await db
+    .select()
+    .from(demandPlanVersions)
+    .where(eq(demandPlanVersions.id, versionId))
+    .limit(1);
+  if (!version) return c.json({ message: '需求计划版本不存在' }, 404);
+  if (!version.startWeek) {
+    return c.json({ message: '仅周粒度需求计划支持准确度导出' }, 400);
+  }
+
+  const scope = await resolveRequestProjectGroupScope(c);
+  if (
+    scope.mode === 'restricted' &&
+    !isAllScopeProjectGroup(version.projectGroup) &&
+    !scope.groups.includes(version.projectGroup.trim())
+  ) {
+    return c.json({ message: '需求计划版本不存在' }, 404);
+  }
+
+  const listQuery = parseDemandPlanListQuery(c);
+  if ('error' in listQuery) {
+    return c.json({ message: listQuery.error }, 400);
+  }
+  const skuCode = c.req.query('skuCode')?.trim() || undefined;
+  const skuScopeCond = skuProjectGroupCondition(scope);
+  const allSkus = await listDemandPlanWeeklySkuRefs({
+    versionId,
+    skuCode,
+    skuScopeCond,
+    categories: listQuery.categories,
+    productScope: listQuery.productScope,
+  });
+  const skuIdsAll = allSkus.map((row) => row.skuId);
+  const [metaBySku, storedMetaBySku] = await Promise.all([
+    loadPublishedForecastSkuMetaBySkuIds(skuIdsAll),
+    loadDemandPlanStoredRowMetaForSkus(versionId, skuIdsAll),
+  ]);
+  const filtered = filterSkusByProfileSegment(
+    allSkus,
+    metaBySku,
+    listQuery.profileSegment,
+    storedMetaBySku,
+  );
+  const sorted = sortDemandPlanSkus(filtered, metaBySku, storedMetaBySku);
+  const skuIds = sorted.map((row) => row.skuId);
+  const skuCodeById = new Map(sorted.map((row) => [row.skuId, row.skuCode ?? '—']));
+
+  const weeklyRows = skuIds.length
+    ? await db
+        .select({
+          skuId: demandPlanWeekly.skuId,
+          period: demandPlanWeekly.period,
+          systemDailyAvg: demandPlanWeekly.systemDailyAvg,
+          manualDailyAvg: demandPlanWeekly.manualDailyAvg,
+        })
+        .from(demandPlanWeekly)
+        .where(and(eq(demandPlanWeekly.versionId, versionId), inArray(demandPlanWeekly.skuId, skuIds)))
+        .orderBy(demandPlanWeekly.period)
+    : [];
+
+  const planRows = weeklyRows.map((row) => ({
+    skuId: row.skuId,
+    skuCode: skuCodeById.get(row.skuId) ?? '—',
+    period: row.period,
+    systemDailyAvg: String(row.systemDailyAvg),
+    manualDailyAvg: row.manualDailyAvg != null ? String(row.manualDailyAvg) : null,
+  }));
+
+  const built = await buildDemandPlanAccuracyExportCsv({ planRows });
+  const stamp = new Date().toISOString().slice(0, 10);
+  const safeName = version.versionNo.replace(/[^\w\u4e00-\u9fff-]+/g, '_').slice(0, 48);
+  return csvAttachment(`demand-plan-accuracy-${safeName}-${stamp}.csv`, built.csv);
+});
+
+demandPlanRoutes.get('/demand-plans/:id/accuracy/summary', menuGuard, async (c) => {
+  const versionId = c.req.param('id')?.trim();
+  if (!versionId) return c.json({ message: 'version id required' }, 400);
+
+  const [version] = await db
+    .select()
+    .from(demandPlanVersions)
+    .where(eq(demandPlanVersions.id, versionId))
+    .limit(1);
+  if (!version) return c.json({ message: '需求计划版本不存在' }, 404);
+  if (!version.startWeek) {
+    return c.json({ message: '仅周粒度需求计划支持准确度复盘' }, 400);
+  }
+
+  const scope = await resolveRequestProjectGroupScope(c);
+  if (
+    scope.mode === 'restricted' &&
+    !isAllScopeProjectGroup(version.projectGroup) &&
+    !scope.groups.includes(version.projectGroup.trim())
+  ) {
+    return c.json({ message: '需求计划版本不存在' }, 404);
+  }
+
+  const listQuery = parseDemandPlanListQuery(c);
+  if ('error' in listQuery) {
+    return c.json({ message: listQuery.error }, 400);
+  }
+  const skuCode = c.req.query('skuCode')?.trim() || undefined;
+  const { page, pageSize } = parseListPagination(c.req.query('page'), c.req.query('pageSize'), 20);
+  const skuScopeCond = skuProjectGroupCondition(scope);
+  const allSkus = await listDemandPlanWeeklySkuRefs({
+    versionId,
+    skuCode,
+    skuScopeCond,
+    categories: listQuery.categories,
+    productScope: listQuery.productScope,
+  });
+  const skuIdsAll = allSkus.map((row) => row.skuId);
+  const [metaBySku, storedMetaBySku] = await Promise.all([
+    loadPublishedForecastSkuMetaBySkuIds(skuIdsAll),
+    loadDemandPlanStoredRowMetaForSkus(versionId, skuIdsAll),
+  ]);
+  const filtered = filterSkusByProfileSegment(
+    allSkus,
+    metaBySku,
+    listQuery.profileSegment,
+    storedMetaBySku,
+  );
+  const sorted = sortDemandPlanSkus(filtered, metaBySku, storedMetaBySku);
+  const skuIds = sorted.map((row) => row.skuId);
+  const skuCodeById = new Map(sorted.map((row) => [row.skuId, row.skuCode ?? '—']));
+
+  const weeklyRows = skuIds.length
+    ? await db
+        .select({
+          skuId: demandPlanWeekly.skuId,
+          period: demandPlanWeekly.period,
+          systemDailyAvg: demandPlanWeekly.systemDailyAvg,
+          manualDailyAvg: demandPlanWeekly.manualDailyAvg,
+        })
+        .from(demandPlanWeekly)
+        .where(and(eq(demandPlanWeekly.versionId, versionId), inArray(demandPlanWeekly.skuId, skuIds)))
+        .orderBy(demandPlanWeekly.period)
+    : [];
+
+  const planRows = weeklyRows.map((row) => ({
+    skuId: row.skuId,
+    skuCode: skuCodeById.get(row.skuId) ?? '—',
+    period: row.period,
+    systemDailyAvg: String(row.systemDailyAvg),
+    manualDailyAvg: row.manualDailyAvg != null ? String(row.manualDailyAvg) : null,
+  }));
+
+  const built = await buildDemandPlanAccuracyRows({ planRows });
+  const pageResult = paginateDemandPlanAccuracySkuSummaries(built.skuSummaries, page, pageSize);
+  return c.json({
+    ...pageResult,
+    totals: {
+      skuCount: built.skuCount,
+      comparedWeekCount: built.comparedWeekCount,
+    },
+  });
+});
+
+demandPlanRoutes.get('/demand-plans/:id/review-summary', menuGuard, async (c) => {
+  const versionId = c.req.param('id')?.trim();
+  if (!versionId) return c.json({ message: 'version id required' }, 400);
+  const scope = await resolveRequestProjectGroupScope(c);
+  const [version] = await db
+    .select({
+      id: demandPlanVersions.id,
+      projectGroup: demandPlanVersions.projectGroup,
+    })
+    .from(demandPlanVersions)
+    .where(eq(demandPlanVersions.id, versionId))
+    .limit(1);
+  if (!version) return c.json({ message: '需求计划版本不存在' }, 404);
+  if (
+    scope.mode === 'restricted' &&
+    !isAllScopeProjectGroup(version.projectGroup) &&
+    !scope.groups.includes(version.projectGroup.trim())
+  ) {
+    return c.json({ message: '需求计划版本不存在' }, 404);
+  }
+  try {
+    const summary = await buildDemandPlanReviewSummary(versionId);
+    return c.json(summary);
+  } catch (err) {
+    const mapped = mapRouteError(err, '加载复核摘要失败');
+    return c.json({ message: mapped.message }, mapped.status);
+  }
+});
+
+async function handleDemandPlanCalibrationImport(c: Context, commit: boolean) {
+  const versionId = c.req.param('id')?.trim();
+  if (!versionId) return c.json({ message: 'version id required' }, 400);
+
+  const bufferOrResponse = await readDemandPlanCalibrationImportCsvBuffer(c);
+  if (bufferOrResponse instanceof Response) return bufferOrResponse;
+
+  try {
+    const result = await runDemandPlanCalibrationImport({
+      versionId,
+      csvBuffer: bufferOrResponse,
+      commit,
+    });
+    if (commit && result.hasBlockingIssues) {
+      return c.json({ message: '导入存在错误，未写入', ...result }, 400);
+    }
+    if (commit && result.applied != null && result.applied > 0) {
+      const user = await getCurrentUser(c);
+      await writeAuditLog(c, {
+        action: 'demand_plan.calibration_import',
+        resourceType: 'demand_plan_version',
+        resourceId: versionId,
+        detail: {
+          updated: result.updated,
+          skipped: result.skipped,
+          errors: result.errors,
+          applied: result.applied,
+        },
+        user,
+      });
+    }
+    return c.json(result);
+  } catch (err) {
+    const mapped = mapRouteError(err, 'Calibration import failed');
+    return c.json({ message: mapped.message }, mapped.status);
+  }
+}
+
+demandPlanRoutes.post(
+  '/demand-plans/:id/calibration-import/preview',
+  menuGuard,
+  requireWrite(),
+  (c) => handleDemandPlanCalibrationImport(c, false),
+);
+
+demandPlanRoutes.post(
+  '/demand-plans/:id/calibration-import/commit',
+  menuGuard,
+  requireWrite(),
+  (c) => handleDemandPlanCalibrationImport(c, true),
+);
+
+async function handleDemandPlanCalibrationClear(c: Context, commit: boolean) {
+  const versionId = c.req.param('id')?.trim();
+  if (!versionId) return c.json({ message: 'version id required' }, 400);
+
+  try {
+    const result = await clearDemandPlanVersionCalibrations({ versionId, commit });
+    if (commit && (result.cleared ?? 0) > 0) {
+      const user = await getCurrentUser(c);
+      await writeAuditLog(c, {
+        action: 'demand_plan.calibration_clear',
+        resourceType: 'demand_plan_version',
+        resourceId: versionId,
+        detail: { cleared: result.cleared, rowsWithManual: result.rowsWithManual },
+        user,
+      });
+    }
+    return c.json(result);
+  } catch (err) {
+    const mapped = mapRouteError(err, 'Clear calibration failed');
+    return c.json({ message: mapped.message }, mapped.status);
+  }
+}
+
+demandPlanRoutes.post(
+  '/demand-plans/:id/calibration-clear/preview',
+  menuGuard,
+  requireWrite(),
+  (c) => handleDemandPlanCalibrationClear(c, false),
+);
+
+demandPlanRoutes.post(
+  '/demand-plans/:id/calibration-clear/commit',
+  menuGuard,
+  requireWrite(),
+  (c) => handleDemandPlanCalibrationClear(c, true),
+);
+
 demandPlanRoutes.get('/demand-plans/:id/sku-detail', menuGuard, async (c) => {
   const versionId = c.req.param('id');
   const skuId = c.req.query('skuId')?.trim();
   if (!skuId) {
     return c.json({ message: 'skuId is required' }, 400);
   }
+  const platform = c.req.query('platform')?.trim() || undefined;
+  const station = c.req.query('station')?.trim() || undefined;
   const scope = await resolveRequestProjectGroupScope(c);
   const [skuRow] = await db
     .select({ projectGroup: skus.projectGroup })
@@ -485,7 +1098,7 @@ demandPlanRoutes.get('/demand-plans/:id/sku-detail', menuGuard, async (c) => {
     return c.json({ message: 'SKU not found' }, 404);
   }
   try {
-    const detail = await loadDemandPlanSkuDetail({ versionId, skuId });
+    const detail = await loadDemandPlanSkuDetail({ versionId, skuId, platform, station });
     return c.json(detail);
   } catch (err) {
     const mapped = mapRouteError(err, '加载 SKU 详情失败');
@@ -519,21 +1132,40 @@ demandPlanRoutes.get('/demand-plans/:id', menuGuard, async (c) => {
   );
   const useWeeks = Boolean(version.startWeek);
   const skuScopeCond = skuProjectGroupCondition(scope);
-  const pageInput = { versionId: id, skuCode, page, pageSize, offset, skuScopeCond };
+  const listQuery = parseDemandPlanListQuery(c);
+  if ('error' in listQuery) {
+    return c.json({ message: listQuery.error }, 400);
+  }
+  const pageInput = {
+    versionId: id,
+    skuCode,
+    page,
+    pageSize,
+    offset,
+    skuScopeCond,
+    channelView: listQuery.channelView,
+    platforms: listQuery.platforms,
+    profileSegment: listQuery.profileSegment,
+    categories: listQuery.categories,
+    productScope: listQuery.productScope,
+  };
   const periods = buildDemandPlanPeriodColumns(version);
 
-  const statsFilters = useWeeks
-    ? [eq(demandPlanWeekly.versionId, id)]
+  const statsFilters: SQL[] = useWeeks
+    ? [eq(demandPlanWeekly.versionId, id), productScopeSql(listQuery.productScope)]
     : [eq(demandPlanMonthly.versionId, id)];
   if (skuScopeCond) statsFilters.push(skuScopeCond);
-  if (skuCode) {
-    statsFilters.push(ilike(skus.code, `%${skuCode}%`));
+  const skuCond = demandPlanSkuCodeFilterSql(skuCode);
+  if (skuCond) statsFilters.push(skuCond);
+  if (useWeeks) {
+    const categoryCond = demandPlanCategoryFilterSql(listQuery.categories);
+    if (categoryCond) statsFilters.push(categoryCond);
   }
   const statsWhere = and(...statsFilters);
   const statsFrom = useWeeks ? demandPlanWeekly : demandPlanMonthly;
   const statsSkuColumn = useWeeks ? demandPlanWeekly.skuId : demandPlanMonthly.skuId;
 
-  const [[adoption], data, [statsRow]] = await Promise.all([
+  const [[adoption], data, [statsRow], [sampleSku]] = await Promise.all([
     db
       .select()
       .from(planningDemandAdoptions)
@@ -549,7 +1181,7 @@ demandPlanRoutes.get('/demand-plans/:id', menuGuard, async (c) => {
         ? listDemandPlanWeeklyWide(pageInput)
         : listDemandPlanMonthlyWide(pageInput)
       : useWeeks
-        ? listDemandPlanWeeklyPage(pageInput)
+        ? listDemandPlanWeeklyPage({ ...pageInput, periods })
         : listDemandPlanMonthlyPage(pageInput),
     db
       .select({
@@ -559,7 +1191,23 @@ demandPlanRoutes.get('/demand-plans/:id', menuGuard, async (c) => {
       .from(statsFrom)
       .innerJoin(skus, eq(skus.id, statsFrom.skuId))
       .where(statsWhere),
+    useWeeks
+      ? db
+          .select({ skuId: demandPlanWeekly.skuId })
+          .from(demandPlanWeekly)
+          .where(eq(demandPlanWeekly.versionId, id))
+          .limit(1)
+      : db
+          .select({ skuId: demandPlanMonthly.skuId })
+          .from(demandPlanMonthly)
+          .where(eq(demandPlanMonthly.versionId, id))
+          .limit(1),
   ]);
+
+  const championForecastVersion = await resolveDemandPlanChampionForecastVersion({
+    frozenVersionId: version.championForecastVersionId,
+    sampleSkuId: sampleSku?.skuId ?? null,
+  });
 
   return c.json({
     version,
@@ -573,6 +1221,7 @@ demandPlanRoutes.get('/demand-plans/:id', menuGuard, async (c) => {
     long: view === 'long' ? data : emptyDemandPlanPeriodPage(page, pageSize),
     wide: view === 'wide' ? data : emptyDemandPlanWidePage(page, pageSize),
     adoption: adoption ?? null,
+    championForecastVersion,
   });
 });
 

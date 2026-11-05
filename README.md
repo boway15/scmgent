@@ -97,13 +97,11 @@ Header：`X-Cron-Secret`（与 `CRON_SECRET` 一致）。时区：`Asia/Shanghai
 |------|------|-----|
 | 缺货预警 | `0 7 * * *` | `POST /api/tasks/stock-alert` |
 | 库存周转拉取 | `30 7 * * *` | `POST /api/tasks/inventory-turnover-pull` |
-| 销量飞书拉取 | `0 5 * * *` | `POST /api/tasks/sales-daily-feishu-pull` |
-| 跨境资讯 | `0 8 * * *` | `POST /api/tasks/news-ingest` |
-| 大件备货拉取 | `0 8 * * *` | `POST /api/tasks/procurement-bulk-stock-pull` |
-| 采购跟单拉取 | `5 8 * * *` | `POST /api/tasks/procurement-follow-up-pull` |
+| 销量飞书拉取 | `35 8 * * *` | `POST /api/tasks/sales-daily-feishu-pull` |
+| 大件备货拉取 | `5 8 * * *` | `POST /api/tasks/procurement-bulk-stock-pull` |
+| 每日库存流水线 | `50 8 * * *` | `POST /api/tasks/daily-inventory-pipeline` |
+| 采购跟单拉取 | `25 8 * * *` | `POST /api/tasks/procurement-follow-up-pull` |
 | 补货预测 | `0 9 * * 1`（每周一） | `POST /api/tasks/replenishment-forecast` |
-
-跨境资讯研究每天 08:00 自动运行，组合查询型新闻源与官方 RSS 发现候选；普通正文提取不足时可按 `NEWS_INTEL_BROWSER_ENABLED` 配置按需启动镜像内 Chromium。候选默认进入人工审核，采用后才同步飞书多维表格；可选 Dify 负责内容增强。该流程不依赖 RSSHub 常驻服务，管理页仍可手动重试当日采集。
 
 停调度：`docker compose stop cron` 或设 `CRON_ENABLED=false`。  
 手动调试：

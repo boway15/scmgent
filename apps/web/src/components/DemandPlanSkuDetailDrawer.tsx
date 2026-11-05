@@ -1,35 +1,54 @@
 import { useEffect, useRef } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { DemandPlanWeeklyForecastTable } from '@/components/DemandPlanWeeklyForecastTable';
 import { HelpHintLabel } from '@/components/HelpHintLabel';
 import { DEMAND_PLAN_WEEKLY_FORECAST_SECTION_HELP } from '@/lib/demand-plan-column-help';
+import {
+  demandPlanPeriodHeaderTitle,
+  formatDemandPlanHorizon,
+  formatDemandPlanPeriodLabel,
+} from '@/lib/demand-plan-utils';
 import { formatLifecycleLabel } from '@/lib/forecast-labels';
+import { formatForecastChannelLabel } from '@/lib/forecast-horizon-meta';
 import { cn } from '@/lib/utils';
 
 export type DemandPlanSkuClickInput = {
   skuId: string;
   skuCode: string;
+  platform?: string;
 };
 
 type Props = {
   versionId: string;
   selectedSku: DemandPlanSkuClickInput | null;
   onClose: () => void;
+  planCalibrationEditable?: boolean;
 };
 
 const formatWeeklyDaily = (value: number | null | undefined) => {
   if (value == null || !Number.isFinite(value)) return '—';
-  return value.toFixed(4);
+  return value.toFixed(2);
 };
 
-export function DemandPlanSkuDetailDrawer({ versionId, selectedSku, onClose }: Props) {
+export function DemandPlanSkuDetailDrawer({
+  versionId,
+  selectedSku,
+  onClose,
+  planCalibrationEditable = false,
+}: Props) {
   const dialogRef = useRef<HTMLDialogElement>(null);
+  const queryClient = useQueryClient();
+
+  const platform = selectedSku?.platform?.trim() || 'ALL';
 
   const detailQuery = useQuery({
-    queryKey: ['demand-plan-sku-detail', versionId, selectedSku?.skuId],
-    queryFn: () => api.getDemandPlanSkuDetail(versionId, selectedSku!.skuId),
+    queryKey: ['demand-plan-sku-detail', versionId, selectedSku?.skuId, platform],
+    queryFn: () =>
+      api.getDemandPlanSkuDetail(versionId, selectedSku!.skuId, {
+        platform: platform === 'ALL' ? undefined : platform,
+      }),
     enabled: Boolean(versionId && selectedSku?.skuId),
   });
 
@@ -55,7 +74,12 @@ export function DemandPlanSkuDetailDrawer({ versionId, selectedSku, onClose }: P
         <div className="flex h-full flex-col">
           <div className="flex shrink-0 items-start justify-between gap-3 border-b border-border p-4">
             <div className="min-w-0 flex-1">
-              <p className="font-mono text-sm text-text-sub">{selectedSku.skuCode}</p>
+              <p className="font-mono text-sm text-text-sub">
+                {selectedSku.skuCode}
+                <span className="ml-2 text-text-sub">
+                  · {formatForecastChannelLabel(platform)}
+                </span>
+              </p>
               <h2 className="whitespace-normal break-words text-lg font-semibold leading-snug text-text-main">
                 {detail?.sku.name || '—'}
               </h2>
@@ -65,6 +89,14 @@ export function DemandPlanSkuDetailDrawer({ versionId, selectedSku, onClose }: P
                   {detail.sku.productCategory ? ` · ${detail.sku.productCategory}` : ''}
                   {' · '}
                   {formatLifecycleLabel(detail.sku.lifecycle)}
+                </p>
+              ) : null}
+              {detail?.planStartWeek ? (
+                <p className="mt-1 font-mono text-xs text-text-sub">
+                  {formatDemandPlanHorizon({
+                    startWeek: detail.planStartWeek,
+                    horizonWeeks: detail.planHorizonWeeks,
+                  })}
                 </p>
               ) : null}
             </div>
@@ -105,28 +137,36 @@ export function DemandPlanSkuDetailDrawer({ versionId, selectedSku, onClose }: P
 
                 {detail.forecastWeeks.length > 0 ? (
                   <DemandPlanWeeklyForecastTable
+                    versionId={versionId}
                     forecastVersion={detail.forecastVersion}
                     forecastHorizon={detail.forecastHorizon}
                     forecastContext={detail.forecastContext}
                     weekRows={detail.forecastWeeks}
                     productCategory={detail.sku.productCategory}
+                    planCalibrationEditable={planCalibrationEditable}
+                    onPlanCalibrationSaved={() => {
+                      void queryClient.invalidateQueries({
+                        queryKey: ['demand-plan-sku-detail', versionId, selectedSku?.skuId, platform],
+                      });
+                      void queryClient.invalidateQueries({ queryKey: ['demand-plan-data', versionId] });
+                    }}
                   />
                 ) : (
                   <section className="space-y-2">
                     <h3 className="text-sm font-medium text-text-main">
                       <HelpHintLabel
-                        label="未来 6 月预测 · 周维度"
+                        label="周需求计划"
                         help={DEMAND_PLAN_WEEKLY_FORECAST_SECTION_HELP}
                       />
                     </h3>
-                    <p className="text-sm text-text-sub">暂无已发布销量预测或计划周次。</p>
+                    <p className="text-sm text-text-sub">该 SKU 无计划周次数据。</p>
                   </section>
                 )}
 
                 <section className="space-y-2">
                   <h3 className="text-sm font-medium text-text-main">近 26 周实际日均</h3>
                   <p className="text-xs text-text-sub">
-                    按 ISO 周汇总销量，折算为周日均；当前周按已发生天数计算（进行中）。
+                    按当前所选平台口径汇总 ISO 周销量，折算为周日均；当前周按已发生天数计算（进行中）。选择「全平台」时为各渠道合计。
                   </p>
                   <div className="overflow-auto">
                     <table className="min-w-full text-sm">
@@ -140,7 +180,12 @@ export function DemandPlanSkuDetailDrawer({ versionId, selectedSku, onClose }: P
                       <tbody>
                         {detail.historyWeeks.map((row) => (
                           <tr key={row.weekKey} className="border-b border-border/60">
-                            <td className="p-2 font-mono">{row.weekKey}</td>
+                            <td
+                              className="p-2 font-mono"
+                              title={demandPlanPeriodHeaderTitle(row.weekKey, 'week')}
+                            >
+                              {formatDemandPlanPeriodLabel(row.weekKey, 'week')}
+                            </td>
                             <td className="p-2 font-numeric">{row.qtySold.toLocaleString()}</td>
                             <td
                               className={cn(

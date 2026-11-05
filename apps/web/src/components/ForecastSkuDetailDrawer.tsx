@@ -773,6 +773,7 @@ export function ForecastSkuDetailDrawer({
                             className="whitespace-nowrap"
                             label="实际日均"
                             help={getForecastHorizonColumnHelp('actual', columnHelpCtx)}
+                            helpAlign="end"
                           />
                         </tr>
                       </thead>

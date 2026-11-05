@@ -2,17 +2,18 @@
 # Format: standard crontab → supercronic
 # 任务错开，避免 08:00 与大体量飞书拉取挤在同一分钟
 
-# 独立缺货预警保持关闭：07:50 每日流水线已包含该步骤，避免同一天跑两遍
+# 独立缺货预警保持关闭：08:50 每日流水线已包含该步骤，避免同一天跑两遍
 # 0 7 * * * /usr/local/bin/run-task.sh /api/tasks/stock-alert
-# 销量长表先于 06:00 库存拉取和 07:50 预测流水线，供当天预测使用
-0 5 * * * /usr/local/bin/run-task.sh /api/tasks/sales-daily-feishu-pull
 0 6 * * * /usr/local/bin/run-task.sh /api/tasks/procurement-ops-pull
 20 7 * * * /usr/local/bin/run-task.sh /api/tasks/inventory-query-pull
 40 7 * * * /usr/local/bin/run-task.sh /api/tasks/inventory-turnover-pull
-# 飞书周转拉取后：三池批次同步 + 补货/预警/异常 digest（周一补货仍走独立周任务）
-50 7 * * * /usr/local/bin/run-task.sh /api/tasks/daily-inventory-pipeline
-0 8 * * * /usr/local/bin/run-task.sh /api/tasks/news-ingest
-10 8 * * * /usr/local/bin/run-task.sh /api/tasks/procurement-bulk-stock-pull
-20 8 * * * /usr/local/bin/run-task.sh /api/tasks/procurement-follow-up-pull
+# 新闻情报采集已停用（模块不再使用；接口仍可手动触发）
+# 0 8 * * * /usr/local/bin/run-task.sh /api/tasks/news-ingest
+5 8 * * * /usr/local/bin/run-task.sh /api/tasks/procurement-bulk-stock-pull
+# 销量长表（飞书侧刷新偏晚；在 08:50 流水线前入库）
+35 8 * * * /usr/local/bin/run-task.sh /api/tasks/sales-daily-feishu-pull
+# 飞书周转 07:40 完成后：三池批次同步 + 补货/预警/异常 digest（周一补货仍走独立周任务）
+50 8 * * * /usr/local/bin/run-task.sh /api/tasks/daily-inventory-pipeline
+25 8 * * * /usr/local/bin/run-task.sh /api/tasks/procurement-follow-up-pull
 30 8 * * * /usr/local/bin/run-task.sh /api/tasks/qc-reinspection-sync
 0 9 * * 1 /usr/local/bin/run-task.sh /api/tasks/replenishment-forecast

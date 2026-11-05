@@ -7,7 +7,11 @@ import { ForecastHorizonPanel } from '@/components/ForecastHorizonPanel';
 import { FORECAST_ALLCAT_V41_TIER_OPTIONS } from '@/lib/forecast-labels';
 import type { ForecastHorizonRow } from '@/components/ForecastSkuDetailDrawer';
 import { ProductScopeSwitch } from '@/components/ProductScopeSwitch';
-import { SegmentedControl } from '@/components/SegmentedControl';
+import { HorizonChannelFilters } from '@/components/planning-horizon/HorizonChannelFilters';
+import {
+  channelQuery,
+  initialChannelSelection,
+} from '@/components/planning-horizon/useHorizonChannelQuery';
 
 type VersionOption = {
   id: string;
@@ -15,8 +19,6 @@ type VersionOption = {
   versionName: string;
   status: string;
 };
-
-type ChannelView = 'merged' | 'by_channel';
 
 type Props = {
   active: boolean;
@@ -35,31 +37,6 @@ type Props = {
   calibrationImportEnabled?: boolean;
   initialCalibrationImportOpen?: boolean;
 };
-
-function initialChannelSelection(initialPlatform: string): {
-  split: boolean;
-  primaryPlatform: string;
-  platforms: string[];
-} {
-  const code = initialPlatform.trim();
-  if (!code || code.toUpperCase() === 'ALL') {
-    return { split: false, primaryPlatform: '', platforms: [] };
-  }
-  return { split: false, primaryPlatform: code, platforms: [code] };
-}
-
-function channelQuery(input: {
-  split: boolean;
-  primaryPlatform: string;
-  platforms: string[];
-}): { channelView: ChannelView; platforms: string[] } {
-  if (!input.split) {
-    const code = input.primaryPlatform.trim();
-    if (!code) return { channelView: 'merged', platforms: [] };
-    return { channelView: 'by_channel', platforms: [code] };
-  }
-  return { channelView: 'by_channel', platforms: input.platforms };
-}
 
 export function ForecastDataExplorer({
   active,
@@ -168,12 +145,6 @@ export function ForecastDataExplorer({
   };
 
   const channelOptions = (platformOptions ?? []).filter((item) => item.code !== 'ALL');
-  const channelSummary =
-    selectedPlatforms.length === 0
-      ? '全部平台'
-      : selectedPlatforms
-          .map((code) => channelOptions.find((item) => item.code === code)?.name || code)
-          .join('、');
 
   if (!active) return null;
 
@@ -192,86 +163,20 @@ export function ForecastDataExplorer({
       <CardContent className="space-y-4">
         {topSection}
         <ProductScopeSwitch />
-        <div className="flex flex-wrap items-end gap-2">
-          <div className="space-y-1 text-sm">
-            <span className="block text-text-sub">平台展示</span>
-            <SegmentedControl
-              aria-label="平台展示"
-              value={splitChannels ? 'split' : 'merged'}
-              options={[
-                { id: 'merged', label: '合计' },
-                { id: 'split', label: '分平台' },
-              ]}
-              onChange={(next) => setGrain(next === 'split')}
-            />
-          </div>
-          {splitChannels ? (
-            <div ref={channelMenuRef} className="relative space-y-1 text-sm">
-              <span className="block text-text-sub">平台</span>
-              <button
-                type="button"
-                className="flex h-9 min-w-36 items-center rounded-md border border-border bg-card px-2 text-left text-sm"
-                aria-expanded={channelOpen}
-                onClick={() => setChannelOpen((open) => !open)}
-              >
-                <span className="max-w-52 truncate">{channelSummary}</span>
-              </button>
-              {channelOpen ? (
-                <div className="absolute z-20 mt-1 max-h-64 w-52 overflow-auto rounded-md border border-border bg-card p-2 shadow-card">
-                  <button
-                    type="button"
-                    className="mb-1 text-xs text-text-sub"
-                    onClick={() => {
-                      setSelectedPlatforms([]);
-                      applyFilters({ split: true, platforms: [] });
-                    }}
-                  >
-                    全部平台
-                  </button>
-                  {channelOptions.map((item) => {
-                    const checked = selectedPlatforms.includes(item.code);
-                    return (
-                      <label key={item.code} className="flex cursor-pointer items-center gap-2 py-1 text-sm">
-                        <input
-                          type="checkbox"
-                          checked={checked}
-                          onChange={() => {
-                            const next = checked
-                              ? selectedPlatforms.filter((code) => code !== item.code)
-                              : [...selectedPlatforms, item.code];
-                            setSelectedPlatforms(next);
-                            applyFilters({ split: true, platforms: next });
-                          }}
-                        />
-                        <span>{item.name || item.code}</span>
-                      </label>
-                    );
-                  })}
-                </div>
-              ) : null}
-            </div>
-          ) : (
-            <div className="flex flex-col gap-1 text-sm">
-              <span className="block text-text-sub">平台</span>
-              <select
-                className="flex h-9 min-w-28 rounded-md border border-border bg-card px-2 text-sm"
-                value={primaryPlatform}
-                onChange={(e) => {
-                  const next = e.target.value;
-                  setPrimaryPlatform(next);
-                  setChannelOpen(false);
-                  applyFilters({ split: false, primaryPlatform: next });
-                }}
-              >
-                <option value="">全部</option>
-                {channelOptions.map((item) => (
-                  <option key={item.code} value={item.code}>
-                    {item.name || item.code}
-                  </option>
-                ))}
-              </select>
-            </div>
-          )}
+        <div className="relative z-30 flex flex-wrap items-end gap-2 overflow-visible">
+          <HorizonChannelFilters
+            splitChannels={splitChannels}
+            onSplitChange={setGrain}
+            primaryPlatform={primaryPlatform}
+            onPrimaryPlatformChange={setPrimaryPlatform}
+            selectedPlatforms={selectedPlatforms}
+            onSelectedPlatformsChange={setSelectedPlatforms}
+            channelOptions={channelOptions}
+            channelOpen={channelOpen}
+            onChannelOpenChange={setChannelOpen}
+            channelMenuRef={channelMenuRef}
+            onApply={(next) => applyFilters(next)}
+          />
           <div className="flex flex-col gap-1 text-sm">
             <span className="block text-text-sub">SKU</span>
             <Input

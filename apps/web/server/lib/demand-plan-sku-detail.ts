@@ -1,20 +1,43 @@
 import { and, eq } from 'drizzle-orm';
-import { db, demandPlanVersions, demandPlanWeekly, salesForecastVersions, skus } from '@scm/db';
+import {
+  db,
+  demandPlanVersions,
+  demandPlanWeekly,
+  salesForecastVersions,
+  skus,
+  type DemandPlanWeekBlendMeta,
+} from '@scm/db';
 import { buildDemandPlanPeriodColumns } from './demand-plan-periods.js';
+import {
+  resolveDemandPlanSkuDetailAssumedSalesEnd,
+  resolveDemandPlanSkuDetailSalesWindow,
+} from './demand-plan-start-week.js';
 import { listForecastHorizon, type ForecastHorizonCell } from './forecast-horizon.js';
 import { resolvePublishedVersionIdForSku } from './forecast-published-resolve.js';
+import { resolveForecastStartMonthAsOf } from './forecast-start-month.js';
 import { buildSkuForecastContextMap } from './forecast-sku-context.js';
+import { FORECAST_GLOBAL_STATION } from './forecast-station-scope.js';
 import {
   addIsoWeeks,
   isoWeekKeyFromUtcDate,
   isoWeekMondayUtc,
+  maxSaleDateKey,
   monthKeyFromUtcDate,
   planningRecentWindowEnd,
 } from './planning-calendar.js';
 import { weekWeightedForecastDaily } from './demand-plan-reconstruct.js';
 import { loadDailySalesBySkuIdsInRange } from './sales-history-query.js';
+import { loadDemandPlanSkuInlineV41Horizon } from './demand-plan-inline-v41.js';
+import { FORECAST_HORIZON_MONTHS } from './forecast-limits.js';
+import { forecastMonthKey } from './forecast-demand.js';
+import { resolveFlexBiasShadowEnabled } from './forecast-flex-bias-shadow.js';
 
 export const DEMAND_PLAN_SKU_HISTORY_WEEKS = 26;
+
+/** SKU 抽屉历史销量与所选平台同口径；未选或 ALL 为全渠道合计。 */
+export function resolveDemandPlanSkuDetailSalesPlatform(platform?: string | null): string {
+  return (platform?.trim() || 'ALL').toUpperCase();
+}
 
 export type DemandPlanSkuWeeklyActual = {
   weekKey: string;
@@ -47,17 +70,27 @@ export type DemandPlanSkuWeeklyForecast = {
   planSystemDailyAvg: string | null;
   planEffectiveDailyAvg: string | null;
   planManualDailyAvg: string | null;
+  planAdjustReason: string | null;
+  planWeekId: string | null;
+  planBlendMeta: DemandPlanWeekBlendMeta | null;
   championForecastDaily: string | null;
   planSource: string | null;
 };
 
 export type DemandPlanSkuWeeklyPlan = {
+  id: string | null;
   weekKey: string;
   systemDailyAvg: string;
   manualDailyAvg: string | null;
   effectiveDailyAvg: string;
+  adjustReason: string | null;
   championForecastDaily: string | null;
   source: string;
+  blendMeta: DemandPlanWeekBlendMeta | null;
+  /** 与计划周对齐的实际销量（回测 / 准确度对照） */
+  qtySold: number;
+  actualDailyAvg: number | null;
+  actualInProgress: boolean;
 };
 
 function roundDaily(value: number): number {
@@ -77,8 +110,11 @@ function aggregateQtyByWeek(
   return map;
 }
 
-export function buildRecentHistoryWeekKeys(asOf: Date, count = DEMAND_PLAN_SKU_HISTORY_WEEKS): string[] {
-  const windowEnd = planningRecentWindowEnd(asOf);
+export function buildRecentHistoryWeekKeys(
+  asOf: Date,
+  count = DEMAND_PLAN_SKU_HISTORY_WEEKS,
+  windowEnd: Date = planningRecentWindowEnd(asOf),
+): string[] {
   const endWeek = isoWeekKeyFromUtcDate(windowEnd);
   return Array.from({ length: count }, (_, index) => addIsoWeeks(endWeek, index - (count - 1)));
 }
@@ -176,6 +212,9 @@ export function expandMonthlyForecastToWeeks(input: {
       planSystemDailyAvg: plan?.systemDailyAvg ?? null,
       planEffectiveDailyAvg: plan?.effectiveDailyAvg ?? null,
       planManualDailyAvg: plan?.manualDailyAvg ?? null,
+      planAdjustReason: plan?.adjustReason ?? null,
+      planWeekId: plan?.id ?? null,
+      planBlendMeta: plan?.blendMeta ?? null,
       championForecastDaily: plan?.championForecastDaily ?? null,
       planSource: plan?.source ?? null,
     };
@@ -185,12 +224,14 @@ export function expandMonthlyForecastToWeeks(input: {
 export async function loadDemandPlanSkuDetail(input: {
   versionId: string;
   skuId: string;
+  platform?: string | null;
+  station?: string | null;
   asOf?: Date;
 }) {
   const asOf = input.asOf ?? new Date();
-  const windowEnd = planningRecentWindowEnd(asOf);
-  const historyWeekKeys = buildRecentHistoryWeekKeys(asOf);
-  const [version, skuRow, planRows, forecastVersionId] = await Promise.all([
+  const platform = resolveDemandPlanSkuDetailSalesPlatform(input.platform);
+  const station = (input.station?.trim() || FORECAST_GLOBAL_STATION).toUpperCase();
+  const [version, skuRow, planRows] = await Promise.all([
     db
       .select()
       .from(demandPlanVersions)
@@ -204,6 +245,7 @@ export async function loadDemandPlanSkuDetail(input: {
         name: skus.name,
         category: skus.category,
         productCategory: skus.productCategory,
+        forceForecast: skus.forceForecast,
         lifecycle: skus.lifecycle,
         salesCountry: skus.salesCountry,
         ownerName: skus.ownerName,
@@ -217,18 +259,20 @@ export async function loadDemandPlanSkuDetail(input: {
       .limit(1),
     db
       .select({
+        id: demandPlanWeekly.id,
         period: demandPlanWeekly.period,
         systemDailyAvg: demandPlanWeekly.systemDailyAvg,
         manualDailyAvg: demandPlanWeekly.manualDailyAvg,
+        adjustReason: demandPlanWeekly.adjustReason,
         championForecastDaily: demandPlanWeekly.championForecastDaily,
         source: demandPlanWeekly.source,
+        blendMeta: demandPlanWeekly.blendMeta,
       })
       .from(demandPlanWeekly)
       .where(
         and(eq(demandPlanWeekly.versionId, input.versionId), eq(demandPlanWeekly.skuId, input.skuId)),
       )
       .orderBy(demandPlanWeekly.period),
-    resolvePublishedVersionIdForSku(input.skuId),
   ]);
 
   if (!version) {
@@ -240,42 +284,75 @@ export async function loadDemandPlanSkuDetail(input: {
     throw Object.assign(new Error('SKU not found'), { status: 404 });
   }
 
-  const planWeekKeys =
-    planRows.length > 0 ? planRows.map((row) => row.period) : buildDemandPlanPeriodColumns(version);
-  const salesWeekKeys = [...new Set([...historyWeekKeys, ...planWeekKeys])].sort();
-  const salesFromKey = isoWeekMondayUtc(salesWeekKeys[0] ?? historyWeekKeys[0]!).toISOString().slice(0, 10);
-  const salesToKey = windowEnd.toISOString().slice(0, 10);
+  const forecastVersionId =
+    version.championForecastVersionId?.trim() ||
+    (await resolvePublishedVersionIdForSku(input.skuId, station));
+
+  const planWeekKeys = buildDemandPlanPeriodColumns(version);
+  const assumedEnd = resolveDemandPlanSkuDetailAssumedSalesEnd({
+    startWeek: version.startWeek,
+    now: asOf,
+  });
+  const provisionalHistoryKeys = buildRecentHistoryWeekKeys(asOf, DEMAND_PLAN_SKU_HISTORY_WEEKS, assumedEnd);
+  const provisionalWeekKeys = [...new Set([...provisionalHistoryKeys, ...planWeekKeys])].sort();
+  const salesFromKey = isoWeekMondayUtc(
+    provisionalWeekKeys[0] ?? provisionalHistoryKeys[0]!,
+  ).toISOString().slice(0, 10);
+  const assumedEndKey = assumedEnd.toISOString().slice(0, 10);
   const dailyBySku = await loadDailySalesBySkuIdsInRange({
     skuIds: [input.skuId],
     fromDate: salesFromKey,
-    toDate: salesToKey,
-    platform: 'ALL',
+    toDate: assumedEndKey,
+    platform,
   });
   const dailyRows = (dailyBySku.get(input.skuId) ?? []).map((row) => ({
     saleDate: row.saleDate,
     qtySold: row.qtySold,
   }));
+  const { windowEnd } = resolveDemandPlanSkuDetailSalesWindow({
+    startWeek: version.startWeek,
+    now: asOf,
+    maxSaleDate: maxSaleDateKey(dailyRows),
+  });
+  const historyWeekKeys = buildRecentHistoryWeekKeys(asOf, DEMAND_PLAN_SKU_HISTORY_WEEKS, windowEnd);
+  const salesWeekKeys = [...new Set([...historyWeekKeys, ...planWeekKeys])].sort();
+  const clippedDailyRows = dailyRows.filter(
+    (row) => String(row.saleDate).slice(0, 10) <= windowEnd.toISOString().slice(0, 10),
+  );
 
   const historyWeeks = buildWeeklyActualFromDaily({
     weekKeys: historyWeekKeys,
-    dailyRows,
+    dailyRows: clippedDailyRows,
     windowEnd,
   });
   const actualByWeek = new Map(
-    buildWeeklyActualFromDaily({ weekKeys: salesWeekKeys, dailyRows, windowEnd }).map((row) => [
-      row.weekKey,
-      row,
-    ]),
+    buildWeeklyActualFromDaily({
+      weekKeys: salesWeekKeys,
+      dailyRows: clippedDailyRows,
+      windowEnd,
+    }).map((row) => [row.weekKey, row]),
   );
 
-  const planWeeks: DemandPlanSkuWeeklyPlan[] = planRows.map((row) => ({
-    weekKey: row.period,
-    systemDailyAvg: String(row.systemDailyAvg),
-    manualDailyAvg: row.manualDailyAvg != null ? String(row.manualDailyAvg) : null,
-    effectiveDailyAvg: String(row.manualDailyAvg ?? row.systemDailyAvg),
-    championForecastDaily: row.championForecastDaily != null ? String(row.championForecastDaily) : null,
-    source: row.source,
-  }));
+  const planRowByPeriod = new Map(planRows.map((row) => [row.period, row]));
+  const planWeeks: DemandPlanSkuWeeklyPlan[] = planWeekKeys.map((weekKey) => {
+    const row = planRowByPeriod.get(weekKey);
+    const actual = actualByWeek.get(weekKey);
+    return {
+      id: row?.id ?? null,
+      weekKey,
+      systemDailyAvg: row ? String(row.systemDailyAvg) : '0',
+      manualDailyAvg: row?.manualDailyAvg != null ? String(row.manualDailyAvg) : null,
+      effectiveDailyAvg: row ? String(row.manualDailyAvg ?? row.systemDailyAvg) : '0',
+      adjustReason: row?.adjustReason ?? null,
+      championForecastDaily:
+        row?.championForecastDaily != null ? String(row.championForecastDaily) : null,
+      source: row?.source ?? 'missing',
+      blendMeta: (row?.blendMeta as DemandPlanWeekBlendMeta | null | undefined) ?? null,
+      qtySold: actual?.qtySold ?? 0,
+      actualDailyAvg: actual?.actualDailyAvg ?? null,
+      actualInProgress: actual?.inProgress ?? false,
+    };
+  });
 
   let forecastVersion: { id: string; versionNo: string; versionName: string } | null = null;
   let forecastWeeks: DemandPlanSkuWeeklyForecast[] = [];
@@ -289,34 +366,50 @@ export async function loadDemandPlanSkuDetail(input: {
   } | null = null;
   let forecastContext: Awaited<ReturnType<typeof buildSkuForecastContextMap>>[string] | null = null;
 
-  if (forecastVersionId && planWeekKeys.length > 0) {
-    const identity = { skuId: input.skuId, station: 'ALL', platform: 'ALL' };
-    const contextKey = `${input.skuId}::ALL::ALL`;
-    const [versionRow, horizon, contexts] = await Promise.all([
-      db
-        .select({
-          id: salesForecastVersions.id,
-          versionNo: salesForecastVersions.versionNo,
-          versionName: salesForecastVersions.versionName,
+  const forecastHorizonAsOf = version.startMonth?.trim()
+    ? resolveForecastStartMonthAsOf(version.startMonth)
+    : asOf;
+
+  if (planWeekKeys.length > 0) {
+    const identity = { skuId: input.skuId, station, platform };
+    const contextKey = `${input.skuId}::${station}::${platform}`;
+    const horizonPromise = forecastVersionId
+      ? listForecastHorizon({
+          versionId: forecastVersionId,
+          skuId: input.skuId,
+          station,
+          platform,
+          page: 1,
+          pageSize: 1,
+          monthCount: 6,
+          historyMonthCount: 0,
+          asOf: forecastHorizonAsOf,
         })
-        .from(salesForecastVersions)
-        .where(eq(salesForecastVersions.id, forecastVersionId))
-        .limit(1)
-        .then((rows) => rows[0] ?? null),
-      listForecastHorizon({
-        versionId: forecastVersionId,
-        skuId: input.skuId,
-        station: 'ALL',
-        platform: 'ALL',
-        page: 1,
-        pageSize: 1,
-        monthCount: 6,
-        historyMonthCount: 0,
-        asOf,
-      }),
-      buildSkuForecastContextMap({ versionId: forecastVersionId, identities: [identity] }),
+      : Promise.resolve({
+          items: [] as Awaited<ReturnType<typeof listForecastHorizon>>['items'],
+        });
+    const versionPromise = forecastVersionId
+      ? db
+          .select({
+            id: salesForecastVersions.id,
+            versionNo: salesForecastVersions.versionNo,
+            versionName: salesForecastVersions.versionName,
+          })
+          .from(salesForecastVersions)
+          .where(eq(salesForecastVersions.id, forecastVersionId))
+          .limit(1)
+          .then((rows) => rows[0] ?? null)
+      : Promise.resolve(null);
+    const contextPromise = forecastVersionId
+      ? buildSkuForecastContextMap({ versionId: forecastVersionId, identities: [identity] })
+      : Promise.resolve({} as Awaited<ReturnType<typeof buildSkuForecastContextMap>>);
+
+    const [versionRow, horizon, contexts] = await Promise.all([
+      versionPromise,
+      horizonPromise,
+      contextPromise,
     ]);
-    forecastContext = contexts[contextKey] ?? null;
+    forecastContext = forecastVersionId ? (contexts[contextKey] ?? null) : null;
 
     if (versionRow) {
       forecastVersion = {
@@ -326,8 +419,51 @@ export async function loadDemandPlanSkuDetail(input: {
       };
     }
 
-    const horizonItem = horizon.items[0];
-    const monthCells = horizonItem?.months ?? [];
+    let horizonItem = horizon.items[0];
+    let monthCells = horizonItem?.months ?? [];
+    const generationMeta = version.generationMeta;
+    const useInlineV41Horizon =
+      generationMeta?.demandForecastSource === 'v41_inline' || !forecastVersionId;
+    if (useInlineV41Horizon && monthCells.length === 0 && sku) {
+      const startMonth = version.startMonth?.trim();
+      const horizonMonthKeys: string[] = [];
+      if (startMonth) {
+        const [year, month] = startMonth.split('-').map(Number);
+        for (let i = 0; i < FORECAST_HORIZON_MONTHS; i += 1) {
+          const cursor = new Date(Date.UTC(year!, month! - 1 + i, 1));
+          horizonMonthKeys.push(
+            forecastMonthKey(cursor.getUTCFullYear(), cursor.getUTCMonth() + 1),
+          );
+        }
+      }
+      const inline = await loadDemandPlanSkuInlineV41Horizon({
+        skuId: input.skuId,
+        sku: {
+          productCategory: sku.productCategory,
+          category: sku.category,
+          forceForecast: sku.forceForecast,
+        },
+        windowEnd,
+        horizonMonthKeys,
+        flexBiasShadow: resolveFlexBiasShadowEnabled(),
+      });
+      if (inline.monthCells.length) {
+        monthCells = inline.monthCells;
+        horizonItem = {
+          skuId: input.skuId,
+          skuCode: sku.code,
+          skuName: sku.name ?? '',
+          category: sku.category,
+          station,
+          platform,
+          lifecycle: inline.lifecycle,
+          forecastProfileClass: null,
+          profileSegment: inline.profileSegment,
+          months: monthCells,
+          historyMonths: [],
+        };
+      }
+    }
     if (horizonItem) {
       forecastHorizon = {
         profileSegment: horizonItem.profileSegment,
@@ -349,6 +485,10 @@ export async function loadDemandPlanSkuDetail(input: {
 
   return {
     sku,
+    platform,
+    station,
+    planStartWeek: version.startWeek ?? null,
+    planHorizonWeeks: version.horizonWeeks ?? planWeekKeys.length,
     historyWeeks,
     planWeeks,
     forecastWeeks,

@@ -18,7 +18,7 @@ export function HelpHintLabel({ label, help, className, tooltipClassName }: Prop
       <span
         role="tooltip"
         className={cn(
-          'pointer-events-none absolute top-full left-0 z-50 mt-1 hidden w-72 rounded-md border border-border bg-card px-2 py-1.5 text-left text-xs font-normal leading-relaxed text-text-main shadow-card group-hover/colhelp:block',
+          'pointer-events-none absolute top-full left-0 z-50 mt-1 hidden w-72 max-w-[min(18rem,calc(100vw-2rem))] rounded-md border border-border bg-card px-2 py-1.5 text-left text-xs font-normal leading-relaxed whitespace-pre-line break-words text-text-main shadow-card group-hover/colhelp:block',
           tooltipClassName,
         )}
       >

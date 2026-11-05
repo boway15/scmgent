@@ -2,6 +2,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   pickLatestPublishedVersionPerSku,
+  resolvePublishedSkuProfileSegment,
   resolveT99FallbackDiscountFromFactors,
   T99_PUBLISHED_FALLBACK_LEGACY_DISCOUNT,
 } from './forecast-published-resolve.js';
@@ -40,5 +41,28 @@ describe('forecast-published-resolve', () => {
   it('resolveT99FallbackDiscountFromFactors uses stored t99FloorDiscount when valid', () => {
     assert.equal(resolveT99FallbackDiscountFromFactors({ t99FloorDiscount: 0.8 }), 0.8);
     assert.equal(resolveT99FallbackDiscountFromFactors({ t99FloorDiscount: 0.6 }), 0.6);
+  });
+
+  it('resolvePublishedSkuProfileSegment shares monthly first-month AMAZON anchor', () => {
+    assert.equal(
+      resolvePublishedSkuProfileSegment([
+        { forecastYear: 2026, month: 11, platform: 'ALL', profileSegment: null },
+        { forecastYear: 2026, month: 11, platform: 'AMAZON', profileSegment: 'T1' },
+        { forecastYear: 2026, month: 11, platform: 'SHOPIFY', profileSegment: 'T4A' },
+        { forecastYear: 2026, month: 12, platform: 'AMAZON', profileSegment: 'T99' },
+      ]),
+      'T1',
+    );
+  });
+
+  it('resolvePublishedSkuProfileSegment prefers non-T99 over ALL empty', () => {
+    assert.equal(
+      resolvePublishedSkuProfileSegment([
+        { forecastYear: 2026, month: 10, platform: 'ALL', profileSegment: '' },
+        { forecastYear: 2026, month: 10, platform: 'WALMART', profileSegment: 'T99' },
+        { forecastYear: 2026, month: 10, platform: 'AMAZON', profileSegment: 'T2' },
+      ]),
+      'T2',
+    );
   });
 });

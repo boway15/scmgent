@@ -621,6 +621,12 @@ export type SkuPlanningView = {
   isAccessory?: boolean;
 };
 
+export type DemandPlanChampionForecastVersion = {
+  id: string;
+  versionNo: string;
+  versionName: string;
+};
+
 export type DemandPlanVersionListItem = {
   id: string;
   versionNo: string;
@@ -632,6 +638,7 @@ export type DemandPlanVersionListItem = {
   horizonWeeks?: number | null;
   startMonth?: string;
   horizonMonths?: number | null;
+  championForecastVersionId?: string | null;
   publishedAt?: string | null;
   createdAt?: string;
 };
@@ -648,7 +655,17 @@ export type DemandPlanMonthRow = {
   adjustReason?: string | null;
 };
 
-export type DemandPlanWeekRow = DemandPlanMonthRow;
+export type DemandPlanWeekRow = DemandPlanMonthRow & {
+  skuName?: string | null;
+  platform?: string;
+  profileSegment?: string | null;
+  lifecycle?: string | null;
+  platformBreakdown?: Array<{
+    platform: string;
+    systemDailyAvg: number;
+    effectiveDailyAvg: number;
+  }>;
+};
 
 export type DemandPlanAdoption = {
   id: string;
@@ -717,20 +734,45 @@ export type DemandPlanSkuWeeklyForecast = {
   planSystemDailyAvg: string | null;
   planEffectiveDailyAvg: string | null;
   planManualDailyAvg: string | null;
+  planAdjustReason: string | null;
+  planWeekId: string | null;
+  planBlendMeta: DemandPlanWeekBlendMeta | null;
   championForecastDaily: string | null;
   planSource: string | null;
 };
 
+export type DemandPlanWeekBlendMeta = {
+  weekIndex: number;
+  U: number;
+  u30: number;
+  u90: number;
+  wNear: number;
+  wYoy: number;
+  weekForecastDaily: number;
+  useForecastShape: boolean;
+  source: string;
+};
+
 export type DemandPlanSkuWeeklyPlan = {
+  id: string | null;
   weekKey: string;
   systemDailyAvg: string;
   manualDailyAvg: string | null;
   effectiveDailyAvg: string;
+  adjustReason: string | null;
   championForecastDaily: string | null;
   source: string;
+  blendMeta: DemandPlanWeekBlendMeta | null;
+  qtySold: number;
+  actualDailyAvg: number | null;
+  actualInProgress: boolean;
 };
 
 export type DemandPlanSkuDetail = {
+  planStartWeek: string | null;
+  planHorizonWeeks: number;
+  platform?: string;
+  station?: string;
   sku: {
     id: string;
     code: string;
@@ -781,6 +823,10 @@ export type DemandPlanSkuDetail = {
 export type DemandPlanWideRow = {
   skuId: string;
   skuCode: string;
+  skuName?: string | null;
+  platform: string;
+  profileSegment: string | null;
+  lifecycle: string | null;
   cells: Record<string, DemandPlanWeekRow>;
 };
 
@@ -802,6 +848,7 @@ export type DemandPlanDetail = {
   long: DemandPlanPeriodPage;
   wide: DemandPlanWidePage;
   adoption?: DemandPlanAdoption | null;
+  championForecastVersion?: DemandPlanChampionForecastVersion | null;
 };
 
 export type PlanningDashboard = {
@@ -1228,6 +1275,17 @@ export type ForecastCalibrationClearResult = {
     sku: string;
     platform: string;
     month: string;
+    manualDailyAvg: number;
+  }>;
+};
+
+export type DemandPlanCalibrationClearResult = {
+  versionId: string;
+  rowsWithManual: number;
+  cleared?: number;
+  samples: Array<{
+    sku: string;
+    weekKey: string;
     manualDailyAvg: number;
   }>;
 };
@@ -5447,8 +5505,16 @@ export const api = {
     request<{ versionId: string | null }>(
       `/api/demand-plans/forecast-version-for-sku?skuId=${encodeURIComponent(skuId)}`,
     ),
-  getDemandPlanSkuDetail: (versionId: string, skuId: string) =>
-    request<DemandPlanSkuDetail>(`/api/demand-plans/${versionId}/sku-detail?skuId=${encodeURIComponent(skuId)}`),
+  getDemandPlanSkuDetail: (
+    versionId: string,
+    skuId: string,
+    opts?: { platform?: string; station?: string },
+  ) => {
+    const qs = new URLSearchParams({ skuId });
+    if (opts?.platform?.trim()) qs.set('platform', opts.platform.trim());
+    if (opts?.station?.trim()) qs.set('station', opts.station.trim());
+    return request<DemandPlanSkuDetail>(`/api/demand-plans/${versionId}/sku-detail?${qs}`);
+  },
   getDemandPlan: (
     id: string,
     params?: {
@@ -5456,6 +5522,12 @@ export const api = {
       page?: number;
       pageSize?: number;
       skuCode?: string;
+      channelView?: 'merged' | 'by_channel';
+      platforms?: string[];
+      profileSegment?: string;
+      pendingCalibration?: boolean;
+      categories?: string[];
+      productScope?: ProductScope;
     },
   ) => {
     const search = new URLSearchParams();
@@ -5463,10 +5535,171 @@ export const api = {
     if (params?.page != null) search.set('page', String(params.page));
     if (params?.pageSize != null) search.set('pageSize', String(params.pageSize));
     if (params?.skuCode) search.set('skuCode', params.skuCode);
+    if (params?.channelView) search.set('channelView', params.channelView);
+    appendRepeatedQuery(search, 'platforms', params?.platforms);
+    if (params?.profileSegment) search.set('profileSegment', params.profileSegment);
+    if (params?.pendingCalibration) search.set('pendingCalibration', 'true');
+    appendRepeatedQuery(search, 'categories', params?.categories);
+    appendProductScopeQuery(search, params?.productScope);
     const query = search.toString();
     return request<DemandPlanDetail>(`/api/demand-plans/${id}${query ? `?${query}` : ''}`);
   },
-  generateDemandPlan: (body?: { projectGroup?: string; versionName?: string }) =>
+  exportDemandPlanHorizon: async (params: {
+    versionId: string;
+    mode: 'wide' | 'detail' | 'calibration';
+    skuCode?: string;
+    channelView?: 'merged' | 'by_channel';
+    platforms?: string[];
+    profileSegment?: string;
+    pendingCalibration?: boolean;
+    categories?: string[];
+    productScope?: ProductScope;
+  }) => {
+    const qs = new URLSearchParams();
+    qs.set('versionId', params.versionId);
+    qs.set('mode', params.mode);
+    if (params.skuCode) qs.set('skuCode', params.skuCode);
+    if (params.channelView) qs.set('channelView', params.channelView);
+    appendRepeatedQuery(qs, 'platforms', params.platforms);
+    if (params.profileSegment) qs.set('profileSegment', params.profileSegment);
+    if (params.pendingCalibration) qs.set('pendingCalibration', 'true');
+    appendRepeatedQuery(qs, 'categories', params.categories);
+    appendProductScopeQuery(qs, params.productScope);
+    const res = await apiFetch(apiUrl(`/api/demand-plans/horizon/export?${qs}`));
+    await downloadAttachment(
+      res,
+      params.mode === 'detail'
+        ? 'demand-plan-horizon-detail.csv'
+        : params.mode === 'calibration'
+          ? 'demand-plan-calibration-import.csv'
+          : 'demand-plan-horizon-wide.csv',
+    );
+  },
+  exportDemandPlanAccuracy: async (params: {
+    versionId: string;
+    skuCode?: string;
+    channelView?: 'merged' | 'by_channel';
+    platforms?: string[];
+    profileSegment?: string;
+    pendingCalibration?: boolean;
+    categories?: string[];
+    productScope?: ProductScope;
+  }) => {
+    const qs = new URLSearchParams();
+    if (params.skuCode) qs.set('skuCode', params.skuCode);
+    if (params.channelView) qs.set('channelView', params.channelView);
+    appendRepeatedQuery(qs, 'platforms', params.platforms);
+    if (params.profileSegment) qs.set('profileSegment', params.profileSegment);
+    if (params.pendingCalibration) qs.set('pendingCalibration', 'true');
+    appendRepeatedQuery(qs, 'categories', params.categories);
+    appendProductScopeQuery(qs, params.productScope);
+    const query = qs.toString();
+    const res = await apiFetch(
+      apiUrl(`/api/demand-plans/${params.versionId}/accuracy/export${query ? `?${query}` : ''}`),
+    );
+    await downloadAttachment(res, 'demand-plan-accuracy.csv');
+  },
+  getDemandPlanAccuracySummary: (
+    versionId: string,
+    params?: {
+      page?: number;
+      pageSize?: number;
+      skuCode?: string;
+      profileSegment?: string;
+      categories?: string[];
+      productScope?: ProductScope;
+    },
+  ) => {
+    const qs = new URLSearchParams();
+    if (params?.page) qs.set('page', String(params.page));
+    if (params?.pageSize) qs.set('pageSize', String(params.pageSize));
+    if (params?.skuCode) qs.set('skuCode', params.skuCode);
+    if (params?.profileSegment) qs.set('profileSegment', params.profileSegment);
+    appendRepeatedQuery(qs, 'categories', params?.categories);
+    appendProductScopeQuery(qs, params?.productScope);
+    const query = qs.toString();
+    return request<{
+      items: Array<{
+        skuId: string;
+        skuCode: string;
+        comparedWeeks: number;
+        mae: number | null;
+        wmape: number | null;
+        absErrorSum: number;
+        actualSum: number;
+      }>;
+      total: number;
+      page: number;
+      pageSize: number;
+      totals: { skuCount: number; comparedWeekCount: number };
+    }>(`/api/demand-plans/${versionId}/accuracy/summary${query ? `?${query}` : ''}`);
+  },
+  getDemandPlanReviewSummary: (versionId: string) =>
+    request<{
+      skuTotal: number;
+      rowTotal: number;
+      calibratedCellCount: number;
+      pendingT99SkuCount: number;
+      skuWithoutChampionCount: number;
+      skippedByReason: Record<string, number>;
+      championForecastVersionId: string | null;
+      startWeek: string | null;
+    }>(`/api/demand-plans/${versionId}/review-summary`),
+  previewDemandPlanCalibrationImport: async (versionId: string, input: { csv?: string; file?: File }) => {
+    let res: Response;
+    if (input.file) {
+      const form = new FormData();
+      form.append('file', input.file);
+      res = await apiFetch(apiUrl(`/api/demand-plans/${versionId}/calibration-import/preview`), {
+        method: 'POST',
+        body: form,
+      });
+    } else {
+      res = await apiFetch(apiUrl(`/api/demand-plans/${versionId}/calibration-import/preview`), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ csv: input.csv ?? '' }),
+      });
+    }
+    const payload = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(payload.message ?? '预览失败');
+    return payload as ForecastCalibrationImportResult;
+  },
+  commitDemandPlanCalibrationImport: async (versionId: string, input: { csv?: string; file?: File }) => {
+    let res: Response;
+    if (input.file) {
+      const form = new FormData();
+      form.append('file', input.file);
+      res = await apiFetch(apiUrl(`/api/demand-plans/${versionId}/calibration-import/commit`), {
+        method: 'POST',
+        body: form,
+      });
+    } else {
+      res = await apiFetch(apiUrl(`/api/demand-plans/${versionId}/calibration-import/commit`), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ csv: input.csv ?? '' }),
+      });
+    }
+    const payload = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(payload.message ?? '导入失败');
+    return payload as ForecastCalibrationImportResult & { applied?: number };
+  },
+  previewDemandPlanCalibrationClear: (versionId: string) =>
+    request<DemandPlanCalibrationClearResult>(
+      `/api/demand-plans/${versionId}/calibration-clear/preview`,
+      { method: 'POST', body: JSON.stringify({}) },
+    ),
+  commitDemandPlanCalibrationClear: (versionId: string) =>
+    request<DemandPlanCalibrationClearResult>(
+      `/api/demand-plans/${versionId}/calibration-clear/commit`,
+      { method: 'POST', body: JSON.stringify({}) },
+    ),
+  generateDemandPlan: (body?: {
+    projectGroup?: string;
+    versionName?: string;
+    startWeek?: string;
+  }) =>
     request<{
       version: DemandPlanVersionListItem;
       skipped: Array<{ skuId: string; skuCode: string; reason: string }>;

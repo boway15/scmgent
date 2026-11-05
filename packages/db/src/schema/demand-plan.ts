@@ -9,10 +9,46 @@ import {
   timestamp,
   index,
   uniqueIndex,
+  jsonb,
 } from 'drizzle-orm/pg-core';
 import { relations } from 'drizzle-orm';
 import { users } from './auth';
 import { skus } from './inventory';
+import { salesForecastVersions } from './sales-forecast';
+
+export type DemandPlanWeekBlendMeta = {
+  weekIndex: number;
+  U: number;
+  u30: number;
+  u90: number;
+  wNear: number;
+  wYoy: number;
+  weekForecastDaily: number;
+  useForecastShape: boolean;
+  source: string;
+  /** monthly=legacy 月混合；v41_inline=内联 V4.1（不读已发布月版本） */
+  algo?: 'monthly' | 'v41_inline';
+  lifecycle?: string;
+  /** 生成时锚定月预测的 T 分层（无已发布 meta 时供矩阵展示） */
+  profileSegment?: string;
+  seasonalityFactor?: number;
+  trendFactor?: number;
+  lastYearSameWeekDaily?: number;
+};
+
+export type DemandPlanGenerationMeta = {
+  generatedAt: string;
+  startWeek: string;
+  championForecastVersionId: string | null;
+  championResolution: {
+    defaultVersionId: string | null;
+    skuWithoutForecastCount: number;
+    versionCounts: Record<string, number>;
+  };
+  skippedByReason: Record<string, number>;
+  /** 周系统日均来源；v41_inline 与月预测算法同构但不依赖月版本发布 */
+  demandForecastSource?: 'v41_inline' | 'published_champion' | 'legacy_blend';
+};
 
 export const demandPlanVersionStatusEnum = pgEnum('demand_plan_version_status', [
   'draft',
@@ -33,6 +69,11 @@ export const demandPlanVersions = pgTable(
     horizonWeeks: integer('horizon_weeks'),
     projectGroup: varchar('project_group', { length: 200 }).notNull(),
     warehouseCode: varchar('warehouse_code', { length: 50 }).notNull(),
+    championForecastVersionId: uuid('champion_forecast_version_id').references(
+      () => salesForecastVersions.id,
+      { onDelete: 'set null' },
+    ),
+    generationMeta: jsonb('generation_meta').$type<DemandPlanGenerationMeta>(),
     publishedAt: timestamp('published_at', { withTimezone: true }),
     createdBy: uuid('created_by').references(() => users.id),
     publishedBy: uuid('published_by').references(() => users.id),
@@ -99,6 +140,7 @@ export const demandPlanWeekly = pgTable(
     unconstrainedRecentDaily: numeric('unconstrained_recent_daily', { precision: 12, scale: 4 }),
     championForecastDaily: numeric('champion_forecast_daily', { precision: 12, scale: 4 }),
     source: varchar('source', { length: 30 }).notNull(),
+    blendMeta: jsonb('blend_meta').$type<DemandPlanWeekBlendMeta>(),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },

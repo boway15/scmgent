@@ -20,10 +20,16 @@ import {
 import {
   buildDemandPlanVersionDetailSearch,
   DEMAND_PLAN_HORIZON_WEEKS,
+  DEMAND_PLAN_REPLENISHMENT_DEFER_NOTICE,
   DEMAND_PLAN_STATUS_LABEL,
   formatDemandPlanHorizon,
   formatDemandPlanProjectGroup,
 } from '@/lib/demand-plan-utils';
+import {
+  buildDemandPlanStartWeekOptions,
+  formatIsoWeekMondayMd,
+  isDemandPlanStartWeekBacktest,
+} from '@/lib/iso-week';
 
 type StatusFilter = 'all' | 'draft' | 'pilot_published' | 'archived';
 
@@ -44,6 +50,12 @@ export function DemandPlanPilotPage() {
   const [keyword, setKeyword] = useState('');
   const [appliedKeyword, setAppliedKeyword] = useState('');
   const [generationSummary, setGenerationSummary] = useState<string | null>(null);
+  const startWeekOptions = useMemo(() => buildDemandPlanStartWeekOptions(), []);
+  const [generationStartWeek, setGenerationStartWeek] = useState(() => startWeekOptions[0] ?? '');
+  const generationIsBacktest = useMemo(
+    () => Boolean(generationStartWeek) && isDemandPlanStartWeekBacktest(generationStartWeek),
+    [generationStartWeek],
+  );
 
   const versionsQuery = useQuery({
     queryKey: ['demand-plan-versions', 'all'],
@@ -85,6 +97,7 @@ export function DemandPlanPilotPage() {
     mutationFn: () =>
       api.generateDemandPlan({
         versionName: versionName.trim() || undefined,
+        startWeek: generationStartWeek || undefined,
       }),
     onSuccess: async (result) => {
       const skipped = result.skipped.length;
@@ -102,15 +115,15 @@ export function DemandPlanPilotPage() {
 
   return (
     <div className="space-y-6">
-      <PageHeader title="需求计划-周">
+      <PageHeader title="周度销量预测">
         <div className="flex flex-wrap items-center gap-2">
           {adoptedPublished.length > 0 ? (
             <span className="inline-flex items-center rounded-md bg-muted px-2 py-1 text-xs text-text-sub">
-              已发布 {adoptedPublished.length} 个版本 · 采用状态见各版本详情
+              已发布 {adoptedPublished.length} 个版本 · 「已发布」≠ 已接入补货
             </span>
           ) : (
             <span className="inline-flex items-center rounded-md border border-amber-500/30 bg-amber-500/10 px-2 py-1 text-xs text-amber-800 dark:text-amber-200">
-              尚无已发布周计划，补货仍吃月预测
+              尚无已发布周预测
             </span>
           )}
         </div>
@@ -122,13 +135,16 @@ export function DemandPlanPilotPage() {
             <span className="font-medium text-text-main">操作流程</span>
             <span className="text-text-sub">① 生成草稿</span>
             <span className="text-text-sub">→</span>
-            <span className="text-text-sub">② 版本列表选草稿复核</span>
+            <span className="text-text-sub">② 版本列表选草稿复核校准</span>
             <span className="text-text-sub">→</span>
-            <span className="text-text-sub">③ 发布并采用后补货吃周计划</span>
+            <span className="text-text-sub">③ 发布（冻结周预测版本）</span>
           </div>
+          <p className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-900 dark:text-amber-100">
+            {DEMAND_PLAN_REPLENISHMENT_DEFER_NOTICE}
+          </p>
           <p className="text-xs text-text-sub">
-            固定 {DEMAND_PLAN_HORIZON_WEEKS} 个 ISO 周（约 180 天），对全量启用 SKU 生成；近 90 天销量为主、月预测仅作季节形状。
-            与销量预测模块独立，仓库在出货/调拨时选择。
+            固定 {DEMAND_PLAN_HORIZON_WEEKS} 个 ISO 周（约 180 天），对全量启用 SKU 生成；默认内联 V4.1 与月预测同算法，T 分层写入周行并在矩阵展示，不依赖月版本发布。
+            与销量预测模块独立。
           </p>
           <p className="text-sm text-text-main">{DEMAND_PLAN_SCOPE_NOTICE}</p>
         </CardContent>
@@ -154,10 +170,29 @@ export function DemandPlanPilotPage() {
               <span className="text-text-sub">计划范围</span>
               <p className="flex h-9 items-center text-text-main">全量 SKU · 固定 {DEMAND_PLAN_HORIZON_WEEKS} 周</p>
             </div>
+            <label className="space-y-1 text-sm">
+              <span className="text-text-sub">开始周（周一）</span>
+              <select
+                className="flex h-9 min-w-[10rem] rounded-md border border-input bg-background px-2 font-mono text-sm"
+                value={generationStartWeek}
+                onChange={(event) => setGenerationStartWeek(event.target.value)}
+              >
+                {startWeekOptions.map((week) => (
+                  <option key={week} value={week}>
+                    周一 {formatIsoWeekMondayMd(week)}（{week}）
+                  </option>
+                ))}
+              </select>
+            </label>
             <Button disabled={generate.isPending} onClick={() => generate.mutate()}>
               {generate.isPending ? '生成中…' : '生成草稿'}
             </Button>
           </div>
+          {generationIsBacktest ? (
+            <p className="text-xs text-text-sub">
+              训练数据截止至开始周之前（严格回测）；仅供复盘对照，不建议发布并采用。
+            </p>
+          ) : null}
           {generationSummary && !generate.isPending && (
             <p className="text-sm text-primary">{generationSummary}</p>
           )}

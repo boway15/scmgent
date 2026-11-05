@@ -19,6 +19,7 @@ import {
 } from '@/lib/forecast-horizon-meta';
 import {
   formatForecastDateTime,
+  isTransientGatewayError,
   mutationErrorMessage,
   sleep,
   buildForecastVersionDetailSearch,
@@ -164,14 +165,30 @@ export function SalesForecastListPage() {
       }
 
       const platformCount = initial.platformCount ?? 5;
-      setBaselineProgress(
-        `后台生成中：约 ${initial.estimatedForecastRows.toLocaleString()} 行（${initial.activeSkuCount.toLocaleString()} SKU × ${initial.monthCount} 月 × ${platformCount} 平台），请稍候…`,
-      );
+      const runningProgress = `后台生成中：约 ${initial.estimatedForecastRows.toLocaleString()} 行（${initial.activeSkuCount.toLocaleString()} SKU × ${initial.monthCount} 月 × ${platformCount} 平台）。请勿再次全量生成。`;
+      setBaselineProgress(runningProgress);
 
+      let gatewayBlips = 0;
       for (let attempt = 0; attempt < 600; attempt++) {
         await sleep(attempt < 5 ? 2000 : 5000);
-        const task = await api.getSalesForecastBaselineTask(initial.taskRunId);
-        if (task.status === 'running') continue;
+        let task;
+        try {
+          task = await api.getSalesForecastBaselineTask(initial.taskRunId);
+        } catch (err) {
+          if (!isTransientGatewayError(err)) throw err;
+          gatewayBlips += 1;
+          setBaselineProgress(
+            `${runningProgress}状态查询被网关打断 ${gatewayBlips} 次，任务仍在后台写入，继续等待…`,
+          );
+          continue;
+        }
+        if (task.status === 'running') {
+          if (gatewayBlips > 0) {
+            gatewayBlips = 0;
+            setBaselineProgress(runningProgress);
+          }
+          continue;
+        }
         if (task.status === 'failed') {
           throw new Error(task.errorMessage ?? '后台生成失败');
         }
@@ -182,7 +199,7 @@ export function SalesForecastListPage() {
         throw new Error('后台任务已完成但未返回结果');
       }
 
-      throw new Error('后台生成超时，请稍后在版本列表查看是否已生成草稿');
+      throw new Error('等待后台生成超时。任务可能仍在写入，请稍后刷新版本列表，不要再次全量生成');
     },
     onSuccess: async (data) => {
       setBaselineProgress(null);

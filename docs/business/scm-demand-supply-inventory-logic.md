@@ -86,7 +86,7 @@ flowchart LR
 | 销量历史 | 日/月销量入库、平台归一、月聚合 | `sales_history*`、`sales-history-import.ts` |
 | 销售分析 | 多维立方快照（看板用，非计划主数据） | `sales_analytics_cube_snapshots`、`sales-analytics-cube.ts` |
 | 销售预测 | 基线生成、ABCD / AllCat V4.1 分层、版本评审发布、准确率 | `sales_forecast_*` |
-| 需求计划（试点） | 周粒度需求、发布/采用，与预测 Champion 对照 | `demand_plan_*`、`planning_demand_adoptions` |
+| 周度销量预测 | 26 周预测与校准、发布冻结；与月预测 Champion 对照；**补货暂未接入** | `demand_plan_*`、`planning_demand_adoptions` |
 | 有效日需求 | 用有货日还原真实需求水平 | `effective-daily-demand.ts`、`forecast-demand-unconstrain.ts` |
 | SKU 生命周期 | 由销量推断生命周期标签 | `skus.lifecycle`、`sku-lifecycle.ts` |
 
@@ -107,17 +107,21 @@ flowchart LR
 | `sales_forecast_seasonality` | — | 按品类/项目组的季节因子 |
 | `forecast_promo_calendar` / `forecast_exogenous_flags` | — | 大促与外生事件剔除 |
 | `sales_platforms` / aliases | — | 渠道归一（`sales-platform.ts`） |
-| `demand_plan_versions` | — | `status`、`start_week`、`horizon_weeks`、`project_group`、`warehouse_code`（常为 `ALL`） |
-| `demand_plan_weekly` | `(version, sku, warehouse, ISO 周)` | `system_daily`、`manual_daily` |
+| `demand_plan_versions` | — | `status`、`start_week`、`horizon_weeks`、`champion_forecast_version_id`、`generation_meta`、`project_group`、`warehouse_code`（常为 `ALL`） |
+| `demand_plan_weekly` | `(version, sku, warehouse, ISO 周)` | `system_daily`、`manual_daily`、`blend_meta` |
 | `demand_plan_monthly` | 同上（`YYYY-MM`） | 现主路径以周为主 |
-| `planning_demand_adoptions` | `(project_group, warehouse_code)` | `source` = `forecast` / `demand_plan`，绑定采用版本 |
+| `planning_demand_adoptions` | `(project_group, warehouse_code)` | `source` = `forecast` / `demand_plan`，绑定采用版本（**当前补货计算仍默认月预测**） |
 | `demand_plan_pilot_snapshots` | — | 试点对照快照 |
+
+#### 周预测与补货解耦
+
+周度销量预测当前用于运营校准与版本冻结；`publish` / `adopt` 可写入 `planning_demand_adoptions`，但产品默认说明 **补货链路暂未切换**。后续扩展补货时应显式打开采用消费，避免运营误以为「已发布 = 已吃周计划」。
 
 ### 1.3 端到端流程
 
 | 步骤 | 输入 | 规则 | 输出 |
 |------|------|------|------|
-| ① 销量导入 | 每日宽表 CSV，`POST /import/sales`（`import.ts` + `sales-xiaoshou.ts`）；飞书长表每天 05:00 拉取 | 平台归一、station 分桶；新行插入，同一 SKU + 日期 + 渠道 + 站点覆盖销量；导入后刷新 SKU 生命周期并异步重建销售分析立方 | `sales_history` |
+| ① 销量导入 | 每日宽表 CSV，`POST /import/sales`（`import.ts` + `sales-xiaoshou.ts`）；飞书长表每天 08:35 拉取 | 平台归一、station 分桶；新行插入，同一 SKU + 日期 + 渠道 + 站点覆盖销量；导入后刷新 SKU 生命周期并异步重建销售分析立方 | `sales_history` |
 | ② 清洗与聚合 | 日表 | 日表默认保留 365 天（`sales-history-config.ts`）；训练用月序列剔除缺货/大促（`forecast-monthly-clean.ts`） | 月度干净序列 |
 | ③ 分层 | 近 12 个月销量 | ABCD：连续性/CV 阈值（`forecast-profile-config.ts`）；默认算法模式 `allcat_v41`（`forecast-algo-mode.ts`）→ T1–T99 | `forecast_profile_class`、`profile_segment` |
 | ④ 基线预测 | 日/月销量、季节因子、准入 | 异步任务 `forecast_baseline`（`forecast-baseline-task.ts`）；monthly_abcd 模式下用 T1/T2/T3 核 | 草稿版本的 `sales_forecast_monthly` |
@@ -736,10 +740,10 @@ SKU 规划入口（`SkuPlanningEntryPage`）列表列展示**库存健康灯**�
 | 06:00 | 全链库存飞书拉取 | `POST /tasks/procurement-ops-pull` |
 | 07:20 | 库存查询飞书拉取 | `POST /tasks/inventory-query-pull` |
 | 07:40 | 库存周转飞书拉取 | `POST /tasks/inventory-turnover-pull` |
-| 07:50 | 每日库存流水线（含影子长表构建 → 数据问题扫描 → 补货…） | `POST /tasks/daily-inventory-pipeline` |
-| 08:00 | 大件备货飞书拉取 | `POST /tasks/procurement-bulk-stock-pull` |
-| 08:05 | 采购跟单飞书拉取 | `POST /tasks/procurement-follow-up-pull` |
-| 05:00 | 销量飞书拉取（近 3 日长表，新行插入、已有行覆盖，先于当天预测） | `POST /tasks/sales-daily-feishu-pull` |
+| 08:05 | 大件备货飞书拉取 | `POST /tasks/procurement-bulk-stock-pull` |
+| 08:35 | 销量飞书拉取（近 3 日长表，新行插入、已有行覆盖） | `POST /tasks/sales-daily-feishu-pull` |
+| 08:50 | 每日库存流水线（含影子长表构建 → 数据问题扫描 → 补货…） | `POST /tasks/daily-inventory-pipeline` |
+| 08:25 | 采购跟单飞书拉取 | `POST /tasks/procurement-follow-up-pull` |
 | 每周一 09:00 | 补货建议生成（独立调度） | `POST /tasks/replenishment-forecast` |
 | 已停用 | 独立缺货预警（已并入流水线） | `POST /tasks/stock-alert` |
 

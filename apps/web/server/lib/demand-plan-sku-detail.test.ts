@@ -4,9 +4,18 @@ import {
   buildRecentHistoryWeekKeys,
   buildWeeklyActualFromDaily,
   expandMonthlyForecastToWeeks,
+  resolveDemandPlanSkuDetailSalesPlatform,
 } from './demand-plan-sku-detail.js';
+import { resolveDemandPlanSkuDetailSalesWindow } from './demand-plan-start-week.js';
 
 describe('demand-plan-sku-detail', () => {
+  it('scopes history sales query to the selected platform, not ALL', () => {
+    assert.equal(resolveDemandPlanSkuDetailSalesPlatform('TIKTOK'), 'TIKTOK');
+    assert.equal(resolveDemandPlanSkuDetailSalesPlatform('amazon'), 'AMAZON');
+    assert.equal(resolveDemandPlanSkuDetailSalesPlatform(undefined), 'ALL');
+    assert.equal(resolveDemandPlanSkuDetailSalesPlatform('ALL'), 'ALL');
+  });
+
   it('builds 26 recent ISO week keys ending at window end week', () => {
     const weeks = buildRecentHistoryWeekKeys(new Date('2026-03-15T00:00:00.000Z'), 26);
     assert.equal(weeks.length, 26);
@@ -32,6 +41,16 @@ describe('demand-plan-sku-detail', () => {
     assert.equal(rows[0]?.inProgress, false);
     assert.equal(rows[1]?.qtySold, 60);
     assert.equal(rows[1]?.inProgress, true);
+  });
+
+  it('backtest sku detail window ends before start week', () => {
+    const now = new Date('2026-09-25T00:00:00.000Z');
+    const { windowEnd, isBacktest } = resolveDemandPlanSkuDetailSalesWindow({
+      startWeek: '2026-W38',
+      now,
+    });
+    assert.equal(isBacktest, true);
+    assert.equal(windowEnd.toISOString().slice(0, 10), '2026-09-13');
   });
 
   it('expands monthly forecast to weekly using day weights', () => {

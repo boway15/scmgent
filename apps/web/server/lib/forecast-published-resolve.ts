@@ -3,12 +3,16 @@ import { db, salesForecastMonthly, salesForecastVersions } from '@scm/db';
 import {
   aggregateForecastP90Rows,
   aggregateForecastRows,
+  forecastMonthKey,
   mapForecastDailyFields,
+  normalizeSalesPlatform,
   resolveT99ReplenishmentFallbackDaily,
   type HorizonDemandSource,
 } from './forecast-demand.js';
+import { resolveAnchorProfileSegment } from './forecast-horizon.js';
 import { profileClassFromSegment } from './forecast-profile-class.js';
 import { FORECAST_GLOBAL_STATION } from './forecast-station-scope.js';
+import { isForecastV41PlatformCode } from './forecast-platform-scope.js';
 
 export type PublishedForecastEntry = {
   map: Map<string, number>;
@@ -192,10 +196,7 @@ export async function loadMergedPublishedForecastBySkuIds(
     for (const skuId of ids) {
       const skuRows = rowsBySku.get(skuId) ?? [];
       const lifecycle = skuRows.find((r) => r.lifecycle)?.lifecycle ?? undefined;
-      const profileSegment = [...skuRows]
-        .sort((left, right) => right.forecastYear * 100 + right.month - (left.forecastYear * 100 + left.month))
-        .map((row) => row.profileSegment?.trim())
-        .find((segment) => segment);
+      const profileSegment = resolvePublishedSkuProfileSegment(skuRows) ?? undefined;
       let usedT99Fallback = false;
       const map = aggregateForecastRows(
         skuRows.map((r) => {
@@ -238,6 +239,130 @@ export async function loadMergedPublishedForecastBySkuIds(
         p90Map,
         versionId,
         demandSource: usedT99Fallback ? 't99_fallback' : 'forecast',
+      });
+    }
+  }
+
+  return result;
+}
+
+export type PublishedForecastSkuMeta = {
+  profileSegment: string | null;
+  lifecycle: string | null;
+  versionId: string | null;
+  /** 分平台月预测日均（已含 manual 生效值） */
+  monthByPlatform: Map<string, Map<string, number>>;
+};
+
+/** 与月预测列表同一套锚点：首月 + 主渠道（非 T99 优先 AMAZON） */
+export function resolvePublishedSkuProfileSegment(
+  rows: Array<{
+    forecastYear: number;
+    month: number;
+    platform: string | null;
+    profileSegment: string | null;
+  }>,
+): string | null {
+  const mapped = rows.map((row) => ({
+    forecastYear: row.forecastYear,
+    month: row.month,
+    platform: row.platform ?? 'ALL',
+    profileSegment: row.profileSegment,
+  }));
+  const v41Rows = mapped.filter((row) => isForecastV41PlatformCode(normalizeSalesPlatform(row.platform)));
+  return resolveAnchorProfileSegment(v41Rows.length ? v41Rows : mapped);
+}
+
+/** 已发布月预测元数据：T 分层 + 分平台月形状（供周计划合计/分平台展示） */
+export async function loadPublishedForecastSkuMetaBySkuIds(
+  skuIds: string[],
+  station: string = FORECAST_GLOBAL_STATION,
+): Promise<Map<string, PublishedForecastSkuMeta>> {
+  const result = new Map<string, PublishedForecastSkuMeta>();
+  if (!skuIds.length) return result;
+
+  const versionBySkuId = await resolvePublishedVersionIdBySkuIds(skuIds, station);
+  for (const skuId of skuIds) {
+    if (!versionBySkuId.has(skuId)) {
+      result.set(skuId, {
+        profileSegment: null,
+        lifecycle: null,
+        versionId: null,
+        monthByPlatform: new Map(),
+      });
+    }
+  }
+
+  const skuIdsByVersion = new Map<string, string[]>();
+  for (const [skuId, versionId] of versionBySkuId) {
+    const list = skuIdsByVersion.get(versionId) ?? [];
+    list.push(skuId);
+    skuIdsByVersion.set(versionId, list);
+  }
+
+  for (const [versionId, ids] of skuIdsByVersion) {
+    const rowsBySku = new Map<
+      string,
+      Array<{
+        forecastYear: number;
+        month: number;
+        forecastDailyAvg: string | null;
+        manualDailyAvg: string | null;
+        lifecycle: string | null;
+        platform: string | null;
+        profileSegment: string | null;
+      }>
+    >();
+
+    for (let offset = 0; offset < ids.length; offset += SKU_IN_CHUNK) {
+      const chunk = ids.slice(offset, offset + SKU_IN_CHUNK);
+      const rows = await db
+        .select({
+          skuId: salesForecastMonthly.skuId,
+          forecastYear: salesForecastMonthly.forecastYear,
+          month: salesForecastMonthly.month,
+          forecastDailyAvg: salesForecastMonthly.forecastDailyAvg,
+          manualDailyAvg: salesForecastMonthly.manualDailyAvg,
+          lifecycle: salesForecastMonthly.lifecycle,
+          platform: salesForecastMonthly.platform,
+          profileSegment: salesForecastMonthly.profileSegment,
+        })
+        .from(salesForecastMonthly)
+        .where(
+          and(
+            eq(salesForecastMonthly.versionId, versionId),
+            eq(salesForecastMonthly.station, station),
+            inArray(salesForecastMonthly.skuId, chunk),
+          ),
+        );
+      for (const row of rows) {
+        const list = rowsBySku.get(row.skuId) ?? [];
+        list.push(row);
+        rowsBySku.set(row.skuId, list);
+      }
+    }
+
+    for (const skuId of ids) {
+      const skuRows = rowsBySku.get(skuId) ?? [];
+      const monthByPlatform = new Map<string, Map<string, number>>();
+      for (const row of skuRows) {
+        const platform = normalizeSalesPlatform(row.platform);
+        if (!isForecastV41PlatformCode(platform) || platform === 'ALL') continue;
+        const daily = mapForecastDailyFields({
+          forecastDailyAvg: row.forecastDailyAvg,
+          manualDailyAvg: row.manualDailyAvg,
+        }).effectiveDailyAvg;
+        if (daily <= 0) continue;
+        const monthKey = forecastMonthKey(row.forecastYear, row.month);
+        const platformMap = monthByPlatform.get(platform) ?? new Map<string, number>();
+        platformMap.set(monthKey, daily);
+        monthByPlatform.set(platform, platformMap);
+      }
+      result.set(skuId, {
+        profileSegment: resolvePublishedSkuProfileSegment(skuRows),
+        lifecycle: skuRows.find((row) => row.lifecycle)?.lifecycle ?? null,
+        versionId,
+        monthByPlatform,
       });
     }
   }

@@ -3,6 +3,17 @@ export const mutationErrorMessage = (error: unknown) =>
 
 export const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
+/**
+ * Cloudflare / cloudflared 返回的 HTML 502/504/524，或浏览器侧连接被掐断。
+ * 这类失败没有进到 Hono，不代表后台任务已失败。
+ */
+export function isTransientGatewayError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  if (/HTTP (502|504|524)\b/.test(message) && /网关超时|HTML 错误页/.test(message)) return true;
+  if (/Failed to fetch|NetworkError|Load failed|ECONNRESET|ETIMEDOUT/i.test(message)) return true;
+  return false;
+}
+
 export function formatForecastWmape(wmape: number | null | undefined): string {
   if (wmape == null || Number.isNaN(wmape)) return '-';
   const capped = Math.min(Math.max(wmape, 0), 9.99);

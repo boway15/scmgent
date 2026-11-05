@@ -336,8 +336,21 @@ docker stats
 
 ---
 
+## 十二、周需求计划（菜单 `data.demand_plan`）冒烟
+
+涉及矩阵筛选 / 校准导入导出时，对照 [superpowers/specs/2026-11-04-weekly-demand-matrix-parity.md](./superpowers/specs/2026-11-04-weekly-demand-matrix-parity.md) §5：
+
+- [ ] 草稿：合计/分平台、T99 待校准、导出宽表/明细/校准表  
+- [ ] 导入校准预览→提交；撤销全部校准  
+- [ ] 导出准确度（有实销周）  
+- [ ] 发布并采用 / 改吃月预测  
+
+---
+
 ## 相关文档
 
 - [dedicated-host-server-checklist.md](./dedicated-host-server-checklist.md) — 首次安装  
 - [win11-cloudflare-tunnel-deploy.md](./win11-cloudflare-tunnel-deploy.md) — Tunnel 详解  
 - [../z-docker-ops.md](../z-docker-ops.md) — 改代码 / 重建速查  
+- [superpowers/specs/2026-11-04-weekly-demand-matrix-parity.md](./superpowers/specs/2026-11-04-weekly-demand-matrix-parity.md) — 周计划矩阵对齐月预测  
+

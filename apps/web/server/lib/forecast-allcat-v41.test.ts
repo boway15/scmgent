@@ -1164,4 +1164,45 @@ describe('forecast-allcat-v41', () => {
     assert.ok(result.forecastDaily >= 5);
     assert.equal(result.horizonFactors.peerPlatformFloor, 5);
   });
+
+  it('seasonal index shadow keeps forecastDaily and on lifts the peak month', () => {
+    const byMonth = Object.fromEntries(Array.from({ length: 12 }, (_, i) => [i + 1, 1])) as Record<number, number>;
+    byMonth[11] = 1.6;
+    byMonth[12] = 1.5;
+    byMonth[1] = 0.75;
+    const monthlyRows = Array.from({ length: 18 }, (_, i) => {
+      const cursor = new Date(Date.UTC(2025, 4 + i, 1));
+      return {
+        saleYear: cursor.getUTCFullYear(),
+        month: cursor.getUTCMonth() + 1,
+        qtySold: 3000,
+      };
+    });
+    const base = {
+      productCategory: 'A',
+      platform: 'AMAZON',
+      forecastYear: 2026,
+      forecastMonth: 11,
+      horizonIndex: 0,
+      monthlyRows,
+      recent30DailyAvg: 100,
+      recent90DailyAvg: 100,
+      historyCapEnd: new Date('2026-10-31T00:00:00.000Z'),
+    };
+    const plain = computeAllCatV41ForecastForMonth(base);
+    const shadow = computeAllCatV41ForecastForMonth({
+      ...base,
+      seasonalIndex: { mode: 'shadow', byMonth, sampleQty: 500_000, level: 'project_group', k: 1000 },
+    });
+    const live = computeAllCatV41ForecastForMonth({
+      ...base,
+      seasonalIndex: { mode: 'on', byMonth, sampleQty: 500_000, level: 'project_group', k: 1000 },
+    });
+    assert.equal(shadow.forecastDaily, plain.forecastDaily);
+    const shadowDaily = Number((shadow.horizonFactors.seasonalIndex as { shadowDaily: number }).shadowDaily);
+    assert.ok(shadowDaily > plain.forecastDaily * 1.15);
+    assert.ok(live.forecastDaily > plain.forecastDaily * 1.15);
+    assert.equal(live.horizonFactors.monthFactor, 1);
+    assert.equal(live.horizonFactors.monthFactorLegacy, plain.horizonFactors.monthFactor);
+  });
 });

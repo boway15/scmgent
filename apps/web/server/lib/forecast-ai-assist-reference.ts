@@ -221,6 +221,13 @@ export function buildAiAssistSystemReference(input: {
   historyCapEnd: Date;
   recent30DailyAvg?: number | null;
   recent90DailyAvg?: number | null;
+  seasonalIndex?: {
+    mode: 'shadow' | 'on';
+    byMonth: Record<number, number>;
+    sampleQty: number;
+    level: string;
+    k?: number;
+  };
 }): AiAssistSystemReference {
   const productCategory = resolveAllCatProductCategory(input.productCategory);
   const recentLevelDaily = computeRecentLevelDaily(input.history);
@@ -237,6 +244,7 @@ export function buildAiAssistSystemReference(input: {
       historyCapEnd: input.historyCapEnd,
       recent30DailyAvg: input.recent30DailyAvg ?? recentLevelDaily,
       recent90DailyAvg: input.recent90DailyAvg ?? null,
+      seasonalIndex: input.seasonalIndex,
     });
     const yoy = yoySameMonthDaily(input.history, h.forecastYear, h.month);
     const blend = suggestBlendDaily({

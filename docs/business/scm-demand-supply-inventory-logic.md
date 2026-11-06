@@ -124,10 +124,10 @@ flowchart LR
 | ① 销量导入 | 每日宽表 CSV，`POST /import/sales`（`import.ts` + `sales-xiaoshou.ts`）；飞书长表每天 08:35 拉取 | 平台归一、station 分桶；新行插入，同一 SKU + 日期 + 渠道 + 站点覆盖销量；导入后刷新 SKU 生命周期并异步重建销售分析立方 | `sales_history` |
 | ② 清洗与聚合 | 日表 | 日表默认保留 365 天（`sales-history-config.ts`）；训练用月序列剔除缺货/大促（`forecast-monthly-clean.ts`） | 月度干净序列 |
 | ③ 分层 | 近 12 个月销量 | ABCD：连续性/CV 阈值（`forecast-profile-config.ts`）；默认算法模式 `allcat_v41`（`forecast-algo-mode.ts`）→ T1–T99 | `forecast_profile_class`、`profile_segment` |
-| ④ 基线预测 | 日/月销量、季节因子、准入 | 异步任务 `forecast_baseline`（`forecast-baseline-task.ts`）；monthly_abcd 模式下用 T1/T2/T3 核 | 草稿版本的 `sales_forecast_monthly` |
-| ⑤ 评审与协同 | 规则 + 回测 | 生成评审项，批量接受/忽略；发布前 `validateForecastRows` | 评审项 `reviewed` / `ignored` |
-| ⑥ 发布 | draft 版本 | 仅 draft 可发布（`forecast-version.ts`）；可多个 published 并存，消费侧按 SKU 取最新 `published_at`（`forecast-published-resolve.ts`） | Champion 预测 |
-| ⑦ 需求计划生成 | 近 90 天销量 + 库存快照 + 已发布预测 | 26 周；`system = U × share × clip(月预测 / championRef, 0.5, 2.0)`（`demand-plan-reconstruct.ts`） | draft + 周行 |
+| ④ 基线预测 | 日/月销量、季节因子、准入 | 异步任务 `forecast_baseline`（`forecast-baseline-task.ts`）；默认 `allcat_v41`。类目季节指数见下表，默认 `shadow` 不改预测值 | 草稿版本的 `sales_forecast_monthly` |
+| ⑤ 评审与协同 | 规则 + 回测 | 生成评审项，批量接受/忽略；发布前 `validateForecastRows`，并加项目组×站点×月总量护栏（`forecast-aggregate-guard.ts`） | 评审项；护栏 warning/error |
+| ⑥ 发布 | draft 版本 | 仅 draft 可发布（`forecast-version.ts`）。总量护栏比值 &lt;0.65 或 &gt;1.5 为 error，阻止发布；0.65–0.80 或 1.25–1.50 为 warning。请求体 `guardOverrideReason` 可将护栏 error 降为 warning 并写入审计。基准月量 &lt;300 件只记 info | Champion 预测 |
+| ⑦ 需求计划生成 | 近 90 天销量 + 库存快照 + 已发布预测 | 26 周；默认 `DEMAND_PLAN_WEEKLY_ALGO=v41_inline`（月 V4.1 拆周，前 4 周近端混合，见 `demand-plan-near-blend.ts`）；可选 `v41_w`（ISO 周 w4/w8/w12/w16，见 `forecast-allcat-v41-w.ts`） | draft + 周行 |
 | ⑧ 发布/采用 | draft | → `pilot_published`，同项目组同仓旧版本归档；可选写入 adoption | 采用关系 |
 | ⑨ 规划解析 | adoption + 试点开关 | `loadPlanningDemandForSkuWarehouse` → `resolvePlanningDemandFromInputs`；有效值 = `manual ?? system` | 需求 Map 供库存域 |
 | ⑩ 需求门禁 | WMAPE、反推封顶 | `planning-demand-gate.ts`：触发封顶或 WMAPE 不达标 → 需人工确认，不进自动队列。WMAPE 取 SKU 最近已结算月，同站点×平台只取最新计算的一版，按实际日均加权（`computeRecentSkuWmape`）；封顶判定为试点需求计划 `reconstructed_shape` 且还原日均 > 日均 × (1.5 − 0.01)（`isDemandReconstructCapHit`）；补货任务与 SKU 规划页同源 | 标志位 |
@@ -145,6 +145,8 @@ flowchart LR
 | ABCD 阈值 | continuityMinA 0.75、cvMaxA 1.0、continuityMinB 0.75、cvMaxC 1.5 等（可被 `forecast-calibration.json` 覆盖） | `forecast-profile-config.ts` |
 | 算法模式 | `legacy` / `monthly_abcd` / `allcat_v41`（默认，环境变量 `FORECAST_ALGO_MODE`） | `forecast-algo-mode.ts` |
 | V4.1 分层示例 | A 类 + AMAZON：近 6 月日均 ≥20、6 月全活跃、CV ≤0.65 → T1 | `forecast-allcat-v41.ts` |
+| 类目季节指数 | 同口径链式比：上月与本月都有销、上市满 3 个月、且后两个月未停售的 SKU，按类目→项目组→站点收缩（`w=n/(n+k)`，k 默认 20000），限幅 [0.6, 1.8]。截止月与预测历史截止一致。快照表 `sales_forecast_seasonal_index`。开关 `forecast-calibration.json` 的 `seasonalIndex.mode` 或环境变量 `FORECAST_V41_SEASONAL_INDEX`：`off` / `shadow`（默认，只写 `horizonFactors.seasonalIndex.shadowDaily`）/ `on`（替换日均，并关闭日历月折减、按指数同比放宽上限）。不复用 `sales_forecast_seasonality`（该表是同比增长率）。日销表在回测窗口内为空时，生成链路用月销量均匀摊到每日（`forecast-monthly-daily-fallback.ts`），不与已有日销叠加 | `forecast-seasonal-index.ts` |
+| 总量护栏基准 | 同一批 SKU×平台近 90 天日均（日表为空时用截止月起近 3 个完整月）× 当月天数 × `SI(目标月) / 近 3 月 SI 均值`。分平台行存在时不计 `ALL`。比较的是生效日均（手工校准优先） | `forecast-aggregate-guard.ts` |
 | T1 偏差预算 | 地平线 k≤0：12%；k≤2：15%；其余 18% | `forecast-t1-anchor.ts` |
 | 地平线分段 | k≤2 precision；k≤5 flex；其余 strategic | `forecast-horizon-band.ts` |
 | 需求反推 | 封顶 1.5 倍；最短连续段 7 天；有效比例 0.3 | `forecast-demand-unconstrain.ts` |

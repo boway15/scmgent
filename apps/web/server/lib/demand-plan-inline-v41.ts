@@ -10,6 +10,7 @@ import {
 } from './forecast-baseline.js';
 import { aggregateForecastRows, forecastMonthKey, formatForecastMonth } from './forecast-demand.js';
 import {
+  aggregateAllCatV41HorizonFactorsForDisplay,
   computeAllCatV41ForecastForMonth,
   isAllCatV41Forecastable,
   isAllCatV41RecentSalesAbsent,
@@ -17,8 +18,10 @@ import {
 } from './forecast-allcat-v41.js';
 import { computeAgeDaysFromFirstSale } from './forecast-collaboration.js';
 import { resolveRecentDemandWindows } from './forecast-demand-unconstrain.js';
+import { resolveSeasonalIndexMode } from './forecast-profile-config.js';
+import { buildSeasonalIndexContext } from './forecast-seasonal-index.js';
 import { FORECAST_V41_PLATFORM_CODES } from './forecast-platform-scope.js';
-import { resolveAnchorProfileSegment } from './forecast-horizon.js';
+import { pickPrimaryTierRow, resolveAnchorProfileSegment } from './forecast-horizon.js';
 import type { ForecastHorizonCell } from './forecast-horizon.js';
 
 type MonthlySalesRow = { saleYear: number; month: number; qtySold: number };
@@ -26,6 +29,8 @@ type MonthlySalesRow = { saleYear: number; month: number; qtySold: number };
 export type DemandPlanInlineV41SkuInput = {
   productCategory?: string | null;
   category?: string | null;
+  projectGroup?: string | null;
+  salesCountry?: string | null;
   forceForecast?: boolean | null;
 };
 
@@ -34,6 +39,8 @@ export type DemandPlanInlineV41Result = {
   monthByPlatform: Map<string, Map<string, number>>;
   profileSegment: string | null;
   lifecycle: string | null;
+  recent30DailyAvg: number;
+  recent90DailyAvg: number;
   monthCells: ForecastHorizonCell[];
 };
 
@@ -105,21 +112,33 @@ export function computeDemandPlanInlineV41ForSku(input: {
   monthlyByPlatform: Map<string, MonthlySalesRow[]>;
   flexBiasShadow?: boolean;
   firstSaleDate?: string | null;
-}): DemandPlanInlineV41Result {
-  const empty: DemandPlanInlineV41Result = {
-    mergedMap: new Map(),
-    monthByPlatform: new Map(),
-    profileSegment: null,
-    lifecycle: null,
-    monthCells: [],
+  targetPlatform?: string;
+  seasonalIndex?: {
+    mode: 'shadow' | 'on';
+    byMonth: Record<number, number>;
+    sampleQty: number;
+    level: string;
+    k?: number;
   };
-
+}): DemandPlanInlineV41Result {
   const recentWindowEnd = input.windowEnd;
   const historyCapEnd = input.windowEnd;
   const recent30Since = addDays(recentWindowEnd, -29);
   const recent90Since = addDays(recentWindowEnd, -89);
   const allChannelRows = mapDailyRows(input.dailyAllRows);
   const allRecent30DailyAvg = roundDaily(sumQtySince(allChannelRows, recent30Since) / 30);
+  const allRecent90DailyAvg = roundDaily(sumQtySince(allChannelRows, recent90Since) / 90);
+  const normalizedTargetPlatform = (input.targetPlatform?.trim() || 'ALL').toUpperCase();
+
+  const empty: DemandPlanInlineV41Result = {
+    mergedMap: new Map(),
+    monthByPlatform: new Map(),
+    profileSegment: null,
+    lifecycle: null,
+    recent30DailyAvg: allRecent30DailyAvg,
+    recent90DailyAvg: allRecent90DailyAvg,
+    monthCells: [],
+  };
 
   const forecastDraftRows: Array<{
     forecastYear: number;
@@ -137,7 +156,18 @@ export function computeDemandPlanInlineV41ForSku(input: {
   }> = [];
 
   let anchorLifecycle: string | null = null;
-  const displayV41ByMonth = new Map<string, ReturnType<typeof computeAllCatV41ForecastForMonth>>();
+  const v41RowsByMonth = new Map<
+    string,
+    Array<{
+      platform: string;
+      profileSegment: string;
+      v41: ReturnType<typeof computeAllCatV41ForecastForMonth>;
+    }>
+  >();
+  const recentWindowByPlatform = new Map<
+    string,
+    { recent30DailyAvg: number; recent90DailyAvg: number; lifecycle: string }
+  >();
 
   for (const platform of FORECAST_V41_PLATFORM_CODES) {
     const rawSalesRows = mapDailyRows(input.dailyByPlatform.get(platform) ?? []);
@@ -171,6 +201,11 @@ export function computeDemandPlanInlineV41ForSku(input: {
     });
     const recent30DailyAvg = recentWindows.recent30DailyAvg;
     const recent90DailyAvg = recentWindows.recent90DailyAvg;
+    recentWindowByPlatform.set(platform, {
+      recent30DailyAvg,
+      recent90DailyAvg,
+      lifecycle,
+    });
     const peerPlatformRecentDaily = roundDaily(Math.max(0, allRecent30DailyAvg - calendar30));
 
     const firstMonth = parseHorizonMonthKey(input.horizonMonthKeys[0] ?? forecastMonthKey(recentWindowEnd.getUTCFullYear(), recentWindowEnd.getUTCMonth() + 1));
@@ -187,6 +222,7 @@ export function computeDemandPlanInlineV41ForSku(input: {
       historyCapEnd,
       demandReconstruct: recentWindows.demandReconstruct,
       flexBiasShadow: input.flexBiasShadow,
+      seasonalIndex: input.seasonalIndex,
     });
     const anchorTier = anchorV41.tier;
 
@@ -228,13 +264,14 @@ export function computeDemandPlanInlineV41ForSku(input: {
         historyCapEnd,
         demandReconstruct: recentWindows.demandReconstruct,
         flexBiasShadow: input.flexBiasShadow,
+        seasonalIndex: input.seasonalIndex,
       });
       if (!isAllCatV41Forecastable(anchorV41.tier) && v41.forecastDaily <= 0) {
         return;
       }
-      if (platform === 'AMAZON' || !displayV41ByMonth.has(monthKey)) {
-        displayV41ByMonth.set(monthKey, v41);
-      }
+      const list = v41RowsByMonth.get(monthKey) ?? [];
+      list.push({ platform, profileSegment: anchorTier, v41 });
+      v41RowsByMonth.set(monthKey, list);
       platformMonthMap.set(monthKey, v41.forecastDaily);
       forecastDraftRows.push({
         forecastYear,
@@ -251,13 +288,64 @@ export function computeDemandPlanInlineV41ForSku(input: {
   }
 
   const mergedMap = aggregateForecastRows(forecastDraftRows);
-  const profileSegment = resolveAnchorProfileSegment(tierPickRows);
+  const scopedTierRows =
+    normalizedTargetPlatform === 'ALL'
+      ? tierPickRows
+      : tierPickRows.filter((row) => row.platform === normalizedTargetPlatform);
+  const profileSegment = resolveAnchorProfileSegment(
+    scopedTierRows.length ? scopedTierRows : tierPickRows,
+  );
+  const targetRecent =
+    normalizedTargetPlatform !== 'ALL'
+      ? recentWindowByPlatform.get(normalizedTargetPlatform)
+      : undefined;
+  const resolvedLifecycle = targetRecent?.lifecycle ?? anchorLifecycle;
+  const resolvedRecent30 = targetRecent?.recent30DailyAvg ?? allRecent30DailyAvg;
+  const resolvedRecent90 = targetRecent?.recent90DailyAvg ?? allRecent90DailyAvg;
 
   const monthCells: ForecastHorizonCell[] = input.horizonMonthKeys.map((monthKey) => {
     const { forecastYear, month } = parseHorizonMonthKey(monthKey);
     const monthLabel = formatForecastMonth(forecastYear, month);
-    const forecastDailyAvg = mergedMap.get(monthKey) ?? 0;
-    const displayV41 = displayV41ByMonth.get(monthKey);
+    const allMonthEntries = v41RowsByMonth.get(monthKey) ?? [];
+    const monthEntries =
+      normalizedTargetPlatform === 'ALL'
+        ? allMonthEntries
+        : allMonthEntries.filter((entry) => entry.platform === normalizedTargetPlatform);
+
+    const primaryEntry = pickPrimaryTierRow(monthEntries) ?? monthEntries[0];
+    const orderedEntries = primaryEntry
+      ? [primaryEntry, ...monthEntries.filter((entry) => entry !== primaryEntry)]
+      : [];
+    const parsedPlatformFactors = orderedEntries.map((entry) =>
+      parseAllCatV41HorizonFactors(entry.v41.horizonFactors),
+    );
+    const aggregatedFactors = aggregateAllCatV41HorizonFactorsForDisplay(parsedPlatformFactors);
+    const allCatV41Factors =
+      aggregatedFactors && orderedEntries.length > 1
+        ? {
+            ...aggregatedFactors,
+            platformContributions: orderedEntries.map((entry, index) => {
+              const factors = parsedPlatformFactors[index];
+              return {
+                platform: entry.platform,
+                forecastDailyAvg: entry.v41.forecastDaily,
+                levelDaily: factors?.levelDaily,
+                seasonalDaily: factors?.seasonalDaily,
+                anchorDaily: factors?.anchorDaily,
+                tier: factors?.tier ?? entry.profileSegment,
+              };
+            }),
+          }
+        : aggregatedFactors;
+
+    const forecastDailyAvg =
+      normalizedTargetPlatform === 'ALL'
+        ? (mergedMap.get(monthKey) ?? 0)
+        : (monthByPlatform.get(normalizedTargetPlatform)?.get(monthKey) ?? 0);
+    const baselineSum = orderedEntries.reduce(
+      (sum, entry) => sum + (Number.isFinite(entry.v41.baseDaily) ? entry.v41.baseDaily : 0),
+      0,
+    );
 
     return {
       id: `inline-v41-${monthKey}`,
@@ -268,9 +356,9 @@ export function computeDemandPlanInlineV41ForSku(input: {
       manualDailyAvg: null,
       effectiveDailyAvg: forecastDailyAvg,
       adjustReason: null,
-      baselineDailyAvg: displayV41 ? roundDaily(displayV41.baseDaily) : null,
-      lifecycle: anchorLifecycle,
-      confidenceLevel: displayV41?.confidenceLevel ?? null,
+      baselineDailyAvg: orderedEntries.length > 0 ? roundDaily(baselineSum) : null,
+      lifecycle: resolvedLifecycle,
+      confidenceLevel: primaryEntry?.v41.confidenceLevel ?? null,
       skuTrendFactor: null,
       seasonalityFactor: 1,
       trendFactor: 1,
@@ -278,9 +366,7 @@ export function computeDemandPlanInlineV41ForSku(input: {
       categoryTrendWasClipped: false,
       categoryTrendMatched: false,
       horizonFactors: null,
-      allCatV41Factors: displayV41
-        ? parseAllCatV41HorizonFactors(displayV41.horizonFactors)
-        : null,
+      allCatV41Factors,
       forecastModel: 'allcat_v41_inline',
     };
   });
@@ -289,7 +375,9 @@ export function computeDemandPlanInlineV41ForSku(input: {
     mergedMap,
     monthByPlatform,
     profileSegment,
-    lifecycle: anchorLifecycle,
+    lifecycle: resolvedLifecycle,
+    recent30DailyAvg: resolvedRecent30,
+    recent90DailyAvg: resolvedRecent90,
     monthCells,
   };
 }
@@ -298,7 +386,7 @@ export function demandPlanInlineV41HistoryLookbackDays(): number {
   return DEFAULT_SALES_HISTORY_LOOKBACK_DAYS;
 }
 
-/** SKU 抽屉：无已发布月版本时内联 V4.1 对照曲线 */
+/** SKU 抽屉：内联 V4.1 因子与曲线 */
 export async function loadDemandPlanSkuInlineV41Horizon(input: {
   skuId: string;
   sku: DemandPlanInlineV41SkuInput;
@@ -306,7 +394,26 @@ export async function loadDemandPlanSkuInlineV41Horizon(input: {
   horizonMonthKeys: string[];
   firstSaleDate?: string | null;
   flexBiasShadow?: boolean;
+  targetPlatform?: string;
 }): Promise<DemandPlanInlineV41Result> {
+  const seasonalMode = resolveSeasonalIndexMode();
+  const seasonalContext = seasonalMode === 'off'
+    ? null
+    : await buildSeasonalIndexContext({ historyCapEnd: input.windowEnd });
+  const resolved = seasonalContext?.resolve({
+    category: input.sku.category,
+    projectGroup: input.sku.projectGroup,
+    salesCountry: input.sku.salesCountry,
+  });
+  const seasonalIndex = resolved && seasonalMode !== 'off'
+    ? {
+        mode: seasonalMode,
+        byMonth: resolved.byMonth,
+        sampleQty: resolved.sampleQty,
+        level: resolved.level,
+        k: seasonalContext?.k,
+      }
+    : undefined;
   const windowEndKey = input.windowEnd.toISOString().slice(0, 10);
   const lookbackDays = DEFAULT_SALES_HISTORY_LOOKBACK_DAYS + 35;
   const fromDate = new Date(input.windowEnd.getTime());
@@ -367,5 +474,7 @@ export async function loadDemandPlanSkuInlineV41Horizon(input: {
     monthlyByPlatform,
     flexBiasShadow: input.flexBiasShadow,
     firstSaleDate: input.firstSaleDate ?? firstSaleBySku.get(input.skuId) ?? null,
+    targetPlatform: input.targetPlatform,
+    seasonalIndex,
   });
 }

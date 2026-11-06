@@ -981,6 +981,8 @@ export function computeAllCatV41BoundedDaily(input: {
   metrics: AllCatV41Metrics;
   recent30DailyAvg?: number | null;
   recent90DailyAvg?: number | null;
+  /** 类目季节指数已经表达日历月形状时，不再叠月份折减 */
+  skipCalendarMonthFactor?: boolean;
 }): AllCatV41BoundedDailyResult {
   if (input.tier === 'T99') {
     const floor = resolveT99SystemFloorDaily({
@@ -1027,7 +1029,9 @@ export function computeAllCatV41BoundedDaily(input: {
     recent30DailyAvg: input.recent30DailyAvg,
     recent90DailyAvg: input.recent90DailyAvg,
   });
-  const monthFactor = resolveV41MonthFactor(forecastMonth, horizonIndex, tier);
+  const monthFactor = input.skipCalendarMonthFactor
+    ? 1
+    : resolveV41MonthFactor(forecastMonth, horizonIndex, tier);
   const conservativeFactor = tierConservativeFactor(tier, productCategory, horizonIndex);
   const adjusted = baseDaily * trend.factor * monthFactor * conservativeFactor;
   const floor = tierFloorDaily(tier, metrics.d6);
@@ -1228,6 +1232,79 @@ export function buildAllCatV41HorizonFactors(input: {
   };
 }
 
+function meanSeasonalIndexEnding(
+  byMonth: Record<number, number>,
+  endMonth: number,
+  count: number,
+): number {
+  let sum = 0;
+  let month = endMonth;
+  const n = Math.max(1, count);
+  for (let i = 0; i < n; i += 1) {
+    sum += byMonth[month] ?? 1;
+    month -= 1;
+    if (month < 1) month = 12;
+  }
+  return sum / n;
+}
+
+/** 与 computeAllCatV41BaseDaily 相同的窗口权重，权重和归一，d12 对应全年均值 1。 */
+export function anchorSeasonalIndexForTier(
+  tier: AllCatV41Tier,
+  metrics: Pick<AllCatV41Metrics, 'active12'>,
+  byMonth: Record<number, number>,
+  endYear: number,
+  endMonth: number,
+): number {
+  const end = endYear * 12 + endMonth;
+  const m2 = meanSeasonalIndexEnding(byMonth, ((end - 1) % 12) + 1, 2);
+  const m3 = meanSeasonalIndexEnding(byMonth, ((end - 1) % 12) + 1, 3);
+  const m6 = meanSeasonalIndexEnding(byMonth, ((end - 1) % 12) + 1, 6);
+  const annual = 1;
+  let parts: Array<[number, number]>;
+  switch (tier) {
+    case 'T1':
+      parts = [[0.15, m2], [0.55, m6], [0.3, annual]];
+      break;
+    case 'T2':
+      parts = [[0.25, m3], [0.55, m6], [0.2, annual]];
+      break;
+    case 'T3':
+      parts = [[0.35, m3], [0.5, m6], [0.15, annual]];
+      break;
+    case 'T3P':
+      parts = [[0.45, m3], [0.45, m6], [0.1, annual]];
+      break;
+    case 'T4A':
+      parts = [[0.35, m3], [0.4, m6], [0.25, annual]];
+      break;
+    case 'T4B':
+      parts = isT4BShortHistory(metrics)
+        ? [[0.45, m3], [0.4, m6]]
+        : [[0.3, m3], [0.4, m6], [0.3, annual]];
+      break;
+    default:
+      parts = [[1, m3]];
+  }
+  const weight = parts.reduce((sum, part) => sum + part[0], 0) || 1;
+  return parts.reduce((sum, part) => sum + part[0] * part[1], 0) / weight;
+}
+
+function scaleMetrics(metrics: AllCatV41Metrics, scale: number): AllCatV41Metrics {
+  if (scale === 1) return metrics;
+  return {
+    ...metrics,
+    q1: metrics.q1 * scale,
+    q3: metrics.q3 * scale,
+    q6: metrics.q6 * scale,
+    q12: metrics.q12 * scale,
+    d2: metrics.d2 * scale,
+    d3: metrics.d3 * scale,
+    d6: metrics.d6 * scale,
+    d12: metrics.d12 * scale,
+  };
+}
+
 export function computeAllCatV41ForecastForMonth(input: {
   productCategory: string;
   platform: string;
@@ -1253,6 +1330,17 @@ export function computeAllCatV41ForecastForMonth(input: {
   demandReconstruct?: DemandReconstructAudit;
   /** 柔性窗偏差校正；默认读 forecast-calibration.json flexBiasShadow.enabled */
   flexBiasShadow?: boolean | null;
+  /**
+   * 类目/项目组同口径季节指数。
+   * shadow 只写入 horizonFactors.seasonalIndex；on 才替换 forecastDaily。
+   */
+  seasonalIndex?: {
+    mode: 'shadow' | 'on';
+    byMonth: Record<number, number>;
+    sampleQty: number;
+    level: string;
+    k?: number;
+  } | null;
 }): AllCatV41ForecastResult {
   const tierMetrics = computeWalkForwardMetrics(
     input.monthlyRows,
@@ -1307,7 +1395,7 @@ export function computeAllCatV41ForecastForMonth(input: {
     forecastDaily: peerLift.forecastDaily,
     flexBiasShadow: input.flexBiasShadow,
   });
-  const forecastDaily = flexBiasShadow.forecastDaily;
+  let forecastDaily = flexBiasShadow.forecastDaily;
   const effectiveTarget = resolveWalkForwardMetricsTarget(
     input.forecastYear,
     input.forecastMonth,
@@ -1367,6 +1455,70 @@ export function computeAllCatV41ForecastForMonth(input: {
     horizonFactors.levelDaily = roundDaily(levelDaily);
   }
   mergeFlexBiasShadowHorizonFactors(horizonFactors, flexBiasShadow);
+
+  const seasonal = input.seasonalIndex;
+  if (seasonal && (seasonal.mode === 'shadow' || seasonal.mode === 'on') && anchorDaily > 0 && !bounded.ghostGated) {
+    const capDate = input.historyCapEnd
+      ?? new Date(Date.UTC(input.forecastYear, input.forecastMonth - 1, 0));
+    const endYear = capDate.getUTCFullYear();
+    const endMonth = capDate.getUTCMonth() + 1;
+    const siAnchorRaw = anchorSeasonalIndexForTier(tier, tierMetrics, seasonal.byMonth, endYear, endMonth);
+    const siAnchor = siAnchorRaw > 0 ? siAnchorRaw : 1;
+    const siTarget = seasonal.byMonth[input.forecastMonth] ?? 1;
+    const capScale = siTarget > 0 ? siTarget / siAnchor : 1;
+    const levelFromIndex = (anchorDaily / siAnchor) * siTarget;
+    const shrinkK = seasonal.k && seasonal.k > 0 ? seasonal.k : 20000;
+    const categoryWeight = seasonal.sampleQty > 0 ? seasonal.sampleQty / (seasonal.sampleQty + shrinkK) : 0;
+    const mixedLevel = tierMetrics.active12 >= 12 && seasonalDaily != null && seasonalDaily > 0
+      ? categoryWeight * levelFromIndex + (1 - categoryWeight) * levelDaily
+      : levelFromIndex;
+    const scaled = scaleMetrics(tierMetrics, capScale);
+    const boundedSi = computeAllCatV41BoundedDaily({
+      tier,
+      baseDaily: mixedLevel,
+      productCategory,
+      forecastMonth: input.forecastMonth,
+      horizonIndex: input.horizonIndex,
+      metrics: scaled,
+      recent30DailyAvg: nonNegative(input.recent30DailyAvg) * capScale,
+      recent90DailyAvg: nonNegative(input.recent90DailyAvg) * capScale,
+      skipCalendarMonthFactor: true,
+    });
+    const peerSi = boundedSi.ghostGated
+      ? { forecastDaily: boundedSi.forecastDaily, peerPlatformFloor: null as number | null }
+      : applyPeerPlatformNearFloor({
+          forecastDaily: boundedSi.forecastDaily,
+          horizonIndex: input.horizonIndex,
+          peerPlatformRecentDaily: nonNegative(input.peerPlatformRecentDaily) * capScale,
+        });
+    const flexSi = applyFlexBiasShadowCorrection({
+      tier,
+      horizonIndex: input.horizonIndex,
+      forecastDaily: peerSi.forecastDaily,
+      flexBiasShadow: input.flexBiasShadow,
+    });
+    horizonFactors.monthFactorLegacy = bounded.monthFactor;
+    horizonFactors.seasonalIndex = {
+      mode: seasonal.mode,
+      level: seasonal.level,
+      siTarget: roundDaily(siTarget),
+      siAnchor: roundDaily(siAnchor),
+      shadowDaily: flexSi.forecastDaily,
+      sampleQty: seasonal.sampleQty,
+      capScale: roundDaily(capScale),
+    };
+    if (seasonal.mode === 'on') {
+      forecastDaily = flexSi.forecastDaily;
+      horizonFactors.monthFactor = 1;
+      horizonFactors.effectiveTrendDecay = boundedSi.trendDecay;
+      horizonFactors.conservativeFactor = boundedSi.conservativeFactor;
+      horizonFactors.tierCeiling = boundedSi.tierCeiling;
+      horizonFactors.levelDaily = roundDaily(mixedLevel);
+      if (boundedSi.nearHorizonFloor != null) {
+        horizonFactors.nearHorizonFloor = boundedSi.nearHorizonFloor;
+      }
+    }
+  }
 
   return {
     tier,

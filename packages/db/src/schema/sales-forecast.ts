@@ -204,6 +204,33 @@ export const salesForecastReviewItems = pgTable(
   }),
 );
 
+/** 同口径链式季节指数快照。不复用 sales_forecast_seasonality（那张表是同比增长率）。 */
+export const salesForecastSeasonalIndex = pgTable(
+  'sales_forecast_seasonal_index',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    asOfMonth: varchar('as_of_month', { length: 7 }).notNull(),
+    dimensionLevel: varchar('dimension_level', { length: 32 }).notNull(),
+    dimensionValue: varchar('dimension_value', { length: 400 }).notNull(),
+    station: varchar('station', { length: 20 }).notNull(),
+    month: integer('month').notNull(),
+    indexValue: numeric('index_value', { precision: 10, scale: 4 }).notNull(),
+    sampleQty: numeric('sample_qty', { precision: 14, scale: 2 }).notNull().default('0'),
+    method: varchar('method', { length: 40 }).notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    uniqueIdx: uniqueIndex('sales_forecast_seasonal_index_unique_idx').on(
+      table.asOfMonth,
+      table.dimensionLevel,
+      table.dimensionValue,
+      table.station,
+      table.month,
+    ),
+    asOfIdx: index('sales_forecast_seasonal_index_as_of_idx').on(table.asOfMonth, table.station),
+  }),
+);
+
 export const salesForecastSeasonality = pgTable(
   'sales_forecast_seasonality',
   {

@@ -32,6 +32,9 @@ async function main() {
   const algoArg = readArg('--algo');
   const replaceVersion = process.argv.includes('--replace');
   const flexBiasShadow = process.argv.includes('--flex-bias-shadow');
+  const seasonalArg = readArg('--seasonal-index');
+  const seasonalIndexMode =
+    seasonalArg === 'off' || seasonalArg === 'shadow' || seasonalArg === 'on' ? seasonalArg : undefined;
   const algoMode: ForecastAlgoMode = resolveForecastAlgoMode(algoArg);
   const tierFilter =
     tierArg === 'core' || tierArg === 'mid' || tierArg === 'tail' ? tierArg : tierArg === 'all' ? 'all' : undefined;
@@ -53,6 +56,7 @@ async function main() {
   if (tierFilter) console.log(`分层汇总：${tierFilter}`);
   if (replaceVersion) console.log('版本模式：--replace（purge 后复用同名版本）');
   if (flexBiasShadow) console.log('柔性窗：--flex-bias-shadow（显式启用 v2 校正，生产默认已开）');
+  if (seasonalIndexMode) console.log(`类目季节指数：${seasonalIndexMode}`);
 
   const result = await runWalkForwardAccuracyBacktest({
     asOf,
@@ -67,6 +71,7 @@ async function main() {
     tierFilter,
     algoMode,
     flexBiasShadow,
+    seasonalIndexMode,
   });
 
   console.log('\n' + result.summary);

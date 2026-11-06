@@ -748,6 +748,10 @@ export type DemandPlanWeekBlendMeta = {
   u90: number;
   wNear: number;
   wYoy: number;
+  nearAlpha?: number;
+  nearLevel?: number;
+  inlineDaily?: number;
+  nearShape?: number;
   weekForecastDaily: number;
   useForecastShape: boolean;
   source: string;
@@ -1431,6 +1435,7 @@ export type SkuForecastContext = {
   storedLifecycle: string | null;
   forecastProfileClass: string | null;
   profileSegment: string | null;
+  v41WalkForwardFactors?: Record<string, unknown> | null;
 };
 
 export type RuleParamSpec =
@@ -4909,11 +4914,15 @@ export const api = {
       canPublish: boolean;
       rowCount: number;
     }>(`/api/sales-forecast-versions/${id}/validate`),
-  publishSalesForecastVersion: async (id: string) => {
+  publishSalesForecastVersion: async (id: string, body?: { guardOverrideReason?: string }) => {
     const url = apiUrl(`/api/sales-forecast-versions/${id}/publish`);
     let res: Response;
     try {
-      res = await apiFetch(url, { method: 'POST' });
+      res = await apiFetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body ?? {}),
+      });
     } catch (err) {
       const hint =
         typeof window !== 'undefined' && window.location.hostname === 'localhost'
@@ -4943,7 +4952,7 @@ export const api = {
     }
     return res.json() as Promise<{ version: unknown; issues: unknown[] }>;
   },
-  mergeSalesForecastVersionToPublished: (id: string) =>
+  mergeSalesForecastVersionToPublished: (id: string, body?: { guardOverrideReason?: string }) =>
     request<{
       mode: 'merged' | 'published';
       draftVersionId: string;
@@ -4958,7 +4967,11 @@ export const api = {
       mergedSkuCount: number;
       mergedForecastRows: number;
       mergedReviewItems: number;
-    }>(`/api/sales-forecast-versions/${id}/merge-to-published`, { method: 'POST' }),
+    }>(`/api/sales-forecast-versions/${id}/merge-to-published`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body ?? {}),
+    }),
   getSalesForecastReviewSummary: (id: string) =>
     request<{ summary: string; issues: unknown[] }>(
       `/api/sales-forecast-versions/${id}/review-summary`,

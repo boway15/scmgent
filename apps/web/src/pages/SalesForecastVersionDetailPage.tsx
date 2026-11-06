@@ -55,6 +55,9 @@ export function SalesForecastVersionDetailPage() {
   const [accuracyListTab, setAccuracyListTab] = useState<AccuracyListTab>('detail');
   const [accuracyExporting, setAccuracyExporting] = useState(false);
   const [listPageSize, setListPageSize] = useState(LIST_PAGE_SIZE);
+  const [guardIssues, setGuardIssues] = useState<Array<{ level: string; code: string; message: string }>>([]);
+  const [guardReason, setGuardReason] = useState('');
+  const [publishAction, setPublishAction] = useState<'publish' | 'merge' | null>(null);
 
   const { data: version, isLoading, isError } = useQuery({
     queryKey: ['sales-forecast-version', versionId],
@@ -165,7 +168,8 @@ export function SalesForecastVersionDetailPage() {
     publishedVersions.some((item) => item.id !== versionId);
 
   const publishVersion = useMutation({
-    mutationFn: () => api.publishSalesForecastVersion(versionId),
+    mutationFn: (guardOverrideReason?: string) =>
+      api.publishSalesForecastVersion(versionId, guardOverrideReason ? { guardOverrideReason } : {}),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ['sales-forecast-versions'] });
       void qc.invalidateQueries({ queryKey: ['sales-forecast-version', versionId] });
@@ -176,7 +180,11 @@ export function SalesForecastVersionDetailPage() {
   });
 
   const mergeToPublished = useMutation({
-    mutationFn: () => api.mergeSalesForecastVersionToPublished(versionId),
+    mutationFn: (guardOverrideReason?: string) =>
+      api.mergeSalesForecastVersionToPublished(
+        versionId,
+        guardOverrideReason ? { guardOverrideReason } : {},
+      ),
     onSuccess: async (result) => {
       await Promise.all([
         qc.invalidateQueries({ queryKey: ['sales-forecast-versions'] }),
@@ -192,6 +200,32 @@ export function SalesForecastVersionDetailPage() {
       );
     },
   });
+
+  async function beginForecastPublish(action: 'publish' | 'merge') {
+    const validation = await api.validateSalesForecastVersion(versionId);
+    const blocking = validation.issues.filter((issue) => issue.level === 'error');
+    const guardOnly =
+      blocking.length > 0 &&
+      blocking.every((issue) => issue.code === 'aggregate_vs_seasonal_baseline');
+    if (guardOnly) {
+      setGuardIssues(blocking);
+      setPublishAction(action);
+      return;
+    }
+    if (blocking.length > 0) {
+      window.alert(blocking.map((issue) => issue.message).join('\n'));
+      return;
+    }
+    if (action === 'merge') {
+      if (
+        window.confirm('将本草稿中的 SKU 预测合入当前已发布生效基线，并归档本试算草稿。确定继续？')
+      ) {
+        mergeToPublished.mutate(undefined);
+      }
+      return;
+    }
+    publishVersion.mutate(undefined);
+  }
 
   const deleteDraftVersion = useMutation({
     mutationFn: () => api.deleteSalesForecastVersion(versionId),
@@ -327,6 +361,40 @@ export function SalesForecastVersionDetailPage() {
                 开始月早于当月，本草稿仅供准确率复盘，不可发布或合入补货基线。
               </p>
             ) : null}
+            {publishAction ? (
+              <div className="space-y-2 rounded-md border border-border p-3">
+                <p className="text-sm font-medium">总量护栏未通过，填写原因后可放行</p>
+                <ul className="max-h-40 list-disc space-y-1 overflow-auto pl-5 text-xs text-text-sub">
+                  {guardIssues.map((issue) => (
+                    <li key={issue.message}>{issue.message}</li>
+                  ))}
+                </ul>
+                <textarea
+                  className="w-full rounded-md border border-border bg-background px-2 py-1 text-sm"
+                  rows={2}
+                  placeholder="放行原因，例如：Q4 按品类校准后下单"
+                  value={guardReason}
+                  onChange={(event) => setGuardReason(event.target.value)}
+                />
+                <div className="flex gap-2">
+                  <Button
+                    size="sm"
+                    disabled={!guardReason.trim() || publishVersion.isPending || mergeToPublished.isPending}
+                    onClick={() => {
+                      const reason = guardReason.trim();
+                      if (publishAction === 'merge') mergeToPublished.mutate(reason);
+                      else publishVersion.mutate(reason);
+                      setPublishAction(null);
+                    }}
+                  >
+                    确认放行并继续
+                  </Button>
+                  <Button size="sm" variant="outline" onClick={() => setPublishAction(null)}>
+                    取消
+                  </Button>
+                </div>
+              </div>
+            ) : null}
             <div className="flex flex-wrap items-center gap-2">
               {preferMergeToPublished ? (
                 <>
@@ -334,13 +402,7 @@ export function SalesForecastVersionDetailPage() {
                     size="sm"
                     disabled={mergeToPublished.isPending || publishVersion.isPending}
                     onClick={() => {
-                      if (
-                        window.confirm(
-                          '将本草稿中的 SKU 预测合入当前已发布生效基线，并归档本试算草稿。确定继续？',
-                        )
-                      ) {
-                        mergeToPublished.mutate();
-                      }
+                      void beginForecastPublish('merge');
                     }}
                   >
                     {mergeToPublished.isPending ? '合入中…' : '合入当前生效预测'}
@@ -349,7 +411,9 @@ export function SalesForecastVersionDetailPage() {
                     size="sm"
                     variant="outline"
                     disabled={publishVersion.isPending || mergeToPublished.isPending}
-                    onClick={() => publishVersion.mutate()}
+                    onClick={() => {
+                      void beginForecastPublish('publish');
+                    }}
                   >
                     {publishVersion.isPending ? '发布中…' : '作为独立版本发布'}
                   </Button>
@@ -358,7 +422,9 @@ export function SalesForecastVersionDetailPage() {
                 <Button
                   size="sm"
                   disabled={isBacktestDraft || publishVersion.isPending}
-                  onClick={() => publishVersion.mutate()}
+                  onClick={() => {
+                    void beginForecastPublish('publish');
+                  }}
                 >
                   {publishVersion.isPending ? '发布中…' : '发布草稿'}
                 </Button>

@@ -74,7 +74,9 @@ import {
   buildLast12MonthlyQty,
   resolveSkuProfileSnapshot,
 } from './forecast-profile-snapshot.js';
-import { loadForecastCalibrationConfig } from './forecast-profile-config.js';
+import { loadForecastCalibrationConfig, resolveSeasonalIndexMode, type SeasonalIndexMode } from './forecast-profile-config.js';
+import { buildSeasonalIndexContext, persistSeasonalIndexSnapshot } from './forecast-seasonal-index.js';
+import { synthesizeDailySalesFromMonthly } from './forecast-monthly-daily-fallback.js';
 import {
   resolveProfileSegment,
   type ProfileClass,
@@ -843,6 +845,8 @@ export async function generateBaselineForecastVersion(input: {
   existingVersionId?: string;
   /** 柔性窗偏差校正；默认读 forecast-calibration.json */
   flexBiasShadow?: boolean;
+  /** 类目季节指数。默认 shadow，不改变预测值。 */
+  seasonalIndexMode?: SeasonalIndexMode;
   /** 默认 true：生成时跳过配件 SKU */
   excludeAccessories?: boolean;
 }) {
@@ -875,18 +879,40 @@ async function generateBaselineForecastVersionForStation(input: {
   purgeSkuScope?: boolean;
   forceNewVersion?: boolean;
   flexBiasShadow?: boolean;
+  seasonalIndexMode?: SeasonalIndexMode;
   excludeAccessories?: boolean;
 }) {
+  const seasonalIndexMode = input.seasonalIndexMode ?? resolveSeasonalIndexMode();
   const platforms = resolveBaselineForecastPlatforms(input.platform);
+  const finish = async (
+    result: Awaited<ReturnType<typeof generateBaselineForStationPlatform>>,
+  ) => {
+    if (seasonalIndexMode !== 'off') {
+      try {
+        const asOf = input.today instanceof Date ? input.today : input.today ? new Date(input.today) : new Date();
+        const cap = effectiveRecentWindowEnd(asOf);
+        const context = await buildSeasonalIndexContext({ historyCapEnd: cap });
+        await persistSeasonalIndexSnapshot(context);
+      } catch (err) {
+        console.warn(
+          '[forecast] seasonal index snapshot skipped:',
+          err instanceof Error ? err.message : err,
+        );
+      }
+    }
+    return result;
+  };
+
   if (platforms.length === 1) {
-    return generateBaselineForStationPlatform({
+    return finish(await generateBaselineForStationPlatform({
       ...input,
+      seasonalIndexMode,
       platform: platforms[0]!,
       purgePlatformScope: resolveBaselinePurgePlatformScope({
         purgeSkuScope: input.purgeSkuScope,
         platformCount: 1,
       }),
-    });
+    }));
   }
 
   let versionId = input.existingVersionId;
@@ -899,6 +925,7 @@ async function generateBaselineForecastVersionForStation(input: {
     const platform = platforms[index]!;
     const part = await generateBaselineForStationPlatform({
       ...input,
+      seasonalIndexMode,
       platform,
       existingVersionId: versionId ?? lastResult?.version.id,
       purgeSkuScope: Boolean(input.purgeSkuScope) && index === 0,
@@ -925,13 +952,13 @@ async function generateBaselineForecastVersionForStation(input: {
     throw new Error('无法生成预测：未配置可用平台');
   }
 
-  return {
+  return finish({
     version: lastResult.version,
     forecastRows: totalForecastRows,
     reviewRows: totalReviewRows,
     eligibilityStats: mergedEligibilityStats,
     platformsGenerated: [...platforms],
-  };
+  });
 }
 
 async function generateBaselineForStationPlatform(input: {
@@ -952,6 +979,7 @@ async function generateBaselineForStationPlatform(input: {
   purgePlatformScope?: 'all' | 'current';
   forceNewVersion?: boolean;
   flexBiasShadow?: boolean;
+  seasonalIndexMode?: SeasonalIndexMode;
   excludeAccessories?: boolean;
 }) {
   const station = resolveForecastGenerationStation(input.station);
@@ -1032,6 +1060,7 @@ async function generateBaselineForStationPlatform(input: {
       category: skus.category,
       projectGroup: skus.projectGroup,
       productCategory: skus.productCategory,
+      salesCountry: skus.salesCountry,
       forceForecast: skus.forceForecast,
       skuKind: skus.skuKind,
     })
@@ -1098,13 +1127,17 @@ async function generateBaselineForStationPlatform(input: {
    * 后续月会把未加载月份当 0 销，导致 forecastDaily≤0 被跳过。
    */
   const historyCapEnd = recentWindowEnd;
+  const seasonalIndexMode = input.seasonalIndexMode ?? resolveSeasonalIndexMode();
+  const seasonalContext = useAllCatV41 && seasonalIndexMode !== 'off'
+    ? await buildSeasonalIndexContext({ historyCapEnd })
+    : null;
   const lookbackFrom = toDateOnly(addDays(today, -DEFAULT_SALES_HISTORY_LOOKBACK_DAYS));
   const lookbackTo = toDateOnly(today);
   const monthlyCutoff = subtractMonthsUtc(today, DEFAULT_MONTHLY_HISTORY_LOOKBACK_MONTHS);
   const monthlyMaxYear = recentWindowEnd.getUTCFullYear();
   const monthlyMaxMonth = recentWindowEnd.getUTCMonth() + 1;
   const skuIds = skuRows.map((sku) => sku.id);
-  const [dailyBySku, monthlyBySku, firstSaleBySku, dailyAllBySku] = await Promise.all([
+  const [loadedDailyBySku, monthlyBySku, firstSaleBySku, dailyAllBySku] = await Promise.all([
     loadDailySalesBySkuIdsInRange({
       skuIds,
       fromDate: lookbackFrom,
@@ -1132,6 +1165,19 @@ async function generateBaselineForStationPlatform(input: {
         })
       : Promise.resolve(new Map()),
   ]);
+  const dailyBySku =
+    loadedDailyBySku.size === 0 && monthlyBySku.size > 0
+      ? synthesizeDailySalesFromMonthly({
+          monthlyBySku,
+          fromDate: lookbackFrom,
+          toDate: lookbackTo,
+        })
+      : loadedDailyBySku;
+  if (loadedDailyBySku.size === 0 && dailyBySku.size > 0) {
+    console.info(
+      `[forecast] no daily sales in ${lookbackFrom}..${lookbackTo} for ${platform}; synthesized ${dailyBySku.size} SKUs from monthly history`,
+    );
+  }
 
   const recent30Since = addDays(recentWindowEnd, -29);
   const recent90Since = addDays(recentWindowEnd, -89);
@@ -1317,6 +1363,20 @@ async function generateBaselineForStationPlatform(input: {
 
     if (useAllCatV41) {
       const productCategory = resolveAllCatProductCategory(sku.productCategory ?? sku.category);
+      const resolvedSeason = seasonalContext?.resolve({
+        category: sku.category,
+        projectGroup: sku.projectGroup,
+        salesCountry: sku.salesCountry,
+      });
+      const seasonalIndex = resolvedSeason && seasonalIndexMode !== 'off'
+        ? {
+            mode: seasonalIndexMode,
+            byMonth: resolvedSeason.byMonth,
+            sampleQty: resolvedSeason.sampleQty,
+            level: resolvedSeason.level,
+            k: seasonalContext?.k,
+          }
+        : undefined;
       const anchorV41 = computeAllCatV41ForecastForMonth({
         productCategory: sku.productCategory ?? sku.category,
         platform,
@@ -1330,6 +1390,7 @@ async function generateBaselineForStationPlatform(input: {
         historyCapEnd,
         demandReconstruct,
         flexBiasShadow,
+        seasonalIndex,
       });
       const anchorTier = anchorV41.tier;
       const anchorForecastable = isAllCatV41Forecastable(anchorTier);
@@ -1373,6 +1434,7 @@ async function generateBaselineForStationPlatform(input: {
           historyCapEnd,
           demandReconstruct,
           flexBiasShadow,
+          seasonalIndex,
         });
 
         if (!anchorForecastable) {

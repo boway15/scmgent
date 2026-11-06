@@ -271,7 +271,7 @@ function expandWideImportRows(rows: Array<Record<string, string>>): ParsedImport
         platformLabel,
         monthLabel: monthLabelNorm,
         calibrationRaw: rawValue ?? '',
-        adjustReasonRaw: '',
+        adjustReasonRaw: pickRowValue(row, COL_REASON),
       });
     }
   }

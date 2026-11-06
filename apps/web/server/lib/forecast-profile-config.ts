@@ -35,11 +35,25 @@ export type FlexBiasShadowConfig = {
   };
 };
 
+export type SeasonalIndexMode = 'off' | 'shadow' | 'on';
+
+export type SeasonalIndexConfig = {
+  /** shadow 只写对照值；on 才改变预测。FORECAST_V41_SEASONAL_INDEX 可覆盖。 */
+  mode?: SeasonalIndexMode;
+  /** 类目向项目组、项目组向站点收缩的样本量常数 */
+  k?: number;
+  clipMin?: number;
+  clipMax?: number;
+  minAgeMonths?: number;
+  forwardMonths?: number;
+};
+
 export type ForecastCalibrationConfig = {
   version: number;
   profile: ForecastProfileConfig;
   aCore: ACoreAlgoConfig;
   flexBiasShadow?: FlexBiasShadowConfig;
+  seasonalIndex?: SeasonalIndexConfig;
 };
 
 export const DEFAULT_FORECAST_PROFILE_CONFIG: ForecastProfileConfig = {
@@ -59,10 +73,20 @@ export const DEFAULT_ACORE_ALGO_CONFIG: ACoreAlgoConfig = {
   declineRecent30Ratio: 0.85,
 };
 
+export const DEFAULT_SEASONAL_INDEX_CONFIG: SeasonalIndexConfig = {
+  mode: 'shadow',
+  k: 20000,
+  clipMin: 0.6,
+  clipMax: 1.8,
+  minAgeMonths: 3,
+  forwardMonths: 2,
+};
+
 export const DEFAULT_FORECAST_CALIBRATION_CONFIG: ForecastCalibrationConfig = {
   version: 1,
   profile: DEFAULT_FORECAST_PROFILE_CONFIG,
   aCore: DEFAULT_ACORE_ALGO_CONFIG,
+  seasonalIndex: DEFAULT_SEASONAL_INDEX_CONFIG,
 };
 
 function moduleConfigPath(): string {
@@ -80,6 +104,17 @@ function mergeACoreConfig(raw: Partial<ACoreAlgoConfig> | undefined): ACoreAlgoC
     base.upperHeadroom = [...raw.upperHeadroom];
   }
   return base;
+}
+
+function mergeSeasonalIndexConfig(
+  raw: Partial<SeasonalIndexConfig> | undefined,
+): SeasonalIndexConfig {
+  const mode = raw?.mode === 'off' || raw?.mode === 'on' || raw?.mode === 'shadow' ? raw.mode : 'shadow';
+  return {
+    ...DEFAULT_SEASONAL_INDEX_CONFIG,
+    ...raw,
+    mode,
+  };
 }
 
 function mergeFlexBiasShadowConfig(
@@ -106,7 +141,20 @@ export function parseForecastCalibrationConfig(raw: unknown): ForecastCalibratio
     profile: mergeProfileConfig(obj.profile),
     aCore: mergeACoreConfig(obj.aCore),
     flexBiasShadow: mergeFlexBiasShadowConfig(obj.flexBiasShadow),
+    seasonalIndex: mergeSeasonalIndexConfig(obj.seasonalIndex),
   };
+}
+
+export const SEASONAL_INDEX_MODE_ENV = 'FORECAST_V41_SEASONAL_INDEX';
+
+/** 显式 override > 环境变量 > forecast-calibration.json。默认 shadow。 */
+export function resolveSeasonalIndexMode(override?: SeasonalIndexMode | null): SeasonalIndexMode {
+  if (override === 'off' || override === 'shadow' || override === 'on') return override;
+  const env = process.env[SEASONAL_INDEX_MODE_ENV]?.trim().toLowerCase();
+  if (env === 'off' || env === '0' || env === 'false' || env === 'no') return 'off';
+  if (env === 'on' || env === '1' || env === 'true') return 'on';
+  if (env === 'shadow') return 'shadow';
+  return loadForecastCalibrationConfig().seasonalIndex?.mode ?? 'shadow';
 }
 
 export function loadForecastCalibration(): ForecastCalibrationConfig {

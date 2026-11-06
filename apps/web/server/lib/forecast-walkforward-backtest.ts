@@ -386,6 +386,8 @@ export type WalkForwardBacktestInput = {
   algoMode?: 'legacy' | 'monthly_abcd';
   /** 启用柔性窗 T4A/T4B/T99 影子偏差校正 */
   flexBiasShadow?: boolean;
+  /** 类目季节指数：off | shadow | on。默认读配置（shadow）。 */
+  seasonalIndexMode?: 'off' | 'shadow' | 'on';
 };
 
 export type WalkForwardMonthResult = {
@@ -749,6 +751,7 @@ export async function runWalkForwardAccuracyBacktest(input: WalkForwardBacktestI
     existingVersionId,
     algoMode: input.algoMode,
     flexBiasShadow: input.flexBiasShadow,
+    seasonalIndexMode: input.seasonalIndexMode,
   });
 
   const versionId = generated.version.id;
@@ -792,8 +795,10 @@ export async function runWalkForwardAccuracyBacktest(input: WalkForwardBacktestI
 
   const exportRows = await loadWalkForwardExportRows(versionId, scope);
   const skippedStats = exportRows.filter((row) => {
-    if (Number(row.forecastDailyAvg) <= 0) return true;
-    return row.actualDailyAvg == null;
+    const forecastDaily = Number(row.forecastDailyAvg);
+    const actualDaily = row.actualDailyAvg;
+    if (forecastDaily > 0) return actualDaily == null;
+    return actualDaily == null || actualDaily <= 0;
   }).length;
 
   const accuracyConditions = [eq(forecastAccuracyMonthly.versionId, versionId)];

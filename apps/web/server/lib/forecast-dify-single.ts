@@ -24,6 +24,8 @@ import {
 } from './forecast-version.js';
 import { loadMonthlySalesBySkuIds } from './sales-history-query.js';
 import { resolveAllCatProductCategory, computeAllCatV41ForecastForMonth } from './forecast-allcat-v41.js';
+import { resolveSeasonalIndexMode } from './forecast-profile-config.js';
+import { buildSeasonalIndexContext } from './forecast-seasonal-index.js';
 import { resolveForecastGenerationStation } from './forecast-station-scope.js';
 import {
   buildAiAssistHorizonFactors,
@@ -369,6 +371,8 @@ export async function runDifySingleSkuForecast(
       name: skus.name,
       category: skus.category,
       productCategory: skus.productCategory,
+      projectGroup: skus.projectGroup,
+      salesCountry: skus.salesCountry,
     })
     .from(skus)
     .where(eq(skus.code, skuCode))
@@ -444,6 +448,24 @@ export async function runDifySingleSkuForecast(
     reviewItem?.message && /T99|no-forecast/i.test(reviewItem.message) ? 'T99' : null;
 
   const historyCapEnd = resolveAiAssistHistoryCapEnd(asOf);
+  const seasonalMode = resolveSeasonalIndexMode();
+  const seasonalContext = seasonalMode === 'off'
+    ? null
+    : await buildSeasonalIndexContext({ historyCapEnd });
+  const resolvedSeason = seasonalContext?.resolve({
+    category: sku.category,
+    projectGroup: sku.projectGroup,
+    salesCountry: sku.salesCountry,
+  });
+  const seasonalIndex = resolvedSeason && seasonalMode !== 'off'
+    ? {
+        mode: seasonalMode,
+        byMonth: resolvedSeason.byMonth,
+        sampleQty: resolvedSeason.sampleQty,
+        level: resolvedSeason.level,
+        k: seasonalContext?.k,
+      }
+    : undefined;
   const anchorV41 = computeAllCatV41ForecastForMonth({
     productCategory: sku.productCategory ?? sku.category,
     platform,
@@ -452,6 +474,7 @@ export async function runDifySingleSkuForecast(
     horizonIndex: 0,
     monthlyRows,
     historyCapEnd,
+    seasonalIndex,
   });
   const existingProfileRows = await loadExistingProfileSegmentRows({
     skuId: sku.id,
@@ -485,6 +508,7 @@ export async function runDifySingleSkuForecast(
     categoryTrend,
     forecastHorizon,
     historyCapEnd,
+    seasonalIndex,
   });
 
   const workflowResult = await runSingleSkuForecastWorkflow(

@@ -806,6 +806,13 @@
       "when": 1788265000000,
       "tag": "0133_demand_plan_champion_blend_meta",
       "breakpoints": true
+    },
+    {
+      "idx": 115,
+      "version": "6",
+      "when": 1788351400000,
+      "tag": "0134_sales_forecast_seasonal_index",
+      "breakpoints": true
     }
   ]
 }

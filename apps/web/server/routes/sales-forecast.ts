@@ -45,7 +45,13 @@ import {
   validateForecastRows,
   hasBlockingForecastIssues,
   type ForecastRowInput,
+  type ForecastValidationIssue,
 } from '../lib/forecast-validation.js';
+import {
+  AGGREGATE_GUARD_CODE,
+  applyAggregateGuardOverride,
+  loadAggregateGuardIssues,
+} from '../lib/forecast-aggregate-guard.js';
 import {
   listForecastAccuracy,
   summarizeForecastAccuracy,
@@ -322,6 +328,24 @@ function mapForecastRow(row: {
     manualDailyAvg: daily.manualDailyAvg,
     effectiveDailyAvg: daily.effectiveDailyAvg,
     baselineDailyAvg: row.baselineDailyAvg != null ? Number(row.baselineDailyAvg) : null,
+  };
+}
+
+async function collectForecastValidation(versionId: string, guardOverrideReason?: string | null): Promise<{
+  issues: ForecastValidationIssue[];
+  canPublish: boolean;
+  rowCount: number;
+  guardOverrideReason: string | null;
+}> {
+  const rows = await loadVersionRows(versionId);
+  const guard = await loadAggregateGuardIssues(versionId);
+  const reason = guardOverrideReason?.trim() || null;
+  const issues = applyAggregateGuardOverride([...validateForecastRows(rows), ...guard], reason);
+  return {
+    issues,
+    canPublish: !hasBlockingForecastIssues(issues),
+    rowCount: rows.length,
+    guardOverrideReason: reason,
   };
 }
 
@@ -1584,9 +1608,7 @@ salesForecastRoutes.post('/sales-forecast-versions', requireMenu('data.forecast'
 
 salesForecastRoutes.get('/sales-forecast-versions/:id/validate', requireMenu('data.forecast'), async (c) => {
   const versionId = c.req.param('id');
-  const rows = await loadVersionRows(versionId);
-  const issues = validateForecastRows(rows);
-  return c.json({ issues, canPublish: !hasBlockingForecastIssues(issues), rowCount: rows.length });
+  return c.json(await collectForecastValidation(versionId));
 });
 
 salesForecastRoutes.post(
@@ -1608,21 +1630,28 @@ salesForecastRoutes.post(
           : 400;
       return c.json({ message }, status as 400);
     }
-    const rows = await loadVersionRows(versionId);
-    const issues = validateForecastRows(rows);
-    if (hasBlockingForecastIssues(issues)) {
-      return c.json({ message: 'Validation failed', issues }, 400);
+    const body = await c.req.json().catch(() => ({} as { guardOverrideReason?: string }));
+    const validation = await collectForecastValidation(versionId, body.guardOverrideReason);
+    if (!validation.canPublish) {
+      return c.json({ message: 'Validation failed', issues: validation.issues }, 400);
     }
 
     const published = await publishForecastVersion(versionId, user.id);
+    const guardWaivers = validation.issues.filter(
+      (issue) => issue.code === AGGREGATE_GUARD_CODE && issue.message.includes('人工放行'),
+    );
     await writeAuditLog(c, {
       action: 'forecast_version.publish',
       resourceType: 'sales_forecast_version',
       resourceId: versionId,
-      detail: { warningCount: issues.filter((i) => i.level === 'warning').length },
+      detail: {
+        warningCount: validation.issues.filter((i) => i.level === 'warning').length,
+        guardOverrideReason: validation.guardOverrideReason,
+        guardWaivers: guardWaivers.map((issue) => issue.message),
+      },
       user,
     });
-    return c.json({ version: published, issues });
+    return c.json({ version: published, issues: validation.issues });
   },
 );
 
@@ -1633,6 +1662,11 @@ salesForecastRoutes.post(
   async (c) => {
     const user = await getCurrentUser(c);
     const versionId = c.req.param('id');
+    const body = await c.req.json().catch(() => ({} as { guardOverrideReason?: string }));
+    const validation = await collectForecastValidation(versionId, body.guardOverrideReason);
+    if (!validation.canPublish) {
+      return c.json({ message: 'Validation failed', issues: validation.issues }, 400);
+    }
     try {
       const result = await mergeDraftIntoPrimaryPublished(versionId, user.id);
       await writeAuditLog(c, {
@@ -1645,6 +1679,7 @@ salesForecastRoutes.post(
           mergedSkuCount: result.mergedSkuCount,
           mergedForecastRows: result.mergedForecastRows,
           mergedReviewItems: result.mergedReviewItems,
+          guardOverrideReason: validation.guardOverrideReason,
         },
         user,
       });
@@ -1730,14 +1765,14 @@ salesForecastRoutes.get('/sales-forecast-versions/:id/impact-preview', requireMe
 
 salesForecastRoutes.get('/sales-forecast-versions/:id/review-summary', requireMenu('data.forecast'), async (c) => {
   const versionId = c.req.param('id');
-  const rows = await loadVersionRows(versionId);
-  const issues = validateForecastRows(rows);
+  const validation = await collectForecastValidation(versionId);
+  const issues = validation.issues;
   const version = await getForecastVersionById(versionId);
   const summary = buildForecastReviewSummary({
     versionName: version?.versionName ?? versionId,
     versionStatus: version?.status ?? 'unknown',
     issues,
-    rowCount: rows.length,
+    rowCount: validation.rowCount,
   });
   return c.json({ summary, issues });
 });

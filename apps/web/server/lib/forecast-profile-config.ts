@@ -46,6 +46,11 @@ export type SeasonalIndexConfig = {
   clipMax?: number;
   minAgeMonths?: number;
   forwardMonths?: number;
+  /**
+   * 生成结束后按站点 SI 重塑项目组×月的系统日均形状（抬旺季、压淡季）。
+   * 默认：mode≠off 时开启。false 可关掉。
+   */
+  reshapePortfolio?: boolean;
 };
 
 export type ForecastCalibrationConfig = {
@@ -80,6 +85,7 @@ export const DEFAULT_SEASONAL_INDEX_CONFIG: SeasonalIndexConfig = {
   clipMax: 1.8,
   minAgeMonths: 3,
   forwardMonths: 2,
+  reshapePortfolio: true,
 };
 
 export const DEFAULT_FORECAST_CALIBRATION_CONFIG: ForecastCalibrationConfig = {

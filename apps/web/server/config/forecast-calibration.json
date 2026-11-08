@@ -28,7 +28,8 @@
     "clipMin": 0.6,
     "clipMax": 1.8,
     "minAgeMonths": 3,
-    "forwardMonths": 2
+    "forwardMonths": 2,
+    "reshapePortfolio": true
   },
   "flexBiasShadow": {
     "enabled": true,

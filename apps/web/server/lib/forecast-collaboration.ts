@@ -78,6 +78,10 @@ import { loadForecastCalibrationConfig, resolveSeasonalIndexMode, type SeasonalI
 import { buildSeasonalIndexContext, persistSeasonalIndexSnapshot } from './forecast-seasonal-index.js';
 import { synthesizeDailySalesFromMonthly } from './forecast-monthly-daily-fallback.js';
 import {
+  applyStationSiPortfolioReshape,
+  shouldRunSiReshapeAfterGenerate,
+} from './forecast-si-reshape.js';
+import {
   resolveProfileSegment,
   type ProfileClass,
   type ProfileSegment,
@@ -896,6 +900,21 @@ async function generateBaselineForecastVersionForStation(input: {
       } catch (err) {
         console.warn(
           '[forecast] seasonal index snapshot skipped:',
+          err instanceof Error ? err.message : err,
+        );
+      }
+    }
+    if (shouldRunSiReshapeAfterGenerate(seasonalIndexMode) && result.version?.id) {
+      try {
+        const asOf = input.today instanceof Date ? input.today : input.today ? new Date(input.today) : new Date();
+        await applyStationSiPortfolioReshape({
+          versionId: result.version.id,
+          historyCapEnd: effectiveRecentWindowEnd(asOf),
+          startMonth: result.version.startMonth ?? input.startMonth,
+        });
+      } catch (err) {
+        console.warn(
+          '[forecast] SI portfolio reshape skipped:',
           err instanceof Error ? err.message : err,
         );
       }

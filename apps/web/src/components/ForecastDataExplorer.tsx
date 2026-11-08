@@ -35,6 +35,7 @@ type Props = {
   topSection?: React.ReactNode;
   showPendingCalibrationShortcut?: boolean;
   calibrationImportEnabled?: boolean;
+  calibrationExportEnabled?: boolean;
   initialCalibrationImportOpen?: boolean;
 };
 
@@ -52,6 +53,7 @@ export function ForecastDataExplorer({
   topSection,
   showPendingCalibrationShortcut = false,
   calibrationImportEnabled = false,
+  calibrationExportEnabled = false,
   initialCalibrationImportOpen = false,
 }: Props) {
   const initialChannel = initialChannelSelection(initialPlatform);
@@ -257,6 +259,7 @@ export function ForecastDataExplorer({
                 : undefined
             }
             calibrationImportEnabled={calibrationImportEnabled}
+            calibrationExportEnabled={calibrationExportEnabled}
             initialCalibrationImportOpen={initialCalibrationImportOpen}
           />
         )}

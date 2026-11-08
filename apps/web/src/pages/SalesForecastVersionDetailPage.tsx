@@ -489,7 +489,8 @@ export function SalesForecastVersionDetailPage() {
               : '合计为一个 SKU 一行，分平台时每个平台各一行。未来矩阵为预测日均，历史矩阵为销量折算实际日均。点击 SKU 查看当前平台的因子与逐月详情，导出与列表一致。'
           }
           onSkuClick={handleSkuClick}
-          calibrationImportEnabled={version.status === 'draft' && activeView === 'review'}
+          calibrationExportEnabled
+          calibrationImportEnabled={version.status === 'draft'}
           initialCalibrationImportOpen={
             version.status === 'draft' &&
             activeView === 'review' &&

@@ -101,7 +101,10 @@ type Props = {
   filters: QueryFilters;
   pageSize?: number;
   onSkuClick?: (row: ForecastHorizonRow, ctx: { platform: string }) => void;
+  /** 草稿可导入人工校准；与季节指数等系统改写无关 */
   calibrationImportEnabled?: boolean;
+  /** 导出校准表：草稿与已发布均可，便于运营对照生效日均 */
+  calibrationExportEnabled?: boolean;
   initialCalibrationImportOpen?: boolean;
 };
 
@@ -111,6 +114,7 @@ export function ForecastHorizonPanel({
   pageSize = 20,
   onSkuClick,
   calibrationImportEnabled = false,
+  calibrationExportEnabled = false,
   initialCalibrationImportOpen = false,
 }: Props) {
   const { productScope } = useProductScope();
@@ -159,8 +163,10 @@ export function ForecastHorizonPanel({
     refetchOnMount: 'always',
   });
 
+  const showCalibrationExport = calibrationExportEnabled || calibrationImportEnabled;
   const importNeedsByChannel =
-    calibrationImportEnabled && filters.channelView !== 'by_channel';
+    (calibrationImportEnabled || showCalibrationExport) &&
+    filters.channelView !== 'by_channel';
 
   const handleExport = async (mode: 'wide' | 'detail' | 'calibration') => {
     if (!filters.versionId) return;
@@ -171,7 +177,7 @@ export function ForecastHorizonPanel({
       }
     } else if (
       mode === 'detail' &&
-      calibrationImportEnabled &&
+      showCalibrationExport &&
       importNeedsByChannel &&
       !window.confirm(
         '当前为「合计」视图，导出明细中的「全平台」行无法用于「导入校准」。\n\n建议：先将平台展示切换为「分平台」，再导出明细或「导出校准表」。\n\n仍要导出当前文件吗？',
@@ -291,23 +297,25 @@ export function ForecastHorizonPanel({
           >
             {exporting === 'detail' ? '导出中…' : '导出明细'}
           </Button>
+          {showCalibrationExport && filters.versionId && (
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={!canExport || exporting != null || filters.channelView !== 'by_channel'}
+              title={
+                filters.channelView !== 'by_channel'
+                  ? '请先切换为「分平台」'
+                  : '仅含导入所需列，推荐发给运营'
+              }
+              onClick={() => void handleExport('calibration')}
+            >
+              {exporting === 'calibration' ? '导出中…' : '导出校准表'}
+            </Button>
+          )}
           {calibrationImportEnabled && filters.versionId && (
-            <>
-              <Button
-                size="sm"
-                variant="outline"
-                disabled={!canExport || exporting != null || importNeedsByChannel}
-                title={
-                  importNeedsByChannel ? '请先切换为「分平台」' : '仅含导入所需列，推荐发给运营'
-                }
-                onClick={() => void handleExport('calibration')}
-              >
-                {exporting === 'calibration' ? '导出中…' : '导出校准表'}
-              </Button>
-              <Button size="sm" variant="outline" onClick={() => setImportOpen(true)}>
-                导入校准
-              </Button>
-            </>
+            <Button size="sm" variant="outline" onClick={() => setImportOpen(true)}>
+              导入校准
+            </Button>
           )}
         </div>
       </div>

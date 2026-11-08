@@ -145,7 +145,7 @@ flowchart LR
 | ABCD 阈值 | continuityMinA 0.75、cvMaxA 1.0、continuityMinB 0.75、cvMaxC 1.5 等（可被 `forecast-calibration.json` 覆盖） | `forecast-profile-config.ts` |
 | 算法模式 | `legacy` / `monthly_abcd` / `allcat_v41`（默认，环境变量 `FORECAST_ALGO_MODE`） | `forecast-algo-mode.ts` |
 | V4.1 分层示例 | A 类 + AMAZON：近 6 月日均 ≥20、6 月全活跃、CV ≤0.65 → T1 | `forecast-allcat-v41.ts` |
-| 类目季节指数 | 同口径链式比：上月与本月都有销、上市满 3 个月、且后两个月未停售的 SKU，按类目→项目组→站点收缩（`w=n/(n+k)`，k 默认 20000），限幅 [0.6, 1.8]。截止月与预测历史截止一致。快照表 `sales_forecast_seasonal_index`。开关 `forecast-calibration.json` 的 `seasonalIndex.mode` 或环境变量 `FORECAST_V41_SEASONAL_INDEX`：`off` / `shadow`（默认，只写 `horizonFactors.seasonalIndex.shadowDaily`）/ `on`（替换日均，并关闭日历月折减、按指数同比放宽上限）。不复用 `sales_forecast_seasonality`（该表是同比增长率）。日销表在回测窗口内为空时，生成链路用月销量均匀摊到每日（`forecast-monthly-daily-fallback.ts`），不与已有日销叠加 | `forecast-seasonal-index.ts` |
+| 类目季节指数 | 同口径链式比：上月与本月都有销、上市满 3 个月、且后两个月未停售的 SKU，按类目→项目组→站点收缩（`w=n/(n+k)`，k 默认 20000），限幅 [0.6, 1.8]。截止月与预测历史截止一致。快照表 `sales_forecast_seasonal_index`。开关 `forecast-calibration.json` 的 `seasonalIndex.mode` 或环境变量 `FORECAST_V41_SEASONAL_INDEX`：`off` / `shadow`（默认，只写 `horizonFactors.seasonalIndex.shadowDaily`）/ `on`（替换日均，并关闭日历月折减、按指数同比放宽上限）。不复用 `sales_forecast_seasonality`（该表是同比增长率）。日销表在回测窗口内为空时，生成链路用月销量均匀摊到每日（`forecast-monthly-daily-fallback.ts`），不与已有日销叠加。**影子结果若要落地，应写入系统预测 `forecast_daily_avg`（`apply-seasonal-index-to-system.ts`），不得走「导入校准」/`manual_daily_avg`**；校准仅表示人工录入或导入校准 | `forecast-seasonal-index.ts` |
 | 总量护栏基准 | 同一批 SKU×平台近 90 天日均（日表为空时用截止月起近 3 个完整月）× 当月天数 × `SI(目标月) / 近 3 月 SI 均值`。分平台行存在时不计 `ALL`。比较的是生效日均（手工校准优先） | `forecast-aggregate-guard.ts` |
 | T1 偏差预算 | 地平线 k≤0：12%；k≤2：15%；其余 18% | `forecast-t1-anchor.ts` |
 | 地平线分段 | k≤2 precision；k≤5 flex；其余 strategic | `forecast-horizon-band.ts` |

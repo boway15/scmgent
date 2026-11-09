@@ -23,14 +23,21 @@ describe('forecast-optimism-post-landing', () => {
     assert.equal(capped, roundLike(54 * POST_LANDING_RUNRATE_UPLIFT));
   });
 
-  it('near cap skips far horizon', () => {
-    const capped = applyPostLandingNearRunRateCap({
+  it('near cap covers horizon 2 (next month after peak pair) but skips farther', () => {
+    const jan = applyPostLandingNearRunRateCap({
       forecastDaily: 80,
       horizonIndex: 2,
       recent30DailyAvg: 54,
       d6: 50,
     });
-    assert.equal(capped, 80);
+    assert.equal(jan, roundLike(54 * POST_LANDING_RUNRATE_UPLIFT));
+    const far = applyPostLandingNearRunRateCap({
+      forecastDaily: 80,
+      horizonIndex: 3,
+      recent30DailyAvg: 54,
+      d6: 50,
+    });
+    assert.equal(far, 80);
   });
 
   it('secondary weak opening caps to ×1.0', () => {

@@ -6,8 +6,8 @@ import { eq } from 'drizzle-orm';
 import { db, salesForecastMonthly } from '@scm/db';
 import { buildHorizonIndexByMonthKey } from './forecast-seasonal-dampen.js';
 
-/** 仅压近端两月（horizonIndex 0/1，含 11 月） */
-export const POST_LANDING_MAX_HORIZON = 1;
+/** 压近端三月（horizonIndex 0/1/2，避免 11/12 压平后把过冲挤到次月） */
+export const POST_LANDING_MAX_HORIZON = 2;
 /** 落地后再帽统一抬升上限（旺季也不放宽到 1.25） */
 export const POST_LANDING_RUNRATE_UPLIFT = 1.1;
 export const POST_LANDING_MIN_RECENT30 = 3;

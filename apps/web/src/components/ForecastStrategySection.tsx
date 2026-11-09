@@ -320,7 +320,7 @@ function AllCategoryV41StrategySummary({ context }: { context: ForecastStrategyC
                 Amazon）弱开局 recent30&lt;5 时 ×1.1。
               </li>
               <li>
-                落地后再帽（对准影子抬升回冲）：近端 h≤1 统一 ×1.10；次通道弱开局收紧到 ×1.0。结果写入{' '}
+                落地后再帽（对准影子抬升回冲）：近端 h≤2 统一 ×1.10（覆盖 11/12 及随后一月，避免过冲挤到次月）；次通道弱开局收紧到 ×1.0。结果写入{' '}
                 <code className="text-xs">horizonFactors.postLandingOptimismCap</code>。
               </li>
               <li>

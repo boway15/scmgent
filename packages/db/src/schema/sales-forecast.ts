@@ -101,6 +101,11 @@ export const salesForecastVersions = pgTable(
     versionName: varchar('version_name', { length: 200 }).notNull(),
     station: varchar('station', { length: 20 }),
     status: forecastVersionStatusEnum('status').notNull().default('draft'),
+    /**
+     * 生成管线状态（与 draft/published 生命周期正交）：
+     * generating | landing | ready | failed
+     */
+    pipelineStatus: varchar('pipeline_status', { length: 20 }).notNull().default('ready'),
     /** 预测地平线首月 YYYY-MM；历史版本可为空 */
     startMonth: varchar('start_month', { length: 7 }),
     excludeAccessories: boolean('exclude_accessories').notNull().default(true),

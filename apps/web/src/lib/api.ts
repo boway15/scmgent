@@ -1212,12 +1212,16 @@ export type ForecastVersionStats = {
   accuracyWmape: number | null;
 };
 
+export type ForecastPipelineStatus = 'generating' | 'landing' | 'ready' | 'failed';
+
 export type ForecastVersionListItem = {
   id: string;
   versionNo: string;
   versionName: string;
   station?: string | null;
   status: 'draft' | 'published' | 'archived';
+  /** generating/landing 时数字可能仍在变化 */
+  pipelineStatus?: ForecastPipelineStatus | string | null;
   createdAt: string;
   publishedAt?: string | null;
   /** 预测地平线首月 YYYY-MM；历史版本可能为空 */

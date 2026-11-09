@@ -813,6 +813,13 @@
       "when": 1788351400000,
       "tag": "0134_sales_forecast_seasonal_index",
       "breakpoints": true
+    },
+    {
+      "idx": 116,
+      "version": "6",
+      "when": 1788437800000,
+      "tag": "0135_forecast_version_pipeline_status",
+      "breakpoints": true
     }
   ]
 }

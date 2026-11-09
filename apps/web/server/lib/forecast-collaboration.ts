@@ -15,6 +15,7 @@ import {
   findOrCreateDraftVersionForImport,
   getOrCreateDraftVersion,
   getForecastVersionById,
+  setForecastVersionPipelineStatus,
 } from './forecast-version.js';
 import {
   resolveProjectGroupFilters,
@@ -915,31 +916,42 @@ async function generateBaselineForecastVersionForStation(input: {
       // mode=shadow：生成后自动跑影子落地全流程（promote→reshape→decay→再帽）
       if (shouldRunShadowLandingAfterGenerate(seasonalIndexMode)) {
         try {
+          await setForecastVersionPipelineStatus(result.version.id, 'landing');
           await applyShadowLandingPipeline({
             versionId: result.version.id,
             startMonth,
             historyCapEnd,
           });
+          const ready = await setForecastVersionPipelineStatus(result.version.id, 'ready');
+          if (ready) result.version = ready;
         } catch (err) {
           console.warn(
             '[forecast] shadow landing pipeline skipped:',
             err instanceof Error ? err.message : err,
           );
+          await setForecastVersionPipelineStatus(result.version.id, 'failed').catch(() => undefined);
         }
       } else if (shouldRunSiReshapeAfterGenerate(seasonalIndexMode)) {
         // mode=on：系统日均已含季节，仅做组合重塑
         try {
+          await setForecastVersionPipelineStatus(result.version.id, 'landing');
           await applyStationSiPortfolioReshape({
             versionId: result.version.id,
             historyCapEnd,
             startMonth,
           });
+          const ready = await setForecastVersionPipelineStatus(result.version.id, 'ready');
+          if (ready) result.version = ready;
         } catch (err) {
           console.warn(
             '[forecast] SI portfolio reshape skipped:',
             err instanceof Error ? err.message : err,
           );
+          await setForecastVersionPipelineStatus(result.version.id, 'failed').catch(() => undefined);
         }
+      } else {
+        const ready = await setForecastVersionPipelineStatus(result.version.id, 'ready');
+        if (ready) result.version = ready;
       }
     }
     return result;
@@ -1073,7 +1085,12 @@ async function generateBaselineForStationPlatform(input: {
     const previousStartMonth = version.startMonth ?? null;
     const [updated] = await db
       .update(salesForecastVersions)
-      .set({ startMonth, excludeAccessories, updatedAt: new Date() })
+      .set({
+        startMonth,
+        excludeAccessories,
+        pipelineStatus: 'generating',
+        updatedAt: new Date(),
+      })
       .where(eq(salesForecastVersions.id, version.id))
       .returning();
     if (updated) version = updated;

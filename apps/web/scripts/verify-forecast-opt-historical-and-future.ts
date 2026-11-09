@@ -26,6 +26,7 @@ import {
   buildHorizonIndexByMonthKey,
   loadSeasonalDampenFromCalibration,
 } from '../server/lib/forecast-seasonal-dampen.js';
+import { applyPostLandingOptimismCaps } from '../server/lib/forecast-optimism-post-landing.js';
 
 const ROOT = resolve(import.meta.dirname, '../../..');
 config({ path: resolve(ROOT, '.env') });
@@ -147,6 +148,9 @@ async function evaluateHistoryVariant(version: (typeof HISTORY_VERSIONS)[number]
     actual: number;
     v41: number;
     shadow: number | null;
+    recent30: number | null;
+    d6: number | null;
+    platform: string;
     horizonIndex: number;
   };
 
@@ -157,6 +161,9 @@ async function evaluateHistoryVariant(version: (typeof HISTORY_VERSIONS)[number]
     if (actual == null || actual < 0) continue;
     const v41 = Number(row.forecastDailyAvg);
     if (!(v41 > 0)) continue;
+    const factors = unwrapFactors(row.horizonFactors);
+    const recent30Raw = Number(factors?.recent30DailyAvg);
+    const d6Raw = Number(factors?.d6);
     const station = resolveSkuSeasonStation({
       salesCountry: row.salesCountry,
       projectGroup: row.projectGroup,
@@ -169,7 +176,10 @@ async function evaluateHistoryVariant(version: (typeof HISTORY_VERSIONS)[number]
       days: daysInMonth(row.year, row.month),
       actual,
       v41,
-      shadow: shadowDaily(unwrapFactors(row.horizonFactors)),
+      shadow: shadowDaily(factors),
+      recent30: Number.isFinite(recent30Raw) ? recent30Raw : null,
+      d6: Number.isFinite(d6Raw) ? d6Raw : null,
+      platform: row.platform,
     });
   }
 
@@ -231,15 +241,26 @@ async function evaluateHistoryVariant(version: (typeof HISTORY_VERSIONS)[number]
     v41: { all: empty(), near: empty(), peak: empty(), far: empty() },
     full: { all: empty(), near: empty(), peak: empty(), far: empty() },
     opt: { all: empty(), near: empty(), peak: empty(), far: empty() },
+    absCap: { all: empty(), near: empty(), peak: empty(), far: empty() },
+    relCap: { all: empty(), near: empty(), peak: empty(), far: empty() },
   };
-  const byMonth = new Map<string, { v41: Metrics; full: Metrics; opt: Metrics }>();
+  const byMonth = new Map<
+    string,
+    { v41: Metrics; full: Metrics; opt: Metrics; absCap: Metrics; relCap: Metrics }
+  >();
 
   let shadowCoverage = 0;
   for (const row of work) {
     const mk = monthKey(row.year, row.month);
     let bucket = byMonth.get(mk);
     if (!bucket) {
-      bucket = { v41: empty(), full: empty(), opt: empty() };
+      bucket = {
+        v41: empty(),
+        full: empty(),
+        opt: empty(),
+        absCap: empty(),
+        relCap: empty(),
+      };
       byMonth.set(mk, bucket);
     }
     const scaleKey = `${row.groupKey}||${mk}`;
@@ -257,12 +278,28 @@ async function evaluateHistoryVariant(version: (typeof HISTORY_VERSIONS)[number]
         peakMonths: damp.reshape.reshapePeakMonthsFull,
       },
     );
+    const absCap = applyPostLandingOptimismCaps({
+      forecastDaily: opt,
+      platform: row.platform,
+      horizonIndex: row.horizonIndex,
+      recent30DailyAvg: row.recent30,
+      d6: row.d6,
+      shadowDaily: null,
+    }).forecastDaily;
+    const relCap = applyPostLandingOptimismCaps({
+      forecastDaily: opt,
+      platform: row.platform,
+      horizonIndex: row.horizonIndex,
+      recent30DailyAvg: row.recent30,
+      d6: row.d6,
+      shadowDaily: row.shadow,
+    }).forecastDaily;
 
-    const preds = { v41: row.v41, full: reshapedFull, opt };
-    for (const key of ['v41', 'full', 'opt'] as const) {
+    const preds = { v41: row.v41, full: reshapedFull, opt, absCap, relCap };
+    for (const key of ['v41', 'full', 'opt', 'absCap', 'relCap'] as const) {
       add(bags[key].all, preds[key], row.actual, row.days);
       add(bucket[key], preds[key], row.actual, row.days);
-      if (row.horizonIndex <= 1) add(bags[key].near, preds[key], row.actual, row.days);
+      if (row.horizonIndex <= 2) add(bags[key].near, preds[key], row.actual, row.days);
       if (row.month === 11 || row.month === 12) add(bags[key].peak, preds[key], row.actual, row.days);
       if (row.horizonIndex >= 3) add(bags[key].far, preds[key], row.actual, row.days);
     }
@@ -617,10 +654,13 @@ async function main() {
   lines.push('');
   lines.push('## 第一部分：历史数据回测（有实际销量，可算偏差/WMAPE）');
   lines.push('');
-  lines.push('口径：原 V4.1 / 满幅重塑(影子) / 优化口径（满幅影子→近端衰减重塑→放宽地平线衰减）。');
+  lines.push(
+    '口径：原 V4.1 / 满幅重塑 / 优化（影子→重塑→衰减）/ **旧绝对顶** max(recent,d6)×1.1 / **新相对影子帽** shadow×1.1（本次改动）。近端桶含 h≤2。',
+  );
   lines.push('');
 
   const historySummary: string[] = [];
+  const capSummary: string[] = [];
   for (const version of HISTORY_VERSIONS) {
     const result = await evaluateHistoryVariant(version);
     lines.push(`### ${result.version.label}`);
@@ -629,11 +669,11 @@ async function main() {
       `版本 \`${result.version.id}\` · SI as_of=${result.version.asOfSi}（${result.siAvailable ? '有' : '无'}）· 可比 ${result.rows} · 含影子 ${result.shadowCoverage}`,
     );
     lines.push('');
-    lines.push('| 范围 | 原V4.1 偏差/WMAPE | 满幅重塑 偏差/WMAPE | 优化后 偏差/WMAPE | 相对满幅(偏差) | 相对满幅(WMAPE) |');
+    lines.push('| 范围 | 原V4.1 偏差/WMAPE | 满幅重塑 | 优化后 | 相对满幅(偏差) | 相对满幅(WMAPE) |');
     lines.push('|---|---:|---:|---:|---|---|');
     for (const [label, key] of [
       ['全部', 'all'],
-      ['近端2月', 'near'],
+      ['近端h≤2', 'near'],
       ['Q4(11-12)', 'peak'],
       ['远端(h≥3)', 'far'],
     ] as const) {
@@ -645,17 +685,36 @@ async function main() {
       );
     }
     lines.push('');
-    lines.push('| 月份 | 原V4.1 | 满幅重塑 | 优化后 |');
-    lines.push('|---|---:|---:|---:|');
+    lines.push('| 范围 | 优化后(无帽) | 旧绝对顶 | 新相对影子帽 | 绝对→相对(偏差) | 绝对→相对(WMAPE) |');
+    lines.push('|---|---:|---:|---:|---|---|');
+    for (const [label, key] of [
+      ['全部', 'all'],
+      ['近端h≤2', 'near'],
+      ['Q4(11-12)', 'peak'],
+      ['远端(h≥3)', 'far'],
+    ] as const) {
+      const opt = result.bags.opt[key];
+      const absCap = result.bags.absCap[key];
+      const relCap = result.bags.relCap[key];
+      lines.push(
+        `| ${label} | ${bias(opt)} / ${wmape(opt)} | ${bias(absCap)} / ${wmape(absCap)} | ${bias(relCap)} / ${wmape(relCap)} | ${direction(absCap, relCap, 'bias')} | ${direction(absCap, relCap, 'wmape')} |`,
+      );
+    }
+    lines.push('');
+    lines.push('| 月份 | 原V4.1 | 优化后 | 旧绝对顶 | 新相对影子帽 |');
+    lines.push('|---|---:|---:|---:|---:|');
     for (const [mk, bag] of [...result.byMonth.entries()].sort(([a], [b]) => a.localeCompare(b))) {
       lines.push(
-        `| ${mk} | ${bias(bag.v41)} / ${wmape(bag.v41)} | ${bias(bag.full)} / ${wmape(bag.full)} | ${bias(bag.opt)} / ${wmape(bag.opt)} |`,
+        `| ${mk} | ${bias(bag.v41)} / ${wmape(bag.v41)} | ${bias(bag.opt)} / ${wmape(bag.opt)} | ${bias(bag.absCap)} / ${wmape(bag.absCap)} | ${bias(bag.relCap)} / ${wmape(bag.relCap)} |`,
       );
     }
     lines.push('');
 
     historySummary.push(
       `| ${result.version.label} | ${bias(result.bags.v41.all)} / ${wmape(result.bags.v41.all)} | ${bias(result.bags.full.all)} / ${wmape(result.bags.full.all)} | ${bias(result.bags.opt.all)} / ${wmape(result.bags.opt.all)} | ${bias(result.bags.opt.near)} | ${bias(result.bags.opt.peak)} | ${bias(result.bags.opt.far)} |`,
+    );
+    capSummary.push(
+      `| ${result.version.label} | ${bias(result.bags.absCap.all)} / ${wmape(result.bags.absCap.all)} | ${bias(result.bags.relCap.all)} / ${wmape(result.bags.relCap.all)} | ${bias(result.bags.absCap.near)} → ${bias(result.bags.relCap.near)} | ${bias(result.bags.absCap.peak)} → ${bias(result.bags.relCap.peak)} | ${direction(result.bags.absCap.all, result.bags.relCap.all, 'bias')} | ${direction(result.bags.absCap.all, result.bags.relCap.all, 'wmape')} |`,
     );
   }
 
@@ -665,6 +724,12 @@ async function main() {
   lines.push('|---|---:|---:|---:|---:|---:|---:|');
   lines.push(...historySummary);
   lines.push('');
+  lines.push('### 落地后再帽：绝对顶 → 相对影子（本次改动）');
+  lines.push('');
+  lines.push('| 截止点 | 旧绝对顶 | 新相对影子帽 | 近端绝对→相对 | Q4绝对→相对 | 偏差判定 | WMAPE判定 |');
+  lines.push('|---|---:|---:|---:|---:|---|---|');
+  lines.push(...capSummary);
+  lines.push('');
   lines.push('### 历史回测结论');
   lines.push('');
   lines.push(
@@ -672,6 +737,7 @@ async function main() {
       '1. **精度可测**：三截止点均有完整实际销量，偏差/WMAPE 为硬指标。',
       '2. **相对满幅重塑**：近端低估减轻、远端过冲收敛、Q4 持平；全期偏差略更保守但 WMAPE 更好或接近。',
       '3. **相对原 V4.1**：含 Q4 走步总量与旺季偏差明显改善；非 Q4 走步以近/远端平衡收益为主。',
+      '4. **本次相对影子帽**：相对旧绝对顶，近端/Q4 应更少削平季节峰谷；若偏差略升但 WMAPE 不恶化，视为可接受的形状换精度权衡。',
     ].join('\n'),
   );
   lines.push('');
@@ -752,9 +818,10 @@ async function main() {
   lines.push(
     [
       '1. **历史回测**：优化口径通过——Q4 不退、近端向好、远端过冲向好、WMAPE 向好；全期略偏保守但已用放宽衰减缓解。',
-      '2. **未来合理性**：以组合日均 11/12 > 2 月为硬门槛；优化口径应通过（若当前已发布版本未重跑落地，表中“当前版本”可能仍是旧形状）。',
-      '3. **未来准确性**：无实际月时只能给区间预估；有回填实际的近月应用第二节表做滚动验收。',
-      '4. **建议**：新草稿/重发布按 `--from-shadow --with-reshape --with-horizon-decay` 落地；`mode` 继续 shadow。',
+      '2. **本次相对影子帽**：对比旧绝对顶，保留月间季节落差；以近端/Q4 偏差与 WMAPE 是否明显恶化作硬闸。',
+      '3. **未来合理性**：以组合日均 11/12 > 2 月为硬门槛；当前版本已含落地后再帽（相对影子）。',
+      '4. **未来准确性**：无实际月时只能给区间预估；有回填实际的近月用第二节表滚动验收。',
+      '5. **建议**：生成链路继续 auto shadow-landing + post-landing；帽模式保持 shadow_relative。',
     ].join('\n'),
   );
   lines.push('');

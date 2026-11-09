@@ -1,6 +1,6 @@
 /**
  * 影子落地 → 重塑 → 地平线衰减之后，再套一道近端乐观帽。
- * 解决「生成时已帽、落地满幅影子/旺季重塑又抬回去」的问题。
+ * 默认按「当月影子 shadowDaily」相对限幅，避免各月被同一 recent/d6 绝对顶削平季节落差。
  */
 import { eq } from 'drizzle-orm';
 import { db, salesForecastMonthly } from '@scm/db';
@@ -8,10 +8,12 @@ import { buildHorizonIndexByMonthKey } from './forecast-seasonal-dampen.js';
 
 /** 压近端三月（horizonIndex 0/1/2，避免 11/12 压平后把过冲挤到次月） */
 export const POST_LANDING_MAX_HORIZON = 2;
-/** 落地后再帽统一抬升上限（旺季也不放宽到 1.25） */
+/** 相对当月影子的抬升上限 */
+export const POST_LANDING_SHADOW_UPLIFT = 1.1;
+/** 无影子时回退：相对 recent/d6 的绝对顶 */
 export const POST_LANDING_RUNRATE_UPLIFT = 1.1;
 export const POST_LANDING_MIN_RECENT30 = 3;
-/** 次通道弱开局：落地后不允许高于 recent30（×1.0） */
+/** 次通道弱开局：相对影子（或 recent30）×1.0 */
 export const POST_LANDING_SECONDARY_RECENT30_MAX = 5;
 export const POST_LANDING_SECONDARY_UPLIFT = 1.0;
 export const POST_LANDING_SECONDARY_FLOOR = 0.5;
@@ -42,15 +44,33 @@ function unwrapFactors(value: unknown): Record<string, unknown> | null {
   return current as Record<string, unknown>;
 }
 
+function readShadowDaily(factors: Record<string, unknown>): number | null {
+  const seasonal = factors.seasonalIndex;
+  if (!seasonal || typeof seasonal !== 'object') return null;
+  const daily = Number((seasonal as { shadowDaily?: unknown }).shadowDaily);
+  return Number.isFinite(daily) && daily > 0 ? daily : null;
+}
+
+/**
+ * 近端帽：优先 min(预测, 当月影子×1.10)；无影子时回退 max(recent30,d6)×1.10。
+ */
 export function applyPostLandingNearRunRateCap(input: {
   forecastDaily: number;
   horizonIndex: number;
   recent30DailyAvg?: number | null;
   d6?: number | null;
+  shadowDaily?: number | null;
 }): number {
   if (!(input.forecastDaily > 0)) return input.forecastDaily;
   const k = Math.max(0, Math.floor(input.horizonIndex));
   if (k > POST_LANDING_MAX_HORIZON) return input.forecastDaily;
+
+  const shadow = nonNegative(input.shadowDaily);
+  if (shadow > 0) {
+    const cap = shadow * POST_LANDING_SHADOW_UPLIFT;
+    return roundDaily(Math.min(input.forecastDaily, cap));
+  }
+
   const recent30 = nonNegative(input.recent30DailyAvg);
   if (recent30 < POST_LANDING_MIN_RECENT30) return input.forecastDaily;
   const d6 = nonNegative(input.d6);
@@ -62,6 +82,7 @@ export function applyPostLandingSecondaryChannelCap(input: {
   forecastDaily: number;
   platform?: string | null;
   recent30DailyAvg?: number | null;
+  shadowDaily?: number | null;
 }): number {
   if (!(input.forecastDaily > 0)) return input.forecastDaily;
   const platform = (input.platform ?? '').trim().toUpperCase();
@@ -70,7 +91,9 @@ export function applyPostLandingSecondaryChannelCap(input: {
   }
   const recent30 = nonNegative(input.recent30DailyAvg);
   if (recent30 >= POST_LANDING_SECONDARY_RECENT30_MAX) return input.forecastDaily;
-  const cap = Math.max(recent30, POST_LANDING_SECONDARY_FLOOR) * POST_LANDING_SECONDARY_UPLIFT;
+  const shadow = nonNegative(input.shadowDaily);
+  const base = shadow > 0 ? shadow : Math.max(recent30, POST_LANDING_SECONDARY_FLOOR);
+  const cap = Math.max(base, POST_LANDING_SECONDARY_FLOOR) * POST_LANDING_SECONDARY_UPLIFT;
   return roundDaily(Math.min(input.forecastDaily, cap));
 }
 
@@ -81,23 +104,33 @@ export function applyPostLandingOptimismCaps(input: {
   horizonIndex: number;
   recent30DailyAvg?: number | null;
   d6?: number | null;
+  shadowDaily?: number | null;
 }): {
   forecastDaily: number;
   nearRunRateCap: number | null;
   secondaryChannelCap: number | null;
+  capMode: 'shadow_relative' | 'runrate_absolute' | 'none';
 } {
   const before = input.forecastDaily;
+  const shadow = nonNegative(input.shadowDaily);
   let forecastDaily = applyPostLandingNearRunRateCap(input);
   const afterNear = forecastDaily;
   forecastDaily = applyPostLandingSecondaryChannelCap({
     forecastDaily,
     platform: input.platform,
     recent30DailyAvg: input.recent30DailyAvg,
+    shadowDaily: input.shadowDaily,
   });
+  const nearApplied = afterNear + 1e-9 < before;
   return {
     forecastDaily,
-    nearRunRateCap: afterNear + 1e-9 < before ? afterNear : null,
+    nearRunRateCap: nearApplied ? afterNear : null,
     secondaryChannelCap: forecastDaily + 1e-9 < afterNear ? forecastDaily : null,
+    capMode: nearApplied
+      ? shadow > 0
+        ? 'shadow_relative'
+        : 'runrate_absolute'
+      : 'none',
   };
 }
 
@@ -122,31 +155,44 @@ export async function applyOptimismDampAfterLanding(input: {
 
   let changedRows = 0;
   for (const row of rows) {
-    const current = Number(row.forecastDailyAvg);
-    if (!(current > 0)) continue;
     const horizonIndex = horizonByMonth.get(monthKey(row.year, row.month)) ?? 0;
     if (horizonIndex > POST_LANDING_MAX_HORIZON) continue;
 
     const factors = unwrapFactors(row.horizonFactors) ?? {};
+    const priorCap = factors.postLandingOptimismCap;
+    const priorBefore =
+      priorCap && typeof priorCap === 'object'
+        ? Number((priorCap as { beforeDaily?: unknown }).beforeDaily)
+        : NaN;
+    // 若曾被旧绝对顶压过，先恢复帽前值再按新规则限幅
+    const currentStored = Number(row.forecastDailyAvg);
+    const baseDaily =
+      Number.isFinite(priorBefore) && priorBefore > 0 ? priorBefore : currentStored;
+    if (!(baseDaily > 0)) continue;
+
     const recent30 = Number(factors.recent30DailyAvg);
     const d6 = Number(factors.d6);
+    const shadowDaily = readShadowDaily(factors);
     const capped = applyPostLandingOptimismCaps({
-      forecastDaily: current,
+      forecastDaily: baseDaily,
       platform: row.platform,
       horizonIndex,
       recent30DailyAvg: Number.isFinite(recent30) ? recent30 : null,
       d6: Number.isFinite(d6) ? d6 : null,
+      shadowDaily,
     });
-    if (Math.abs(capped.forecastDaily - current) < 0.005) continue;
+    if (Math.abs(capped.forecastDaily - currentStored) < 0.005) continue;
 
     const nextFactors = { ...factors } as Record<string, unknown>;
     nextFactors.postLandingOptimismCap = {
-      beforeDaily: roundDaily(current),
+      beforeDaily: roundDaily(baseDaily),
       afterDaily: capped.forecastDaily,
       nearRunRateCap: capped.nearRunRateCap,
       secondaryChannelCap: capped.secondaryChannelCap,
-      uplift: POST_LANDING_RUNRATE_UPLIFT,
+      uplift: POST_LANDING_SHADOW_UPLIFT,
       horizonIndex,
+      capMode: capped.capMode,
+      shadowDaily: shadowDaily != null ? roundDaily(shadowDaily) : null,
     };
 
     await db

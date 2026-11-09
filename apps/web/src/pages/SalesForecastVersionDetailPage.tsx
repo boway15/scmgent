@@ -9,7 +9,10 @@ import { ListPagination } from '@/components/ListPagination';
 import { ForecastDataExplorer } from '@/components/ForecastDataExplorer';
 import { ForecastSkuDetailDrawer, type ForecastHorizonRow } from '@/components/ForecastSkuDetailDrawer';
 import { ForecastAccuracyDiagnosticsPanel } from '@/components/ForecastAccuracyDiagnosticsPanel';
-import { ForecastVersionStatusBadge } from '@/components/ForecastVersionStatusBadge';
+import {
+  ForecastVersionStatusBadge,
+  isForecastPipelineBusy,
+} from '@/components/ForecastVersionStatusBadge';
 import { formatForecastStartMonth, resolveHorizonPlatformScope } from '@/lib/forecast-horizon-meta';
 import { formatForecastVersionTitle, mutationErrorMessage, buildForecastVersionDetailSearch, resolveForecastExplorerPlatform } from '@/lib/forecast-version-utils';
 import { formatTierDisplayLabel } from '@/lib/forecast-labels';
@@ -63,7 +66,24 @@ export function SalesForecastVersionDetailPage() {
     queryKey: ['sales-forecast-version', versionId],
     queryFn: () => api.getSalesForecastVersion(versionId),
     enabled: Boolean(versionId),
+    refetchInterval: (query) =>
+      isForecastPipelineBusy(query.state.data?.pipelineStatus) ? 4000 : false,
   });
+
+  const pipelineBusy = isForecastPipelineBusy(version?.pipelineStatus);
+  const [wasPipelineBusy, setWasPipelineBusy] = useState(false);
+
+  useEffect(() => {
+    if (pipelineBusy) {
+      setWasPipelineBusy(true);
+      return;
+    }
+    if (!wasPipelineBusy || !versionId) return;
+    setWasPipelineBusy(false);
+    void qc.invalidateQueries({ queryKey: ['sales-forecasts'] });
+    void qc.invalidateQueries({ queryKey: ['sales-forecast-horizon'] });
+    void qc.invalidateQueries({ queryKey: ['sales-forecast-version-summary', versionId] });
+  }, [pipelineBusy, wasPipelineBusy, versionId, qc]);
 
   const defaultView = useMemo<DetailView>(() => {
     if (!version) return 'data';
@@ -303,7 +323,10 @@ export function SalesForecastVersionDetailPage() {
     <div className="space-y-6">
       <PageHeader title={formatForecastVersionTitle(version.versionNo, version.versionName)}>
         <div className="flex flex-wrap items-center gap-2">
-          <ForecastVersionStatusBadge status={version.status} />
+          <ForecastVersionStatusBadge
+            status={version.status}
+            pipelineStatus={version.pipelineStatus}
+          />
           <span className="text-xs text-text-sub">开始月：{version.startMonth ?? '—'}</span>
           {version.status === 'published' && (
             <span className="inline-flex items-center rounded-md bg-muted px-2 py-1 text-xs text-text-sub">
@@ -320,6 +343,24 @@ export function SalesForecastVersionDetailPage() {
           </Link>
         </div>
       </PageHeader>
+
+      {pipelineBusy ? (
+        <div className="rounded-md border border-violet-500/30 bg-violet-500/10 px-4 py-3 text-sm text-violet-950 dark:text-violet-100">
+          <p className="font-medium">
+            {version.pipelineStatus === 'landing'
+              ? '影子落地进行中（满幅影子 → 站点重塑 → 地平线衰减 → 近端再帽）'
+              : '基线生成写入中（分平台逐步落库）'}
+          </p>
+          <p className="mt-1 text-xs opacity-90">
+            此阶段刷新页面时数字可能变化，属正常现象；状态变为「已就绪」后再核对/发布。页面会自动轮询进度。
+          </p>
+        </div>
+      ) : null}
+      {version.pipelineStatus === 'failed' ? (
+        <div className="rounded-md border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-900 dark:text-red-100">
+          生成或影子落地未完整完成。请查看任务日志后重新生成，勿直接发布该草稿。
+        </div>
+      ) : null}
 
       {versionSummary && (
         <Card className="border-border/80">

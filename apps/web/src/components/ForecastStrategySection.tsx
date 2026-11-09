@@ -320,8 +320,9 @@ function AllCategoryV41StrategySummary({ context }: { context: ForecastStrategyC
                 Amazon）弱开局 recent30&lt;5 时 ×1.1。
               </li>
               <li>
-                落地后再帽（对准影子抬升回冲）：近端 h≤2 统一 ×1.10（覆盖 11/12 及随后一月，避免过冲挤到次月）；次通道弱开局收紧到 ×1.0。结果写入{' '}
-                <code className="text-xs">horizonFactors.postLandingOptimismCap</code>。
+                落地后再帽（对准重塑过冲）：近端 h≤2 按<strong>当月影子 shadowDaily×1.10</strong>相对限幅（保留 12/1
+                季节落差，避免各月被同一 recent/d6 绝对顶削平）；无影子时回退 max(recent30,d6)×1.10。次通道弱开局相对影子（或
+                recent30）×1.0。结果写入 <code className="text-xs">horizonFactors.postLandingOptimismCap</code>。
               </li>
               <li>
                 目标：压住 Top 爆款相对开局 MTD 的过冲；组合层可能略偏保守（尤其次通道），补货时需留意断货风险。

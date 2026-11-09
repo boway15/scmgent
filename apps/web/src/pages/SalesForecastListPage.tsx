@@ -70,6 +70,14 @@ export function SalesForecastListPage() {
     queryKey: ['sales-forecast-versions', 'stats', 'list'],
     queryFn: () => api.getSalesForecastVersions({ includeStats: true, statsScope: 'list' }),
     staleTime: 30_000,
+    refetchInterval: (query) => {
+      const rows = query.state.data ?? [];
+      return rows.some(
+        (v) => v.pipelineStatus === 'generating' || v.pipelineStatus === 'landing',
+      )
+        ? 5000
+        : false;
+    },
   });
 
   const publishedVersions = useMemo(
@@ -587,7 +595,10 @@ function VersionRow({
         )}
       </td>
       <td className="p-2">
-        <ForecastVersionStatusBadge status={version.status} />
+        <ForecastVersionStatusBadge
+          status={version.status}
+          pipelineStatus={version.pipelineStatus}
+        />
       </td>
       <td className="p-2 font-numeric">
         <span>{version.startMonth ?? '—'}</span>

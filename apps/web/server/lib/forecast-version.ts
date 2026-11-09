@@ -44,6 +44,32 @@ function invalidateForecastDownstreamCaches(): void {
 
 export type ForecastVersionStatus = 'draft' | 'published' | 'archived';
 
+/** 与 draft/published 正交：生成写入 / 影子落地进行中时可看数字会变 */
+export type ForecastPipelineStatus = 'generating' | 'landing' | 'ready' | 'failed';
+
+export const FORECAST_PIPELINE_STATUS_LABEL: Record<ForecastPipelineStatus, string> = {
+  generating: '生成写入中',
+  landing: '影子落地中',
+  ready: '已就绪',
+  failed: '生成失败',
+};
+
+export function isForecastPipelineBusy(status?: string | null): boolean {
+  return status === 'generating' || status === 'landing';
+}
+
+export async function setForecastVersionPipelineStatus(
+  versionId: string,
+  pipelineStatus: ForecastPipelineStatus,
+) {
+  const [row] = await db
+    .update(salesForecastVersions)
+    .set({ pipelineStatus, updatedAt: new Date() })
+    .where(eq(salesForecastVersions.id, versionId))
+    .returning();
+  return row;
+}
+
 /** 与 sales_forecast_versions.version_no varchar(50) 对齐 */
 export const FORECAST_VERSION_NO_MAX_LEN = 50;
 /** 与 sales_forecast_versions.version_name varchar(200) 对齐 */
@@ -101,6 +127,7 @@ export async function getOrCreateDraftVersion(params: {
       versionName,
       station: params.station ?? null,
       status: 'draft',
+      pipelineStatus: 'generating',
       createdBy: params.createdBy ?? null,
     })
     .returning();
@@ -446,6 +473,7 @@ export type ForecastVersionListItem = {
   versionName: string;
   station: string | null;
   status: ForecastVersionStatus;
+  pipelineStatus: ForecastPipelineStatus | string;
   createdAt: Date;
   publishedAt: Date | null;
   /** 预测地平线首月 YYYY-MM；历史版本可能为空 */
@@ -625,6 +653,7 @@ function toVersionListItem(
     versionName: version.versionName,
     station: version.station,
     status: version.status as ForecastVersionStatus,
+    pipelineStatus: (version.pipelineStatus as ForecastPipelineStatus | string) || 'ready',
     createdAt: version.createdAt,
     publishedAt: version.publishedAt,
     startMonth: version.startMonth ?? null,

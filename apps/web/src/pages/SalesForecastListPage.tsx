@@ -595,10 +595,7 @@ function VersionRow({
         )}
       </td>
       <td className="p-2">
-        <ForecastVersionStatusBadge
-          status={version.status}
-          pipelineStatus={version.pipelineStatus}
-        />
+        <ForecastVersionStatusBadge status={version.status} />
       </td>
       <td className="p-2 font-numeric">
         <span>{version.startMonth ?? '—'}</span>

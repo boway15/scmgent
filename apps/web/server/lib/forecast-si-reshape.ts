@@ -18,6 +18,11 @@ import {
   resolveSeasonalIndexMode,
   type SeasonalIndexMode,
 } from './forecast-profile-config.js';
+import {
+  buildHorizonIndexByMonthKey,
+  dampenReshapeScale,
+  loadSeasonalDampenFromCalibration,
+} from './forecast-seasonal-dampen.js';
 
 export const SI_RESHAPE_SCALE_MIN = 0.72;
 export const SI_RESHAPE_SCALE_MAX = 1.45;
@@ -55,13 +60,20 @@ export function clipSiReshapeScale(
   return Math.min(max, Math.max(min, raw));
 }
 
-/** 保月均水平，按 SI 分配；返回各月 scale（已限幅）。 */
+/** 保月均水平，按 SI 分配；返回各月 scale（已限幅，可选近端衰减）。 */
 export function computeSiReshapeScales(input: {
   months: SiReshapeMonthAgg[];
   siByMonth: Record<number, number>;
   minGroupDaily?: number;
   scaleMin?: number;
   scaleMax?: number;
+  /** key → 地平线下标；缺省不衰减 */
+  horizonIndexByKey?: Map<string, number>;
+  nearBlend?: number;
+  nearMonths?: number;
+  peakMonths?: readonly number[];
+  /** false 时跳过近端衰减（回测基线） */
+  applyHorizonDamp?: boolean;
 }): SiReshapeScalePlan[] {
   const months = input.months.filter((item) => item.sum > 0);
   if (!months.length) return [];
@@ -75,16 +87,28 @@ export function computeSiReshapeScales(input: {
   const siMean = withSi.reduce((sum, item) => sum + item.si, 0) / withSi.length;
   if (!(siMean > 0)) return [];
 
+  const applyDamp = input.applyHorizonDamp !== false;
   return withSi.map((item) => {
     const target = avg * (item.si / siMean);
     const raw = item.sum > 0 ? target / item.sum : 1;
+    let scale = clipSiReshapeScale(raw, input.scaleMin, input.scaleMax);
+    if (applyDamp && input.horizonIndexByKey) {
+      const horizonIndex = input.horizonIndexByKey.get(item.key) ?? 0;
+      scale = dampenReshapeScale(scale, {
+        horizonIndex,
+        calendarMonth: item.month,
+        nearBlend: input.nearBlend,
+        nearMonths: input.nearMonths,
+        peakMonths: input.peakMonths,
+      });
+    }
     return {
       key: item.key,
       month: item.month,
       current: item.sum,
       target,
       si: item.si,
-      scale: clipSiReshapeScale(raw, input.scaleMin, input.scaleMax),
+      scale,
     };
   });
 }
@@ -194,10 +218,19 @@ export async function applyStationSiPortfolioReshape(input: {
   const groups = [...new Set([...byGroupMonth.keys()].map((key) => key.split('||')[0]!))];
   const scales = new Map<string, number>();
   let groupsTouched = 0;
+  const damp = loadSeasonalDampenFromCalibration();
+  const horizonByMonth = buildHorizonIndexByMonthKey(
+    [...rowMeta.values()].map((meta) => ({ year: meta.year, month: meta.month })),
+  );
 
   for (const group of groups) {
     const station = group.split('@@')[1] ?? 'ALL';
     const monthEntries = [...byGroupMonth.entries()].filter(([key]) => key.startsWith(`${group}||`));
+    const horizonIndexByKey = new Map<string, number>();
+    for (const [key] of monthEntries) {
+      const mk = key.slice(key.lastIndexOf('||') + 2);
+      horizonIndexByKey.set(key, horizonByMonth.get(mk) ?? 0);
+    }
     const plans = computeSiReshapeScales({
       months: monthEntries.map(([key, agg]) => ({
         key,
@@ -212,6 +245,11 @@ export async function applyStationSiPortfolioReshape(input: {
             1,
         ]),
       ),
+      horizonIndexByKey,
+      nearBlend: damp.reshape.reshapeNearHorizonBlend,
+      nearMonths: damp.reshape.reshapeNearHorizonMonths,
+      peakMonths: damp.reshape.reshapePeakMonthsFull,
+      applyHorizonDamp: true,
     });
     if (!plans.length) continue;
     groupsTouched += 1;

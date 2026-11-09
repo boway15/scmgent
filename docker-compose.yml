@@ -87,6 +87,11 @@ services:
       # SALES_HISTORY_DAILY_RETENTION_DAYS: "365"
       # 补货/健康读取日表回溯天数，默认 90
       # REPLENISHMENT_SALES_LOOKBACK_DAYS: "90"
+      # 月销量预测算法（默认 allcat_v41）；legacy / monthly_abcd 见 forecast-algo-mode.ts
+      # FORECAST_ALGO_MODE: "allcat_v41"
+      # 周度销量预测生成：v41_inline（默认，月 V4.1 拆 ISO 周）| v41_w（ISO 周 w4/w8/w12/w16）
+      # 改后需重新生成周预测草稿；对比两版：pnpm demand-plan:compare-algo
+      # DEMAND_PLAN_WEEKLY_ALGO: "v41_inline"
     volumes:
       - costingdata:/data/costing
     depends_on:

@@ -85,12 +85,14 @@ export function ForecastPanel({
   const f = hasSeries ? trendSeasonalForecast(series, periods, horizon, isWeek) : null;
   const fc = f?.fc ?? [];
   const lastActual = f?.last ?? 0;
+  const trainingEndLabel = f?.trainingEndLabel ?? periods[periods.length - 1] ?? '';
+  const trainingEndIdx = trainingEndLabel ? periods.indexOf(trainingEndLabel) : periods.length - 1;
 
   const chartData = [
     ...periods.map((period, i) => ({
       period,
       actual: series[i] ?? 0,
-      forecast: i === periods.length - 1 ? lastActual : null,
+      forecast: i === trainingEndIdx ? lastActual : null,
     })),
     ...fc.map((p) => ({
       period: p.ym,
@@ -135,9 +137,9 @@ export function ForecastPanel({
               `未来 ${fc.length} ${granWord}合计约 ${fmtQty(fcSum)} 件。`,
             ].join('')
           : [
-              `基于 ${periods[0]} ~ ${periods[periods.length - 1]} 共 ${series.length} 个${granWord}（已去前导零${isWeek ? '' : '、进行中月折整'}），采用「近端锚定 + 衰减趋势${isWeek ? '' : ' × 限幅季节(0.85–1.15)'}」。`,
-              `① 锚定：近 ${isWeek ? 8 : 6} ${granWord}均值 ${fmtQty(f.anchor)} 件；`,
-              `② 趋势：斜率 ${(f.b >= 0 ? '+' : '') + f.b.toFixed(1)} 件/期，R²=${f.r2.toFixed(2)}，${trendWord}；`,
+              `基于 ${periods[0]} ~ ${trainingEndLabel || periods[periods.length - 1]} 共 ${series.length} 个${granWord}（已去前导零${isWeek ? '' : '、不含当月实际，训练截至上月末'}），采用「趋势外推${isWeek ? '' : ' × 限幅季节(0.85–1.15)'}」。`,
+              `① 趋势：按斜率 ${(f.b >= 0 ? '+' : '') + f.b.toFixed(1)} 件/期外推（R²=${f.r2.toFixed(2)}，${trendWord}），近 ${isWeek ? 8 : 6} ${granWord}锚定 ${fmtQty(f.anchor)} 件作参考；`,
+              `② 水平：取线性外推与锚定衰减的较优值，避免远期贴回去年同期量级；`,
               isWeek
                 ? '（周度不做月度季节分解）'
                 : f.path === 'seasonal'

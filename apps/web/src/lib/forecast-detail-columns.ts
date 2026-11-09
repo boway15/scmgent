@@ -60,6 +60,27 @@ function uniformNumber(
 }
 
 /** V4.1 走步特征：触发时锚定，通常全周期一致 */
+/** V4.1-W：从走步因子块解析锚定快照（展示时 d6/d3 槽位对应 w8/w4） */
+export function resolveV41WAnchoredSnapshot(
+  factors: Record<string, unknown> | null | undefined,
+): V41AnchoredSnapshot | null {
+  if (!factors) return null;
+  const num = (key: string) => {
+    const v = factors[key];
+    return typeof v === 'number' && Number.isFinite(v) ? v : null;
+  };
+  const w8 = num('w8');
+  const w4 = num('w4');
+  if (w8 == null && w4 == null) return null;
+  return {
+    d6: w8 ?? 0,
+    d3: w4 ?? 0,
+    trendRatio: num('trendRatioW') ?? 1,
+    anchorDaily: num('anchorDaily') ?? 0,
+    formula: typeof factors.formula === 'string' ? factors.formula : undefined,
+  };
+}
+
 export function resolveV41AnchoredSnapshot(
   months: ForecastDetailMonthCell[],
 ): V41AnchoredSnapshot | null {

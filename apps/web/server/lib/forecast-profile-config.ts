@@ -51,6 +51,17 @@ export type SeasonalIndexConfig = {
    * 默认：mode≠off 时开启。false 可关掉。
    */
   reshapePortfolio?: boolean;
+  /**
+   * 影子相对原预测增量的地平线衰减（按 horizonIndex 取下标，超出用末项）。
+   * 用于落地系统日均 / mode=on，不改写 shadowDaily 原始对照值。
+   */
+  shadowHorizonDecay?: number[];
+  /** 近端重塑强度（0~1），对 scale−1 的保留比例；默认 0.5 */
+  reshapeNearHorizonBlend?: number;
+  /** 视为近端的月数（horizonIndex < 该值时衰减）；默认 2 */
+  reshapeNearHorizonMonths?: number;
+  /** 满幅重塑的日历月（默认 11/12），不受近端衰减 */
+  reshapePeakMonthsFull?: number[];
 };
 
 export type ForecastCalibrationConfig = {
@@ -86,6 +97,10 @@ export const DEFAULT_SEASONAL_INDEX_CONFIG: SeasonalIndexConfig = {
   minAgeMonths: 3,
   forwardMonths: 2,
   reshapePortfolio: true,
+  shadowHorizonDecay: [1, 1, 0.85, 0.7, 0.6, 0.55],
+  reshapeNearHorizonBlend: 0.5,
+  reshapeNearHorizonMonths: 2,
+  reshapePeakMonthsFull: [11, 12],
 };
 
 export const DEFAULT_FORECAST_CALIBRATION_CONFIG: ForecastCalibrationConfig = {

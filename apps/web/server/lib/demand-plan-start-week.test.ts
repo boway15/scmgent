@@ -6,6 +6,7 @@ import {
   isDemandPlanStartWeekBacktest,
   parseAndValidateDemandPlanStartWeek,
   planningTrainingWindowEndBeforeWeek,
+  resolveDemandPlanSkuDetailActualDisplayWindow,
   resolveDemandPlanSkuDetailSalesWindow,
 } from './demand-plan-start-week.js';
 import { formatIsoWeekMondayMd } from './planning-calendar.js';
@@ -36,6 +37,14 @@ describe('demand-plan-start-week', () => {
       maxSaleDate: '2026-09-15',
     });
     assert.equal(windowEnd.toISOString().slice(0, 10), '2026-09-15');
+  });
+
+  it('actual display window ignores backtest training cutoff', () => {
+    const end = resolveDemandPlanSkuDetailActualDisplayWindow({
+      now: new Date('2026-11-06T00:00:00.000Z'),
+      maxSaleDate: '2026-11-04',
+    });
+    assert.equal(end.toISOString().slice(0, 10), '2026-11-04');
   });
 
   it('parse validates lookback range', () => {

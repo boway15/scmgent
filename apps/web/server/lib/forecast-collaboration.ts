@@ -82,6 +82,10 @@ import {
   shouldRunSiReshapeAfterGenerate,
 } from './forecast-si-reshape.js';
 import {
+  applyShadowLandingPipeline,
+  shouldRunShadowLandingAfterGenerate,
+} from './forecast-shadow-landing.js';
+import {
   resolveProfileSegment,
   type ProfileClass,
   type ProfileSegment,
@@ -904,19 +908,38 @@ async function generateBaselineForecastVersionForStation(input: {
         );
       }
     }
-    if (shouldRunSiReshapeAfterGenerate(seasonalIndexMode) && result.version?.id) {
-      try {
-        const asOf = input.today instanceof Date ? input.today : input.today ? new Date(input.today) : new Date();
-        await applyStationSiPortfolioReshape({
-          versionId: result.version.id,
-          historyCapEnd: effectiveRecentWindowEnd(asOf),
-          startMonth: result.version.startMonth ?? input.startMonth,
-        });
-      } catch (err) {
-        console.warn(
-          '[forecast] SI portfolio reshape skipped:',
-          err instanceof Error ? err.message : err,
-        );
+    if (result.version?.id) {
+      const asOf = input.today instanceof Date ? input.today : input.today ? new Date(input.today) : new Date();
+      const historyCapEnd = effectiveRecentWindowEnd(asOf);
+      const startMonth = result.version.startMonth ?? input.startMonth;
+      // mode=shadow：生成后自动跑影子落地全流程（promote→reshape→decay→再帽）
+      if (shouldRunShadowLandingAfterGenerate(seasonalIndexMode)) {
+        try {
+          await applyShadowLandingPipeline({
+            versionId: result.version.id,
+            startMonth,
+            historyCapEnd,
+          });
+        } catch (err) {
+          console.warn(
+            '[forecast] shadow landing pipeline skipped:',
+            err instanceof Error ? err.message : err,
+          );
+        }
+      } else if (shouldRunSiReshapeAfterGenerate(seasonalIndexMode)) {
+        // mode=on：系统日均已含季节，仅做组合重塑
+        try {
+          await applyStationSiPortfolioReshape({
+            versionId: result.version.id,
+            historyCapEnd,
+            startMonth,
+          });
+        } catch (err) {
+          console.warn(
+            '[forecast] SI portfolio reshape skipped:',
+            err instanceof Error ? err.message : err,
+          );
+        }
       }
     }
     return result;
@@ -1394,6 +1417,7 @@ async function generateBaselineForStationPlatform(input: {
             sampleQty: resolvedSeason.sampleQty,
             level: resolvedSeason.level,
             k: seasonalContext?.k,
+            shadowHorizonDecay: calibration.seasonalIndex?.shadowHorizonDecay,
           }
         : undefined;
       const anchorV41 = computeAllCatV41ForecastForMonth({

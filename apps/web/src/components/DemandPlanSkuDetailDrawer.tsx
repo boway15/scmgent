@@ -138,12 +138,13 @@ export function DemandPlanSkuDetailDrawer({
                 {detail.forecastWeeks.length > 0 ? (
                   <DemandPlanWeeklyForecastTable
                     versionId={versionId}
+                    platform={platform}
                     forecastVersion={detail.forecastVersion}
                     forecastHorizon={detail.forecastHorizon}
                     forecastContext={detail.forecastContext}
                     weekRows={detail.forecastWeeks}
                     productCategory={detail.sku.productCategory}
-                    planCalibrationEditable={planCalibrationEditable}
+                    planCalibrationEditable={planCalibrationEditable && platform === 'ALL'}
                     onPlanCalibrationSaved={() => {
                       void queryClient.invalidateQueries({
                         queryKey: ['demand-plan-sku-detail', versionId, selectedSku?.skuId, platform],

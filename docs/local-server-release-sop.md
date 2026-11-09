@@ -345,6 +345,32 @@ docker stats
 - [ ] 导出准确度（有实销周）  
 - [ ] 发布并采用 / 改吃月预测  
 
+### 12.1 周预测算法环境变量（V4.1-W）
+
+| 变量 | 默认 | 说明 |
+|------|------|------|
+| `FORECAST_ALGO_MODE` | `allcat_v41` | 月销量预测；周计划内联仍依赖此模式为 V4.1 |
+| `DEMAND_PLAN_WEEKLY_ALGO` | `v41_inline` | `v41_inline` = 月 V4.1 拆周，前 4 周再向近 14/30/90 日均衰减混合；`v41_w` = 周走步 w4/w8/w12/w16 |
+
+**启用 V4.1-W（生产/本地 Docker）**
+
+1. 在 `.env` 或 `docker-compose.public.yml` 的 `web.environment` 增加：`DEMAND_PLAN_WEEKLY_ALGO=v41_w`  
+2. 重建 web：`docker compose -p scm-agent -f docker-compose.yml -f docker-compose.public.yml up -d --force-recreate web`  
+3. 数据中心 → **周度销量预测** → **重新生成草稿**（旧草稿仍是旧算法）  
+4. 矩阵 / 抽屉应出现 `blend_meta.algo=v41_w`、走步摘要 **w8/w4**
+
+**回滚**：删除该变量或设为 `v41_inline`，重建 web 后重新生成草稿。
+
+**离线对比两算法（不改线上数据）** — 在仓库根目录、已配置 `DATABASE_URL`：
+
+```powershell
+pnpm demand-plan:compare-algo
+pnpm demand-plan:compare-algo -- --start-week 2026-W30 --max-skus 200
+pnpm demand-plan:compare-algo -- --sku-code YOUR_SKU --csv docs/samples/demand-plan-algo-compare.csv
+```
+
+输出近 4 周与全可比周的 WMAPE（inline vs near_blend vs v41_w）。设计说明见 [superpowers/specs/2026-11-06-allcat-v41-w-weekly-design.md](./superpowers/specs/2026-11-06-allcat-v41-w-weekly-design.md)。
+
 ---
 
 ## 相关文档

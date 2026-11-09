@@ -9,7 +9,13 @@ import {
   FORECAST_HORIZON_FUTURE_MONTH_OPTIONS,
   MAX_FORECAST_MONTH_COUNT,
 } from '@/lib/forecast-horizon-meta';
+import {
+  DEMAND_PLAN_HORIZON_WEEKS,
+  DEMAND_PLAN_REPLENISHMENT_DEFER_NOTICE,
+  formatDemandPlanVersionTitle,
+} from '@/lib/demand-plan-utils';
 import { formatForecastVersionTitle } from '@/lib/forecast-version-utils';
+import { Link } from 'react-router-dom';
 
 type SectionTab = 'strategy' | 'trends';
 type TrendType = 'category' | 'project_group';
@@ -30,8 +36,12 @@ const mutationErrorMessage = (error: unknown) => (error instanceof Error ? error
 
 const LIST_PAGE_SIZE = 15;
 
+export type ForecastStrategyContext = 'monthly' | 'weekly';
+
 type Props = {
   active: boolean;
+  /** 月销量预测默认 monthly；周度销量预测传 weekly */
+  context?: ForecastStrategyContext;
 };
 
 const ALL_CATEGORY_V41_TIERS = [
@@ -44,28 +54,161 @@ const ALL_CATEGORY_V41_TIERS = [
   ['T99', '异常/低规律保守保底层', '连续性不足、cv 过高或近端弱信号；近30≈0 时归零', '近端 max(近30,近90,d3)×1.0，远月×0.8×0.9；不进主 KPI', '不计入主准确率统计'],
 ] as const;
 
-function AllCategoryV41StrategySummary() {
-  const { data: versions } = useQuery({
+function WeeklyDemandPlanStrategyPreamble() {
+  return (
+    <div className="space-y-4 rounded-lg border border-border bg-background p-4 text-sm">
+      <div>
+        <h3 className="text-base font-semibold text-text-main">每一周只做一次加法</h3>
+        <p className="mt-1 leading-relaxed text-text-sub">
+          未来 {DEMAND_PLAN_HORIZON_WEEKS} 周，每周给出一个「预测每天卖几件」。它由两个数相加，没有第三套周公式。第几周只决定这两个数各占多少。
+        </p>
+      </div>
+      <table className="min-w-full text-left text-xs">
+        <thead>
+          <tr className="border-b border-border">
+            <th className="py-2 pr-3 font-medium text-text-main">两个数</th>
+            <th className="py-2 pr-3 font-medium text-text-main">怎么来</th>
+            <th className="py-2 font-medium text-text-main">会不会每周变</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr className="border-b border-border/60 align-top">
+            <td className="py-2 pr-3 font-medium text-text-main">最近每天</td>
+            <td className="py-2 pr-3 text-text-sub">
+              真实销量。60% 是近 14 天每天，40% 是近 30 天和近 90 天（近 90 天更重）。最远 90 天，截止业务日前 2 天。过大或过小，拉回到近 90 天每天的 0.4～2.5 倍。
+            </td>
+            <td className="py-2 text-text-sub">不变。一个 SKU 共用这一个数。</td>
+          </tr>
+          <tr className="align-top">
+            <td className="py-2 pr-3 font-medium text-text-main">本周月预测</td>
+            <td className="py-2 pr-3 text-text-sub">
+              SKU 先定一个层，26 周不换。用该层算出未来 6 个月各自每天卖几件，再摊到这一周：7 天在哪个月就用哪个月，跨月按天数平均。层的公式在文末附录，和第几周无关。
+            </td>
+            <td className="py-2 text-text-sub">会变。淡季的周，这个数更小。</td>
+          </tr>
+        </tbody>
+      </table>
+      <div className="overflow-auto">
+        <p className="mb-2 font-medium text-text-main">相加时，越往后月预测占得越多</p>
+        <table className="min-w-full text-left text-xs">
+          <thead>
+            <tr className="border-y border-border bg-muted/40">
+              <th className="px-3 py-2 font-medium text-text-main">周</th>
+              <th className="px-3 py-2 font-medium text-text-main">预测每天</th>
+            </tr>
+          </thead>
+          <tbody>
+            {[
+              ['第 1 周', '最近每天 × 70% + 本周月预测 × 30%'],
+              ['第 2 周', '最近每天 × 倍数 × 50% + 本周月预测 × 50%'],
+              ['第 3 周', '最近每天 × 倍数 × 30% + 本周月预测 × 70%'],
+              ['第 4 周', '最近每天 × 倍数 × 15% + 本周月预测 × 85%'],
+              ['第 5 周起', '就等于本周月预测'],
+            ].map((row) => (
+              <tr key={row[0]} className="border-b border-border/50 align-top">
+                <td className="whitespace-nowrap px-3 py-2 font-medium text-text-main">{row[0]}</td>
+                <td className="px-3 py-2 text-text-sub">{row[1]}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        <p className="mt-2 leading-relaxed text-text-sub">
+          倍数 = 本周月预测 ÷ 第 1 周月预测，最小 0.5、最大 2。第 1 周不用乘。它只让「最近每天」跟着月预测的淡旺走，避免淡季仍按最近高峰卖。
+        </p>
+      </div>
+      <div className="overflow-auto rounded-md border border-border bg-card">
+        <p className="border-b border-border px-3 py-2 font-medium text-text-main">代入一次</p>
+        <p className="px-3 pt-2 text-text-sub">最近每天 11.2 件。第 1 周月预测 8 件，第 2 周月预测 6 件。</p>
+        <table className="min-w-full text-left text-xs">
+          <thead>
+            <tr className="border-b border-border">
+              <th className="px-3 py-2 font-medium text-text-main" />
+              <th className="px-3 py-2 font-medium text-text-main">第 1 周</th>
+              <th className="px-3 py-2 font-medium text-text-main">第 2 周</th>
+            </tr>
+          </thead>
+          <tbody>
+            {[
+              ['最近每天', '11.2', '11.2'],
+              ['本周月预测', '8', '6'],
+              ['倍数', '不用', '6 ÷ 8 = 0.75'],
+              ['预测每天', '11.2×70% + 8×30% = 10.24', '11.2×0.75×50% + 6×50% = 7.20'],
+            ].map((row) => (
+              <tr key={row[0]} className="border-b border-border/50">
+                {row.map((cell, index) => (
+                  <td key={`${row[0]}-${index}`} className="px-3 py-2 text-text-sub">
+                    {cell}
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        <p className="px-3 py-2 text-text-sub">第 5 周如果月预测是 5 件，预测每天就是 5 件。矩阵用的是这列结果。</p>
+      </div>
+    </div>
+  );
+}
+
+function AllCategoryV41StrategySummary({ context }: { context: ForecastStrategyContext }) {
+  const isWeekly = context === 'weekly';
+  const { data: forecastDrafts } = useQuery({
     queryKey: ['sales-forecast-versions', 'draft'],
     queryFn: () => api.getSalesForecastVersions({ status: 'draft' }),
+    enabled: !isWeekly,
   });
-  const latestDraft = versions?.[0];
+  const { data: demandPlanList } = useQuery({
+    queryKey: ['demand-plan-versions', 'draft-strategy'],
+    queryFn: () => api.listDemandPlanVersions({ pageSize: 50 }),
+    enabled: isWeekly,
+  });
+  const latestForecastDraft = forecastDrafts?.[0];
+  const latestDemandPlanDraft = demandPlanList?.items.find((row) => row.status === 'draft');
 
-  return (
-    <div className="mb-6 space-y-4 rounded-lg border border-primary/20 bg-primary/5 p-4 text-sm">
+  const monthlyReference = (
+    <>
       <div>
-        <h3 className="text-base font-semibold text-text-main">当前生效策略：全品类 V4.1 分层 KPI + T4B 保底 + T99 保守保底</h3>
+        <h3 className="text-base font-semibold text-text-main">
+          当前生效策略：全品类 V4.1 分层 KPI + 季节影子落地 + 近端乐观抑制
+        </h3>
         <p className="mt-1 leading-relaxed text-text-sub">
-          运行时默认 <span className="font-medium text-text-main">FORECAST_ALGO_MODE=allcat_v41</span>。
-          T1–T4A 按 d2/d3/d6/d12 加权生成系统预测；T4B 对连续有销但未达主层门槛的 SKU 给出保守保底预测；T99 有近期动销时写保守保底数，近30=0 归零，Dify 可选覆盖。
-          选择「全平台」生成时，按 V4.1 支持平台分别写入预测行，列表查询 ALL 为分平台汇总，不写入 platform=ALL 物理行。日销站点按导入原文保存。预测仍按全站合并，station=ALL。
-          模型标识 <span className="font-medium text-text-main">allcat_kpi_corefirst_v41</span>。
-          {latestDraft ? (
+          {isWeekly ? (
+            <>
+              这张表只用来算出上面的「本周月预测」。一个 SKU 全程一层，第 2 周不会改成另一层。
+            </>
+          ) : (
+            <>
+              运行时默认 <span className="font-medium text-text-main">FORECAST_ALGO_MODE=allcat_v41</span>。
+              T1–T4A 按 d2/d3/d6/d12 加权生成系统预测；T4B 对连续有销但未达主层门槛的 SKU 给出保守保底预测；T99
+              有近期动销时写保守保底数，近30=0 归零，Dify 可选覆盖。 选择「全平台」生成时，按 V4.1 支持平台分别写入预测行，列表查询
+              ALL 为分平台汇总，不写入 platform=ALL 物理行。日销站点按导入原文保存。预测仍按全站合并，station=ALL。 模型标识{' '}
+              <span className="font-medium text-text-main">allcat_kpi_corefirst_v41</span>
+              ；季节指数默认 <span className="font-medium text-text-main">mode=shadow</span>
+              ，基线生成结束后自动跑影子落地全流程。
+            </>
+          )}
+          {isWeekly ? (
+            latestDemandPlanDraft ? (
+              <>
+                {' '}
+                当前最新周预测草稿{' '}
+                <span className="font-medium text-text-main">
+                  {formatDemandPlanVersionTitle(
+                    latestDemandPlanDraft.versionNo,
+                    latestDemandPlanDraft.versionName,
+                  )}
+                </span>
+                。
+              </>
+            ) : (
+              <span> 生成周预测草稿后将写入新的 demand_plan 版本。</span>
+            )
+          ) : latestForecastDraft ? (
             <>
               {' '}
               当前最新草稿版本{' '}
               <span className="font-medium text-text-main">
-                {formatForecastVersionTitle(latestDraft.versionNo, latestDraft.versionName)}
+                {formatForecastVersionTitle(latestForecastDraft.versionNo, latestForecastDraft.versionName)}
               </span>
               。
             </>
@@ -75,16 +218,30 @@ function AllCategoryV41StrategySummary() {
         </p>
       </div>
 
-      <div className="rounded-md border border-border bg-background p-3">
-        <p className="font-medium text-text-main">T99 与 Dify 单条辅助预测</p>
-        <ul className="mt-2 list-disc space-y-1 pl-5 text-text-sub">
-          <li>T99：波动大、连续性不足或近端弱信号 — 有近期动销时系统写保守保底数（近30=0 归零）；T4B 连续有销 SKU 由系统直接给保守保底数。</li>
-          <li>版本详情 → 复核与发布：矩阵中 T99 行展示系统保守数（断销时为 0 且悬停「待校准」），点击 SKU 可触发 Dify 工作流或人工校准，入参含近 24 月销、品类趋势、预测周期。</li>
-          <li>LLM 输出写入草稿版 sales_forecast_monthly（source=dify），可在 SKU 抽屉查看 rationale 并手工校准。</li>
-          <li>SKU 抽屉提供三种辅助：<strong>AI 自动</strong>（直调 Dify）、<strong>AI+人工</strong>（外生因素：调价/投广告等）、<strong>系统运算</strong>（单 SKU 本地算法重算）。</li>
-          <li>工作流 DSL：<code className="text-xs">docs/dify/workflows/single-sku-forecast.yml</code></li>
-        </ul>
-      </div>
+      {isWeekly ? (
+        <div className="rounded-md border border-border bg-background p-3">
+          <p className="font-medium text-text-main">T99 与人工校准（周预测）</p>
+          <ul className="mt-2 list-disc space-y-1 pl-5 text-text-sub">
+            <li>T99：波动大、连续性不足或近端弱信号 — 系统仍写保守保底数（近30=0 归零）；复核摘要统计待校准 SKU 数。</li>
+            <li>版本详情 → 复核矩阵：可按 T99 筛选；长表或 SKU 抽屉改「人工日均」；分平台导出校准表导入后按月形状反算全平台合计。</li>
+            <li>发布冻结周预测版本；「发布并采用」仅登记意图，补货仍以月预测为准（见页头说明）。</li>
+          </ul>
+        </div>
+      ) : (
+        <div className="rounded-md border border-border bg-background p-3">
+          <p className="font-medium text-text-main">T99 与 Dify 单条辅助预测</p>
+          <ul className="mt-2 list-disc space-y-1 pl-5 text-text-sub">
+            <li>T99：波动大、连续性不足或近端弱信号 — 有近期动销时系统写保守保底数（近30=0 归零）；T4B 连续有销 SKU 由系统直接给保守保底数。</li>
+            <li>版本详情 → 复核与发布：矩阵中 T99 行展示系统保守数（断销时为 0 且悬停「待校准」），点击 SKU 可触发 Dify 工作流或人工校准，入参含近 24 月销、品类趋势、预测周期。</li>
+            <li>LLM 输出写入草稿版 sales_forecast_monthly（source=dify），可在 SKU 抽屉查看 rationale 并手工校准。</li>
+            <li>
+              SKU 抽屉提供三种辅助：<strong>AI 自动</strong>（直调 Dify）、<strong>AI+人工</strong>（外生因素：调价/投广告等）、
+              <strong>系统运算</strong>（单 SKU 本地算法重算）。
+            </li>
+            <li>工作流 DSL：<code className="text-xs">docs/dify/workflows/single-sku-forecast.yml</code></li>
+          </ul>
+        </div>
+      )}
 
       <div className="rounded-md border border-border bg-background p-3">
         <p className="font-medium text-text-main">品类趋势系数（保守口径，供 Dify / legacy 辅助）</p>
@@ -122,13 +279,64 @@ function AllCategoryV41StrategySummary() {
         <div className="rounded-md border border-border bg-background p-3">
           <p className="font-medium text-text-main">V4.1 主算法</p>
           <ul className="mt-2 list-disc space-y-1 pl-5 text-text-sub">
-            <li>d2/d3/d6/d12 = 目标月前 2/3/6/12 个月折算日均。</li>
+            <li>
+              d2/d3/d6/d12 = 目标<strong>自然月</strong>之前 2/3/6/12 个完整自然月的月销合计，再 ÷ 60/91/182/365 得到日均（走步特征，<strong>无 d1</strong>）。
+              {isWeekly
+                ? ' 这些月销量只用来算出「本周月预测」，不是矩阵上的最终数字。'
+                : null}
+            </li>
+            <li>
+              近 30/90 为日销表上滚动 30/90 <strong>日历天</strong>（与 d 不同）；growth / T99 会用到。
+              {isWeekly ? ' 周计划近窗截止日为 planningRecentWindowEnd（业务日−2 与最大销日取早），月预测多为 effectiveRecentWindowEnd（常截上月末）。' : null}
+            </li>
             <li>base_daily 按 T 层加权 → 趋势衰减（growth 用 recent30/90）→ 近端月渐减 → 层级保守系数 → 上下限 → 近端地板。</li>
           </ul>
         </div>
       </div>
 
+      {!isWeekly ? (
+        <>
+          <div className="rounded-md border border-border bg-background p-3">
+            <p className="font-medium text-text-main">季节影子落地全流程（生成后自动）</p>
+            <ul className="mt-2 list-disc space-y-1 pl-5 text-text-sub">
+              <li>
+                生成时先写 V4.1 系统日均，并把类目/项目组季节指数的对照值写入 factors（
+                <code className="text-xs">seasonalIndex.shadowDaily</code>，mode=shadow）。
+              </li>
+              <li>
+                基线生成结束后<strong>自动</strong>执行：① 满幅影子写入系统日均 → ② 站点 SI 组合重塑（近端 blend≈0.5，11/12
+                旺季满幅）→ ③ 地平线衰减 shadowHorizonDecay=[1,1,0.85,0.7,0.6,0.55]（11/12 强制满幅）→ ④ 落地后再帽。
+              </li>
+              <li>
+                因此「再次生成」的草稿与已落地正式版应对齐同一口径；无需再手工跑落地脚本。
+              </li>
+            </ul>
+          </div>
+          <div className="rounded-md border border-border bg-background p-3">
+            <p className="font-medium text-text-main">近端乐观抑制（爆款护栏）</p>
+            <ul className="mt-2 list-disc space-y-1 pl-5 text-text-sub">
+              <li>
+                生成路径：近端 h≤1 且 recent30≥3 时，相对 max(recent30,d6) 抬升帽（平季 ×1.15 / 11–12 月 ×1.25）；次通道（非
+                Amazon）弱开局 recent30&lt;5 时 ×1.1。
+              </li>
+              <li>
+                落地后再帽（对准影子抬升回冲）：近端 h≤1 统一 ×1.10；次通道弱开局收紧到 ×1.0。结果写入{' '}
+                <code className="text-xs">horizonFactors.postLandingOptimismCap</code>。
+              </li>
+              <li>
+                目标：压住 Top 爆款相对开局 MTD 的过冲；组合层可能略偏保守（尤其次通道），补货时需留意断货风险。
+              </li>
+            </ul>
+          </div>
+        </>
+      ) : null}
+
       <div className="overflow-auto rounded-md border border-border bg-background">
+        {isWeekly ? (
+          <p className="border-b border-border px-3 py-2 text-sm text-text-sub">
+            T1 的 SKU 每一周都用 T1 这一行来算月预测，不会在第 2 周改用 T2。
+          </p>
+        ) : null}
         <table className="min-w-full text-left text-xs">
           <thead>
             <tr className="border-b border-border bg-muted/40">
@@ -152,13 +360,30 @@ function AllCategoryV41StrategySummary() {
           </tbody>
         </table>
       </div>
-    </div>
+    </>
   );
+
+  if (isWeekly) {
+    return (
+      <div className="space-y-4 text-sm">
+        <WeeklyDemandPlanStrategyPreamble />
+        <details className="rounded-lg border border-border bg-background p-4">
+          <summary className="cursor-pointer font-medium text-text-main">
+            附录：月预测的分层公式（和第几周无关，需要时再看）
+          </summary>
+          <div className="mt-4 space-y-4">{monthlyReference}</div>
+        </details>
+      </div>
+    );
+  }
+
+  return <div className="mb-6 space-y-4 rounded-lg border border-primary/20 bg-primary/5 p-4 text-sm">{monthlyReference}</div>;
 }
 
 
-export function ForecastStrategySection({ active }: Props) {
+export function ForecastStrategySection({ active, context = 'monthly' }: Props) {
   const qc = useQueryClient();
+  const isWeekly = context === 'weekly';
   const [sectionTab, setSectionTab] = useState<SectionTab>('strategy');
   const [trendType, setTrendType] = useState<TrendType>('category');
   const [trendView, setTrendView] = useState<TrendView>('future');
@@ -216,13 +441,17 @@ export function ForecastStrategySection({ active }: Props) {
       {sectionTab === 'strategy' && (
         <Card>
           <CardHeader>
-            <CardTitle>预测策略（V4.1 + T99 + Dify）</CardTitle>
+            <CardTitle>
+              {isWeekly ? '周预测口径' : '预测策略（V4.1 + 季节落地 + 乐观抑制）'}
+            </CardTitle>
             <p className="text-sm text-text-sub">
-              主预测为全品类 V4.1 分层 KPI；T99 走复核 + 可选 Dify LLM 单条预测。品类趋势系数见「品类趋势系数」Tab。
+              {isWeekly
+                ? '每周的预测每天 = 最近每天和本周月预测按比例相加。分层公式在文末附录。'
+                : '主预测为全品类 V4.1 分层 KPI；T99 走复核 + 可选 Dify LLM 单条预测。品类趋势系数见「品类趋势系数」Tab。'}
             </p>
           </CardHeader>
           <CardContent>
-            <AllCategoryV41StrategySummary />
+            <AllCategoryV41StrategySummary context={context} />
           </CardContent>
         </Card>
       )}

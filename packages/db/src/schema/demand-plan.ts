@@ -23,11 +23,19 @@ export type DemandPlanWeekBlendMeta = {
   u90: number;
   wNear: number;
   wYoy: number;
+  /** v41_inline 前 4 周近端混合权重；与 wNear 相同，第 5 周起为 0 */
+  nearAlpha?: number;
+  /** winsorize(0.6*r14 + 0.4*U) */
+  nearLevel?: number;
+  /** 混合前的月 V4.1 拆周日均 */
+  inlineDaily?: number;
+  /** clip(F_k / F_0)，F_0 为地平线首周拆周值 */
+  nearShape?: number;
   weekForecastDaily: number;
   useForecastShape: boolean;
   source: string;
-  /** monthly=legacy 月混合；v41_inline=内联 V4.1（不读已发布月版本） */
-  algo?: 'monthly' | 'v41_inline';
+  /** monthly=legacy 月混合；v41_inline=内联 V4.1；v41_w=ISO 周 walk-forward V4.1-W */
+  algo?: 'monthly' | 'v41_inline' | 'v41_w';
   lifecycle?: string;
   /** 生成时锚定月预测的 T 分层（无已发布 meta 时供矩阵展示） */
   profileSegment?: string;
@@ -46,8 +54,8 @@ export type DemandPlanGenerationMeta = {
     versionCounts: Record<string, number>;
   };
   skippedByReason: Record<string, number>;
-  /** 周系统日均来源；v41_inline 与月预测算法同构但不依赖月版本发布 */
-  demandForecastSource?: 'v41_inline' | 'published_champion' | 'legacy_blend';
+  /** 周系统日均来源；v41_w=周走步；v41_inline=月 V4.1 拆周且前 4 周近端混合 */
+  demandForecastSource?: 'v41_inline' | 'v41_w' | 'published_champion' | 'legacy_blend';
 };
 
 export const demandPlanVersionStatusEnum = pgEnum('demand_plan_version_status', [

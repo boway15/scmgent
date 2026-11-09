@@ -27,7 +27,8 @@
     "forecast:analyze:high-wmape": "pnpm --filter @scm/web exec tsx scripts/analyze-high-wmape-skus.ts",
     "forecast:calibrate:profile": "pnpm --filter @scm/web exec tsx scripts/calibrate-forecast-profile.ts",
     "forecast:calibrate:algo": "pnpm --filter @scm/web exec tsx scripts/calibrate-forecast-a-class.ts",
-    "forecast:calibrate": "pnpm --filter @scm/web exec tsx scripts/calibrate-forecast-report.ts"
+    "forecast:calibrate": "pnpm --filter @scm/web exec tsx scripts/calibrate-forecast-report.ts",
+    "demand-plan:compare-algo": "pnpm --filter @scm/web exec tsx scripts/compare-demand-plan-weekly-algo.ts"
   },
   "engines": {
     "node": ">=20"

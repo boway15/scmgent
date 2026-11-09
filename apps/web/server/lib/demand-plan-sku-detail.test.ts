@@ -6,7 +6,10 @@ import {
   expandMonthlyForecastToWeeks,
   resolveDemandPlanSkuDetailSalesPlatform,
 } from './demand-plan-sku-detail.js';
-import { resolveDemandPlanSkuDetailSalesWindow } from './demand-plan-start-week.js';
+import {
+  resolveDemandPlanSkuDetailActualDisplayWindow,
+  resolveDemandPlanSkuDetailSalesWindow,
+} from './demand-plan-start-week.js';
 
 describe('demand-plan-sku-detail', () => {
   it('scopes history sales query to the selected platform, not ALL', () => {
@@ -51,6 +54,24 @@ describe('demand-plan-sku-detail', () => {
     });
     assert.equal(isBacktest, true);
     assert.equal(windowEnd.toISOString().slice(0, 10), '2026-09-13');
+  });
+
+  it('backtest plan weeks still get actual daily under display window', () => {
+    const now = new Date('2026-11-06T00:00:00.000Z');
+    const displayEnd = resolveDemandPlanSkuDetailActualDisplayWindow({
+      now,
+      maxSaleDate: '2026-11-04',
+    });
+    const rows = buildWeeklyActualFromDaily({
+      weekKeys: ['2026-W40', '2026-W50'],
+      dailyRows: [
+        { saleDate: '2026-09-29', qtySold: 49 },
+        { saleDate: '2026-10-06', qtySold: 56 },
+      ],
+      windowEnd: displayEnd,
+    });
+    assert.equal(rows[0]?.actualDailyAvg, 7);
+    assert.equal(rows[1]?.actualDailyAvg, null);
   });
 
   it('expands monthly forecast to weekly using day weights', () => {

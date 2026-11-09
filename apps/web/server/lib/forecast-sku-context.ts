@@ -44,6 +44,8 @@ export type SkuForecastContext = {
   storedLifecycle: string | null;
   forecastProfileClass: string | null;
   profileSegment: string | null;
+  /** V4.1-W 走步因子（周预测 v41_w 版本） */
+  v41WalkForwardFactors?: Record<string, unknown> | null;
 };
 
 export type SkuForecastIdentity = {

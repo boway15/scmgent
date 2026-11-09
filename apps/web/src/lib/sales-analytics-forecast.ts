@@ -31,6 +31,8 @@ export type TrendSeasonalForecastResult = {
   last: number;
   anchor: number;
   avgWindow?: number;
+  /** 参与拟合的最后一期标签（月度为上月末，不含当月） */
+  trainingEndLabel: string;
   fc: ForecastPoint[];
 };
 
@@ -193,30 +195,26 @@ function trimLeadingZeros(
   return { series: series.slice(start), periods: periods.slice(start) };
 }
 
-function daysInMonth(y: number, m: number): number {
-  return new Date(y, m, 0).getDate();
-}
-
 function isCurrentMonthPeriod(period: string, now: Date): boolean {
   const m = /^(\d{4})-(\d{2})$/.exec(period);
   if (!m) return false;
   return +m[1]! === now.getFullYear() && +m[2]! === now.getMonth() + 1;
 }
 
-function prorateIncompletePeriod(
-  value: number,
-  period: string,
+/** 月度：末期为当月时剔除，拟合与锚定仅用到上月末；首条预测为当月。 */
+function excludeTrailingCurrentMonth(
+  series: number[],
+  periods: string[],
   isWeek: boolean,
   now: Date,
-): number {
-  if (value <= 0 || isWeek) return value;
-  if (!isCurrentMonthPeriod(period, now)) return value;
-  const m = /^(\d{4})-(\d{2})$/.exec(period);
-  if (!m) return value;
-  const dim = daysInMonth(+m[1]!, +m[2]!);
-  const day = now.getDate();
-  if (day >= dim) return value;
-  return value / (day / dim);
+): { series: number[]; periods: string[] } {
+  if (isWeek || series.length === 0) return { series, periods };
+  const lastPeriod = periods[periods.length - 1];
+  if (!lastPeriod || !isCurrentMonthPeriod(lastPeriod, now)) return { series, periods };
+  return {
+    series: series.slice(0, -1),
+    periods: periods.slice(0, -1),
+  };
 }
 
 export function preprocessForecastSeries(
@@ -227,15 +225,7 @@ export function preprocessForecastSeries(
 ): { series: number[]; periods: string[] } {
   const trimmed = trimLeadingZeros(series, periods);
   if (trimmed.series.length === 0) return trimmed;
-  const adjusted = [...trimmed.series];
-  const lastIdx = adjusted.length - 1;
-  adjusted[lastIdx] = prorateIncompletePeriod(
-    adjusted[lastIdx]!,
-    trimmed.periods[lastIdx]!,
-    isWeek,
-    now,
-  );
-  return { series: adjusted, periods: trimmed.periods };
+  return excludeTrailingCurrentMonth(trimmed.series, trimmed.periods, isWeek, now);
 }
 
 function computeAnchor(v: number[], isWeek: boolean): number {
@@ -249,9 +239,26 @@ function dampedTrendFactor(b: number, anchor: number, k: number, isWeek: boolean
   if (anchor <= 0) return 1;
   const trendRel = b / anchor;
   const halfLife = isWeek ? 16 : 8;
-  const decay = Math.max(0, 1 - k / halfLife);
+  /** 双曲衰减：远期仍保留斜率，避免月度 8 期后完全贴死在锚定水平 */
+  const decay = 1 / (1 + k / halfLife);
   const raw = 1 + trendRel * k * decay;
-  return Math.max(0.7, Math.min(1.3, raw));
+  return Math.max(0.7, Math.min(1.45, raw));
+}
+
+/** 上升趋势取 max(线性外推, 锚定衰减)；下降取 min，弱趋势仍以锚定为主 */
+function computeForecastBaseLevel(
+  fit: LinearFit,
+  n: number,
+  k: number,
+  anchor: number,
+  isWeek: boolean,
+): number {
+  const linear = fit.a + fit.b * (n - 1 + k);
+  const damped = anchor * dampedTrendFactor(fit.b, anchor, k, isWeek);
+  if (fit.r2 < 0.35) return damped;
+  if (fit.b > 0) return Math.max(damped, Math.max(0, linear));
+  if (fit.b < 0) return Math.min(damped, Math.max(0, linear));
+  return damped;
 }
 
 function forecastMonth(lastLbl: string, k: number): number {
@@ -286,6 +293,7 @@ function emptyForecastResult(last: number): TrendSeasonalForecastResult {
     troughM: 1,
     last,
     anchor: last,
+    trainingEndLabel: '',
     fc: [],
   };
 }
@@ -391,7 +399,7 @@ function fmtPieces(n: number): string {
 }
 
 /**
- * 看板统一粗估：预处理 → 弱信号退回均线/朴素 → 否则近端锚定 + 衰减趋势 × 限幅季节。
+ * 看板统一粗估：预处理 → 弱信号退回均线/朴素 → 否则线性趋势外推（与锚定衰减取优）× 限幅季节。
  */
 export function trendSeasonalForecast(
   series: number[],
@@ -400,10 +408,8 @@ export function trendSeasonalForecast(
   isWeek: boolean,
   now: Date = new Date(),
 ): TrendSeasonalForecastResult {
-  const last = series[series.length - 1] ?? 0;
-  const lastLbl = periods[periods.length - 1] ?? '';
-
-  if (series.length < 2 || !lastLbl) {
+  if (series.length < 2 || !periods[periods.length - 1]) {
+    const last = series[series.length - 1] ?? 0;
     return emptyForecastResult(last);
   }
 
@@ -413,11 +419,16 @@ export function trendSeasonalForecast(
     isWeek,
     now,
   );
-  if (clean.length < 2) {
+  const last = clean[clean.length - 1] ?? 0;
+  const forecastBaseLbl = cleanPeriods[cleanPeriods.length - 1] ?? '';
+
+  if (clean.length < 2 || !forecastBaseLbl) {
+    const fcBase = forecastBaseLbl || periods[periods.length - 1] || '';
     return {
       ...emptyForecastResult(last),
+      trainingEndLabel: forecastBaseLbl,
       fc: Array.from({ length: horizon }, (_, i) => ({
-        ym: nextPeriodLabel(lastLbl, i + 1, isWeek),
+        ym: nextPeriodLabel(fcBase, i + 1, isWeek),
         val: 0,
       })),
     };
@@ -439,7 +450,7 @@ export function trendSeasonalForecast(
   }
 
   if (auto.type === 'naive' || auto.type === 'avg') {
-    const fc = modelForecast(auto, clean.length, horizon, lastLbl, isWeek);
+    const fc = modelForecast(auto, clean.length, horizon, forecastBaseLbl, isWeek);
     return {
       path: auto.type,
       a: fit.a,
@@ -451,6 +462,7 @@ export function trendSeasonalForecast(
       last,
       anchor: auto.type === 'avg' ? (auto.params.base ?? anchor) : last,
       avgWindow: auto.params.W,
+      trainingEndLabel: forecastBaseLbl,
       fc,
     };
   }
@@ -464,16 +476,29 @@ export function trendSeasonalForecast(
   const troughM = sf?.troughM ?? 1;
 
   const fc: ForecastPoint[] = [];
+  const n = clean.length;
   for (let k = 1; k <= horizon; k++) {
-    let val = anchor * dampedTrendFactor(fit.b, anchor, k, isWeek);
+    let val = computeForecastBaseLevel(fit, n, k, anchor, isWeek);
     if (useSeasonal) {
-      val *= sIdx[forecastMonth(lastLbl, k)] ?? 1;
+      val *= sIdx[forecastMonth(forecastBaseLbl, k)] ?? 1;
     }
     if (val < 0) val = 0;
-    fc.push({ ym: nextPeriodLabel(lastLbl, k, isWeek), val: Math.round(val) });
+    fc.push({ ym: nextPeriodLabel(forecastBaseLbl, k, isWeek), val: Math.round(val) });
   }
 
-  return { path, a: fit.a, b: fit.b, r2: fit.r2, sIdx, peakM, troughM, last, anchor, fc };
+  return {
+    path,
+    a: fit.a,
+    b: fit.b,
+    r2: fit.r2,
+    sIdx,
+    peakM,
+    troughM,
+    last,
+    anchor,
+    trainingEndLabel: forecastBaseLbl,
+    fc,
+  };
 }
 
 export function trendSeasonalRowBasis(
@@ -487,9 +512,9 @@ export function trendSeasonalRowBasis(
   if (f.path === 'naive') {
     return `最新期 ${Math.round(f.last)} 件`;
   }
-  const trendPart = `锚定 ${Math.round(f.anchor)} 件 × 衰减趋势`;
+  const trendPart = `趋势外推（斜率 ${signed(f.b)} 件/期，锚定 ${Math.round(f.anchor)} 件）`;
   if (isWeek) {
-    return `${trendPart}（斜率 ${signed(f.b)} 件/期）`;
+    return trendPart;
   }
   const mm = +(ym.split('-')[1] ?? 1);
   return `${trendPart} × 季节因子 ${(f.sIdx[mm] ?? 1).toFixed(2)}`;
@@ -498,7 +523,7 @@ export function trendSeasonalRowBasis(
 export function trendSeasonalPanelTag(isWeek: boolean): string {
   return isWeek
     ? '近8周锚定 + 衰减趋势'
-    : '近6月锚定 + 限幅季节（0.85–1.15）';
+    : '趋势外推 + 限幅季节（0.85–1.15）';
 }
 
 export type FitConfidence = '较高' | '中等' | '偏低';
@@ -517,7 +542,7 @@ export function trendSeasonalModelLabel(
 ): string {
   if (path === 'avg') return '移动平均（粗估）';
   if (path === 'naive') return '朴素法（粗估）';
-  const base = isWeek ? '锚定+衰减趋势' : path === 'seasonal' ? '锚定+限幅季节' : '锚定+衰减趋势';
+  const base = isWeek ? '锚定+衰减趋势' : path === 'seasonal' ? '趋势+限幅季节' : '趋势外推';
   const conf = fitConfidenceFromR2(r2);
   return conf === '较高' ? base : `${base}（可信度${conf}）`;
 }
@@ -560,9 +585,9 @@ export function trendSeasonalModelReason(
         `峰值 ${MONTH_NAME[f.peakM - 1]}(因子${peakF.toFixed(2)})、谷值 ${MONTH_NAME[f.troughM - 1]}(因子${troughF.toFixed(2)})；`
       : '未检测到足够季节强度，仅应用衰减趋势；';
   return (
-    `近6月锚定 + 限幅季节（与底部预估同口径）：锚定 ${fmtPieces(f.anchor)} 件，斜率 ${signed(f.b)} 件/期，` +
-    `R²=${f.r2.toFixed(2)}（可信度${conf}），趋势${tw}；${seasonalNote}` +
-    `基于 ${periodCount} 月历史（已去前导零${isWeek ? '' : '、进行中月折整'}）。看板粗估，非系统发布预测。`
+    `趋势外推 + 限幅季节（与底部预估同口径）：斜率 ${signed(f.b)} 件/期（R²=${f.r2.toFixed(2)}，可信度${conf}，趋势${tw}），` +
+    `近 ${isWeek ? 8 : 6} 期锚定 ${fmtPieces(f.anchor)} 件作下限参考；${seasonalNote}` +
+    `基于 ${periodCount} 月历史（已去前导零${isWeek ? '' : '、不含当月实际'}，训练截至上月末）。看板粗估，非系统发布预测。`
   );
 }
 

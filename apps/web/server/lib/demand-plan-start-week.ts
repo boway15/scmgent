@@ -70,7 +70,10 @@ export function buildDemandPlanWeekHorizon(startWeek: string, count: number): st
   return Array.from({ length: safeCount }, (_, index) => addIsoWeeks(startWeek, index));
 }
 
-/** SKU 详情近窗：与 generateDemandPlanDraft 一致，回测时截止开始周前一日 */
+/**
+ * SKU 详情训练近窗：与 generateDemandPlanDraft 一致，回测时截止开始周前一日。
+ * 仅用于 inline V4.1 / 近端水位等生成口径，不用于计划周实销对照。
+ */
 export function resolveDemandPlanSkuDetailSalesWindow(input: {
   startWeek: string | null | undefined;
   now?: Date;
@@ -114,4 +117,14 @@ export function resolveDemandPlanSkuDetailAssumedSalesEnd(input: {
   return isBacktest
     ? planningTrainingWindowEndBeforeWeek(startWeek)
     : planningAssumedSalesCutoff(now);
+}
+
+/** 计划周 / 历史区实销展示：与准确度导出一致（业务日 − lag、且不超过库内最大销日） */
+export function resolveDemandPlanSkuDetailActualDisplayWindow(input: {
+  now?: Date;
+  maxSaleDate?: string | null;
+}): Date {
+  return planningRecentWindowEnd(input.now ?? new Date(), {
+    maxSaleDate: input.maxSaleDate ?? undefined,
+  });
 }

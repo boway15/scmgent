@@ -9,13 +9,16 @@ import {
 } from '@scm/db';
 import { buildDemandPlanPeriodColumns } from './demand-plan-periods.js';
 import {
-  resolveDemandPlanSkuDetailAssumedSalesEnd,
+  resolveDemandPlanSkuDetailActualDisplayWindow,
   resolveDemandPlanSkuDetailSalesWindow,
 } from './demand-plan-start-week.js';
 import { listForecastHorizon, type ForecastHorizonCell } from './forecast-horizon.js';
 import { resolvePublishedVersionIdForSku } from './forecast-published-resolve.js';
 import { resolveForecastStartMonthAsOf } from './forecast-start-month.js';
-import { buildSkuForecastContextMap } from './forecast-sku-context.js';
+import { buildSkuForecastContextMap, formatBaselineWeightsLabel } from './forecast-sku-context.js';
+import { computeLifecycleBaselineWeights, type SalesLifecycle } from './forecast-baseline.js';
+import { splitMergedWeeklyDailyByPlatform } from './demand-plan-enrich.js';
+import { FORECAST_V41_PLATFORM_CODES } from './forecast-platform-scope.js';
 import { FORECAST_GLOBAL_STATION } from './forecast-station-scope.js';
 import {
   addIsoWeeks,
@@ -23,11 +26,13 @@ import {
   isoWeekMondayUtc,
   maxSaleDateKey,
   monthKeyFromUtcDate,
+  planningAssumedSalesCutoff,
   planningRecentWindowEnd,
 } from './planning-calendar.js';
 import { weekWeightedForecastDaily } from './demand-plan-reconstruct.js';
 import { loadDailySalesBySkuIdsInRange } from './sales-history-query.js';
 import { loadDemandPlanSkuInlineV41Horizon } from './demand-plan-inline-v41.js';
+import { loadDemandPlanSkuInlineV41WHorizon } from './demand-plan-inline-v41-w.js';
 import { FORECAST_HORIZON_MONTHS } from './forecast-limits.js';
 import { forecastMonthKey } from './forecast-demand.js';
 import { resolveFlexBiasShadowEnabled } from './forecast-flex-bias-shadow.js';
@@ -245,6 +250,7 @@ export async function loadDemandPlanSkuDetail(input: {
         name: skus.name,
         category: skus.category,
         productCategory: skus.productCategory,
+        projectGroup: skus.projectGroup,
         forceForecast: skus.forceForecast,
         lifecycle: skus.lifecycle,
         salesCountry: skus.salesCountry,
@@ -289,47 +295,58 @@ export async function loadDemandPlanSkuDetail(input: {
     (await resolvePublishedVersionIdForSku(input.skuId, station));
 
   const planWeekKeys = buildDemandPlanPeriodColumns(version);
-  const assumedEnd = resolveDemandPlanSkuDetailAssumedSalesEnd({
-    startWeek: version.startWeek,
-    now: asOf,
-  });
-  const provisionalHistoryKeys = buildRecentHistoryWeekKeys(asOf, DEMAND_PLAN_SKU_HISTORY_WEEKS, assumedEnd);
+  const salesLoadEnd = planningAssumedSalesCutoff(asOf);
+  const provisionalHistoryKeys = buildRecentHistoryWeekKeys(
+    asOf,
+    DEMAND_PLAN_SKU_HISTORY_WEEKS,
+    salesLoadEnd,
+  );
   const provisionalWeekKeys = [...new Set([...provisionalHistoryKeys, ...planWeekKeys])].sort();
   const salesFromKey = isoWeekMondayUtc(
     provisionalWeekKeys[0] ?? provisionalHistoryKeys[0]!,
   ).toISOString().slice(0, 10);
-  const assumedEndKey = assumedEnd.toISOString().slice(0, 10);
+  const salesLoadEndKey = salesLoadEnd.toISOString().slice(0, 10);
   const dailyBySku = await loadDailySalesBySkuIdsInRange({
     skuIds: [input.skuId],
     fromDate: salesFromKey,
-    toDate: assumedEndKey,
+    toDate: salesLoadEndKey,
     platform,
   });
   const dailyRows = (dailyBySku.get(input.skuId) ?? []).map((row) => ({
     saleDate: row.saleDate,
     qtySold: row.qtySold,
   }));
-  const { windowEnd } = resolveDemandPlanSkuDetailSalesWindow({
+  const maxSaleDate = maxSaleDateKey(dailyRows);
+  const { windowEnd: trainingWindowEnd } = resolveDemandPlanSkuDetailSalesWindow({
     startWeek: version.startWeek,
     now: asOf,
-    maxSaleDate: maxSaleDateKey(dailyRows),
+    maxSaleDate,
   });
-  const historyWeekKeys = buildRecentHistoryWeekKeys(asOf, DEMAND_PLAN_SKU_HISTORY_WEEKS, windowEnd);
+  const actualDisplayWindowEnd = resolveDemandPlanSkuDetailActualDisplayWindow({
+    now: asOf,
+    maxSaleDate,
+  });
+  const historyWeekKeys = buildRecentHistoryWeekKeys(
+    asOf,
+    DEMAND_PLAN_SKU_HISTORY_WEEKS,
+    actualDisplayWindowEnd,
+  );
   const salesWeekKeys = [...new Set([...historyWeekKeys, ...planWeekKeys])].sort();
-  const clippedDailyRows = dailyRows.filter(
-    (row) => String(row.saleDate).slice(0, 10) <= windowEnd.toISOString().slice(0, 10),
+  const actualDisplayEndKey = actualDisplayWindowEnd.toISOString().slice(0, 10);
+  const clippedDailyRowsForDisplay = dailyRows.filter(
+    (row) => String(row.saleDate).slice(0, 10) <= actualDisplayEndKey,
   );
 
   const historyWeeks = buildWeeklyActualFromDaily({
     weekKeys: historyWeekKeys,
-    dailyRows: clippedDailyRows,
-    windowEnd,
+    dailyRows: clippedDailyRowsForDisplay,
+    windowEnd: actualDisplayWindowEnd,
   });
   const actualByWeek = new Map(
     buildWeeklyActualFromDaily({
       weekKeys: salesWeekKeys,
-      dailyRows: clippedDailyRows,
-      windowEnd,
+      dailyRows: clippedDailyRowsForDisplay,
+      windowEnd: actualDisplayWindowEnd,
     }).map((row) => [row.weekKey, row]),
   );
 
@@ -422,9 +439,39 @@ export async function loadDemandPlanSkuDetail(input: {
     let horizonItem = horizon.items[0];
     let monthCells = horizonItem?.months ?? [];
     const generationMeta = version.generationMeta;
+    const demandSource = generationMeta?.demandForecastSource;
+    const useInlineV41WHorizon = demandSource === 'v41_w';
     const useInlineV41Horizon =
-      generationMeta?.demandForecastSource === 'v41_inline' || !forecastVersionId;
-    if (useInlineV41Horizon && monthCells.length === 0 && sku) {
+      demandSource === 'v41_inline' || (!forecastVersionId && !useInlineV41WHorizon);
+    if (useInlineV41WHorizon && sku) {
+      const inlineW = await loadDemandPlanSkuInlineV41WHorizon({
+        skuId: input.skuId,
+        sku: {
+          productCategory: sku.productCategory,
+          category: sku.category,
+          forceForecast: sku.forceForecast,
+        },
+        windowEnd: trainingWindowEnd,
+        horizonWeekKeys: planWeekKeys,
+        flexBiasShadow: resolveFlexBiasShadowEnabled(),
+      });
+      if (inlineW.weekCells.length) {
+        forecastContext = {
+          lifecycle: (inlineW.lifecycle as SalesLifecycle | null) ?? 'mature',
+          weights: computeLifecycleBaselineWeights((inlineW.lifecycle as SalesLifecycle) ?? 'mature'),
+          weightsLabel: formatBaselineWeightsLabel(
+            computeLifecycleBaselineWeights((inlineW.lifecycle as SalesLifecycle) ?? 'mature'),
+          ),
+          recent30DailyAvg: inlineW.recent30DailyAvg,
+          recent90DailyAvg: inlineW.recent90DailyAvg,
+          lastYearSameMonthDailyAvg: 0,
+          categoryReferenceDailyAvg: null,
+          storedBaselineDailyAvg: inlineW.weekCells[0]?.forecastDailyAvg ?? null,
+          profileSegment: inlineW.profileSegment,
+          v41WalkForwardFactors: inlineW.weekCells[0]?.allCatV41WFactors ?? null,
+        };
+      }
+    } else if ((useInlineV41Horizon || monthCells.length === 0) && sku) {
       const startMonth = version.startMonth?.trim();
       const horizonMonthKeys: string[] = [];
       if (startMonth) {
@@ -441,11 +488,14 @@ export async function loadDemandPlanSkuDetail(input: {
         sku: {
           productCategory: sku.productCategory,
           category: sku.category,
+          projectGroup: sku.projectGroup,
+          salesCountry: sku.salesCountry,
           forceForecast: sku.forceForecast,
         },
-        windowEnd,
+        windowEnd: trainingWindowEnd,
         horizonMonthKeys,
         flexBiasShadow: resolveFlexBiasShadowEnabled(),
+        targetPlatform: platform,
       });
       if (inline.monthCells.length) {
         monthCells = inline.monthCells;
@@ -462,6 +512,44 @@ export async function loadDemandPlanSkuDetail(input: {
           months: monthCells,
           historyMonths: [],
         };
+        const inlineLifecycle = (inline.lifecycle as SalesLifecycle | null) ?? 'mature';
+        const inlineWeights = computeLifecycleBaselineWeights(inlineLifecycle);
+        forecastContext = {
+          lifecycle: inlineLifecycle,
+          weights: inlineWeights,
+          weightsLabel: formatBaselineWeightsLabel(inlineWeights),
+          recent30DailyAvg: inline.recent30DailyAvg,
+          recent90DailyAvg: inline.recent90DailyAvg,
+          lastYearSameMonthDailyAvg: 0,
+          categoryReferenceDailyAvg: null,
+          storedBaselineDailyAvg: inline.monthCells[0]?.baselineDailyAvg ?? null,
+          storedLifecycle: inline.lifecycle,
+          forecastProfileClass: null,
+          profileSegment: inline.profileSegment,
+        };
+      }
+      if (platform !== 'ALL' && inline.monthByPlatform.size > 0) {
+        for (const planRow of planWeeks) {
+          const mergedSystem = Number(planRow.systemDailyAvg);
+          const mergedManual =
+            planRow.manualDailyAvg != null ? Number(planRow.manualDailyAvg) : null;
+          const split = splitMergedWeeklyDailyByPlatform({
+            period: planRow.weekKey,
+            mergedSystemDaily: Number.isFinite(mergedSystem) ? mergedSystem : 0,
+            mergedManualDaily:
+              mergedManual != null && Number.isFinite(mergedManual) ? mergedManual : null,
+            monthByPlatform: inline.monthByPlatform,
+            platforms: [...FORECAST_V41_PLATFORM_CODES],
+          });
+          const match = split.breakdown.find((entry) => entry.platform === platform);
+          if (match) {
+            planRow.systemDailyAvg = String(match.systemDailyAvg);
+            planRow.effectiveDailyAvg = String(match.effectiveDailyAvg);
+          } else {
+            planRow.systemDailyAvg = '0';
+            planRow.effectiveDailyAvg = '0';
+          }
+        }
       }
     }
     if (horizonItem) {

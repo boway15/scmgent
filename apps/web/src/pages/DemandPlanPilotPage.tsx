@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, type DemandPlanVersionListItem } from '@/lib/api';
 import { PageHeader } from '@/components/PageHeader';
@@ -10,6 +10,7 @@ import {
 import { ListPagination } from '@/components/ListPagination';
 import { ListSearchBar } from '@/components/ListSearchBar';
 import { DemandPlanVersionStatusBadge } from '@/components/DemandPlanVersionStatusBadge';
+import { ForecastStrategySection } from '@/components/ForecastStrategySection';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -31,7 +32,13 @@ import {
   isDemandPlanStartWeekBacktest,
 } from '@/lib/iso-week';
 
+type ListTab = 'versions' | 'strategy';
 type StatusFilter = 'all' | 'draft' | 'pilot_published' | 'archived';
+
+const LIST_TAB_LABEL: Record<ListTab, string> = {
+  versions: '版本列表',
+  strategy: '预测策略',
+};
 
 const STATUS_FILTER_LABEL: Record<StatusFilter, string> = {
   all: '全部',
@@ -43,6 +50,8 @@ const STATUS_FILTER_LABEL: Record<StatusFilter, string> = {
 export function DemandPlanPilotPage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const listTab: ListTab = searchParams.get('tab') === 'strategy' ? 'strategy' : 'versions';
   const [versionName, setVersionName] = useState('');
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
   const [page, setPage] = useState(1);
@@ -93,6 +102,14 @@ export function DemandPlanPilotPage() {
     setPage(1);
   }, [statusFilter, appliedKeyword]);
 
+  const setListTab = (tab: ListTab) => {
+    if (tab === 'strategy') {
+      setSearchParams({ tab: 'strategy' });
+    } else {
+      setSearchParams({});
+    }
+  };
+
   const generate = useMutation({
     mutationFn: () =>
       api.generateDemandPlan({
@@ -117,6 +134,20 @@ export function DemandPlanPilotPage() {
     <div className="space-y-6">
       <PageHeader title="周度销量预测">
         <div className="flex flex-wrap items-center gap-2">
+          {listTab === 'versions' ? (
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => {
+                document.getElementById('demand-plan-generate-section')?.scrollIntoView({
+                  behavior: 'smooth',
+                  block: 'start',
+                });
+              }}
+            >
+              去生成
+            </Button>
+          ) : null}
           {adoptedPublished.length > 0 ? (
             <span className="inline-flex items-center rounded-md bg-muted px-2 py-1 text-xs text-text-sub">
               已发布 {adoptedPublished.length} 个版本 · 「已发布」≠ 已接入补货
@@ -129,6 +160,21 @@ export function DemandPlanPilotPage() {
         </div>
       </PageHeader>
 
+      <div className="flex flex-wrap gap-2">
+        {(['versions', 'strategy'] as ListTab[]).map((tab) => (
+          <Button
+            key={tab}
+            variant={listTab === tab ? 'default' : 'outline'}
+            size="sm"
+            onClick={() => setListTab(tab)}
+          >
+            {LIST_TAB_LABEL[tab]}
+          </Button>
+        ))}
+      </div>
+
+      {listTab === 'versions' && (
+        <>
       <Card className="border-primary/20 bg-primary/5">
         <CardContent className="space-y-3 py-3 text-sm">
           <div className="flex flex-wrap items-center gap-3">
@@ -143,14 +189,14 @@ export function DemandPlanPilotPage() {
             {DEMAND_PLAN_REPLENISHMENT_DEFER_NOTICE}
           </p>
           <p className="text-xs text-text-sub">
-            固定 {DEMAND_PLAN_HORIZON_WEEKS} 个 ISO 周（约 180 天），对全量启用 SKU 生成；默认内联 V4.1 与月预测同算法，T 分层写入周行并在矩阵展示，不依赖月版本发布。
+            固定 {DEMAND_PLAN_HORIZON_WEEKS} 个 ISO 周（约 180 天），对全量启用 SKU 生成。月曲线为内联 V4.1（不依赖月版本发布）；矩阵系统日均在前 4 周向近 14/30/90 天混合，第 5 周起等于拆周。T 分层写入周行。
             与销量预测模块独立。
           </p>
           <p className="text-sm text-text-main">{DEMAND_PLAN_SCOPE_NOTICE}</p>
         </CardContent>
       </Card>
 
-      <Card>
+      <Card id="demand-plan-generate-section">
         <CardHeader>
           <CardTitle>生成草稿</CardTitle>
           <p className="text-sm text-text-sub">{DEMAND_PLAN_GENERATE_HINT}</p>
@@ -266,6 +312,10 @@ export function DemandPlanPilotPage() {
           )}
         </CardContent>
       </Card>
+        </>
+      )}
+
+      {listTab === 'strategy' && <ForecastStrategySection active context="weekly" />}
     </div>
   );
 }

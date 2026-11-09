@@ -79,7 +79,7 @@ describe('sales-analytics-forecast', () => {
     assert.equal(fitConfidenceFromR2(0.7), '较高');
     assert.equal(fitConfidenceFromR2(0.4), '中等');
     assert.equal(fitConfidenceFromR2(0.1), '偏低');
-    assert.equal(trendSeasonalModelLabel(false, 0.7, 'seasonal'), '锚定+限幅季节');
+    assert.equal(trendSeasonalModelLabel(false, 0.7, 'seasonal'), '趋势+限幅季节');
     assert.match(trendSeasonalModelLabel(false, 0.2, 'seasonal'), /可信度偏低/);
     assert.match(trendSeasonalModelLabel(true, 0.4, 'trend'), /锚定\+衰减趋势.*可信度中等/);
     assert.equal(trendSeasonalModelLabel(false, 0.2, 'avg'), '移动平均（粗估）');
@@ -106,36 +106,49 @@ describe('sales-analytics-forecast', () => {
     }
   });
 
-  it('prorates incomplete current month for fitting', () => {
-    const periods = months(2024, 10, 24);
+  it('excludes current month from fit and forecasts current month first', () => {
+    const periods = months(2024, 10, 25);
+    assert.equal(periods[periods.length - 1], '2026-10');
     const series = periods.map((p) => {
       const mm = +p.split('-')[1]!;
       const season = mm === 12 ? 1.4 : mm === 2 ? 0.7 : 1;
       return Math.round(1100 * season);
     });
-    assert.equal(periods[periods.length - 1], '2026-09');
-    series[series.length - 1] = Math.round(series[series.length - 1]! * 0.7);
-    const now = new Date(2026, 8, 22); // 2026-09-22
+    const partialCurrent = 999_999;
+    series[series.length - 1] = partialCurrent;
+    const now = new Date(2026, 9, 6); // 2026-10-06
     const pre = preprocessForecastSeries(series, periods, false, now);
-    assert.ok(
-      pre.series[pre.series.length - 1]! > series[series.length - 1]!,
-      'incomplete month should be prorated upward for fit',
-    );
+    assert.equal(pre.periods[pre.periods.length - 1], '2026-09');
+    assert.notEqual(pre.series[pre.series.length - 1], partialCurrent);
+
     const panel = trendSeasonalForecast(series, periods, 3, false, now);
-    const anchorGap =
-      panel.anchor > 0
-        ? Math.abs(panel.fc[0]!.val - panel.anchor) / panel.anchor
-        : 0;
-    assert.ok(
-      anchorGap < 0.2,
-      `first forecast should stay near prorated anchor, gap=${(anchorGap * 100).toFixed(1)}%`,
-    );
+    assert.equal(panel.trainingEndLabel, '2026-09');
+    assert.equal(panel.fc[0]!.ym, '2026-10');
+    assert.ok(panel.anchor > 0 && panel.anchor < partialCurrent / 6);
   });
 
   it('clips dashboard seasonality to publish-aligned bounds', () => {
     assert.equal(clipDashboardSeasonality(1.64), 1.15);
     assert.equal(clipDashboardSeasonality(0.55), 0.85);
     assert.equal(clipDashboardSeasonality(1.05), 1.05);
+  });
+
+  it('keeps forecast above flat anchor for sustained monthly growth', () => {
+    const periods = months(2024, 1, 24);
+    const series = periods.map((_, i) => Math.round(140_000 + i * 7_500));
+    const panel = trendSeasonalForecast(series, periods, 12, false);
+    assert.ok(panel.fc.length === 12);
+    const lastFc = panel.fc[panel.fc.length - 1]!.val;
+    assert.ok(
+      lastFc > panel.anchor * 1.2,
+      `expected late horizon above anchor, got fc=${lastFc} anchor=${panel.anchor}`,
+    );
+    const midIdx = 5;
+    assert.ok(
+      panel.fc[midIdx]!.val < panel.fc[midIdx + 1]!.val ||
+        panel.fc[midIdx]!.val < panel.fc[panel.fc.length - 1]!.val,
+      'forecast should trend up with series slope',
+    );
   });
 
   it('reduces month-to-month swing versus unbounded seasonal extrapolation', () => {

@@ -192,7 +192,7 @@ export function DemandPlanDetailPage() {
             {DEMAND_PLAN_REPLENISHMENT_DEFER_NOTICE}
           </p>
           <p>
-            周度销量预测：默认内联 V4.1 与月销量预测同算法生成（不依赖月版本发布）；Champion 月版本仅作可选对照。校准：分平台导出校准表改数后导入（按月形状反算全平台合计），或明细/抽屉直接校准「全平台」行。
+            周度销量预测：月曲线为内联 V4.1（不依赖月版本发布），前 4 周系统日均再向近端日均混合；Champion 月版本仅作可选对照。校准：分平台导出校准表改数后导入（按月形状反算全平台合计），或明细/抽屉直接校准「全平台」行。
             {stats && stats.skuTotal > 0 ? (
               <span className="ml-2 font-numeric text-text-main">
                 · {stats.skuTotal.toLocaleString()} SKU / {stats.rowTotal.toLocaleString()} 计划行

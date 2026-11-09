@@ -22,6 +22,9 @@ import {
   tierConservativeFactor,
   applyV41CoreUpperBiasCap,
   applyV41MicroSalesUpperCap,
+  applyV41OptimismDampCaps,
+  applyV41NearRecentRunRateCap,
+  applyV41SecondaryChannelRunRateCap,
   applyV41TailUpperBiasCap,
   buildT99ReviewMessage,
   V41_T4B_NEAR_CONSERVATIVE_FACTOR,
@@ -1200,9 +1203,54 @@ describe('forecast-allcat-v41', () => {
     });
     assert.equal(shadow.forecastDaily, plain.forecastDaily);
     const shadowDaily = Number((shadow.horizonFactors.seasonalIndex as { shadowDaily: number }).shadowDaily);
-    assert.ok(shadowDaily > plain.forecastDaily * 1.15);
-    assert.ok(live.forecastDaily > plain.forecastDaily * 1.15);
+    assert.ok(shadowDaily > plain.forecastDaily * 1.05);
+    assert.ok(live.forecastDaily > plain.forecastDaily * 1.05);
     assert.equal(live.horizonFactors.monthFactor, 1);
     assert.equal(live.horizonFactors.monthFactorLegacy, plain.horizonFactors.monthFactor);
   });
+
+  it('near recent run-rate cap limits peak-month uplift vs recent30', () => {
+    const capped = applyV41NearRecentRunRateCap({
+      forecastDaily: 80,
+      horizonIndex: 0,
+      forecastMonth: 11,
+      recent30DailyAvg: 54,
+      d6: 50,
+    });
+    assert.equal(capped, roundLike(54 * 1.25));
+  });
+
+  it('secondary channel run-rate cap tightens weak Walmart openings', () => {
+    const capped = applyV41SecondaryChannelRunRateCap({
+      forecastDaily: 11.8,
+      platform: 'WALMART',
+      recent30DailyAvg: 2,
+    });
+    assert.equal(capped, roundLike(2 * 1.1));
+    const amazon = applyV41SecondaryChannelRunRateCap({
+      forecastDaily: 80,
+      platform: 'AMAZON',
+      recent30DailyAvg: 2,
+    });
+    assert.equal(amazon, 80);
+  });
+
+  it('optimism damp combo writes the tighter of near and secondary caps', () => {
+    const damp = applyV41OptimismDampCaps({
+      forecastDaily: 20,
+      platform: 'WALMART',
+      horizonIndex: 0,
+      forecastMonth: 11,
+      recent30DailyAvg: 2,
+      d6: 2,
+    });
+    // recent30 < 3 → near cap skipped; secondary applies
+    assert.equal(damp.forecastDaily, roundLike(2 * 1.1));
+    assert.equal(damp.nearRunRateCap, null);
+    assert.ok(damp.secondaryChannelCap != null);
+  });
 });
+
+function roundLike(value: number): number {
+  return Math.round(value * 100) / 100;
+}

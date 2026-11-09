@@ -24,7 +24,7 @@ import {
 } from './forecast-version.js';
 import { loadMonthlySalesBySkuIds } from './sales-history-query.js';
 import { resolveAllCatProductCategory, computeAllCatV41ForecastForMonth } from './forecast-allcat-v41.js';
-import { resolveSeasonalIndexMode } from './forecast-profile-config.js';
+import { loadForecastCalibrationConfig, resolveSeasonalIndexMode } from './forecast-profile-config.js';
 import { buildSeasonalIndexContext } from './forecast-seasonal-index.js';
 import { resolveForecastGenerationStation } from './forecast-station-scope.js';
 import {
@@ -464,6 +464,7 @@ export async function runDifySingleSkuForecast(
         sampleQty: resolvedSeason.sampleQty,
         level: resolvedSeason.level,
         k: seasonalContext?.k,
+        shadowHorizonDecay: loadForecastCalibrationConfig().seasonalIndex?.shadowHorizonDecay,
       }
     : undefined;
   const anchorV41 = computeAllCatV41ForecastForMonth({

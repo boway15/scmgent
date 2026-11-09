@@ -27,6 +27,7 @@ describe('forecast-si-reshape', () => {
         3: 1.097,
         4: 0.868,
       },
+      applyHorizonDamp: false,
     });
     const byMonth = new Map(plans.map((plan) => [plan.month, plan]));
     assert.ok((byMonth.get(12)?.scale ?? 0) > 1);
@@ -36,5 +37,41 @@ describe('forecast-si-reshape', () => {
     const meanTarget =
       plans.reduce((sum, plan) => sum + plan.target, 0) / plans.length;
     assert.ok(Math.abs(meanTarget - 1000) < 1e-6);
+  });
+
+  it('damps near-horizon non-peak scales when horizon map is provided', () => {
+    const horizonIndexByKey = new Map([
+      ['g||2026-02', 0],
+      ['g||2026-03', 1],
+      ['g||2026-11', 2],
+    ]);
+    const plans = computeSiReshapeScales({
+      months: [
+        { key: 'g||2026-02', month: 2, sum: 1000 },
+        { key: 'g||2026-03', month: 3, sum: 1000 },
+        { key: 'g||2026-11', month: 11, sum: 1000 },
+      ],
+      siByMonth: { 2: 0.7, 3: 0.7, 11: 1.6 },
+      horizonIndexByKey,
+      nearBlend: 0.5,
+      nearMonths: 2,
+      peakMonths: [11, 12],
+      applyHorizonDamp: true,
+    });
+    const byKey = new Map(plans.map((plan) => [plan.key, plan.scale]));
+    const undampedFeb = computeSiReshapeScales({
+      months: [
+        { key: 'g||2026-02', month: 2, sum: 1000 },
+        { key: 'g||2026-03', month: 3, sum: 1000 },
+        { key: 'g||2026-11', month: 11, sum: 1000 },
+      ],
+      siByMonth: { 2: 0.7, 3: 0.7, 11: 1.6 },
+      applyHorizonDamp: false,
+    });
+    const undampedByKey = new Map(undampedFeb.map((plan) => [plan.key, plan.scale]));
+    const febUndamped = undampedByKey.get('g||2026-02')!;
+    const febDamped = byKey.get('g||2026-02')!;
+    assert.ok(Math.abs(febDamped - (1 + 0.5 * (febUndamped - 1))) < 1e-9);
+    assert.equal(byKey.get('g||2026-11'), undampedByKey.get('g||2026-11'));
   });
 });

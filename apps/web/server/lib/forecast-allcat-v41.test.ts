@@ -2,6 +2,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   applyPeerPlatformNearFloor,
+  applyT4aFarRecent90Floor,
   computeAllCatV41BoundedDaily,
   computeAllCatV41ForecastForMonth,
   computeWalkForwardMetrics,
@@ -1133,6 +1134,8 @@ describe('forecast-allcat-v41', () => {
       forecastDaily: 0.23,
       horizonIndex: 0,
       peerPlatformRecentDaily: 20,
+      platform: 'WALMART',
+      recent30DailyAvg: 8,
     });
     assert.equal(lifted.peerPlatformFloor, 4);
     assert.equal(lifted.forecastDaily, 4);
@@ -1141,12 +1144,55 @@ describe('forecast-allcat-v41', () => {
       forecastDaily: 0.23,
       horizonIndex: 4,
       peerPlatformRecentDaily: 20,
+      platform: 'WALMART',
+      recent30DailyAvg: 8,
     });
     assert.equal(far.peerPlatformFloor, null);
     assert.equal(far.forecastDaily, 0.23);
   });
 
-  it('computeAllCatV41ForecastForMonth applies peer platform floor into horizon_factors', () => {
+  it('applyT4aFarRecent90Floor only guards severe far-month under-forecast', () => {
+    const lifted = applyT4aFarRecent90Floor({
+      tier: 'T4A',
+      forecastDaily: 20,
+      horizonIndex: 5,
+      recent90DailyAvg: 60,
+      floorRatio: 0.55,
+      triggerRatio: 0.45,
+    });
+    assert.equal(lifted, roundLike(60 * 0.55));
+    const mild = applyT4aFarRecent90Floor({
+      tier: 'T4A',
+      forecastDaily: 39,
+      horizonIndex: 5,
+      recent90DailyAvg: 60,
+      floorRatio: 0.55,
+      triggerRatio: 0.45,
+    });
+    assert.equal(mild, 39);
+    const near = applyT4aFarRecent90Floor({
+      tier: 'T4A',
+      forecastDaily: 20,
+      horizonIndex: 1,
+      recent90DailyAvg: 60,
+      floorRatio: 0.55,
+    });
+    assert.equal(near, 20);
+  });
+
+  it('applyPeerPlatformNearFloor skips collapsed secondary channels', () => {
+    const skipped = applyPeerPlatformNearFloor({
+      forecastDaily: 0.23,
+      horizonIndex: 0,
+      peerPlatformRecentDaily: 60,
+      platform: 'WALMART',
+      recent30DailyAvg: 2,
+    });
+    assert.equal(skipped.peerPlatformFloor, null);
+    assert.equal(skipped.forecastDaily, 0.23);
+  });
+
+  it('computeAllCatV41ForecastForMonth does not peer-lift collapsed secondary channels', () => {
     const result = computeAllCatV41ForecastForMonth({
       productCategory: 'B',
       platform: 'TIKTOK',
@@ -1160,6 +1206,28 @@ describe('forecast-allcat-v41', () => {
       })),
       recent30DailyAvg: 1.5,
       recent90DailyAvg: 1.2,
+      peerPlatformRecentDaily: 25,
+      historyCapEnd: new Date('2026-06-30T00:00:00Z'),
+    });
+    assert.notEqual(result.tier, 'T99');
+    assert.equal(result.horizonFactors.peerPlatformFloor, undefined);
+    assert.ok(result.forecastDaily < 5);
+  });
+
+  it('computeAllCatV41ForecastForMonth applies peer platform floor when secondary recent is healthy', () => {
+    const result = computeAllCatV41ForecastForMonth({
+      productCategory: 'B',
+      platform: 'TIKTOK',
+      forecastYear: 2026,
+      forecastMonth: 7,
+      horizonIndex: 0,
+      monthlyRows: Array.from({ length: 12 }, (_, i) => ({
+        saleYear: 2025 + (i >= 6 ? 1 : 0),
+        month: ((i + 6) % 12) + 1,
+        qtySold: 40 + i * 2,
+      })),
+      recent30DailyAvg: 6,
+      recent90DailyAvg: 5,
       peerPlatformRecentDaily: 25,
       historyCapEnd: new Date('2026-06-30T00:00:00Z'),
     });
@@ -1217,7 +1285,7 @@ describe('forecast-allcat-v41', () => {
       recent30DailyAvg: 54,
       d6: 50,
     });
-    assert.equal(capped, roundLike(54 * 1.25));
+    assert.equal(capped, roundLike(54 * 1.32));
   });
 
   it('secondary channel run-rate cap tightens weak Walmart openings', () => {

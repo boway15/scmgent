@@ -41,8 +41,11 @@ import {
   computeBClassPointForecast,
   computeResidualInterval,
   computeYoyAnchorDailyAvg,
+  blendRecent30WithMtd,
+  computeMtdDailyAvg,
   DEFAULT_SALES_HISTORY_LOOKBACK_DAYS,
   effectiveRecentWindowEnd,
+  isPartialCalendarMonth,
   resolveEffectiveLastYearDailyAvg,
   resolveConservativeCategoryFactor,
   roundDaily,
@@ -1390,6 +1393,12 @@ async function generateBaselineForStationPlatform(input: {
     const recent90DailyAvg = recentWindows.recent90DailyAvg;
     const recent30DailyAvg = recentWindows.recent30DailyAvg;
     const demandReconstruct = recentWindows.demandReconstruct;
+    const mtdStats = computeMtdDailyAvg(rawSalesRows, today);
+    const nearTermCfg = calibration.nearTerm;
+    const mtdBlendEligible =
+      isPartialCalendarMonth(today) &&
+      mtdStats.mtdDays >= (nearTermCfg?.mtdMinDays ?? 3) &&
+      mtdStats.mtdDaily > 0;
     const allChannelRows = filterSalesRowsByStation(
       dailyAllBySku.get(sku.id) ?? [],
       station,
@@ -1437,6 +1446,41 @@ async function generateBaselineForStationPlatform(input: {
             shadowHorizonDecay: calibration.seasonalIndex?.shadowHorizonDecay,
           }
         : undefined;
+      const resolveRecent30ForHorizon = (horizonIndex: number) => {
+        if (horizonIndex !== 0 || !mtdBlendEligible) {
+          return {
+            recent30: recent30DailyAvg,
+            mtdBlend: null as null | {
+              mtdDaily: number;
+              mtdDays: number;
+              weight: number;
+              blended: number;
+              priorRecent30: number;
+            },
+          };
+        }
+        const blend = blendRecent30WithMtd({
+          recent30DailyAvg,
+          mtdDaily: mtdStats.mtdDaily,
+          mtdDays: mtdStats.mtdDays,
+          mtdWeight: nearTermCfg?.mtdBlendWeight,
+          minMtdDays: nearTermCfg?.mtdMinDays,
+        });
+        if (!blend.applied) {
+          return { recent30: recent30DailyAvg, mtdBlend: null };
+        }
+        return {
+          recent30: blend.blended,
+          mtdBlend: {
+            mtdDaily: mtdStats.mtdDaily,
+            mtdDays: mtdStats.mtdDays,
+            weight: blend.weight,
+            blended: blend.blended,
+            priorRecent30: recent30DailyAvg,
+          },
+        };
+      };
+      const anchorRecent = resolveRecent30ForHorizon(0);
       const anchorV41 = computeAllCatV41ForecastForMonth({
         productCategory: sku.productCategory ?? sku.category,
         platform,
@@ -1444,7 +1488,7 @@ async function generateBaselineForStationPlatform(input: {
         forecastMonth: horizon[0]?.month ?? today.getUTCMonth() + 1,
         horizonIndex: 0,
         monthlyRows: monthlySalesRows,
-        recent30DailyAvg,
+        recent30DailyAvg: anchorRecent.recent30,
         recent90DailyAvg,
         peerPlatformRecentDaily,
         historyCapEnd,
@@ -1461,7 +1505,7 @@ async function generateBaselineForStationPlatform(input: {
         (anchorTier === 'T4A' || anchorTier === 'T4B') &&
         !(sku.forceForecast ?? false) &&
         isAllCatV41RecentSalesAbsent({
-          recent30DailyAvg,
+          recent30DailyAvg: anchorRecent.recent30,
           recent90DailyAvg,
           metrics: anchorV41.metrics,
           tier: anchorTier === 'T4A' || anchorTier === 'T4B' ? anchorTier : undefined,
@@ -1481,6 +1525,7 @@ async function generateBaselineForStationPlatform(input: {
       }
 
       for (const [horizonIndex, horizonMonth] of horizon.entries()) {
+        const recentForHorizon = resolveRecent30ForHorizon(horizonIndex);
         const v41 = computeAllCatV41ForecastForMonth({
           productCategory: sku.productCategory ?? sku.category,
           platform,
@@ -1488,7 +1533,7 @@ async function generateBaselineForStationPlatform(input: {
           forecastMonth: horizonMonth.month,
           horizonIndex,
           monthlyRows: monthlySalesRows,
-          recent30DailyAvg,
+          recent30DailyAvg: recentForHorizon.recent30,
           recent90DailyAvg,
           peerPlatformRecentDaily,
           historyCapEnd,
@@ -1496,6 +1541,9 @@ async function generateBaselineForStationPlatform(input: {
           flexBiasShadow,
           seasonalIndex,
         });
+        if (recentForHorizon.mtdBlend) {
+          v41.horizonFactors.mtdBlend = recentForHorizon.mtdBlend;
+        }
 
         if (!anchorForecastable) {
           if (v41.forecastDaily > 0) wroteForecast = true;

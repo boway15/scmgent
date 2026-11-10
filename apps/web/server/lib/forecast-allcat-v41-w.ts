@@ -280,12 +280,19 @@ export function computeAllCatV41WForecastForWeek(input: {
           forecastDaily: secondaryPrePeer,
           horizonIndex,
           peerPlatformRecentDaily: input.peerPlatformRecentDaily,
+          platform: input.platform,
+          recent30DailyAvg: input.recent30DailyAvg,
         });
+  const secondaryPostPeer = applyV41SecondaryChannelRunRateCap({
+    forecastDaily: peerLift.forecastDaily,
+    platform: input.platform,
+    recent30DailyAvg: input.recent30DailyAvg,
+  });
 
   const flexBiasShadow = applyFlexBiasShadowCorrection({
     tier,
     horizonIndex,
-    forecastDaily: peerLift.forecastDaily,
+    forecastDaily: secondaryPostPeer,
     flexBiasShadow: input.flexBiasShadow,
   });
   const nearRunRate = applyV41NearRecentRunRateCap({
@@ -296,11 +303,16 @@ export function computeAllCatV41WForecastForWeek(input: {
     d6: legacyMetrics.d6,
   });
   const forecastDaily = nearRunRate;
+  const secondaryEffective =
+    secondaryPostPeer + 1e-9 < peerLift.forecastDaily
+      ? secondaryPostPeer
+      : secondaryPrePeer + 1e-9 < bounded.forecastDaily
+        ? secondaryPrePeer
+        : null;
   const optimismDamp = {
     nearRunRateCap:
       nearRunRate + 1e-9 < flexBiasShadow.forecastDaily ? nearRunRate : null,
-    secondaryChannelCap:
-      secondaryPrePeer + 1e-9 < bounded.forecastDaily ? secondaryPrePeer : null,
+    secondaryChannelCap: secondaryEffective,
   };
 
   const historyCutoff = input.historyCapEnd

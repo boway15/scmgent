@@ -13,6 +13,8 @@ export const DEFAULT_SHADOW_HORIZON_DECAY = [1, 1, 0.85, 0.7, 0.6, 0.55] as cons
 export const DEFAULT_RESHAPE_NEAR_BLEND = 0.5;
 export const DEFAULT_RESHAPE_NEAR_MONTHS = 2;
 export const DEFAULT_RESHAPE_PEAK_MONTHS = [11, 12] as const;
+/** 旺季 YoY 低于此阈值时不再强制满幅 shadow/reshape */
+export const DEFAULT_PEAK_YOY_DAMP_THRESHOLD = 0.6;
 
 export type ShadowHorizonDecayConfig = {
   shadowHorizonDecay?: number[];
@@ -49,19 +51,26 @@ export function shadowHorizonDecayAt(
 
 /**
  * 将完整影子日均相对 base 的增量按地平线衰减。
- * effective = base + α·(shadow − base)；旺季日历月（默认 11/12）强制 α=1。
+ * effective = base + α·(shadow − base)；旺季日历月（默认 11/12）在 allowPeakFull 时强制 α=1。
  */
 export function blendShadowWithHorizonDecay(
   baseDaily: number,
   shadowDaily: number,
   horizonIndex: number,
   decay?: readonly number[],
-  options?: { calendarMonth?: number; peakMonths?: readonly number[] },
+  options?: {
+    calendarMonth?: number;
+    peakMonths?: readonly number[];
+    /** false 时旺季也走地平线衰减（YoY 明显下滑） */
+    allowPeakFull?: boolean;
+  },
 ): number {
   if (!(Number.isFinite(baseDaily) && baseDaily > 0)) return shadowDaily;
   if (!(Number.isFinite(shadowDaily) && shadowDaily > 0)) return baseDaily;
   const peakMonths = options?.peakMonths ?? DEFAULT_RESHAPE_PEAK_MONTHS;
+  const allowPeakFull = options?.allowPeakFull !== false;
   if (
+    allowPeakFull &&
     options?.calendarMonth != null &&
     peakMonths.includes(options.calendarMonth)
   ) {
@@ -71,6 +80,18 @@ export function blendShadowWithHorizonDecay(
   if (alpha >= 0.999) return shadowDaily;
   if (alpha <= 0.001) return baseDaily;
   return baseDaily + alpha * (shadowDaily - baseDaily);
+}
+
+/** YoY 低于阈值时禁用旺季满幅。threshold≤0 表示关闭检测。 */
+export function resolveAllowPeakFull(input: {
+  peakYoyRatio?: number | null;
+  threshold?: number | null;
+}): boolean {
+  const threshold = Number(input.threshold);
+  if (!(Number.isFinite(threshold) && threshold > 0)) return true;
+  const yoy = Number(input.peakYoyRatio);
+  if (!(Number.isFinite(yoy) && yoy > 0)) return true;
+  return yoy >= threshold;
 }
 
 export function resolveReshapeHorizonDamp(
@@ -96,7 +117,7 @@ export function resolveReshapeHorizonDamp(
 }
 
 /**
- * 近端月份把 scale 向 1 收缩；11/12 等旺季月保持满幅（仍受 clip）。
+ * 近端月份把 scale 向 1 收缩；11/12 等旺季月默认满幅（仍受 clip）；YoY 下滑时可关闭满幅。
  */
 export function dampenReshapeScale(
   scale: number,
@@ -106,6 +127,7 @@ export function dampenReshapeScale(
     nearBlend?: number;
     nearMonths?: number;
     peakMonths?: readonly number[];
+    allowPeakFull?: boolean;
   },
 ): number {
   if (!(Number.isFinite(scale) && scale > 0)) return 1;
@@ -113,7 +135,8 @@ export function dampenReshapeScale(
   const nearMonths = input.nearMonths ?? DEFAULT_RESHAPE_NEAR_MONTHS;
   const peakMonths = input.peakMonths ?? DEFAULT_RESHAPE_PEAK_MONTHS;
   const h = Math.max(0, Math.floor(input.horizonIndex));
-  const isPeak = peakMonths.includes(input.calendarMonth);
+  const allowPeakFull = input.allowPeakFull !== false;
+  const isPeak = allowPeakFull && peakMonths.includes(input.calendarMonth);
   if (isPeak || h >= nearMonths) return scale;
   return 1 + nearBlend * (scale - 1);
 }

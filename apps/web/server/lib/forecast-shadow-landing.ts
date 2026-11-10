@@ -11,6 +11,7 @@ import {
   blendShadowWithHorizonDecay,
   buildHorizonIndexByMonthKey,
   loadSeasonalDampenFromCalibration,
+  resolveAllowPeakFull,
 } from './forecast-seasonal-dampen.js';
 import { applyOptimismDampAfterLanding } from './forecast-optimism-post-landing.js';
 import {
@@ -18,6 +19,7 @@ import {
   shouldRunSiReshapeAfterGenerate,
 } from './forecast-si-reshape.js';
 import {
+  loadForecastCalibrationConfig,
   resolveSeasonalIndexMode,
   type SeasonalIndexMode,
 } from './forecast-profile-config.js';
@@ -66,6 +68,8 @@ export async function promoteForecastFromShadowDaily(
     .select({
       id: salesForecastMonthly.id,
       forecastDailyAvg: salesForecastMonthly.forecastDailyAvg,
+      forecastDailyP10: salesForecastMonthly.forecastDailyP10,
+      forecastDailyP90: salesForecastMonthly.forecastDailyP90,
       horizonFactors: salesForecastMonthly.horizonFactors,
     })
     .from(salesForecastMonthly)
@@ -90,10 +94,17 @@ export async function promoteForecastFromShadowDaily(
     seasonal.baseDailyBeforeShadow = roundDaily(current);
     nextFactors.seasonalIndex = seasonal;
 
+    const scale = current > 0 ? next / current : 1;
+    const p10 = Number(row.forecastDailyP10);
+    const p90 = Number(row.forecastDailyP90);
     await db
       .update(salesForecastMonthly)
       .set({
         forecastDailyAvg: String(next),
+        forecastDailyP10:
+          Number.isFinite(p10) && p10 > 0 ? String(roundDaily(p10 * scale)) : row.forecastDailyP10,
+        forecastDailyP90:
+          Number.isFinite(p90) && p90 > 0 ? String(roundDaily(p90 * scale)) : row.forecastDailyP90,
         horizonFactors: nextFactors,
         updatedAt: new Date(),
       })
@@ -110,6 +121,8 @@ export async function applyHorizonDecayAfterReshape(versionId: string): Promise<
       year: salesForecastMonthly.forecastYear,
       month: salesForecastMonthly.month,
       forecastDailyAvg: salesForecastMonthly.forecastDailyAvg,
+      forecastDailyP10: salesForecastMonthly.forecastDailyP10,
+      forecastDailyP90: salesForecastMonthly.forecastDailyP90,
       horizonFactors: salesForecastMonthly.horizonFactors,
     })
     .from(salesForecastMonthly)
@@ -119,6 +132,8 @@ export async function applyHorizonDecayAfterReshape(versionId: string): Promise<
     rows.map((row) => ({ year: row.year, month: row.month })),
   );
   const { shadowDecay } = loadSeasonalDampenFromCalibration();
+  const peakYoyThreshold =
+    loadForecastCalibrationConfig().seasonalIndex?.peakYoyDampThreshold;
 
   let changed = 0;
   for (const row of rows) {
@@ -133,15 +148,29 @@ export async function applyHorizonDecayAfterReshape(versionId: string): Promise<
     const current = Number(row.forecastDailyAvg);
     if (!(current > 0)) continue;
     const horizonIndex = horizonByMonth.get(monthKey(row.year, row.month)) ?? 0;
+    const peakYoyRatio = Number(factors?.peakYoyRatio);
+    const allowPeakFull = resolveAllowPeakFull({
+      peakYoyRatio: Number.isFinite(peakYoyRatio) ? peakYoyRatio : null,
+      threshold: peakYoyThreshold,
+    });
+    // 注意：远月不再衰减后二次叠 flex——组合层会把 T4B/T4A 的 2–4 月抬成伪旺季高峰。
     const blended = blendShadowWithHorizonDecay(base, current, horizonIndex, shadowDecay, {
       calendarMonth: row.month,
+      allowPeakFull,
     });
     const next = roundDaily(blended);
     if (Math.abs(next - current) < 0.005) continue;
+    const scale = current > 0 ? next / current : 1;
+    const p10 = Number(row.forecastDailyP10);
+    const p90 = Number(row.forecastDailyP90);
     await db
       .update(salesForecastMonthly)
       .set({
         forecastDailyAvg: String(next),
+        forecastDailyP10:
+          Number.isFinite(p10) && p10 > 0 ? String(roundDaily(p10 * scale)) : row.forecastDailyP10,
+        forecastDailyP90:
+          Number.isFinite(p90) && p90 > 0 ? String(roundDaily(p90 * scale)) : row.forecastDailyP90,
         updatedAt: new Date(),
       })
       .where(eq(salesForecastMonthly.id, row.id));

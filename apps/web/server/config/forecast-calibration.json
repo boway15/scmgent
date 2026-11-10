@@ -33,7 +33,19 @@
     "shadowHorizonDecay": [1, 1, 0.85, 0.7, 0.6, 0.55],
     "reshapeNearHorizonBlend": 0.5,
     "reshapeNearHorizonMonths": 2,
-    "reshapePeakMonthsFull": [11, 12]
+    "reshapePeakMonthsFull": [11, 12],
+    "peakYoyDampThreshold": 0.6
+  },
+  "nearTerm": {
+    "mtdBlendWeight": 0.66,
+    "mtdMinDays": 3
+  },
+  "v41MonthFactor": {
+    "t4TailMonthDiscount": 0.8,
+    "t4aFlexDecayFactor": 0.72,
+    "q2SeasonalDiscount": 0.92,
+    "t4aFarFloorRecent90Ratio": 0.55,
+    "t4aFarFloorTriggerRatio": 0.45
   },
   "flexBiasShadow": {
     "enabled": true,

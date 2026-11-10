@@ -346,12 +346,16 @@ export type ForecastHorizonCell = {
   forecastYear: number;
   month: number;
   monthLabel: string;
-  /** 系统算法预测日均（重新生成会更新） */
+  /** 系统算法预测日均（重新生成会更新）；等同 P50 点估 */
   forecastDailyAvg: number;
   /** 运营校准日均；有值时下游与矩阵展示优先使用 */
   manualDailyAvg: number | null;
   /** 生效日均 = manualDailyAvg ?? forecastDailyAvg */
   effectiveDailyAvg: number;
+  /** 分位区间：P10 / P50(=系统日均) / P90；补货默认用 P50 */
+  forecastDailyP10?: number | null;
+  forecastDailyP50?: number | null;
+  forecastDailyP90?: number | null;
   adjustReason: string | null;
   baselineDailyAvg: number | null;
   lifecycle: string | null;
@@ -760,6 +764,9 @@ function buildPlaceholderHorizonCell(
     forecastDailyAvg: 0,
     manualDailyAvg: null,
     effectiveDailyAvg: 0,
+    forecastDailyP10: null,
+    forecastDailyP50: null,
+    forecastDailyP90: null,
     adjustReason: null,
     baselineDailyAvg: null,
     lifecycle: null,
@@ -814,6 +821,8 @@ type ForecastDetailRow = {
   month: number;
   forecastDailyAvg: string | number;
   manualDailyAvg: string | number | null;
+  forecastDailyP10?: string | number | null;
+  forecastDailyP90?: string | number | null;
   adjustReason: string | null;
   baselineDailyAvg: string | number | null;
   lifecycle: string | null;
@@ -826,6 +835,18 @@ type ForecastDetailRow = {
   skuName: string;
   category: string | null;
 };
+
+function sumNullableDaily(rows: ForecastDetailRow[], key: 'forecastDailyP10' | 'forecastDailyP90'): number | null {
+  let sum = 0;
+  let any = false;
+  for (const row of rows) {
+    const n = numericOrNull(row[key] ?? null);
+    if (n == null || !(n > 0)) continue;
+    any = true;
+    sum += n;
+  }
+  return any ? Math.round(sum * 10_000) / 10_000 : null;
+}
 
 function pickPrimaryForecastDetailRow(rows: ForecastDetailRow[]): ForecastDetailRow | null {
   return pickPrimaryTierRow(rows);
@@ -937,6 +958,8 @@ function aggregateHorizonCellsForIdentity(input: {
         : undefined;
 
     const aiAssist = parseAiAssistMeta(primaryRow.horizonFactors);
+    const forecastDailyP10 = sumNullableDaily(monthRows, 'forecastDailyP10');
+    const forecastDailyP90 = sumNullableDaily(monthRows, 'forecastDailyP90');
     return {
       id: primaryRow.id,
       forecastYear: h.forecastYear,
@@ -945,6 +968,9 @@ function aggregateHorizonCellsForIdentity(input: {
       forecastDailyAvg,
       manualDailyAvg,
       effectiveDailyAvg,
+      forecastDailyP10,
+      forecastDailyP50: forecastDailyAvg,
+      forecastDailyP90,
       platformBreakdown,
       adjustReason: primaryRow.adjustReason ?? null,
       baselineDailyAvg,
@@ -1141,6 +1167,8 @@ async function listForecastHorizonAggregated(input: {
       month: salesForecastMonthly.month,
       forecastDailyAvg: salesForecastMonthly.forecastDailyAvg,
       manualDailyAvg: salesForecastMonthly.manualDailyAvg,
+      forecastDailyP10: salesForecastMonthly.forecastDailyP10,
+      forecastDailyP90: salesForecastMonthly.forecastDailyP90,
       adjustReason: salesForecastMonthly.adjustReason,
       baselineDailyAvg: salesForecastMonthly.baselineDailyAvg,
       lifecycle: salesForecastMonthly.lifecycle,
@@ -1481,6 +1509,8 @@ export async function listForecastHorizon(input: {
       month: salesForecastMonthly.month,
       forecastDailyAvg: salesForecastMonthly.forecastDailyAvg,
       manualDailyAvg: salesForecastMonthly.manualDailyAvg,
+      forecastDailyP10: salesForecastMonthly.forecastDailyP10,
+      forecastDailyP90: salesForecastMonthly.forecastDailyP90,
       adjustReason: salesForecastMonthly.adjustReason,
       baselineDailyAvg: salesForecastMonthly.baselineDailyAvg,
       lifecycle: salesForecastMonthly.lifecycle,
@@ -1541,6 +1571,8 @@ export async function listForecastHorizon(input: {
     const categoryFactors = buildCategoryFactors(seasonalityLookup, row.category, row.month);
 
     const aiAssist = parseAiAssistMeta(row.horizonFactors);
+    const forecastDailyP10 = numericOrNull(row.forecastDailyP10 ?? null);
+    const forecastDailyP90 = numericOrNull(row.forecastDailyP90 ?? null);
     cellsByIdentity.get(key)?.push({
       id: row.id,
       forecastYear: row.forecastYear,
@@ -1549,6 +1581,9 @@ export async function listForecastHorizon(input: {
       forecastDailyAvg,
       manualDailyAvg: dailyFields.manualDailyAvg,
       effectiveDailyAvg: dailyFields.effectiveDailyAvg,
+      forecastDailyP10,
+      forecastDailyP50: forecastDailyAvg,
+      forecastDailyP90,
       adjustReason: row.adjustReason ?? null,
       baselineDailyAvg,
       lifecycle: row.lifecycle,

@@ -1059,6 +1059,79 @@ export function effectiveRecentWindowEnd(today = new Date()): Date {
   return new Date(Date.UTC(year, month, 0));
 }
 
+/** True when asOf is not the last calendar day of its UTC month. */
+export function isPartialCalendarMonth(asOf = new Date()): boolean {
+  const year = asOf.getUTCFullYear();
+  const month = asOf.getUTCMonth();
+  const lastDay = new Date(Date.UTC(year, month + 1, 0)).getUTCDate();
+  return asOf.getUTCDate() < lastDay;
+}
+
+export type MtdDailyAvgResult = {
+  mtdDaily: number;
+  mtdQty: number;
+  mtdDays: number;
+  year: number;
+  month: number;
+};
+
+/** 当月截至 asOf 的有销日日均（MTD）。 */
+export function computeMtdDailyAvg(
+  rows: Array<{ saleDate: string; qtySold: number }>,
+  asOf = new Date(),
+): MtdDailyAvgResult {
+  const year = asOf.getUTCFullYear();
+  const month = asOf.getUTCMonth() + 1;
+  const prefix = `${year}-${String(month).padStart(2, '0')}-`;
+  const asOfKey = asOf.toISOString().slice(0, 10);
+  const days = new Set<string>();
+  let qty = 0;
+  for (const row of rows) {
+    const date = String(row.saleDate).slice(0, 10);
+    if (!date.startsWith(prefix) || date > asOfKey) continue;
+    const sold = Number(row.qtySold);
+    if (!(sold > 0)) continue;
+    qty += sold;
+    days.add(date);
+  }
+  const mtdDays = days.size;
+  return {
+    mtdDaily: mtdDays > 0 ? roundDaily(qty / mtdDays) : 0,
+    mtdQty: qty,
+    mtdDays,
+    year,
+    month,
+  };
+}
+
+export const DEFAULT_MTD_BLEND_WEIGHT = 0.5;
+export const DEFAULT_MTD_MIN_DAYS = 3;
+
+/**
+ * k=0 近端：w·mtd + (1−w)·recent30。MTD 天数不足或未过完月时不混合。
+ */
+export function blendRecent30WithMtd(input: {
+  recent30DailyAvg: number;
+  mtdDaily: number;
+  mtdDays: number;
+  mtdWeight?: number;
+  minMtdDays?: number;
+}): { blended: number; applied: boolean; weight: number } {
+  const recent30 = nonNegative(input.recent30DailyAvg);
+  const mtdDaily = nonNegative(input.mtdDaily);
+  const weightRaw = input.mtdWeight ?? DEFAULT_MTD_BLEND_WEIGHT;
+  const weight = Math.min(1, Math.max(0, Number.isFinite(weightRaw) ? weightRaw : DEFAULT_MTD_BLEND_WEIGHT));
+  const minDays = Math.max(1, Math.floor(input.minMtdDays ?? DEFAULT_MTD_MIN_DAYS));
+  if (!(mtdDaily > 0) || input.mtdDays < minDays || weight <= 0) {
+    return { blended: roundDaily(recent30), applied: false, weight: 0 };
+  }
+  return {
+    blended: roundDaily(weight * mtdDaily + (1 - weight) * recent30),
+    applied: true,
+    weight,
+  };
+}
+
 /** Dates belonging to consecutive zero-qty runs of at least minRunDays within [start, end]. */
 export function collectStockoutExcludedDates(
   rows: Array<{ saleDate: string; qtySold: number }>,

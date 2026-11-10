@@ -62,6 +62,30 @@ export type SeasonalIndexConfig = {
   reshapeNearHorizonMonths?: number;
   /** 满幅重塑的日历月（默认 11/12），不受近端衰减 */
   reshapePeakMonthsFull?: number[];
+  /**
+   * 旺季月若 YoY（recent90 / 去年同季日均）低于此阈值，则不做满幅 shadow/reshape。
+   * 默认 0.6；设为 0 关闭。
+   */
+  peakYoyDampThreshold?: number;
+};
+
+/** k=0 当月 MTD 与 recent30 混合 */
+export type NearTermMtdConfig = {
+  /** MTD 权重 w；blended = w·mtd + (1−w)·recent30。默认 0.5 */
+  mtdBlendWeight?: number;
+  /** 至少有销天数才启用 MTD。默认 3 */
+  mtdMinDays?: number;
+};
+
+/** T4A / 远月日历折扣（可覆盖硬编码常量） */
+export type V41MonthFactorConfig = {
+  t4TailMonthDiscount?: number;
+  t4aFlexDecayFactor?: number;
+  q2SeasonalDiscount?: number;
+  /** T4A 远月护栏抬升目标：recent90 × floorRatio。默认 0.55 */
+  t4aFarFloorRecent90Ratio?: number;
+  /** 仅当预测 < recent90 × trigger 时启用护栏。默认 0.45 */
+  t4aFarFloorTriggerRatio?: number;
 };
 
 export type ForecastCalibrationConfig = {
@@ -70,6 +94,8 @@ export type ForecastCalibrationConfig = {
   aCore: ACoreAlgoConfig;
   flexBiasShadow?: FlexBiasShadowConfig;
   seasonalIndex?: SeasonalIndexConfig;
+  nearTerm?: NearTermMtdConfig;
+  v41MonthFactor?: V41MonthFactorConfig;
 };
 
 export const DEFAULT_FORECAST_PROFILE_CONFIG: ForecastProfileConfig = {
@@ -101,6 +127,20 @@ export const DEFAULT_SEASONAL_INDEX_CONFIG: SeasonalIndexConfig = {
   reshapeNearHorizonBlend: 0.5,
   reshapeNearHorizonMonths: 2,
   reshapePeakMonthsFull: [11, 12],
+  peakYoyDampThreshold: 0.6,
+};
+
+export const DEFAULT_NEAR_TERM_MTD_CONFIG: NearTermMtdConfig = {
+  mtdBlendWeight: 0.66,
+  mtdMinDays: 3,
+};
+
+export const DEFAULT_V41_MONTH_FACTOR_CONFIG: V41MonthFactorConfig = {
+  t4TailMonthDiscount: 0.8,
+  t4aFlexDecayFactor: 0.72,
+  q2SeasonalDiscount: 0.92,
+  t4aFarFloorRecent90Ratio: 0.55,
+  t4aFarFloorTriggerRatio: 0.45,
 };
 
 export const DEFAULT_FORECAST_CALIBRATION_CONFIG: ForecastCalibrationConfig = {
@@ -108,6 +148,8 @@ export const DEFAULT_FORECAST_CALIBRATION_CONFIG: ForecastCalibrationConfig = {
   profile: DEFAULT_FORECAST_PROFILE_CONFIG,
   aCore: DEFAULT_ACORE_ALGO_CONFIG,
   seasonalIndex: DEFAULT_SEASONAL_INDEX_CONFIG,
+  nearTerm: DEFAULT_NEAR_TERM_MTD_CONFIG,
+  v41MonthFactor: DEFAULT_V41_MONTH_FACTOR_CONFIG,
 };
 
 function moduleConfigPath(): string {
@@ -138,6 +180,18 @@ function mergeSeasonalIndexConfig(
   };
 }
 
+function mergeNearTermConfig(
+  raw: Partial<NearTermMtdConfig> | undefined,
+): NearTermMtdConfig {
+  return { ...DEFAULT_NEAR_TERM_MTD_CONFIG, ...raw };
+}
+
+function mergeV41MonthFactorConfig(
+  raw: Partial<V41MonthFactorConfig> | undefined,
+): V41MonthFactorConfig {
+  return { ...DEFAULT_V41_MONTH_FACTOR_CONFIG, ...raw };
+}
+
 function mergeFlexBiasShadowConfig(
   raw: Partial<FlexBiasShadowConfig> | undefined,
 ): FlexBiasShadowConfig | undefined {
@@ -163,7 +217,17 @@ export function parseForecastCalibrationConfig(raw: unknown): ForecastCalibratio
     aCore: mergeACoreConfig(obj.aCore),
     flexBiasShadow: mergeFlexBiasShadowConfig(obj.flexBiasShadow),
     seasonalIndex: mergeSeasonalIndexConfig(obj.seasonalIndex),
+    nearTerm: mergeNearTermConfig(obj.nearTerm),
+    v41MonthFactor: mergeV41MonthFactorConfig(obj.v41MonthFactor),
   };
+}
+
+export function loadNearTermMtdConfig(): NearTermMtdConfig {
+  return loadForecastCalibrationConfig().nearTerm ?? DEFAULT_NEAR_TERM_MTD_CONFIG;
+}
+
+export function loadV41MonthFactorConfig(): V41MonthFactorConfig {
+  return loadForecastCalibrationConfig().v41MonthFactor ?? DEFAULT_V41_MONTH_FACTOR_CONFIG;
 }
 
 export const SEASONAL_INDEX_MODE_ENV = 'FORECAST_V41_SEASONAL_INDEX';

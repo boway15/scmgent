@@ -55,6 +55,10 @@ export type ForecastHorizonMonthCell = {
   forecastDailyAvg: number;
   manualDailyAvg?: number | null;
   effectiveDailyAvg?: number;
+  /** 分位区间；P50 默认等于系统日均 */
+  forecastDailyP10?: number | null;
+  forecastDailyP50?: number | null;
+  forecastDailyP90?: number | null;
   adjustReason?: string | null;
   baselineDailyAvg: number | null;
   lifecycle: string | null;
@@ -217,15 +221,28 @@ function CalibrationCells({
     onSaved();
   };
 
+  const p10 = cell.forecastDailyP10;
+  const p90 = cell.forecastDailyP90;
+  const p50 = cell.forecastDailyP50 ?? cell.forecastDailyAvg;
+  const intervalTitle =
+    p10 != null && p90 != null && Number.isFinite(p10) && Number.isFinite(p90)
+      ? `区间 P10–P50–P90：${formatFactor(p10)} / ${formatFactor(p50)} / ${formatFactor(p90)}（补货默认 P50）`
+      : null;
   const systemCell = (
     <td
       className={cn(
         'p-2 font-numeric text-text-sub whitespace-nowrap',
-        systemCellTitle && 'cursor-help underline decoration-dotted decoration-text-sub/40 underline-offset-2',
+        (systemCellTitle || intervalTitle) &&
+          'cursor-help underline decoration-dotted decoration-text-sub/40 underline-offset-2',
       )}
-      title={systemCellTitle}
+      title={[systemCellTitle, intervalTitle].filter(Boolean).join('\n') || undefined}
     >
-      {formatFactor(cell.forecastDailyAvg)}
+      <div>{formatFactor(cell.forecastDailyAvg)}</div>
+      {intervalTitle ? (
+        <div className="mt-0.5 text-[10px] text-text-sub/80">
+          {formatFactor(p10)}–{formatFactor(p90)}
+        </div>
+      ) : null}
     </td>
   );
 

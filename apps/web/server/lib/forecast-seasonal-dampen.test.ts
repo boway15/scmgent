@@ -4,6 +4,7 @@ import {
   blendShadowWithHorizonDecay,
   buildHorizonIndexByMonthKey,
   dampenReshapeScale,
+  resolveAllowPeakFull,
   shadowHorizonDecayAt,
 } from './forecast-seasonal-dampen.js';
 
@@ -19,6 +20,12 @@ describe('forecast-seasonal-dampen', () => {
 
     const peak = blendShadowWithHorizonDecay(100, 200, 4, undefined, { calendarMonth: 12 });
     assert.equal(peak, 200);
+
+    const dampedPeak = blendShadowWithHorizonDecay(100, 200, 0, undefined, {
+      calendarMonth: 11,
+      allowPeakFull: false,
+    });
+    assert.equal(dampedPeak, 200);
   });
 
   it('keeps peak-month reshape full and damps near horizon', () => {
@@ -38,6 +45,15 @@ describe('forecast-seasonal-dampen', () => {
     });
     assert.equal(peak, 1.4);
 
+    const peakDamped = dampenReshapeScale(1.4, {
+      horizonIndex: 0,
+      calendarMonth: 11,
+      nearBlend: 0.5,
+      nearMonths: 2,
+      allowPeakFull: false,
+    });
+    assert.equal(peakDamped, 1.2);
+
     const far = dampenReshapeScale(1.4, {
       horizonIndex: 3,
       calendarMonth: 4,
@@ -45,6 +61,12 @@ describe('forecast-seasonal-dampen', () => {
       nearMonths: 2,
     });
     assert.equal(far, 1.4);
+  });
+
+  it('resolveAllowPeakFull damps when YoY below threshold', () => {
+    assert.equal(resolveAllowPeakFull({ peakYoyRatio: 0.45, threshold: 0.6 }), false);
+    assert.equal(resolveAllowPeakFull({ peakYoyRatio: 0.8, threshold: 0.6 }), true);
+    assert.equal(resolveAllowPeakFull({ peakYoyRatio: 0.45, threshold: 0 }), true);
   });
 
   it('builds horizon index by sorted month keys', () => {

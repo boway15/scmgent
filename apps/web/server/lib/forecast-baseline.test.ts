@@ -12,13 +12,16 @@ import {
   computeHorizonBlendWeights,
   applyHorizonBiasBudgetCap,
   applyACoreUpperBound,
+  blendRecent30WithMtd,
   computeLastYearSameMonthDailyAvg,
+  computeMtdDailyAvg,
   parseHorizonFactors,
   computeLifecycleBaselineWeights,
   computeSkuTrendFactor,
   clipCombinedSeasonality,
   effectiveRecentWindowEnd,
   filterSalesRowsExcludingDates,
+  isPartialCalendarMonth,
   resolveEffectiveLastYearDailyAvg,
   resolveLastYearSameMonthDailyAvg,
   roundDaily,
@@ -378,6 +381,30 @@ describe('forecast-baseline', () => {
       effectiveRecentWindowEnd(new Date('2026-05-31')).toISOString().slice(0, 10),
       '2026-05-31',
     );
+  });
+
+  it('blends MTD with recent30 for partial-month k0 anchor', () => {
+    assert.equal(isPartialCalendarMonth(new Date('2026-11-07T00:00:00Z')), true);
+    assert.equal(isPartialCalendarMonth(new Date('2026-11-30T00:00:00Z')), false);
+    const mtd = computeMtdDailyAvg(
+      [
+        { saleDate: '2026-11-01', qtySold: 60 },
+        { saleDate: '2026-11-02', qtySold: 60 },
+        { saleDate: '2026-11-03', qtySold: 60 },
+        { saleDate: '2026-10-31', qtySold: 40 },
+      ],
+      new Date('2026-11-07T00:00:00Z'),
+    );
+    assert.equal(mtd.mtdDays, 3);
+    assert.equal(mtd.mtdDaily, 60);
+    const blend = blendRecent30WithMtd({
+      recent30DailyAvg: 50,
+      mtdDaily: 60,
+      mtdDays: 3,
+      mtdWeight: 0.5,
+    });
+    assert.equal(blend.applied, true);
+    assert.equal(blend.blended, 55);
   });
 
   it('excludes consecutive zero-qty runs from stockout filtering', () => {

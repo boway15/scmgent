@@ -2,7 +2,7 @@
  * AllCategory V4.1 KPI tier system — ported from tmp_create_allcat_v41_kpi_forecast.sql
  */
 
-import { roundDaily } from './forecast-baseline.js';
+import { daysInCalendarMonth, roundDaily } from './forecast-baseline.js';
 import {
   resolveT99SystemFloorDaily,
   resolveT99SystemFloorDiscount,
@@ -21,9 +21,15 @@ import {
 } from './forecast-flex-bias-shadow.js';
 import {
   blendShadowWithHorizonDecay,
+  resolveAllowPeakFull,
   resolveShadowHorizonDecay,
   shadowHorizonDecayAt,
 } from './forecast-seasonal-dampen.js';
+import {
+  loadForecastCalibrationConfig,
+  loadV41MonthFactorConfig,
+  type V41MonthFactorConfig,
+} from './forecast-profile-config.js';
 
 export type AllCatV41Tier = 'T1' | 'T2' | 'T3' | 'T3P' | 'T4A' | 'T4B' | 'T99';
 
@@ -312,7 +318,7 @@ export const V41_T4B_D6_CAP = 0.95;
 export const V41_NEAR_RUNRATE_MAX_HORIZON = 1;
 export const V41_NEAR_RUNRATE_MIN_RECENT30 = 3;
 export const V41_NEAR_RUNRATE_UPLIFT = 1.15;
-export const V41_NEAR_RUNRATE_PEAK_UPLIFT = 1.25; // 11/12
+export const V41_NEAR_RUNRATE_PEAK_UPLIFT = 1.32; // 11/12 近端帽
 /** 次通道（非 Amazon）弱开局时更严 */
 export const V41_SECONDARY_RECENT30_MAX = 5;
 export const V41_SECONDARY_RUNRATE_UPLIFT = 1.1;
@@ -647,13 +653,22 @@ export function resolveEffectiveTrendDecay(input: {
   };
 }
 
+function resolveMonthFactorCfg(override?: V41MonthFactorConfig | null): V41MonthFactorConfig {
+  return { ...loadV41MonthFactorConfig(), ...(override ?? {}) };
+}
+
 /** 4–12 月折减：T1/T2 首月仍保留轻度折减；Q2 目标月核心层叠加季节折减 */
 export function resolveV41MonthFactor(
   forecastMonth: number,
   horizonIndex: number,
   tier?: AllCatV41Tier,
+  cfgOverride?: V41MonthFactorConfig | null,
 ): number {
   if (forecastMonth < 4) return 1.0;
+  const cfg = resolveMonthFactorCfg(cfgOverride);
+  const q2Discount = cfg.q2SeasonalDiscount ?? V41_Q2_SEASONAL_DISCOUNT;
+  const t4Tail = cfg.t4TailMonthDiscount ?? V41_T4_TAIL_MONTH_DISCOUNT;
+  const t4aFlex = cfg.t4aFlexDecayFactor ?? V41_T4A_FLEX_DECAY_FACTOR;
   const k = Math.max(0, Math.floor(horizonIndex));
   const coreTier = tier === 'T1' || tier === 'T2';
   const coreTier123 = tier === 'T1' || tier === 'T2' || tier === 'T3';
@@ -665,22 +680,83 @@ export function resolveV41MonthFactor(
   else if (k === 4) factor = 0.9;
   else factor = 0.88;
   if (coreTier123 && V41_Q2_TARGET_MONTHS.has(forecastMonth)) {
-    factor *= V41_Q2_SEASONAL_DISCOUNT;
+    factor *= q2Discount;
     if (tier === 'T2' || tier === 'T3') {
       factor *= V41_Q2_MID_TIER_EXTRA_DISCOUNT;
     }
   }
   // B1：T4B 不再叠尾月折扣（远端已有 flex 衰减）；T4A 仍保留
   if (tier === 'T4A' && forecastMonth >= 4) {
-    factor *= V41_T4_TAIL_MONTH_DISCOUNT;
+    factor *= t4Tail;
   }
   if (tier === 'T4A' && k >= V41_T4A_FLEX_DECAY_FROM_K) {
-    factor *= V41_T4A_FLEX_DECAY_FACTOR;
+    factor *= t4aFlex;
   }
   if (tier === 'T4B' && k >= V41_T4B_FLEX_DECAY_FROM_K) {
     factor *= V41_T4B_FLEX_DECAY_FACTOR;
   }
   return factor;
+}
+
+/**
+ * T4A 远月「严重低估」护栏：仅当预测已低于 recent90×trigger 时，抬到 recent90×floorRatio。
+ * 默认 trigger=0.45、floor=0.55，避免组合层把 2–4 月抬成伪高峰。
+ */
+export function applyT4aFarRecent90Floor(input: {
+  tier: AllCatV41Tier;
+  forecastDaily: number;
+  horizonIndex: number;
+  recent90DailyAvg?: number | null;
+  floorRatio?: number | null;
+  triggerRatio?: number | null;
+}): number {
+  if (input.tier !== 'T4A') return input.forecastDaily;
+  const k = Math.max(0, Math.floor(input.horizonIndex));
+  if (k < V41_T4A_FLEX_DECAY_FROM_K) return input.forecastDaily;
+  const recent90 = nonNegative(input.recent90DailyAvg);
+  if (!(recent90 > 0)) return input.forecastDaily;
+  const cfg = loadV41MonthFactorConfig();
+  const floorRatio =
+    input.floorRatio != null && Number.isFinite(input.floorRatio)
+      ? Math.max(0, input.floorRatio)
+      : (cfg.t4aFarFloorRecent90Ratio ?? 0.55);
+  const triggerRatio =
+    input.triggerRatio != null && Number.isFinite(input.triggerRatio)
+      ? Math.max(0, input.triggerRatio)
+      : (cfg.t4aFarFloorTriggerRatio ?? 0.45);
+  if (input.forecastDaily >= recent90 * triggerRatio) return input.forecastDaily;
+  const floor = roundDaily(recent90 * floorRatio);
+  if (!(floor > 0)) return input.forecastDaily;
+  return Math.max(input.forecastDaily, floor);
+}
+
+/** recent90 / 去年同窗（截止月末前 3 个自然月）日均；用于旺季满幅阻尼。 */
+export function computePeakYoyRatio(input: {
+  monthlyRows: Array<{ saleYear: number; month: number; qtySold: number }>;
+  recent90DailyAvg?: number | null;
+  endYear: number;
+  endMonth: number;
+}): number | null {
+  const recent = nonNegative(input.recent90DailyAvg);
+  if (!(recent > 0)) return null;
+  let qty = 0;
+  let dayCount = 0;
+  for (let i = 0; i < 3; i++) {
+    let month = input.endMonth - i;
+    let year = input.endYear - 1;
+    while (month <= 0) {
+      month += 12;
+      year -= 1;
+    }
+    const hit = input.monthlyRows.find((row) => row.saleYear === year && row.month === month);
+    if (!hit || !(hit.qtySold > 0)) continue;
+    qty += hit.qtySold;
+    dayCount += daysInCalendarMonth(year, month);
+  }
+  if (!(qty > 0) || dayCount <= 0) return null;
+  const lyDaily = qty / dayCount;
+  if (!(lyDaily > 0)) return null;
+  return roundDaily(recent / lyDaily);
 }
 
 export function tierConservativeFactor(
@@ -978,16 +1054,34 @@ function applyNearHorizonFloor(input: {
   return Math.max(input.result, roundDaily(floor));
 }
 
-/** 同 SKU 其他平台近端动销抬底（仅 k≤2）；写入 horizon_factors.peerPlatformFloor */
+function isPrimarySalesPlatform(platform?: string | null): boolean {
+  const p = (platform ?? '').trim().toUpperCase();
+  return !p || p === 'AMAZON' || p === 'ALL' || p === 'UNKNOWN';
+}
+
+/**
+ * 同 SKU 其他平台近端动销抬底（仅 k≤2）；写入 horizon_factors.peerPlatformFloor。
+ * 次通道且本平台 recent30 弱时跳过，避免 Amazon 跑量把崩塌渠道抬回旺季水平。
+ */
 export function applyPeerPlatformNearFloor(input: {
   forecastDaily: number;
   horizonIndex: number;
   peerPlatformRecentDaily?: number | null;
+  platform?: string | null;
+  recent30DailyAvg?: number | null;
   alpha?: number;
   peerMinDaily?: number;
+  secondaryRecent30Max?: number;
 }): { forecastDaily: number; peerPlatformFloor: number | null } {
   const k = Math.max(0, Math.floor(input.horizonIndex));
   if (k > 2) return { forecastDaily: input.forecastDaily, peerPlatformFloor: null };
+  if (!isPrimarySalesPlatform(input.platform)) {
+    const recent30 = nonNegative(input.recent30DailyAvg);
+    const weakMax = input.secondaryRecent30Max ?? V41_SECONDARY_RECENT30_MAX;
+    if (recent30 < weakMax) {
+      return { forecastDaily: input.forecastDaily, peerPlatformFloor: null };
+    }
+  }
   const peer = nonNegative(input.peerPlatformRecentDaily);
   const alpha = input.alpha ?? V41_PEER_PLATFORM_FLOOR_ALPHA;
   const peerMin = input.peerMinDaily ?? V41_PEER_PLATFORM_MIN_DAILY;
@@ -1167,6 +1261,12 @@ export function computeAllCatV41BoundedDaily(input: {
     forecastDaily,
     d6: metrics.d6,
     recent30DailyAvg: input.recent30DailyAvg,
+    recent90DailyAvg: input.recent90DailyAvg,
+  });
+  forecastDaily = applyT4aFarRecent90Floor({
+    tier,
+    forecastDaily,
+    horizonIndex,
     recent90DailyAvg: input.recent90DailyAvg,
   });
   return {
@@ -1480,11 +1580,19 @@ export function computeAllCatV41ForecastForMonth(input: {
           forecastDaily: secondaryPrePeer,
           horizonIndex: input.horizonIndex,
           peerPlatformRecentDaily: input.peerPlatformRecentDaily,
+          platform,
+          recent30DailyAvg: input.recent30DailyAvg,
         });
+  // peer 之后再套一次次通道帽，防止弱渠道被抬底后高于本渠道 run-rate
+  const secondaryPostPeer = applyV41SecondaryChannelRunRateCap({
+    forecastDaily: peerLift.forecastDaily,
+    platform,
+    recent30DailyAvg: input.recent30DailyAvg,
+  });
   const flexBiasShadow = applyFlexBiasShadowCorrection({
     tier,
     horizonIndex: input.horizonIndex,
-    forecastDaily: peerLift.forecastDaily,
+    forecastDaily: secondaryPostPeer,
     flexBiasShadow: input.flexBiasShadow,
   });
   const nearRunRate = applyV41NearRecentRunRateCap({
@@ -1494,12 +1602,17 @@ export function computeAllCatV41ForecastForMonth(input: {
     recent30DailyAvg: input.recent30DailyAvg,
     d6: tierMetrics.d6,
   });
+  const secondaryEffective =
+    secondaryPostPeer + 1e-9 < peerLift.forecastDaily
+      ? secondaryPostPeer
+      : secondaryPrePeer + 1e-9 < bounded.forecastDaily
+        ? secondaryPrePeer
+        : null;
   const optimismDamp = {
     forecastDaily: nearRunRate,
     nearRunRateCap:
       nearRunRate + 1e-9 < flexBiasShadow.forecastDaily ? nearRunRate : null,
-    secondaryChannelCap:
-      secondaryPrePeer + 1e-9 < bounded.forecastDaily ? secondaryPrePeer : null,
+    secondaryChannelCap: secondaryEffective,
   };
   let forecastDaily = optimismDamp.forecastDaily;
   const effectiveTarget = resolveWalkForwardMetricsTarget(
@@ -1524,6 +1637,19 @@ export function computeAllCatV41ForecastForMonth(input: {
   }
   if (input.recent90DailyAvg != null && input.recent90DailyAvg > 0) {
     horizonFactors.recent90DailyAvg = roundDaily(input.recent90DailyAvg);
+  }
+  {
+    const capDate = input.historyCapEnd
+      ?? new Date(Date.UTC(input.forecastYear, input.forecastMonth - 1, 0));
+    const peakYoyRatio = computePeakYoyRatio({
+      monthlyRows: input.monthlyRows,
+      recent90DailyAvg: input.recent90DailyAvg,
+      endYear: capDate.getUTCFullYear(),
+      endMonth: capDate.getUTCMonth() + 1,
+    });
+    if (peakYoyRatio != null) {
+      horizonFactors.peakYoyRatio = peakYoyRatio;
+    }
   }
   if (input.peerPlatformRecentDaily != null && input.peerPlatformRecentDaily > 0) {
     horizonFactors.peerPlatformRecentDaily = roundDaily(input.peerPlatformRecentDaily);
@@ -1607,11 +1733,18 @@ export function computeAllCatV41ForecastForMonth(input: {
           forecastDaily: secondarySi,
           horizonIndex: input.horizonIndex,
           peerPlatformRecentDaily: nonNegative(input.peerPlatformRecentDaily) * capScale,
+          platform,
+          recent30DailyAvg: input.recent30DailyAvg,
         });
+    const secondarySiPost = applyV41SecondaryChannelRunRateCap({
+      forecastDaily: peerSi.forecastDaily,
+      platform,
+      recent30DailyAvg: input.recent30DailyAvg,
+    });
     const flexSi = applyFlexBiasShadowCorrection({
       tier,
       horizonIndex: input.horizonIndex,
-      forecastDaily: peerSi.forecastDaily,
+      forecastDaily: secondarySiPost,
       flexBiasShadow: input.flexBiasShadow,
     });
     // 影子路径用未按 SI 放大的真实 recent30
@@ -1622,12 +1755,17 @@ export function computeAllCatV41ForecastForMonth(input: {
       recent30DailyAvg: input.recent30DailyAvg,
       d6: tierMetrics.d6,
     });
+    const secondarySiEffective =
+      secondarySiPost + 1e-9 < peerSi.forecastDaily
+        ? secondarySiPost
+        : secondarySi + 1e-9 < boundedSi.forecastDaily
+          ? secondarySi
+          : null;
     const shadowDamp = {
       forecastDaily: shadowNear,
       nearRunRateCap:
         shadowNear + 1e-9 < flexSi.forecastDaily ? shadowNear : null,
-      secondaryChannelCap:
-        secondarySi + 1e-9 < boundedSi.forecastDaily ? secondarySi : null,
+      secondaryChannelCap: secondarySiEffective,
     };
     horizonFactors.monthFactorLegacy = bounded.monthFactor;
     const shadowRaw = shadowDamp.forecastDaily;
@@ -1636,12 +1774,25 @@ export function computeAllCatV41ForecastForMonth(input: {
       k: seasonal.k,
       shadowHorizonDecay: seasonal.shadowHorizonDecay,
     });
+    const peakYoyRatio = computePeakYoyRatio({
+      monthlyRows: input.monthlyRows,
+      recent90DailyAvg: input.recent90DailyAvg,
+      endYear,
+      endMonth,
+    });
+    if (peakYoyRatio != null) {
+      horizonFactors.peakYoyRatio = peakYoyRatio;
+    }
+    const allowPeakFull = resolveAllowPeakFull({
+      peakYoyRatio,
+      threshold: loadForecastCalibrationConfig().seasonalIndex?.peakYoyDampThreshold,
+    });
     const shadowBlended = blendShadowWithHorizonDecay(
       forecastDaily,
       shadowRaw,
       input.horizonIndex,
       shadowDecay,
-      { calendarMonth: input.forecastMonth },
+      { calendarMonth: input.forecastMonth, allowPeakFull },
     );
     horizonFactors.seasonalIndex = {
       mode: seasonal.mode,

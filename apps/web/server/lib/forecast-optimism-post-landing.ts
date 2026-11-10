@@ -9,9 +9,11 @@ import { buildHorizonIndexByMonthKey } from './forecast-seasonal-dampen.js';
 /** 压近端三月（horizonIndex 0/1/2，避免 11/12 压平后把过冲挤到次月） */
 export const POST_LANDING_MAX_HORIZON = 2;
 /** 相对当月影子的抬升上限 */
-export const POST_LANDING_SHADOW_UPLIFT = 1.1;
+export const POST_LANDING_SHADOW_UPLIFT = 1.16;
 /** 无影子时回退：相对 recent/d6 的绝对顶 */
 export const POST_LANDING_RUNRATE_UPLIFT = 1.1;
+/** 有影子时 run-rate 第二顶 */
+export const POST_LANDING_SHADOW_RUNRATE_UPLIFT = 1.32;
 export const POST_LANDING_MIN_RECENT30 = 3;
 /** 次通道弱开局：相对影子（或 recent30）×1.0 */
 export const POST_LANDING_SECONDARY_RECENT30_MAX = 5;
@@ -65,19 +67,26 @@ export function applyPostLandingNearRunRateCap(input: {
   const k = Math.max(0, Math.floor(input.horizonIndex));
   if (k > POST_LANDING_MAX_HORIZON) return input.forecastDaily;
 
+  const recent30 = nonNegative(input.recent30DailyAvg);
+  const d6 = nonNegative(input.d6);
+  const runrate = Math.max(recent30, d6);
   const shadow = nonNegative(input.shadowDaily);
   if (shadow > 0) {
-    const cap = shadow * POST_LANDING_SHADOW_UPLIFT;
+    let cap = shadow * POST_LANDING_SHADOW_UPLIFT;
+    if (runrate >= POST_LANDING_MIN_RECENT30) {
+      cap = Math.min(cap, runrate * POST_LANDING_SHADOW_RUNRATE_UPLIFT);
+    }
     return roundDaily(Math.min(input.forecastDaily, cap));
   }
 
-  const recent30 = nonNegative(input.recent30DailyAvg);
   if (recent30 < POST_LANDING_MIN_RECENT30) return input.forecastDaily;
-  const d6 = nonNegative(input.d6);
-  const cap = Math.max(recent30, d6) * POST_LANDING_RUNRATE_UPLIFT;
+  const cap = runrate * POST_LANDING_RUNRATE_UPLIFT;
   return roundDaily(Math.min(input.forecastDaily, cap));
 }
 
+/**
+ * 次通道弱开局帽：基准取 min(shadow, recent30)（有影子时），禁止 shadow-alone 把崩塌渠道抬高。
+ */
 export function applyPostLandingSecondaryChannelCap(input: {
   forecastDaily: number;
   platform?: string | null;
@@ -92,7 +101,8 @@ export function applyPostLandingSecondaryChannelCap(input: {
   const recent30 = nonNegative(input.recent30DailyAvg);
   if (recent30 >= POST_LANDING_SECONDARY_RECENT30_MAX) return input.forecastDaily;
   const shadow = nonNegative(input.shadowDaily);
-  const base = shadow > 0 ? shadow : Math.max(recent30, POST_LANDING_SECONDARY_FLOOR);
+  const recentBase = Math.max(recent30, POST_LANDING_SECONDARY_FLOOR);
+  const base = shadow > 0 ? Math.min(shadow, recentBase) : recentBase;
   const cap = Math.max(base, POST_LANDING_SECONDARY_FLOOR) * POST_LANDING_SECONDARY_UPLIFT;
   return roundDaily(Math.min(input.forecastDaily, cap));
 }
@@ -144,6 +154,8 @@ export async function applyOptimismDampAfterLanding(input: {
       month: salesForecastMonthly.month,
       platform: salesForecastMonthly.platform,
       forecastDailyAvg: salesForecastMonthly.forecastDailyAvg,
+      forecastDailyP10: salesForecastMonthly.forecastDailyP10,
+      forecastDailyP90: salesForecastMonthly.forecastDailyP90,
       horizonFactors: salesForecastMonthly.horizonFactors,
     })
     .from(salesForecastMonthly)
@@ -195,10 +207,18 @@ export async function applyOptimismDampAfterLanding(input: {
       shadowDaily: shadowDaily != null ? roundDaily(shadowDaily) : null,
     };
 
+    const scale =
+      currentStored > 0 ? capped.forecastDaily / currentStored : 1;
+    const p10 = Number(row.forecastDailyP10);
+    const p90 = Number(row.forecastDailyP90);
     await db
       .update(salesForecastMonthly)
       .set({
         forecastDailyAvg: String(capped.forecastDaily),
+        forecastDailyP10:
+          Number.isFinite(p10) && p10 > 0 ? String(roundDaily(p10 * scale)) : row.forecastDailyP10,
+        forecastDailyP90:
+          Number.isFinite(p90) && p90 > 0 ? String(roundDaily(p90 * scale)) : row.forecastDailyP90,
         horizonFactors: nextFactors,
         updatedAt: new Date(),
       })

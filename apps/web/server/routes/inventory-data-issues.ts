@@ -7,12 +7,10 @@ import { requireMenu } from '../lib/rbac.js';
 import { writeAuditLog } from '../lib/audit-log.js';
 import { countOpenDataIssuesByType } from '../lib/inventory-data-issue-store.js';
 import {
-  buildInventoryDataIssueExportCsv,
   listInventoryDataIssueRows,
-  listInventoryDataIssueRowsForExport,
   parseInventoryDataIssueListFilters,
 } from '../lib/inventory-data-issue-list.js';
-import { buildCsv, csvAttachment } from '../lib/csv-export.js';
+import { enqueueDownloadJob } from '../lib/download-enqueue.js';
 import { productScopeSql } from '../lib/planning-accessory-filter.js';
 
 export const inventoryDataIssueRoutes = new Hono();
@@ -26,13 +24,14 @@ inventoryDataIssueRoutes.get('/inventory/data-issues/export', requireMenu(MENU),
     q: c.req.query('q'),
     productScope: c.req.query('productScope'),
   });
-  const { items, truncated } = await listInventoryDataIssueRowsForExport(filters);
-  const { headers, bodyRows } = buildInventoryDataIssueExportCsv(items);
-  const csv = buildCsv(headers, bodyRows);
   const date = new Date().toISOString().slice(0, 10);
   const scope = filters.productScope === 'accessory' ? 'accessory' : 'goods';
-  const suffix = truncated ? '-truncated' : '';
-  return csvAttachment(`inventory-data-issues-${date}-${scope}${suffix}.csv`, csv);
+  return enqueueDownloadJob(c, {
+    jobType: 'inventory_data_issues',
+    title: `库存数据问题导出-${date}`,
+    fileName: `inventory-data-issues-${date}-${scope}.csv`,
+    params: { filters },
+  });
 });
 
 inventoryDataIssueRoutes.get('/inventory/data-issues', requireMenu(MENU), async (c) => {

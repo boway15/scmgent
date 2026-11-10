@@ -66,12 +66,28 @@ export function SalesForecastListPage() {
     [generationSkuCode],
   );
 
-  const { data: versions = [], isLoading } = useQuery({
-    queryKey: ['sales-forecast-versions', 'stats', 'list'],
-    queryFn: () => api.getSalesForecastVersions({ includeStats: true, statsScope: 'list' }),
+  const { data, isLoading } = useQuery({
+    queryKey: [
+      'sales-forecast-versions',
+      'stats',
+      'list',
+      versionPage,
+      versionPageSize,
+      statusFilter,
+      appliedVersionKeyword,
+    ],
+    queryFn: () =>
+      api.getSalesForecastVersions({
+        includeStats: true,
+        statsScope: 'list',
+        page: versionPage,
+        pageSize: versionPageSize,
+        status: statusFilter === 'all' ? undefined : statusFilter,
+        q: appliedVersionKeyword.trim() || undefined,
+      }),
     staleTime: 30_000,
     refetchInterval: (query) => {
-      const rows = query.state.data ?? [];
+      const rows = query.state.data?.items ?? [];
       return rows.some(
         (v) => v.pipelineStatus === 'generating' || v.pipelineStatus === 'landing',
       )
@@ -79,50 +95,38 @@ export function SalesForecastListPage() {
         : false;
     },
   });
+  const versions = data?.items ?? [];
+  const total = data?.total ?? 0;
 
-  const publishedVersions = useMemo(
-    () =>
-      versions
-        .filter((v) => v.status === 'published')
-        .sort((a, b) => {
-          const aTime = a.publishedAt ? new Date(a.publishedAt).getTime() : 0;
-          const bTime = b.publishedAt ? new Date(b.publishedAt).getTime() : 0;
-          return bTime - aTime;
-        }),
-    [versions],
-  );
-  const latestPublishedVersion = publishedVersions[0];
+  const legacyTab = searchParams.get('tab');
+  const needsLegacyDraft =
+    legacyTab === 'publish' || searchParams.get('calibrationImport') === '1';
 
-  const filteredVersions = useMemo(() => {
-    if (statusFilter === 'all') return versions;
-    return versions.filter((v) => v.status === statusFilter);
-  }, [versions, statusFilter]);
+  const { data: latestPublishedPage, isSuccess: latestPublishedReady } = useQuery({
+    queryKey: ['sales-forecast-versions', 'latest-published'],
+    queryFn: () =>
+      api.getSalesForecastVersions({ status: 'published', page: 1, pageSize: 1 }),
+    staleTime: 30_000,
+  });
+  const latestPublishedVersion = latestPublishedPage?.items?.[0];
+  const publishedTotal = latestPublishedPage?.total ?? 0;
 
-  const searchedVersions = useMemo(() => {
-    const q = appliedVersionKeyword.trim().toLowerCase();
-    if (!q) return filteredVersions;
-    return filteredVersions.filter(
-      (v) =>
-        v.versionName?.toLowerCase().includes(q) ||
-        v.versionNo?.toLowerCase().includes(q) ||
-        v.station?.toLowerCase().includes(q),
-    );
-  }, [filteredVersions, appliedVersionKeyword]);
-
-  const pagedVersions = useMemo(() => {
-    const start = (versionPage - 1) * versionPageSize;
-    return searchedVersions.slice(start, start + versionPageSize);
-  }, [searchedVersions, versionPage, versionPageSize]);
+  const { data: legacyDraftPage, isFetched: legacyDraftFetched } = useQuery({
+    queryKey: ['sales-forecast-versions', 'legacy-draft'],
+    queryFn: () => api.getSalesForecastVersions({ status: 'draft', page: 1, pageSize: 1 }),
+    enabled: needsLegacyDraft,
+    staleTime: 30_000,
+  });
 
   useEffect(() => {
     setVersionPage(1);
   }, [statusFilter, appliedVersionKeyword]);
 
   useEffect(() => {
-    const legacyTab = searchParams.get('tab');
     if (!legacyTab || legacyTab === 'strategy' || legacyTab === 'versions') return;
     if (legacyTab === 'publish') {
-      const draft = versions.find((v) => v.status === 'draft');
+      if (!legacyDraftFetched) return;
+      const draft = legacyDraftPage?.items?.[0];
       if (draft) {
         navigate(`/data/forecast/${draft.id}?view=review`, { replace: true });
         return;
@@ -131,7 +135,8 @@ export function SalesForecastListPage() {
       return;
     }
     if (legacyTab === 'insights') {
-      const published = versions.find((v) => v.status === 'published');
+      if (!latestPublishedReady) return;
+      const published = latestPublishedPage?.items?.[0];
       if (published) {
         navigate(`/data/forecast/${published.id}?view=accuracy`, { replace: true });
         return;
@@ -142,11 +147,20 @@ export function SalesForecastListPage() {
     if (legacyTab === 'generate') {
       setSearchParams({}, { replace: true });
     }
-  }, [searchParams, versions, navigate, setSearchParams]);
+  }, [
+    legacyTab,
+    legacyDraftFetched,
+    legacyDraftPage,
+    latestPublishedReady,
+    latestPublishedPage,
+    navigate,
+    setSearchParams,
+  ]);
 
   useEffect(() => {
     if (searchParams.get('calibrationImport') !== '1') return;
-    const draft = versions.find((v) => v.status === 'draft');
+    if (!legacyDraftFetched) return;
+    const draft = legacyDraftPage?.items?.[0];
     if (draft) {
       navigate(`/data/forecast/${draft.id}?view=review&calibrationImport=1`, { replace: true });
       return;
@@ -155,7 +169,7 @@ export function SalesForecastListPage() {
       prev.delete('calibrationImport');
       return prev;
     }, { replace: true });
-  }, [searchParams, versions, navigate, setSearchParams]);
+  }, [searchParams, legacyDraftFetched, legacyDraftPage, navigate, setSearchParams]);
 
   const generateBaseline = useMutation({
     mutationFn: async () => {
@@ -275,15 +289,15 @@ export function SalesForecastListPage() {
         <div className="flex flex-wrap items-center gap-2">
           {latestPublishedVersion ? (
             <span className="inline-flex items-center rounded-md bg-muted px-2 py-1 text-xs text-text-sub">
-              补货口径：{publishedVersions.length > 1
-                ? `${publishedVersions.length} 个已发布版本 · 同 SKU 取最新发布`
+              补货口径：{publishedTotal > 1
+                ? `${publishedTotal} 个已发布版本 · 同 SKU 取最新发布`
                 : latestPublishedVersion.versionNo}
             </span>
-          ) : (
+          ) : latestPublishedReady ? (
             <span className="inline-flex items-center rounded-md border border-amber-500/30 bg-amber-500/10 px-2 py-1 text-xs text-amber-800 dark:text-amber-200">
               尚无已发布版本，补货未挂载预测
             </span>
-          )}
+          ) : null}
           {listTab === 'versions' && (
             <Button
               size="sm"
@@ -501,7 +515,7 @@ export function SalesForecastListPage() {
               )}
               {isLoading ? (
                 <p className="text-sm text-text-sub">加载中…</p>
-              ) : searchedVersions.length === 0 ? (
+              ) : versions.length === 0 ? (
                 <p className="text-sm text-text-sub">暂无预测版本，请先生成草稿。</p>
               ) : (
                 <div className="overflow-auto">
@@ -512,19 +526,19 @@ export function SalesForecastListPage() {
                         <th className="p-2 font-normal">状态</th>
                         <th className="p-2 font-normal">开始月 / 月数</th>
                         <th className="p-2 font-normal">SKU / 行数</th>
+                        <th className="p-2 font-normal">创建人</th>
                         <th className="p-2 font-normal">创建 / 发布</th>
                         <th className="p-2 font-normal">操作</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {pagedVersions.map((version) => (
+                      {versions.map((version) => (
                         <VersionRow
                           key={version.id}
                           version={version}
                           deleting={deleteDraftVersion.isPending && deleteDraftVersion.variables === version.id}
                           onDelete={(id) => {
-                            const target = versions.find((v) => v.id === id);
-                            const label = target?.versionName || target?.versionNo || id;
+                            const label = version.versionName || version.versionNo || id;
                             if (
                               window.confirm(
                                 `确定删除草稿「${label}」？将同步删除其预测明细与复核项，且不可恢复。`,
@@ -539,11 +553,11 @@ export function SalesForecastListPage() {
                   </table>
                 </div>
               )}
-              {!isLoading && searchedVersions.length > 0 && (
+              {!isLoading && total > 0 && (
                 <ListPagination
                   page={versionPage}
                   pageSize={versionPageSize}
-                  total={searchedVersions.length}
+                  total={total}
                   onPageChange={setVersionPage}
                   onPageSizeChange={(next) => {
                     setVersionPageSize(next);
@@ -608,6 +622,7 @@ function VersionRow({
       <td className="p-2 font-numeric">
         {version.stats.skuCount.toLocaleString()} / {version.stats.forecastRowCount.toLocaleString()}
       </td>
+      <td className="p-2 text-sm text-text-sub">{version.createdByName ?? '—'}</td>
       <td className="p-2 text-xs text-text-sub">
         <p>创建 {formatForecastDateTime(version.createdAt)}</p>
         {version.publishedAt && <p>发布 {formatForecastDateTime(version.publishedAt)}</p>}

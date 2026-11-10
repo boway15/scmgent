@@ -157,6 +157,14 @@ const MENU_SEEDS: MenuSeed[] = [
     isLeaf: true,
   },
   {
+    code: 'downloads',
+    name: '下载中心',
+    icon: 'Download',
+    path: '/downloads',
+    sortOrder: 95,
+    isLeaf: true,
+  },
+  {
     code: 'system',
     name: '系统设置',
     icon: 'Settings',
@@ -247,6 +255,7 @@ const ROLE_MENU_CODES: Record<string, string[]> = {
     'data.demand_plan',
     ...ASSISTANT_MENU_CODES,
     'help',
+    'downloads',
     'system',
     'system.users',
     'system.roles',
@@ -266,6 +275,7 @@ const ROLE_MENU_CODES: Record<string, string[]> = {
     'ai.chat',
     'cs.quality',
     'help',
+    'downloads',
   ],
   warehouse: [
     'inventory',
@@ -279,6 +289,7 @@ const ROLE_MENU_CODES: Record<string, string[]> = {
     'ai.chat',
     'cs.quality',
     'help',
+    'downloads',
   ],
   purchaser: [
     ...INVENTORY_MENU_CODES,
@@ -290,6 +301,7 @@ const ROLE_MENU_CODES: Record<string, string[]> = {
     'ai.chat',
     'cs.quality',
     'help',
+    'downloads',
   ],
   viewer: [
     'inventory',
@@ -308,6 +320,7 @@ const ROLE_MENU_CODES: Record<string, string[]> = {
     'ai.chat',
     'cs.quality',
     'help',
+    'downloads',
   ],
 };
 

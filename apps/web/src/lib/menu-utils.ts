@@ -15,6 +15,7 @@ import {
   Receipt,
   ClipboardCheck,
   Ship,
+  Download,
   type LucideIcon,
 } from 'lucide-react';
 import type { MenuNode } from '@/lib/api';
@@ -36,6 +37,7 @@ const ICON_MAP: Record<string, LucideIcon> = {
   Receipt,
   ClipboardCheck,
   Ship,
+  Download,
 };
 
 export function getMenuIcon(icon?: string | null): LucideIcon {
@@ -56,6 +58,12 @@ export function normalizePath(path: string): string {
   if (!path || path === '/') return '/';
   return path.startsWith('/') ? path : `/${path}`;
 }
+
+/** 登录即可访问，不依赖角色菜单（与帮助中心一致） */
+export const OPEN_ACCESS_PATHS = ['/help', '/downloads'] as const;
+
+/** 侧栏不展示，改由顶栏入口进入的菜单 code */
+export const TOP_NAV_ONLY_MENU_CODES = new Set(['help', 'downloads']);
 
 /** 路由别名：旧路径 / 重定向入口 → 实际授权菜单 */
 const RELATED_PATH_ACCESS: Record<string, string> = {
@@ -101,6 +109,9 @@ export function canAccessPath(
   if (roleCode === 'super_admin') return true;
 
   const normalized = normalizePath(path);
+  if (OPEN_ACCESS_PATHS.some((p) => normalized === p || normalized.startsWith(`${p}/`))) {
+    return true;
+  }
   if (normalized === '/') return allowedPaths.length > 0;
 
   const normalizedAllowed = allowedPaths.map(normalizePath);
@@ -173,4 +184,15 @@ export function flattenMenusWithParent(
     }
   }
   return result;
+}
+
+/** 侧栏菜单：去掉帮助中心 / 下载中心（改由顶栏进入） */
+export function menusForSidebar(menus: MenuNode[]): MenuNode[] {
+  return menus
+    .filter((menu) => !TOP_NAV_ONLY_MENU_CODES.has(menu.code))
+    .map((menu) =>
+      menu.children?.length
+        ? { ...menu, children: menusForSidebar(menu.children) }
+        : menu,
+    );
 }

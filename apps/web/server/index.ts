@@ -43,6 +43,7 @@ import { csReplyQualityRoutes } from './routes/cs-reply-quality.js';
 import { qcReinspectionRoutes } from './routes/qc-reinspection.js';
 
 import { taskRoutes } from './routes/tasks.js';
+import { downloadRoutes } from './routes/downloads.js';
 import { productRoutes } from './routes/products.js';
 import { dashboardRoutes } from './routes/dashboard.js';
 import { salesRoutes } from './routes/sales.js';
@@ -126,7 +127,13 @@ app.use('/api/*', async (c, next) => {
   const path = c.req.path;
   const method = c.req.method;
   if (!['POST', 'PUT', 'PATCH', 'DELETE'].includes(method)) return next();
-  if (path.startsWith('/api/auth/') || path.startsWith('/api/tasks/')) return next();
+  if (
+    path.startsWith('/api/auth/') ||
+    path.startsWith('/api/tasks/') ||
+    path.startsWith('/api/downloads')
+  ) {
+    return next();
+  }
   return requireWrite()(c, next);
 });
 
@@ -152,6 +159,7 @@ app.route('/api', roleRoutes);
 app.route('/api', importRoutes);
 app.route('/api', aiRoutes);
 app.route('/api', taskRoutes);
+app.route('/api', downloadRoutes);
 app.route('/api', productRoutes);
 app.route('/api', dashboardRoutes);
 app.route('/api', salesRoutes);

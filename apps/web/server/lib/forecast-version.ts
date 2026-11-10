@@ -1,4 +1,4 @@
-import { eq, and, desc, isNull, inArray, sql } from 'drizzle-orm';
+import { eq, and, desc, isNull, inArray, sql, ilike, or } from 'drizzle-orm';
 import {
   db,
   salesForecastVersions,
@@ -6,7 +6,9 @@ import {
   salesForecastReviewItems,
   forecastAccuracyMonthly,
   LEGACY_FORECAST_VERSION_ID,
+  users,
 } from '@scm/db';
+import { parseListPagination } from './list-pagination.js';
 import { FORECAST_V41_PLATFORM_CODES } from './forecast-platform-scope.js';
 import { parseBaselinePlatformFromVersionName } from './forecast-version-label.js';
 import { invalidateAlertActionCache } from './alert-action-index.js';
@@ -480,6 +482,7 @@ export type ForecastVersionListItem = {
   startMonth: string | null;
   /** 单渠道生成草稿时的渠道码；全平台或未识别时为 null */
   generationPlatform: string | null;
+  createdByName: string | null;
   stats: ForecastVersionStats;
 };
 
@@ -642,8 +645,21 @@ export async function resolveVersionGenerationPlatform(input: {
   return null;
 }
 
+type ForecastVersionListRow = {
+  id: string;
+  versionNo: string;
+  versionName: string;
+  station: string | null;
+  status: string;
+  pipelineStatus: string | null;
+  createdAt: Date;
+  publishedAt: Date | null;
+  startMonth: string | null;
+  createdByName?: string | null;
+};
+
 function toVersionListItem(
-  version: Awaited<ReturnType<typeof listForecastVersions>>[number],
+  version: ForecastVersionListRow,
   stats: ForecastVersionStats,
   generationPlatform: string | null = parseBaselinePlatformFromVersionName(version.versionName),
 ): ForecastVersionListItem {
@@ -658,8 +674,76 @@ function toVersionListItem(
     publishedAt: version.publishedAt,
     startMonth: version.startMonth ?? null,
     generationPlatform,
+    createdByName: version.createdByName ?? null,
     stats,
   };
+}
+
+export async function listForecastVersionsPage(input: {
+  status?: ForecastVersionStatus;
+  q?: string;
+  page?: number;
+  pageSize?: number;
+  includeStats?: boolean;
+  statsScope?: ForecastVersionStatsScope;
+}) {
+  const { page, pageSize, offset } = parseListPagination(
+    input.page != null ? String(input.page) : undefined,
+    input.pageSize != null ? String(input.pageSize) : undefined,
+  );
+  const conditions = [];
+  if (input.status) conditions.push(eq(salesForecastVersions.status, input.status));
+  const q = input.q?.trim();
+  if (q) {
+    const pattern = `%${q}%`;
+    conditions.push(
+      or(
+        ilike(salesForecastVersions.versionNo, pattern),
+        ilike(salesForecastVersions.versionName, pattern),
+        ilike(salesForecastVersions.station, pattern),
+      )!,
+    );
+  }
+  const where = conditions.length ? and(...conditions) : undefined;
+
+  const [rows, countRow] = await Promise.all([
+    db
+      .select({
+        id: salesForecastVersions.id,
+        versionNo: salesForecastVersions.versionNo,
+        versionName: salesForecastVersions.versionName,
+        station: salesForecastVersions.station,
+        status: salesForecastVersions.status,
+        pipelineStatus: salesForecastVersions.pipelineStatus,
+        createdAt: salesForecastVersions.createdAt,
+        publishedAt: salesForecastVersions.publishedAt,
+        startMonth: salesForecastVersions.startMonth,
+        createdByName: users.name,
+      })
+      .from(salesForecastVersions)
+      .leftJoin(users, eq(salesForecastVersions.createdBy, users.id))
+      .where(where)
+      .orderBy(desc(salesForecastVersions.createdAt))
+      .limit(pageSize)
+      .offset(offset),
+    db
+      .select({ count: sql<number>`count(*)::int` })
+      .from(salesForecastVersions)
+      .where(where),
+  ]);
+
+  const statsMap =
+    input.includeStats === false
+      ? new Map<string, ForecastVersionStats>()
+      : await loadVersionStatsMap(
+          rows.map((r) => r.id),
+          input.statsScope ?? 'list',
+        );
+
+  const items = rows.map((r) =>
+    toVersionListItem(r, statsMap.get(r.id) ?? emptyVersionStats()),
+  );
+  return { items, total: countRow[0]?.count ?? 0, page, pageSize };
 }
 
 export async function listForecastVersionsWithStats(

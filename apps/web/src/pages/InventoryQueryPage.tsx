@@ -140,7 +140,7 @@ export function InventoryQueryPage() {
   const onExport = async () => {
     setExporting(true);
     try {
-      const blob = await api.exportInventoryQueryCsv({
+      await api.exportInventoryQueryCsv({
         q: applied.q || undefined,
         category: applied.category || undefined,
         salesCountry: applied.salesCountry || undefined,
@@ -149,8 +149,6 @@ export function InventoryQueryPage() {
         productScope,
         columns: appliedColumns,
       });
-      const date = data?.selectedSnapshotDate ?? 'export';
-      downloadBlob(blob, `inventory-query-${date}-${productScope}.csv`);
     } finally {
       setExporting(false);
     }

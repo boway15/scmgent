@@ -7,6 +7,7 @@ import {
   demandPlanWeekly,
   planningDemandAdoptions,
   skus,
+  users,
 } from '@scm/db';
 import { getCurrentUser } from '../lib/auth-context.js';
 import {
@@ -59,13 +60,8 @@ import {
   type DemandPlanSkuRef,
 } from '../lib/demand-plan-enrich.js';
 import { loadPublishedForecastSkuMetaBySkuIds } from '../lib/forecast-published-resolve.js';
+import { type DemandPlanHorizonExportMode } from '../lib/demand-plan-horizon-export.js';
 import {
-  buildDemandPlanHorizonExportCsv,
-  loadDemandPlanHorizonExportDataset,
-  type DemandPlanHorizonExportMode,
-} from '../lib/demand-plan-horizon-export.js';
-import {
-  buildDemandPlanAccuracyExportCsv,
   buildDemandPlanAccuracyRows,
   paginateDemandPlanAccuracySkuSummaries,
 } from '../lib/demand-plan-accuracy-export.js';
@@ -74,7 +70,7 @@ import {
   clearDemandPlanVersionCalibrations,
   runDemandPlanCalibrationImport,
 } from '../lib/demand-plan-calibration-import.js';
-import { csvAttachment } from '../lib/csv-export.js';
+import { enqueueDownloadJob } from '../lib/download-enqueue.js';
 import { writeAuditLog } from '../lib/audit-log.js';
 import { parseForecastSkuQuery } from '../lib/forecast-sku-query.js';
 import { resolveHorizonProfileSegmentFilter } from '../lib/forecast-horizon.js';
@@ -162,6 +158,10 @@ demandPlanRoutes.get('/demand-plans', menuGuard, async (c) => {
       )!,
     );
   }
+  const status = c.req.query('status')?.trim();
+  if (status) {
+    conditions.push(eq(demandPlanVersions.status, status));
+  }
   const where = conditions.length ? and(...conditions) : undefined;
 
   const [rows, countRow] = await Promise.all([
@@ -178,8 +178,10 @@ demandPlanRoutes.get('/demand-plans', menuGuard, async (c) => {
         horizonWeeks: demandPlanVersions.horizonWeeks,
         publishedAt: demandPlanVersions.publishedAt,
         createdAt: demandPlanVersions.createdAt,
+        createdByName: users.name,
       })
       .from(demandPlanVersions)
+      .leftJoin(users, eq(demandPlanVersions.createdBy, users.id))
       .where(where)
       .orderBy(desc(demandPlanVersions.createdAt))
       .limit(pageSize)
@@ -770,34 +772,28 @@ demandPlanRoutes.get('/demand-plans/horizon/export', menuGuard, async (c) => {
     return c.json({ message: listQuery.error }, 400);
   }
   const skuCode = c.req.query('skuCode')?.trim() || undefined;
-  const skuScopeCond = skuProjectGroupCondition(scope);
-  const periods = buildDemandPlanPeriodColumns(version);
-
-  const dataset = await loadDemandPlanHorizonExportDataset({
-    versionId,
-    skuCode,
-    channelView: listQuery.channelView,
-    platforms: listQuery.platforms,
-    profileSegment: listQuery.profileSegment,
-    categories: listQuery.categories,
-    productScope: listQuery.productScope,
-    skuScopeCond,
-    periods,
-    listWeeklySkuRefs: listDemandPlanWeeklySkuRefs,
-    listWeeklyRows: ({ versionId: vid, skuIds }) => loadWeeklyRowsForExport(vid, skuIds),
-    listStoredRowMeta: ({ versionId: vid, skuIds }) =>
-      loadDemandPlanStoredRowMetaForSkus(vid, skuIds),
-  });
-
-  const built = buildDemandPlanHorizonExportCsv(mode, dataset);
-  if (mode === 'calibration' && built.rowCount === 0) {
-    return c.json({ message: '当前筛选下无分平台计划行，请调整筛选或确认已生成计划' }, 400);
-  }
-
   const stamp = new Date().toISOString().slice(0, 10);
   const safeName = version.versionNo.replace(/[^\w\u4e00-\u9fff-]+/g, '_').slice(0, 48);
   const suffix = mode === 'detail' ? 'detail' : mode === 'calibration' ? 'calibration' : 'wide';
-  return csvAttachment(`demand-plan-horizon-${suffix}-${safeName}-${stamp}.csv`, built.csv);
+  const fileName = `demand-plan-horizon-${suffix}-${safeName}-${stamp}.csv`;
+  const modeLabel =
+    mode === 'detail' ? '明细' : mode === 'calibration' ? '校准表' : '宽表';
+  return enqueueDownloadJob(c, {
+    jobType: 'demand_plan_horizon',
+    title: `需求计划矩阵-${modeLabel}-${version.versionNo}`,
+    fileName,
+    params: {
+      versionId,
+      mode,
+      skuCode,
+      channelView: listQuery.channelView,
+      platforms: listQuery.platforms,
+      profileSegment: listQuery.profileSegment,
+      categories: listQuery.categories,
+      productScope: listQuery.productScope,
+      projectGroupScope: scope,
+    },
+  });
 });
 
 demandPlanRoutes.get('/demand-plans/:id/accuracy/export', menuGuard, async (c) => {
@@ -828,54 +824,22 @@ demandPlanRoutes.get('/demand-plans/:id/accuracy/export', menuGuard, async (c) =
     return c.json({ message: listQuery.error }, 400);
   }
   const skuCode = c.req.query('skuCode')?.trim() || undefined;
-  const skuScopeCond = skuProjectGroupCondition(scope);
-  const allSkus = await listDemandPlanWeeklySkuRefs({
-    versionId,
-    skuCode,
-    skuScopeCond,
-    categories: listQuery.categories,
-    productScope: listQuery.productScope,
-  });
-  const skuIdsAll = allSkus.map((row) => row.skuId);
-  const [metaBySku, storedMetaBySku] = await Promise.all([
-    loadPublishedForecastSkuMetaBySkuIds(skuIdsAll),
-    loadDemandPlanStoredRowMetaForSkus(versionId, skuIdsAll),
-  ]);
-  const filtered = filterSkusByProfileSegment(
-    allSkus,
-    metaBySku,
-    listQuery.profileSegment,
-    storedMetaBySku,
-  );
-  const sorted = sortDemandPlanSkus(filtered, metaBySku, storedMetaBySku);
-  const skuIds = sorted.map((row) => row.skuId);
-  const skuCodeById = new Map(sorted.map((row) => [row.skuId, row.skuCode ?? '—']));
-
-  const weeklyRows = skuIds.length
-    ? await db
-        .select({
-          skuId: demandPlanWeekly.skuId,
-          period: demandPlanWeekly.period,
-          systemDailyAvg: demandPlanWeekly.systemDailyAvg,
-          manualDailyAvg: demandPlanWeekly.manualDailyAvg,
-        })
-        .from(demandPlanWeekly)
-        .where(and(eq(demandPlanWeekly.versionId, versionId), inArray(demandPlanWeekly.skuId, skuIds)))
-        .orderBy(demandPlanWeekly.period)
-    : [];
-
-  const planRows = weeklyRows.map((row) => ({
-    skuId: row.skuId,
-    skuCode: skuCodeById.get(row.skuId) ?? '—',
-    period: row.period,
-    systemDailyAvg: String(row.systemDailyAvg),
-    manualDailyAvg: row.manualDailyAvg != null ? String(row.manualDailyAvg) : null,
-  }));
-
-  const built = await buildDemandPlanAccuracyExportCsv({ planRows });
   const stamp = new Date().toISOString().slice(0, 10);
   const safeName = version.versionNo.replace(/[^\w\u4e00-\u9fff-]+/g, '_').slice(0, 48);
-  return csvAttachment(`demand-plan-accuracy-${safeName}-${stamp}.csv`, built.csv);
+  const fileName = `demand-plan-accuracy-${safeName}-${stamp}.csv`;
+  return enqueueDownloadJob(c, {
+    jobType: 'demand_plan_accuracy',
+    title: `需求计划准确率-${version.versionNo}`,
+    fileName,
+    params: {
+      versionId,
+      skuCode,
+      profileSegment: listQuery.profileSegment,
+      categories: listQuery.categories,
+      productScope: listQuery.productScope,
+      projectGroupScope: scope,
+    },
+  });
 });
 
 demandPlanRoutes.get('/demand-plans/:id/accuracy/summary', menuGuard, async (c) => {

@@ -17,3 +17,5 @@
 25 8 * * * /usr/local/bin/run-task.sh /api/tasks/procurement-follow-up-pull
 30 8 * * * /usr/local/bin/run-task.sh /api/tasks/qc-reinspection-sync
 0 9 * * 1 /usr/local/bin/run-task.sh /api/tasks/replenishment-forecast
+# 下载中心过期文件清理
+15 3 * * * /usr/local/bin/run-task.sh /api/tasks/download-jobs-cleanup

@@ -1,4 +1,5 @@
 import { apiFetch, apiUrl } from './base-path';
+import { showDownloadQueuedNotice } from './download-notice';
 import type { HorizonBand } from './forecast-horizon-meta';
 import { appendProductScopeQuery, type ProductScope } from './product-scope';
 import type { SalesAnalyticsCubePayload } from './sales-analytics-types';
@@ -26,6 +27,30 @@ export type PaginatedResult<T> = {
   total: number;
   page: number;
   pageSize: number;
+};
+
+export type AsyncExportQueued = {
+  kind: 'queued';
+  jobId: string;
+  message: string;
+  downloadCenterPath: string;
+};
+
+export type ExportOutcome = AsyncExportQueued | { kind: 'downloaded' };
+
+export type DownloadJob = {
+  id: string;
+  jobType: string;
+  title: string;
+  fileName: string;
+  status: 'pending' | 'running' | 'ready' | 'failed' | 'cancelled' | 'expired';
+  fileSize: number | null;
+  contentType: string | null;
+  rowCount: number | null;
+  errorMessage: string | null;
+  expiresAt: string;
+  createdAt: string;
+  finishedAt: string | null;
 };
 
 export type User = {
@@ -641,6 +666,7 @@ export type DemandPlanVersionListItem = {
   championForecastVersionId?: string | null;
   publishedAt?: string | null;
   createdAt?: string;
+  createdByName?: string | null;
 };
 
 export type DemandPlanMonthRow = {
@@ -1228,6 +1254,7 @@ export type ForecastVersionListItem = {
   startMonth?: string | null;
   /** 单渠道生成草稿时的渠道码；全平台或未识别时为 null */
   generationPlatform?: string | null;
+  createdByName?: string | null;
   stats: ForecastVersionStats;
 };
 
@@ -1239,6 +1266,7 @@ export type ForecastVersionBasic = {
   startMonth?: string | null;
   status: string;
   publishedAt?: string | null;
+  createdByName?: string | null;
 };
 
 export type ForecastCalibrationImportResult = {
@@ -2500,8 +2528,7 @@ export const api = {
     }
     const query = qs.toString();
     const res = await apiFetch(apiUrl(`/api/inventory/query/export${query ? `?${query}` : ''}`));
-    if (!res.ok) throw new Error('Export failed');
-    return res.blob();
+    return handleExportResponse(res, 'inventory-query.csv');
   },
   getProcurementOpsDates: () =>
     request<{
@@ -2568,8 +2595,7 @@ export const api = {
     const res = await apiFetch(
       apiUrl(`/api/inventory/procurement-ops/export${query ? `?${query}` : ''}`),
     );
-    if (!res.ok) throw new Error('Export failed');
-    return res.blob();
+    return handleExportResponse(res, 'procurement-ops.csv');
   },
   getSkuPlanning: (
     skuId: string,
@@ -2614,8 +2640,7 @@ export const api = {
     const res = await apiFetch(
       apiUrl(`/api/inventory/pools/summary/export${query ? `?${query}` : ''}`),
     );
-    if (!res.ok) throw new Error('Export failed');
-    return res.blob();
+    return handleExportResponse(res, 'inventory-pools-summary.csv');
   },
   getSupplyLotWarehouses: () =>
     request<{ items: string[] }>('/api/inventory/pools/warehouses'),
@@ -2643,8 +2668,7 @@ export const api = {
     appendProductScopeQuery(qs, params?.productScope);
     const query = qs.toString();
     const res = await apiFetch(apiUrl(`/api/inventory/pools/export${query ? `?${query}` : ''}`));
-    if (!res.ok) throw new Error('Export failed');
-    return res.blob();
+    return handleExportResponse(res, 'inventory-pools.csv');
   },
   syncSupplyLots: () =>
     request<{ lotCount: number; eligibleCount: number }>('/api/inventory/pools/sync', {
@@ -2749,7 +2773,10 @@ export const api = {
     appendProductScopeQuery(qs, params?.productScope);
     const query = qs.toString();
     const res = await apiFetch(apiUrl(`/api/inventory/data-issues/export${query ? `?${query}` : ''}`));
-    await downloadAttachment(res, `inventory-data-issues-${new Date().toISOString().slice(0, 10)}.csv`);
+    return handleExportResponse(
+      res,
+      `inventory-data-issues-${new Date().toISOString().slice(0, 10)}.csv`,
+    );
   },
   getUnallocatedSupply: (params?: {
     skuId?: string;
@@ -2806,25 +2833,14 @@ export const api = {
     }
     const query = qs.toString();
     const res = await apiFetch(apiUrl(`/api/inventory/overview/export${query ? `?${query}` : ''}`));
-    if (!res.ok) throw new Error('Export failed');
-    const blob = await res.blob();
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `inventory-turnover-${new Date().toISOString().slice(0, 10)}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
+    return handleExportResponse(
+      res,
+      `inventory-turnover-${new Date().toISOString().slice(0, 10)}.csv`,
+    );
   },
   exportInventoryCsv: async () => {
     const res = await apiFetch(apiUrl('/api/inventory/export'));
-    if (!res.ok) throw new Error('Export failed');
-    const blob = await res.blob();
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `inventory-${new Date().toISOString().slice(0, 10)}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
+    return handleExportResponse(res, `inventory-${new Date().toISOString().slice(0, 10)}.csv`);
   },
   getMerchants: () =>
     request<Array<{ merchantCode: string; merchantName?: string | null }>>('/api/merchants'),
@@ -4792,7 +4808,7 @@ export const api = {
     if (params.historyMonthCount != null) qs.set('historyMonthCount', String(params.historyMonthCount));
     appendProductScopeQuery(qs, params.productScope);
     const res = await apiFetch(apiUrl(`/api/sales-forecasts/horizon/export?${qs}`));
-    await downloadAttachment(
+    return handleExportResponse(
       res,
       params.mode === 'detail'
         ? 'forecast-horizon-detail.csv'
@@ -4821,6 +4837,30 @@ export const api = {
     if (!res.ok) throw new Error(payload.message ?? '预览失败');
     return payload as ForecastCalibrationImportResult;
   },
+  listDownloadJobs: (params?: { page?: number; pageSize?: number; status?: string }) => {
+    const qs = new URLSearchParams();
+    if (params?.page) qs.set('page', String(params.page));
+    if (params?.pageSize) qs.set('pageSize', String(params.pageSize));
+    if (params?.status) qs.set('status', params.status);
+    const query = qs.toString();
+    return request<PaginatedResult<DownloadJob> & { retentionDays?: number }>(
+      `/api/downloads${query ? `?${query}` : ''}`,
+    );
+  },
+  getDownloadJob: (id: string) => request<DownloadJob>(`/api/downloads/${id}`),
+  downloadJobFile: async (id: string) => {
+    const res = await apiFetch(apiUrl(`/api/downloads/${id}/file`));
+    await downloadAttachment(res, 'download.bin');
+  },
+  retryDownloadJob: (id: string) =>
+    request<{ jobId: string; message: string; downloadCenterPath: string }>(
+      `/api/downloads/${id}/retry`,
+      { method: 'POST' },
+    ),
+  cancelDownloadJob: (id: string) =>
+    request<DownloadJob>(`/api/downloads/${id}/cancel`, { method: 'POST' }),
+  deleteDownloadJob: (id: string) =>
+    request<{ ok: boolean }>(`/api/downloads/${id}`, { method: 'DELETE' }),
   commitForecastCalibrationImport: async (versionId: string, input: { csv?: string; file?: File }) => {
     let res: Response;
     if (input.file) {
@@ -4870,18 +4910,24 @@ export const api = {
     includeStats?: boolean;
     /** 列表页仅需 SKU/行数/月数，跳过复核与准确率聚合 */
     statsScope?: 'list' | 'full';
+    page?: number;
+    pageSize?: number;
+    q?: string;
   }) => {
     const qs = new URLSearchParams();
     if (params?.status) qs.set('status', params.status);
     if (params?.includeStats) qs.set('includeStats', '1');
     if (params?.includeStats && params.statsScope) qs.set('statsScope', params.statsScope);
+    if (params?.page) qs.set('page', String(params.page));
+    if (params?.pageSize) qs.set('pageSize', String(params.pageSize));
+    if (params?.q) qs.set('q', params.q);
     const query = qs.toString();
     if (params?.includeStats) {
-      return request<ForecastVersionListItem[]>(
+      return request<PaginatedResult<ForecastVersionListItem>>(
         `/api/sales-forecast-versions${query ? `?${query}` : ''}`,
       );
     }
-    return request<ForecastVersionBasic[]>(
+    return request<PaginatedResult<ForecastVersionBasic>>(
       `/api/sales-forecast-versions${query ? `?${query}` : ''}`,
     );
   },
@@ -5181,7 +5227,7 @@ export const api = {
         : params?.rowKind === 'miss'
           ? 'forecast-accuracy-miss.csv'
           : 'forecast-accuracy.csv';
-    await downloadAttachment(res, fallback);
+    return handleExportResponse(res, fallback);
   },
   getSalesForecastAccuracySummary: (params?: {
     versionId?: string;
@@ -5494,27 +5540,21 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(body ?? {}),
     }),
-  listDemandPlanVersions: (params?: { page?: number; pageSize?: number; q?: string }) => {
+  listDemandPlanVersions: (params?: {
+    page?: number;
+    pageSize?: number;
+    q?: string;
+    status?: string;
+  }) => {
     const qs = new URLSearchParams();
     if (params?.page) qs.set('page', String(params.page));
     if (params?.pageSize) qs.set('pageSize', String(params.pageSize));
     if (params?.q) qs.set('q', params.q);
+    if (params?.status) qs.set('status', params.status);
     const query = qs.toString();
-    return request<
-      PaginatedResult<{
-        id: string;
-        versionNo: string;
-        versionName: string;
-        status: string;
-        projectGroup: string;
-        warehouseCode: string;
-        startMonth?: string;
-        startWeek?: string | null;
-        horizonWeeks?: number | null;
-        publishedAt?: string | null;
-        createdAt?: string;
-      }>
-    >(`/api/demand-plans${query ? `?${query}` : ''}`);
+    return request<PaginatedResult<DemandPlanVersionListItem>>(
+      `/api/demand-plans${query ? `?${query}` : ''}`,
+    );
   },
   listDemandPlanProjectGroups: () =>
     request<{ items: string[]; horizonWeeks: number }>('/api/demand-plans/project-groups'),
@@ -5583,7 +5623,7 @@ export const api = {
     appendRepeatedQuery(qs, 'categories', params.categories);
     appendProductScopeQuery(qs, params.productScope);
     const res = await apiFetch(apiUrl(`/api/demand-plans/horizon/export?${qs}`));
-    await downloadAttachment(
+    return handleExportResponse(
       res,
       params.mode === 'detail'
         ? 'demand-plan-horizon-detail.csv'
@@ -5614,7 +5654,7 @@ export const api = {
     const res = await apiFetch(
       apiUrl(`/api/demand-plans/${params.versionId}/accuracy/export${query ? `?${query}` : ''}`),
     );
-    await downloadAttachment(res, 'demand-plan-accuracy.csv');
+    return handleExportResponse(res, 'demand-plan-accuracy.csv');
   },
   getDemandPlanAccuracySummary: (
     versionId: string,
@@ -5807,6 +5847,33 @@ export const api = {
       body: JSON.stringify(data ?? {}),
     }),
 };
+
+export function notifyExportOutcome(result: ExportOutcome) {
+  if (result.kind !== 'queued') return;
+  showDownloadQueuedNotice(result.message, result.downloadCenterPath);
+}
+
+/** 同步附件下载，或 202 异步入队（下载中心） */
+async function handleExportResponse(res: Response, fallbackName: string): Promise<ExportOutcome> {
+  if (res.status === 202) {
+    const body = (await res.json().catch(() => ({}))) as {
+      jobId?: string;
+      message?: string;
+      downloadCenterPath?: string;
+    };
+    if (!body.jobId) throw new Error(body.message ?? '导出任务创建失败');
+    const queued: AsyncExportQueued = {
+      kind: 'queued',
+      jobId: body.jobId,
+      message: body.message ?? '已加入下载中心，生成完成后可下载',
+      downloadCenterPath: body.downloadCenterPath ?? '/downloads',
+    };
+    notifyExportOutcome(queued);
+    return queued;
+  }
+  await downloadAttachment(res, fallbackName);
+  return { kind: 'downloaded' };
+}
 
 async function downloadAttachment(res: Response, fallbackName: string) {
   if (!res.ok) {

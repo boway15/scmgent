@@ -75,6 +75,7 @@ services:
       # DIFY_BASE_URL / DIFY_API_KEY_* 由 .env 注入；容器内 127.0.0.1 会在代码中改写为 host.docker.internal
       RUNNING_IN_DOCKER: "true"
       COSTING_DATA_DIR: /data/costing
+      DOWNLOAD_DATA_DIR: /data/downloads
       COSTING_PREPROCESS_MODE: ${COSTING_PREPROCESS_MODE:-auto}
       DIFY_WORKFLOW_TIMEOUT_MS: ${DIFY_WORKFLOW_TIMEOUT_MS:-300000}
       COSTING_EXTRACT_BATCH_SIZE: ${COSTING_EXTRACT_BATCH_SIZE:-1}
@@ -94,6 +95,7 @@ services:
       # DEMAND_PLAN_WEEKLY_ALGO: "v41_inline"
     volumes:
       - costingdata:/data/costing
+      - downloadsdata:/data/downloads
     depends_on:
       postgres:
         condition: service_healthy
@@ -132,3 +134,4 @@ services:
 volumes:
   pgdata:
   costingdata:
+  downloadsdata:

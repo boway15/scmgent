@@ -154,16 +154,18 @@ function AllCategoryV41StrategySummary({ context }: { context: ForecastStrategyC
   const isWeekly = context === 'weekly';
   const { data: forecastDrafts } = useQuery({
     queryKey: ['sales-forecast-versions', 'draft'],
-    queryFn: () => api.getSalesForecastVersions({ status: 'draft' }),
+    queryFn: () =>
+      api.getSalesForecastVersions({ status: 'draft', page: 1, pageSize: 1 }),
     enabled: !isWeekly,
   });
   const { data: demandPlanList } = useQuery({
     queryKey: ['demand-plan-versions', 'draft-strategy'],
-    queryFn: () => api.listDemandPlanVersions({ pageSize: 50 }),
+    queryFn: () =>
+      api.listDemandPlanVersions({ status: 'draft', page: 1, pageSize: 1 }),
     enabled: isWeekly,
   });
-  const latestForecastDraft = forecastDrafts?.[0];
-  const latestDemandPlanDraft = demandPlanList?.items.find((row) => row.status === 'draft');
+  const latestForecastDraft = forecastDrafts?.items?.[0];
+  const latestDemandPlanDraft = demandPlanList?.items?.[0];
 
   const monthlyReference = (
     <>

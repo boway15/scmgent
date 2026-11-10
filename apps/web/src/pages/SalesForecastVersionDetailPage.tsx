@@ -169,12 +169,14 @@ export function SalesForecastVersionDetailPage() {
     enabled: activeView === 'accuracy' && Boolean(versionId),
   });
 
-  const { data: publishedVersions = [] } = useQuery({
+  const { data: publishedPage } = useQuery({
     queryKey: ['sales-forecast-versions', 'published-for-merge'],
-    queryFn: () => api.getSalesForecastVersions({ status: 'published' }),
+    queryFn: () =>
+      api.getSalesForecastVersions({ status: 'published', page: 1, pageSize: 100 }),
     enabled: Boolean(versionId) && version?.status === 'draft',
     staleTime: 30_000,
   });
+  const publishedVersions = publishedPage?.items ?? [];
 
   const isBacktestDraft = Boolean(
     version?.status === 'draft' &&

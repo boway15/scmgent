@@ -67,36 +67,26 @@ export function DemandPlanPilotPage() {
   );
 
   const versionsQuery = useQuery({
-    queryKey: ['demand-plan-versions', 'all'],
-    queryFn: () => api.listDemandPlanVersions({ pageSize: 500 }),
+    queryKey: ['demand-plan-versions', page, pageSize, statusFilter, appliedKeyword],
+    queryFn: () =>
+      api.listDemandPlanVersions({
+        page,
+        pageSize,
+        status: statusFilter === 'all' ? undefined : statusFilter,
+        q: appliedKeyword.trim() || undefined,
+      }),
   });
 
   const versions = versionsQuery.data?.items ?? [];
-  const adoptedPublished = useMemo(
-    () => versions.filter((row) => row.status === 'pilot_published'),
-    [versions],
-  );
+  const total = versionsQuery.data?.total ?? 0;
 
-  const filteredVersions = useMemo(() => {
-    if (statusFilter === 'all') return versions;
-    return versions.filter((row) => row.status === statusFilter);
-  }, [versions, statusFilter]);
-
-  const searchedVersions = useMemo(() => {
-    const q = appliedKeyword.trim().toLowerCase();
-    if (!q) return filteredVersions;
-    return filteredVersions.filter(
-      (row) =>
-        row.versionName?.toLowerCase().includes(q) ||
-        row.versionNo?.toLowerCase().includes(q) ||
-        formatDemandPlanProjectGroup(row.projectGroup).toLowerCase().includes(q),
-    );
-  }, [filteredVersions, appliedKeyword]);
-
-  const pagedVersions = useMemo(() => {
-    const start = (page - 1) * pageSize;
-    return searchedVersions.slice(start, start + pageSize);
-  }, [searchedVersions, page, pageSize]);
+  const { data: publishedCountPage } = useQuery({
+    queryKey: ['demand-plan-versions', 'pilot-published-count'],
+    queryFn: () =>
+      api.listDemandPlanVersions({ status: 'pilot_published', page: 1, pageSize: 1 }),
+    staleTime: 30_000,
+  });
+  const publishedTotal = publishedCountPage?.total ?? 0;
 
   useEffect(() => {
     setPage(1);
@@ -148,9 +138,9 @@ export function DemandPlanPilotPage() {
               去生成
             </Button>
           ) : null}
-          {adoptedPublished.length > 0 ? (
+          {publishedTotal > 0 ? (
             <span className="inline-flex items-center rounded-md bg-muted px-2 py-1 text-xs text-text-sub">
-              已发布 {adoptedPublished.length} 个版本 · 「已发布」≠ 已接入补货
+              已发布 {publishedTotal} 个版本 · 「已发布」≠ 已接入补货
             </span>
           ) : (
             <span className="inline-flex items-center rounded-md border border-amber-500/30 bg-amber-500/10 px-2 py-1 text-xs text-amber-800 dark:text-amber-200">
@@ -276,7 +266,7 @@ export function DemandPlanPilotPage() {
           />
           {versionsQuery.isLoading ? (
             <p className="text-sm text-text-sub">加载中…</p>
-          ) : searchedVersions.length === 0 ? (
+          ) : total === 0 ? (
             <p className="text-sm text-text-sub">暂无需求计划版本，请先生成草稿。</p>
           ) : (
             <div className="overflow-auto">
@@ -286,23 +276,24 @@ export function DemandPlanPilotPage() {
                     <th className="p-2 font-normal">版本</th>
                     <th className="p-2 font-normal">状态</th>
                     <th className="p-2 font-normal">范围 / 周期</th>
+                    <th className="p-2 font-normal">创建人</th>
                     <th className="p-2 font-normal">创建 / 发布</th>
                     <th className="p-2 font-normal">操作</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {pagedVersions.map((version) => (
+                  {versions.map((version) => (
                     <VersionRow key={version.id} version={version} />
                   ))}
                 </tbody>
               </table>
             </div>
           )}
-          {!versionsQuery.isLoading && searchedVersions.length > 0 && (
+          {!versionsQuery.isLoading && total > 0 && (
             <ListPagination
               page={page}
               pageSize={pageSize}
-              total={searchedVersions.length}
+              total={total}
               onPageChange={setPage}
               onPageSizeChange={(next) => {
                 setPageSize(next);
@@ -345,6 +336,7 @@ function VersionRow({ version }: { version: DemandPlanVersionListItem }) {
         <p>{formatDemandPlanProjectGroup(version.projectGroup)}</p>
         <p className="font-mono text-xs text-text-sub">{formatDemandPlanHorizon(version)}</p>
       </td>
+      <td className="p-2 text-sm text-text-sub">{version.createdByName ?? '—'}</td>
       <td className="p-2 text-xs text-text-sub">
         <p>创建 {formatForecastDateTime(version.createdAt)}</p>
         {version.publishedAt ? <p>发布 {formatForecastDateTime(version.publishedAt)}</p> : null}

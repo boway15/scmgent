@@ -5,38 +5,30 @@ import {
   skuProjectGroupCondition,
 } from '../lib/data-scope.js';
 import { Hono } from 'hono';
-import { db, inventoryRecords, skus, safetyStockConfig, warehouses, channelWarehousePrefs, merchants, salesForecastMonthly } from '@scm/db';
+import { db, inventoryRecords, skus, warehouses, channelWarehousePrefs, merchants, salesForecastMonthly } from '@scm/db';
 import { getCurrentUser } from '../lib/auth-context.js';
 import { analysisOnlyResponse } from '../lib/analysis-only.js';
 import { requireMenu } from '../lib/rbac.js';
-import { buildCsv, csvAttachment } from '../lib/csv-export.js';
+import { enqueueDownloadJob } from '../lib/download-enqueue.js';
 import { IN_PRODUCTION_WAREHOUSE } from '../lib/inventory-constants.js';
-import { getLatestInProductionQty } from '../lib/inventory-snapshot.js';
-import { resolveInventoryPosition } from '../lib/inventory-position.js';
 import {
   applyReplenishLightToRows,
-  normalizeReplenishLight,
   needsReplenishmentByInventory,
   type ReplenishLight,
 } from '../lib/replenish-light.js';
 import { writeAuditLog } from '../lib/audit-log.js';
-import { buildInventoryOverviewRows, buildInventoryOverviewItemBySkuId, buildInventoryOverviewExportItems } from '../lib/inventory-overview-service.js';
+import { buildInventoryOverviewRows, buildInventoryOverviewItemBySkuId } from '../lib/inventory-overview-service.js';
 import { parseListPagination } from '../lib/list-pagination.js';
-import { getViewColumnIds, resolveOverviewColumnIds } from '../lib/inventory-overview-views.js';
-import { getOverviewCellValue } from '../lib/inventory-overview-cell-value.js';
-import { INVENTORY_OVERVIEW_COLUMN_BY_ID } from '../lib/inventory-turnover-snapshot.js';
 import {
   DEFAULT_INVENTORY_TREND_FIELDS,
   listInventorySnapshotDates,
   loadInventoryTrend,
 } from '../lib/inventory-daily-snapshot.js';
 import {
-  buildProcurementOpsExportRows,
   listProcurementOpsRows,
   listProcurementOpsSnapshotDates,
 } from '../lib/procurement-ops-service.js';
 import {
-  buildInventoryQueryExportRows,
   listInventoryQueryRows,
   listInventoryQuerySnapshotDates,
 } from '../lib/inventory-query-service.js';
@@ -85,10 +77,13 @@ function parseQueryFilters(c: { req: { query: (k: string) => string | undefined 
 inventoryRoutes.get('/inventory/query/export', requireMenu('inventory.overview'), async (c) => {
   const filters = parseQueryFilters(c);
   const projectGroupScope = await resolveRequestProjectGroupScope(c);
-  const exported = await buildInventoryQueryExportRows({ ...filters, projectGroupScope });
-  const csv = buildCsv(exported.headers, exported.rows);
-  const date = exported.selectedSnapshotDate ?? new Date().toISOString().slice(0, 10);
-  return csvAttachment(`inventory-query-${date}-${filters.productScope}.csv`, csv);
+  const date = new Date().toISOString().slice(0, 10);
+  return enqueueDownloadJob(c, {
+    jobType: 'inventory_query',
+    title: `库存查询导出-${date}`,
+    fileName: `inventory-query-${date}-${filters.productScope}.csv`,
+    params: { ...filters, projectGroupScope },
+  });
 });
 
 inventoryRoutes.get('/inventory/query/dates', requireMenu('inventory.overview'), async (c) => {
@@ -120,10 +115,13 @@ inventoryRoutes.get(
   async (c) => {
     const filters = parseQueryFilters(c);
     const projectGroupScope = await resolveRequestProjectGroupScope(c);
-    const exported = await buildProcurementOpsExportRows({ ...filters, projectGroupScope });
-    const csv = buildCsv(exported.headers, exported.rows);
-    const date = exported.selectedSnapshotDate ?? new Date().toISOString().slice(0, 10);
-    return csvAttachment(`procurement-ops-${date}-${filters.productScope}.csv`, csv);
+    const date = new Date().toISOString().slice(0, 10);
+    return enqueueDownloadJob(c, {
+      jobType: 'inventory_procurement_ops',
+      title: `采购在途导出-${date}`,
+      fileName: `procurement-ops-${date}-${filters.productScope}.csv`,
+      params: { ...filters, projectGroupScope },
+    });
   },
 );
 
@@ -162,22 +160,13 @@ inventoryRoutes.get('/inventory/overview/export', requireMenu('inventory.overvie
   const filters = parseOverviewFilters(c);
   const projectGroupScope = await resolveRequestProjectGroupScope(c);
   const full = c.req.query('full') === 'true';
-  const columnIds =
-    full
-      ? getViewColumnIds('feishu_full')
-      : resolveOverviewColumnIds({ view: filters.view, columns: filters.columns }) ??
-        getViewColumnIds('replenish');
-
-  const items = await buildInventoryOverviewExportItems(
-    { ...filters, projectGroupScope },
-    { fullColumns: full },
-  );
-  const headers = columnIds.map((id) => INVENTORY_OVERVIEW_COLUMN_BY_ID.get(id)?.label ?? id);
-  const rows = items.map((item) => columnIds.map((colId) => getOverviewCellValue(item, colId)));
-
-  const csv = buildCsv(headers, rows);
   const date = new Date().toISOString().slice(0, 10);
-  return csvAttachment(`inventory-turnover-${date}-${filters.productScope}.csv`, csv);
+  return enqueueDownloadJob(c, {
+    jobType: 'inventory_overview',
+    title: `库存周转导出-${date}`,
+    fileName: `inventory-turnover-${date}-${filters.productScope}.csv`,
+    params: { filters, projectGroupScope, full },
+  });
 });
 
 inventoryRoutes.get('/inventory/overview/dates', requireMenu('inventory.overview'), async (c) => {
@@ -246,75 +235,15 @@ inventoryRoutes.get('/inventory/overview', requireMenu('inventory.overview'), as
 });
 
 inventoryRoutes.get('/inventory/export', requireMenu('inventory.overview'), async (c) => {
-  const scope = await resolveRequestProjectGroupScope(c);
-  const scopeCond = skuProjectGroupCondition(scope);
-  const warehouseFilter = c.req.query('warehouse');
-  const whList = warehouseFilter
-    ? [{ code: warehouseFilter }]
-    : await db
-        .select({ code: warehouses.code })
-        .from(warehouses)
-        .where(eq(warehouses.isActive, true))
-        .orderBy(warehouses.sortOrder);
-
-  const skuWhere = scopeCond ? and(eq(skus.isActive, true), scopeCond) : eq(skus.isActive, true);
-  const skuRows = await db
-    .select({ id: skus.id, code: skus.code, name: skus.name, replenishLight: skus.replenishLight })
-    .from(skus)
-    .where(skuWhere)
-    .orderBy(skus.code);
-
-  const rows: Array<Array<string | number>> = [];
-  for (const sku of skuRows) {
-    const qtyInProduction = await getLatestInProductionQty(sku.id);
-
-    for (const wh of whList) {
-      const [record] = await db
-        .select({
-          qtyAvailable: inventoryRecords.qtyAvailable,
-          qtyInTransit: inventoryRecords.qtyInTransit,
-          qtyReserved: inventoryRecords.qtyReserved,
-        })
-        .from(inventoryRecords)
-        .where(and(eq(inventoryRecords.skuId, sku.id), eq(inventoryRecords.warehouse, wh.code)))
-        .orderBy(desc(inventoryRecords.recordedDate), desc(inventoryRecords.createdAt))
-        .limit(1);
-
-      const [cfg] = await db
-        .select({ reorderPoint: safetyStockConfig.reorderPoint })
-        .from(safetyStockConfig)
-        .where(
-          and(eq(safetyStockConfig.skuId, sku.id), eq(safetyStockConfig.warehouseCode, wh.code)),
-        )
-        .limit(1);
-
-      const qtyAvailable = record?.qtyAvailable ?? 0;
-      const qtyInTransit = record?.qtyInTransit ?? 0;
-      const qtyReserved = record?.qtyReserved ?? 0;
-      const localEffectiveQty = qtyAvailable + qtyInTransit;
-      const position = await resolveInventoryPosition({ skuId: sku.id, warehouseCode: wh.code });
-
-      rows.push([
-        wh.code,
-        sku.code,
-        sku.name,
-        normalizeReplenishLight(sku.replenishLight),
-        qtyAvailable,
-        qtyInTransit,
-        qtyInProduction,
-        qtyReserved,
-        localEffectiveQty,
-        position.effectiveQty,
-        cfg?.reorderPoint ?? '',
-      ]);
-    }
-  }
-
-  const csv = buildCsv(
-    ['warehouse', 'sku_code', 'sku_name', 'replenish_light', 'qty_available', 'qty_in_transit', 'sku_qty_in_production', 'qty_reserved', 'local_effective_qty', 'effective_qty', 'reorder_point'],
-    rows,
-  );
-  return csvAttachment(`inventory-${new Date().toISOString().slice(0, 10)}.csv`, csv);
+  const projectGroupScope = await resolveRequestProjectGroupScope(c);
+  const warehouse = c.req.query('warehouse')?.trim() || undefined;
+  const date = new Date().toISOString().slice(0, 10);
+  return enqueueDownloadJob(c, {
+    jobType: 'inventory_full',
+    title: `库存全量导出-${date}`,
+    fileName: `inventory-${date}.csv`,
+    params: { projectGroupScope, warehouse },
+  });
 });
 
 inventoryRoutes.get('/inventory/records', requireMenu('inventory.overview'), async (c) => {

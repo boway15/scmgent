@@ -1,14 +1,12 @@
 import { Hono } from 'hono';
-import { csvAttachment } from '../lib/csv-export.js';
+import { enqueueDownloadJob } from '../lib/download-enqueue.js';
 import {
-  buildSupplyLotSummaryExportCsv,
   countSupplyLotSummaries,
   listSupplyLotSummaries,
   listSupplyLotWarehouseOptions,
   parseSupplyLotSummaryFilters,
 } from '../lib/inventory-supply-lot-summary.js';
 import {
-  buildSupplyLotsExportCsv,
   countSupplyLots,
   listSupplyLots,
   parseSupplyLotExportFilters,
@@ -47,11 +45,13 @@ inventoryPoolsRoutes.get(
       multiTransitBatch: c.req.query('multiTransitBatch'),
       productScope: c.req.query('productScope'),
     });
-    const csv = await buildSupplyLotSummaryExportCsv(filters);
-    return csvAttachment(
-      `inventory-pools-summary-${todayFilenameSuffix()}-${filters.productScope}.csv`,
-      csv,
-    );
+    const date = todayFilenameSuffix();
+    return enqueueDownloadJob(c, {
+      jobType: 'inventory_pools_summary',
+      title: `仓网三池汇总导出-${date}`,
+      fileName: `inventory-pools-summary-${date}-${filters.productScope}.csv`,
+      params: { filters },
+    });
   },
 );
 
@@ -66,12 +66,14 @@ inventoryPoolsRoutes.get(
       dateUnknown: c.req.query('dateUnknown'),
       productScope: c.req.query('productScope'),
     });
-    const csv = await buildSupplyLotsExportCsv(filters);
+    const date = todayFilenameSuffix();
     const poolSuffix = filters.pool ?? 'all';
-    return csvAttachment(
-      `inventory-pools-batches-${poolSuffix}-${todayFilenameSuffix()}-${filters.productScope}.csv`,
-      csv,
-    );
+    return enqueueDownloadJob(c, {
+      jobType: 'inventory_pools',
+      title: `仓网三池批次导出-${date}`,
+      fileName: `inventory-pools-batches-${poolSuffix}-${date}-${filters.productScope}.csv`,
+      params: { filters },
+    });
   },
 );
 

@@ -189,6 +189,30 @@ function sumAllocatedByContainer(
   return map;
 }
 
+/** 费用区表头：每个费用项「总 / 承担」成对列 */
+function buildFeePairHeaders(feeHeaders: readonly string[]): string[] {
+  const headers: string[] = [];
+  for (const feeType of feeHeaders) {
+    headers.push(`${feeType}-总`, `${feeType}-承担`);
+  }
+  return headers;
+}
+
+/** 按柜预聚合：该工厂各费用项承担金额 */
+function buildMerchantFeeBorneByContainer(
+  allocations: ReconcileExportAllocation[],
+  merchantCode: string,
+): Map<string, Map<string, number>> {
+  const map = new Map<string, Map<string, number>>();
+  for (const row of allocations) {
+    if (row.merchantCode !== merchantCode) continue;
+    if (!map.has(row.containerNo)) map.set(row.containerNo, new Map());
+    const fees = map.get(row.containerNo)!;
+    fees.set(row.feeType, round2((fees.get(row.feeType) ?? 0) + row.allocatedAmountCny));
+  }
+  return map;
+}
+
 function merchantContainers(
   allocations: ReconcileExportAllocation[],
   merchantCode: string,
@@ -246,17 +270,24 @@ export function buildMerchantBillWideExportAoa(params: {
   const containerVolumeTotals = buildContainerVolumeTotals(containerStats);
   const merchantVolumes = buildMerchantVolumeByContainer(containerStats, merchantCode);
   const merchantAllocated = sumAllocatedByContainer(allocations, merchantCode);
+  const merchantFeeBorne = buildMerchantFeeBorneByContainer(allocations, merchantCode);
   const merchantLabel = merchantDisplayName(allocations, merchantCode);
   const containers = merchantContainers(allocations, merchantCode);
 
-  const header = [...metaHeaders, ...feeHeaders, ...MERCHANT_BILL_APPEND_HEADERS];
+  const feePairHeaders = buildFeePairHeaders(feeHeaders);
+  const header = [...metaHeaders, ...feePairHeaders, ...MERCHANT_BILL_APPEND_HEADERS];
   const rows: unknown[][] = [header];
 
   for (const containerNo of containers) {
     const bill =
       billByContainer.get(containerNo) ??
       emptyBillWideRow(containerNo, metaHeaders.length);
-    const feeCells = feeHeaders.map((feeType) => bill.fees.get(feeType) ?? 0);
+    const borneByFee = merchantFeeBorne.get(containerNo);
+    const feeCells: number[] = [];
+    for (const feeType of feeHeaders) {
+      feeCells.push(bill.fees.get(feeType) ?? 0);
+      feeCells.push(borneByFee?.get(feeType) ?? 0);
+    }
     const totalVolume = containerVolumeTotals.get(containerNo) ?? 0;
     const merchantVolume = merchantVolumes.get(containerNo) ?? 0;
     const volumeRatio = totalVolume > 0 ? round4(merchantVolume / totalVolume) : 0;

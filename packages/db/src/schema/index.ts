@@ -14,6 +14,7 @@ export * from './pmc';
 export * from './ai';
 export * from './logistics';
 export * from './ops';
+export * from './downloads';
 export * from './news-intel';
 export * from './cs-reply-quality';
 export * from './qc-reinspection';

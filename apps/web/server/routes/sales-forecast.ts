@@ -31,9 +31,9 @@ import {
   publishForecastVersion,
   archiveForecastVersion,
   deleteDraftForecastVersion,
-  listForecastVersions,
-  listForecastVersionsWithStats,
+  listForecastVersionsPage,
   getForecastVersionWithStats,
+  type ForecastVersionStatus,
   assertVersionIsDraft,
   getPrimaryPublishedVersionId,
   getForecastVersionById,
@@ -55,20 +55,18 @@ import {
 import {
   listForecastAccuracy,
   summarizeForecastAccuracy,
-  buildForecastAccuracyExportCsv,
-  buildForecastAccuracySkuExportCsv,
 } from '../lib/forecast-accuracy.js';
 import {
   buildForecastAccuracyDiagnostics,
   createForecastAccuracyReviewQueue,
 } from '../lib/forecast-accuracy-diagnostics.js';
-import { buildForecastHorizonExportCsv, type ForecastHorizonExportMode } from '../lib/forecast-horizon-export.js';
+import { type ForecastHorizonExportMode } from '../lib/forecast-horizon-export.js';
 import {
   clearForecastVersionCalibrations,
   runForecastCalibrationImport,
 } from '../lib/forecast-calibration-import.js';
 import { runWalkForwardAccuracyBacktest } from '../lib/forecast-walkforward-backtest.js';
-import { csvAttachment } from '../lib/csv-export.js';
+import { enqueueDownloadJob } from '../lib/download-enqueue.js';
 import {
   buildForecastReviewSummary,
   buildForecastAccuracyDigest,
@@ -1366,32 +1364,34 @@ salesForecastRoutes.get('/sales-forecasts/horizon/export', requireMenu('data.for
   const categoryQuery = readCategoryQuery(c);
   if ('error' in categoryQuery) return c.json({ message: categoryQuery.error }, 400);
 
-  const built = scopeEmpty
-    ? { csv: '', rowCount: 0 }
-    : await buildForecastHorizonExportCsv({
-        mode,
-        versionId,
-        station: c.req.query('station')?.trim() || undefined,
-        platform: c.req.query('platform')?.trim() || undefined,
-        platforms: readPlatformsQuery(c),
-        channelView: c.req.query('channelView')?.trim() || undefined,
-        skuCode: c.req.query('skuCode')?.trim() || undefined,
-        categories: categoryQuery.categories,
-        profileSegment: c.req.query('profileSegment')?.trim() || undefined,
-        pendingCalibration: pendingCalibration || undefined,
-        monthCount,
-        historyMonthCount: mode === 'calibration' ? 0 : historyMonthCount,
-        projectGroupScope,
-      });
-
-  if (mode === 'calibration' && !scopeEmpty && built.rowCount === 0) {
-    return c.json({ message: '当前筛选下无分平台预测行，请调整筛选或确认已生成预测' }, 400);
-  }
-
   const stamp = new Date().toISOString().slice(0, 10);
   const safeName = version.versionNo.replace(/[^\w\u4e00-\u9fff-]+/g, '_').slice(0, 48);
   const suffix = mode === 'detail' ? 'detail' : mode === 'calibration' ? 'calibration' : 'wide';
-  return csvAttachment(`forecast-horizon-${suffix}-${safeName}-${stamp}.csv`, built.csv);
+  const fileName = `forecast-horizon-${suffix}-${safeName}-${stamp}.csv`;
+  const modeLabel =
+    mode === 'detail' ? '明细' : mode === 'calibration' ? '校准表' : '宽表';
+  return enqueueDownloadJob(c, {
+    jobType: 'sales_forecast_horizon',
+    title: `销量预测矩阵-${modeLabel}-${version.versionNo}`,
+    fileName,
+    params: {
+      mode,
+      versionId,
+      versionNo: version.versionNo,
+      station: c.req.query('station')?.trim() || undefined,
+      platform: c.req.query('platform')?.trim() || undefined,
+      platforms: readPlatformsQuery(c),
+      channelView: c.req.query('channelView')?.trim() || undefined,
+      skuCode: c.req.query('skuCode')?.trim() || undefined,
+      categories: categoryQuery.categories,
+      profileSegment: c.req.query('profileSegment')?.trim() || undefined,
+      pendingCalibration: pendingCalibration || undefined,
+      monthCount,
+      historyMonthCount: mode === 'calibration' ? 0 : historyMonthCount,
+      projectGroupScope,
+      scopeEmpty,
+    },
+  });
 });
 
 async function readCalibrationImportCsvBuffer(c: Context): Promise<Buffer | Response> {
@@ -1558,16 +1558,18 @@ salesForecastRoutes.get('/sales-forecast-versions', requireMenu('data.forecast')
   if (statusQuery && !isOneOf(statusQuery, FORECAST_VERSION_STATUSES)) {
     return c.json({ message: 'status must be one of draft, published, archived' }, 400);
   }
-  const status = statusQuery;
   const includeStats = c.req.query('includeStats')?.trim() === '1';
-  if (includeStats) {
-    const statsScopeRaw = c.req.query('statsScope')?.trim();
-    const statsScope = statsScopeRaw === 'full' ? 'full' : 'list';
-    const rows = await listForecastVersionsWithStats(status, { statsScope });
-    return c.json(rows);
-  }
-  const rows = await listForecastVersions(status);
-  return c.json(rows);
+  const statsScopeRaw = c.req.query('statsScope')?.trim();
+  const statsScope = statsScopeRaw === 'full' ? 'full' : 'list';
+  const result = await listForecastVersionsPage({
+    status: statusQuery as ForecastVersionStatus | undefined,
+    q: c.req.query('q')?.trim(),
+    page: Number(c.req.query('page') ?? 1),
+    pageSize: Number(c.req.query('pageSize') ?? 20),
+    includeStats,
+    statsScope,
+  });
+  return c.json(result);
 });
 
 salesForecastRoutes.get('/sales-forecast-versions/:id', requireMenu('data.forecast'), async (c) => {
@@ -2101,28 +2103,6 @@ salesForecastRoutes.get('/sales-forecasts/accuracy/export', requireMenu('data.fo
   const groupBy = c.req.query('groupBy')?.trim().toLowerCase();
   const rowKind =
     c.req.query('rowKind')?.trim().toLowerCase() === 'miss' ? 'miss' : 'predicted';
-  const baseExportParams = {
-    versionId,
-    year: parsedYear.value,
-    month: parsedMonth.value,
-    station: c.req.query('station')?.trim(),
-    platform: c.req.query('platform')?.trim(),
-  };
-
-  const { csv, rowCount } = scopeEmpty
-    ? { csv: '', rowCount: 0 }
-    : groupBy === 'sku'
-      ? await buildForecastAccuracySkuExportCsv({
-          ...baseExportParams,
-          rowKind,
-          projectGroupScope,
-        })
-      : await buildForecastAccuracyExportCsv({
-          ...baseExportParams,
-          rowKind,
-          projectGroupScope,
-        });
-
   const stamp = new Date().toISOString().slice(0, 10);
   const safeName = version.versionNo.replace(/[^\w\u4e00-\u9fff-]+/g, '_').slice(0, 48);
   const suffix =
@@ -2133,7 +2113,24 @@ salesForecastRoutes.get('/sales-forecasts/accuracy/export', requireMenu('data.fo
       : rowKind === 'miss'
         ? 'miss'
         : 'detail';
-  return csvAttachment(`forecast-accuracy-${suffix}-${safeName}-${stamp}.csv`, csv);
+  const fileName = `forecast-accuracy-${suffix}-${safeName}-${stamp}.csv`;
+  return enqueueDownloadJob(c, {
+    jobType: 'sales_forecast_accuracy',
+    title: `销量预测准确率-${version.versionNo}`,
+    fileName,
+    params: {
+      versionId,
+      versionNo: version.versionNo,
+      year: parsedYear.value,
+      month: parsedMonth.value,
+      station: c.req.query('station')?.trim(),
+      platform: c.req.query('platform')?.trim(),
+      groupBy,
+      rowKind,
+      projectGroupScope,
+      scopeEmpty,
+    },
+  });
 });
 
 salesForecastRoutes.get('/sales-forecasts', requireMenu('data.forecast'), async (c) => {

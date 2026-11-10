@@ -106,6 +106,14 @@ export const SCHEDULED_TASKS: ScheduledTask[] = [
     cronLabel: '每周一 09:00',
     description: '基于预测与库存位置生成补货建议',
   },
+  {
+    id: 'download_jobs_cleanup',
+    name: '下载中心清理',
+    path: '/api/tasks/download-jobs-cleanup',
+    cron: '15 3 * * *',
+    cronLabel: '每天 03:15',
+    description: '清空超过 15 天有效期的下载记录与文件，并收尾超时任务',
+  },
 ];
 
 export const TASK_NAME_LABELS: Record<string, string> = {
@@ -118,6 +126,7 @@ export const TASK_NAME_LABELS: Record<string, string> = {
   procurement_follow_up_pull: '采购跟单飞书拉取',
   qc_reinspection_sync: '二次验货同步',
   replenishment_forecast: '补货建议生成',
+  download_jobs_cleanup: '下载中心清理',
   purchase_follow_up: '采购跟单提醒',
   inventory_exception_scan: '库存异常扫描',
   inventory_data_issue_scan: '库存数据问题扫描',

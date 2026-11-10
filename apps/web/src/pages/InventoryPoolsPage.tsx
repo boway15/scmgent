@@ -255,19 +255,16 @@ export function InventoryPoolsPage() {
   const onExport = async () => {
     setExporting(true);
     try {
-      const date = new Date().toISOString().slice(0, 10);
       if (viewMode === 'summary') {
-        const blob = await api.exportSupplyLotSummariesCsv({
+        await api.exportSupplyLotSummariesCsv({
           ...toSummaryFilters(applied),
           productScope,
         });
-        downloadBlob(blob, `inventory-pools-summary-${date}.csv`);
       } else {
-        const blob = await api.exportSupplyLotsCsv({
+        await api.exportSupplyLotsCsv({
           ...toBatchFilters(applied, pool),
           productScope,
         });
-        downloadBlob(blob, `inventory-pools-batches-${pool}-${date}.csv`);
       }
     } finally {
       setExporting(false);

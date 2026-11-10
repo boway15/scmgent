@@ -41,6 +41,7 @@ import { BulkStockRequestPage, ProcurementFollowUpPage } from '@/pages/Procureme
 import { HomeRedirect } from '@/components/HomeRedirect';
 import { PlaceholderPage } from '@/pages/PlaceholderPage';
 import { SystemTasksPage } from '@/pages/SystemTasksPage';
+import { DownloadsPage } from '@/pages/DownloadsPage';
 import { RuleCenterPage } from '@/pages/RuleCenterPage';
 import { QcReinspectionPage } from '@/pages/QcReinspectionPage';
 export function AppRouter() {
@@ -111,6 +112,7 @@ export function AppRouter() {
           <Route path="system/roles" element={<RoleMenusPage />} />
           <Route path="system/logs" element={<AuditLogsPage />} />
           <Route path="system/tasks" element={<SystemTasksPage />} />
+          <Route path="downloads" element={<DownloadsPage />} />
           <Route path="system/rules" element={<RuleCenterPage />} />
           <Route path="intel/news" element={<NewsIntelPage />} />
           <Route path="cs/quality" element={<CsReplyQualityPage />} />

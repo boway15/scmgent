@@ -23,4 +23,10 @@ describe('canAccessPath merged inventory menus', () => {
     assert.equal(canAccessPath('/inventory/unallocated', allowed), false);
     assert.equal(canAccessPath('/inventory/planning', allowed), false);
   });
+
+  it('allows help and downloads without menu grant', () => {
+    const allowed: string[] = [];
+    assert.equal(canAccessPath('/help', allowed, 'viewer'), true);
+    assert.equal(canAccessPath('/downloads', allowed, 'viewer'), true);
+  });
 });

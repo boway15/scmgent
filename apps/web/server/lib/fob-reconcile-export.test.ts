@@ -211,6 +211,9 @@ function round4(n: number) {
   });
   assert.equal(wide.length, 2);
   assert.equal(wide[0]?.[0], '货柜号');
+  assert.equal(wide[0]?.includes('拖车费-总'), true);
+  assert.equal(wide[0]?.includes('拖车费-承担'), true);
+  assert.equal(wide[0]?.includes('拖车费'), false);
   assert.equal(wide[0]?.includes('合计金额'), true);
   assert.equal(wide[0]?.includes('承担金额'), true);
   assert.equal(wide[0]?.includes('收款公司名称'), true);
@@ -218,6 +221,10 @@ function round4(n: number) {
   assert.equal(dataRow[0], 'CNTR1');
   assert.equal(dataRow[1], 'BIZ001');
   assert.equal(dataRow[dataRow.length - 1], '森威物流');
+  const feeTotalIdx = wide[0]!.indexOf('拖车费-总');
+  const feeBorneIdx = wide[0]!.indexOf('拖车费-承担');
+  assert.equal(dataRow[feeTotalIdx], 1000);
+  assert.equal(dataRow[feeBorneIdx], 600);
   const totalAmountIdx = wide[0]!.indexOf('合计金额');
   const allocatedIdx = wide[0]!.indexOf('承担金额');
   const totalVolumeIdx = wide[0]!.indexOf('总体积');
@@ -266,6 +273,12 @@ function round4(n: number) {
   const merchantIdx = totalRows[0]!.indexOf('承担工厂/主体');
   assert.equal((totalRows[1] as unknown[])[merchantIdx], '工厂A');
   assert.equal((totalRows[2] as unknown[])[merchantIdx], '工厂B');
+  const feeTotalIdx = totalRows[0]!.indexOf('拖车费-总');
+  const feeBorneIdx = totalRows[0]!.indexOf('拖车费-承担');
+  assert.equal((totalRows[1] as unknown[])[feeTotalIdx], 1000);
+  assert.equal((totalRows[1] as unknown[])[feeBorneIdx], 600);
+  assert.equal((totalRows[2] as unknown[])[feeTotalIdx], 1000);
+  assert.equal((totalRows[2] as unknown[])[feeBorneIdx], 400);
 }
 
 console.log('fob-reconcile-export.test.ts ok');

@@ -147,7 +147,7 @@ export function ProcurementOpsPage() {
   const onExport = async () => {
     setExporting(true);
     try {
-      const blob = await api.exportProcurementOpsCsv({
+      await api.exportProcurementOpsCsv({
         q: applied.q || undefined,
         category: applied.category || undefined,
         salesCountry: applied.salesCountry || undefined,
@@ -156,8 +156,6 @@ export function ProcurementOpsPage() {
         productScope,
         columns: appliedColumns,
       });
-      const date = data?.selectedSnapshotDate ?? 'export';
-      downloadBlob(blob, `full-chain-inventory-${date}-${productScope}.csv`);
     } finally {
       setExporting(false);
     }

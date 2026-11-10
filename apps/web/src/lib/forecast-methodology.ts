@@ -172,14 +172,17 @@ export const FORECAST_METHODOLOGY_SECTIONS: ForecastMethodologySection[] = [
     paragraphs: [
       '生产默认链路：V4.1 分平台生成 → promoteForecastFromShadowDaily → 站点 SI 组合重塑 → 地平线衰减 → 落地后再帽。系统日均=P50；同时持久化 forecast_daily_p10 / p90，复核抽屉展示 P10–P90 区间；补货默认消费 P50。',
       '次通道（非 Amazon）且 recent30<5：禁用 applyPeerPlatformNearFloor，避免主站跑量把崩塌渠道（如 Walmart）抬回旺季水平；落地次通道帽基准为 min(shadow, recent30)。',
-      '当月未过完时，k=0 将 MTD 日均与 recent30 按 nearTerm.mtdBlendWeight（默认 0.5）混合，写入 horizon_factors.mtdBlend。',
-      '旺季月（默认 11/12）若 peakYoyRatio（recent90/去年同窗）低于 seasonalIndex.peakYoyDampThreshold（默认 0.6），不再强制满幅 shadow；近端帽取 min(shadow×1.1, run-rate×1.25)。',
-      'T4A 远月（k≥3）折扣可配置于 v41MonthFactor；仅当预测已低于 recent90×trigger 时，才抬到 recent90×floor（默认 0.45→0.55），防止组合层 2–4 月被抬成伪高峰。衰减后不再二次叠 flex。',
+      '当月未过完时，k=0 将 MTD 日均与 recent30 按 nearTerm.mtdBlendWeight（默认 0.66）混合，写入 horizon_factors.mtdBlend。',
+      '旺季月（默认 11/12）若 peakYoyRatio（recent90/去年同窗）低于 seasonalIndex.peakYoyDampThreshold（默认 0.6），不再强制满幅 shadow。',
+      '生成侧近端帽（h≤1）：平季 max(recent30,d6)×1.15，旺季 11/12 ×1.32。落地后再帽（h≤2）：有影子时取 min(shadow×1.16, run-rate×1.32)；无影子回退×1.10。',
+      'T4A 远月（k≥3）折扣可配置于 v41MonthFactor；仅当预测已低于 recent90×trigger 时，才抬到 recent90×floor（默认 0.45→0.55），防止组合层 2–4 月被抬成伪高峰。衰减后不再二次叠 flex；近端旋钮原则上不改 2–4 月。',
     ],
     table: {
-      headers: ['旋钮', '配置键', '默认', '作用'],
+      headers: ['旋钮', '配置键 / 常量', '默认', '作用'],
       rows: [
         ['MTD 混合', 'nearTerm.mtdBlendWeight / mtdMinDays', '0.66 / 3', 'k=0 锚定当月实绩（温和抬近端）'],
+        ['V41 近端帽', 'V41_NEAR_RUNRATE_*_UPLIFT', '1.15 / 旺季 1.32', 'h≤1 相对 run-rate 上限'],
+        ['落地双顶', 'POST_LANDING_SHADOW_*_UPLIFT', '1.16 / 1.32', 'h≤2 min(影子, run-rate) 帽'],
         ['旺季 YoY 阻尼', 'seasonalIndex.peakYoyDampThreshold', '0.6', '下滑 SKU 取消旺季满幅'],
         ['远月衰减', 'seasonalIndex.shadowHorizonDecay', '[1,1,.85,.7,.6,.55]', '压远端过冲'],
         ['T4A 远月护栏', 'v41MonthFactor.t4aFarFloorTrigger/Ratio', '0.45 / 0.55', '仅纠正严重低估'],

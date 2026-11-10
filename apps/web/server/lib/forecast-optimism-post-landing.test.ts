@@ -8,6 +8,7 @@ import {
   POST_LANDING_SHADOW_RUNRATE_UPLIFT,
   POST_LANDING_SHADOW_UPLIFT,
   POST_LANDING_SECONDARY_UPLIFT,
+  scaleForecastQuantiles,
 } from './forecast-optimism-post-landing.js';
 
 function roundLike(value: number): number {
@@ -116,5 +117,26 @@ describe('forecast-optimism-post-landing', () => {
     assert.ok(damp.nearRunRateCap != null);
     assert.ok(damp.secondaryChannelCap != null);
     assert.equal(damp.capMode, 'shadow_relative');
+  });
+
+  it('scaleForecastQuantiles keeps P50 inside band and repairs stale inverted P90', () => {
+    const ok = scaleForecastQuantiles({
+      daily: 77.85,
+      prevDaily: 81.59,
+      p10: 66.9,
+      p90: 96.28,
+    });
+    assert.equal(ok.p10, roundLike(66.9 * (77.85 / 81.59)));
+    assert.equal(ok.p90, roundLike(96.28 * (77.85 / 81.59)));
+    assert.ok(ok.p10 <= 77.85 && 77.85 <= ok.p90);
+
+    const repaired = scaleForecastQuantiles({
+      daily: 77.85,
+      prevDaily: 81.59,
+      p10: 53.04,
+      p90: 76.34,
+    });
+    assert.ok(repaired.p10 <= 77.85 && 77.85 <= repaired.p90);
+    assert.ok(repaired.p90 > 77.85);
   });
 });

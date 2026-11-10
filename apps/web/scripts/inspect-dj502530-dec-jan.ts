@@ -94,7 +94,7 @@ console.log(
       forecastRows: out,
       forecastJanAsPctOfDec: ratio,
       explanation:
-        '近端帽按当月影子 shadowDaily×1.10（无影子才回退 max(recent30,d6)×1.10），保留 Dec>Jan 季节落差。',
+        '近端帽取 min(shadowDaily×1.16, run-rate×1.32)（无影子才回退 max(recent30,d6)×1.10），保留 Dec>Jan 季节落差。',
     },
     null,
     2,

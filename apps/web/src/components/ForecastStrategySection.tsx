@@ -313,19 +313,28 @@ function AllCategoryV41StrategySummary({ context }: { context: ForecastStrategyC
             </ul>
           </div>
           <div className="rounded-md border border-border bg-background p-3">
-            <p className="font-medium text-text-main">近端乐观抑制（爆款护栏）</p>
+            <p className="font-medium text-text-main">近端锚定与乐观抑制（爆款护栏）</p>
             <ul className="mt-2 list-disc space-y-1 pl-5 text-text-sub">
               <li>
-                生成路径：近端 h≤1 且 recent30≥3 时，相对 max(recent30,d6) 抬升帽（平季 ×1.15 / 11–12 月 ×1.25）；次通道（非
+                MTD 混合：当月未过完且 mtdDays≥3 时，k=0 按{' '}
+                <code className="text-xs">nearTerm.mtdBlendWeight=0.66</code> 混合 MTD 与 recent30，温和抬近端（尤其首月）。
+              </li>
+              <li>
+                生成路径：近端 h≤1 且 recent30≥3 时，相对 max(recent30,d6) 抬升帽（平季 ×1.15 / 11–12 月 ×1.32）；次通道（非
                 Amazon）弱开局 recent30&lt;5 时 ×1.1。
               </li>
               <li>
-                落地后再帽（对准重塑过冲）：近端 h≤2 按<strong>当月影子 shadowDaily×1.10</strong>相对限幅（保留 12/1
-                季节落差，避免各月被同一 recent/d6 绝对顶削平）；无影子时回退 max(recent30,d6)×1.10。次通道弱开局相对影子（或
-                recent30）×1.0。结果写入 <code className="text-xs">horizonFactors.postLandingOptimismCap</code>。
+                落地后再帽（对准重塑过冲）：近端 h≤2 取{' '}
+                <strong>min(shadowDaily×1.16, run-rate×1.32)</strong> 双顶（有影子且 run-rate≥3），保留 12/1 季节落差；无影子时回退
+                max(recent30,d6)×1.10。次通道弱开局相对 min(shadow, recent30)×1.0；崩塌次通道跳过 peer 抬底。结果写入{' '}
+                <code className="text-xs">horizonFactors.postLandingOptimismCap</code>。
               </li>
               <li>
-                目标：压住 Top 爆款相对开局 MTD 的过冲；组合层可能略偏保守（尤其次通道），补货时需留意断货风险。
+                作用范围：MTD / V41 近端帽主影响 11–12；落地双顶可触及 k=2（约 1 月）；2–4 月不受本组旋钮影响。衰减后不再二次叠
+                flex，近端抬升不会把量挤到远端。
+              </li>
+              <li>
+                目标：压住 Top 爆款过冲的同时避免近端相对 MTD/run-rate 贴地；组合层仍可能略偏保守（尤其次通道），补货需留意断货风险。
               </li>
             </ul>
           </div>

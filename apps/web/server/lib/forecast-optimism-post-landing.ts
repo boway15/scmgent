@@ -29,6 +29,34 @@ function roundDaily(value: number): number {
   return Math.round(value * 100) / 100;
 }
 
+/**
+ * 按日均变化同比缩放 P10/P90；若先前步骤漏缩放导致倒挂（P90 < 日均），
+ * 则按原区间宽比重置，保证 P10 ≤ 日均 ≤ P90。
+ */
+export function scaleForecastQuantiles(input: {
+  daily: number;
+  prevDaily: number;
+  p10: number;
+  p90: number;
+}): { p10: number; p90: number } {
+  const daily = input.daily;
+  const prevDaily = input.prevDaily;
+  const p10 = input.p10;
+  const p90 = input.p90;
+  if (!(daily > 0) || !(prevDaily > 0) || !(p10 > 0) || !(p90 > 0)) {
+    return { p10, p90 };
+  }
+  let nextP10 = roundDaily(p10 * (daily / prevDaily));
+  let nextP90 = roundDaily(p90 * (daily / prevDaily));
+  if (nextP90 + 0.005 < daily || nextP10 - 0.005 > daily) {
+    const ratio = p90 > p10 ? p90 / p10 : 1.18 / 0.82;
+    const span = Math.sqrt(ratio);
+    nextP10 = roundDaily(daily / span);
+    nextP90 = roundDaily(daily * span);
+  }
+  return { p10: nextP10, p90: nextP90 };
+}
+
 function monthKey(year: number, month: number): string {
   return `${year}-${String(month).padStart(2, '0')}`;
 }
@@ -54,7 +82,7 @@ function readShadowDaily(factors: Record<string, unknown>): number | null {
 }
 
 /**
- * 近端帽：优先 min(预测, 当月影子×1.10)；无影子时回退 max(recent30,d6)×1.10。
+ * 近端帽：有影子时 min(预测, shadow×1.16, run-rate×1.32)；无影子时回退 max(recent30,d6)×1.10。
  */
 export function applyPostLandingNearRunRateCap(input: {
   forecastDaily: number;
@@ -207,18 +235,23 @@ export async function applyOptimismDampAfterLanding(input: {
       shadowDaily: shadowDaily != null ? roundDaily(shadowDaily) : null,
     };
 
-    const scale =
-      currentStored > 0 ? capped.forecastDaily / currentStored : 1;
     const p10 = Number(row.forecastDailyP10);
     const p90 = Number(row.forecastDailyP90);
+    const scaledBands =
+      Number.isFinite(p10) && p10 > 0 && Number.isFinite(p90) && p90 > 0 && currentStored > 0
+        ? scaleForecastQuantiles({
+            daily: capped.forecastDaily,
+            prevDaily: currentStored,
+            p10,
+            p90,
+          })
+        : null;
     await db
       .update(salesForecastMonthly)
       .set({
         forecastDailyAvg: String(capped.forecastDaily),
-        forecastDailyP10:
-          Number.isFinite(p10) && p10 > 0 ? String(roundDaily(p10 * scale)) : row.forecastDailyP10,
-        forecastDailyP90:
-          Number.isFinite(p90) && p90 > 0 ? String(roundDaily(p90 * scale)) : row.forecastDailyP90,
+        forecastDailyP10: scaledBands ? String(scaledBands.p10) : row.forecastDailyP10,
+        forecastDailyP90: scaledBands ? String(scaledBands.p90) : row.forecastDailyP90,
         horizonFactors: nextFactors,
         updatedAt: new Date(),
       })

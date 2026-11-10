@@ -655,7 +655,7 @@ async function main() {
   lines.push('## 第一部分：历史数据回测（有实际销量，可算偏差/WMAPE）');
   lines.push('');
   lines.push(
-    '口径：原 V4.1 / 满幅重塑 / 优化（影子→重塑→衰减）/ **旧绝对顶** max(recent,d6)×1.1 / **新相对影子帽** shadow×1.1（本次改动）。近端桶含 h≤2。',
+    '口径：原 V4.1 / 满幅重塑 / 优化（影子→重塑→衰减）/ **旧绝对顶** max(recent,d6)×1.1 / **落地双顶** min(shadow×1.16, run-rate×1.32)（无影子回退×1.10）。近端桶含 h≤2。',
   );
   lines.push('');
 

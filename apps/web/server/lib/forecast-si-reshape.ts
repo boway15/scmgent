@@ -1,6 +1,7 @@
 /**
  * 按站点季节指数重塑版本内地平线系统日均：保留项目组月均水平，按 SI 分配各月。
- * 只改 forecast_daily_avg，不写入人工校准。
+ * 同步按同一 scale 缩放 P10/P90，避免「系统日均 > 区间上界」。
+ * 不写入人工校准。
  */
 import { and, eq } from 'drizzle-orm';
 import {
@@ -186,6 +187,8 @@ export async function applyStationSiPortfolioReshape(input: {
       year: salesForecastMonthly.forecastYear,
       month: salesForecastMonthly.month,
       forecastDailyAvg: salesForecastMonthly.forecastDailyAvg,
+      forecastDailyP10: salesForecastMonthly.forecastDailyP10,
+      forecastDailyP90: salesForecastMonthly.forecastDailyP90,
       projectGroup: skus.projectGroup,
       salesCountry: skus.salesCountry,
     })
@@ -195,12 +198,24 @@ export async function applyStationSiPortfolioReshape(input: {
 
   type Agg = { sum: number; ids: string[]; values: number[] };
   const byGroupMonth = new Map<string, Agg>();
-  const rowMeta = new Map<string, { groupKey: string; year: number; month: number; daily: number }>();
+  const rowMeta = new Map<
+    string,
+    {
+      groupKey: string;
+      year: number;
+      month: number;
+      daily: number;
+      p10: number | null;
+      p90: number | null;
+    }
+  >();
 
   for (const row of rows) {
     if (row.platform === 'ALL') continue;
     const daily = Number(row.forecastDailyAvg);
     if (!(daily > 0)) continue;
+    const p10Raw = Number(row.forecastDailyP10);
+    const p90Raw = Number(row.forecastDailyP90);
     const station = resolveSkuSeasonStation({
       salesCountry: row.salesCountry,
       projectGroup: row.projectGroup,
@@ -212,7 +227,14 @@ export async function applyStationSiPortfolioReshape(input: {
     agg.ids.push(row.id);
     agg.values.push(daily);
     byGroupMonth.set(key, agg);
-    rowMeta.set(row.id, { groupKey: group, year: row.year, month: row.month, daily });
+    rowMeta.set(row.id, {
+      groupKey: group,
+      year: row.year,
+      month: row.month,
+      daily,
+      p10: Number.isFinite(p10Raw) && p10Raw > 0 ? p10Raw : null,
+      p90: Number.isFinite(p90Raw) && p90Raw > 0 ? p90Raw : null,
+    });
   }
 
   const groups = [...new Set([...byGroupMonth.keys()].map((key) => key.split('||')[0]!))];
@@ -256,14 +278,24 @@ export async function applyStationSiPortfolioReshape(input: {
     for (const plan of plans) scales.set(plan.key, plan.scale);
   }
 
-  const patches: Array<{ id: string; next: number }> = [];
+  const patches: Array<{
+    id: string;
+    next: number;
+    nextP10: number | null;
+    nextP90: number | null;
+  }> = [];
   for (const [id, meta] of rowMeta) {
     const key = `${meta.groupKey}||${monthKey(meta.year, meta.month)}`;
     const scale = scales.get(key);
     if (scale == null || Math.abs(scale - 1) < 0.01) continue;
     const next = roundDaily(meta.daily * scale);
     if (next === roundDaily(meta.daily)) continue;
-    patches.push({ id, next });
+    patches.push({
+      id,
+      next,
+      nextP10: meta.p10 != null ? roundDaily(meta.p10 * scale) : null,
+      nextP90: meta.p90 != null ? roundDaily(meta.p90 * scale) : null,
+    });
   }
 
   if (!dryRun) {
@@ -276,6 +308,8 @@ export async function applyStationSiPortfolioReshape(input: {
             .update(salesForecastMonthly)
             .set({
               forecastDailyAvg: String(patch.next),
+              ...(patch.nextP10 != null ? { forecastDailyP10: String(patch.nextP10) } : {}),
+              ...(patch.nextP90 != null ? { forecastDailyP90: String(patch.nextP90) } : {}),
               updatedAt: new Date(),
             })
             .where(eq(salesForecastMonthly.id, patch.id)),

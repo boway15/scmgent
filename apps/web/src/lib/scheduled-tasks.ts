@@ -58,6 +58,15 @@ export const SCHEDULED_TASKS: ScheduledTask[] = [
     description: '三池批次同步 → 数据问题扫描 → 补货预测 → 缺货/时间轴预警 → 异常扫描 → 飞书 digest',
   },
   {
+    id: 'inventory_sales_cube_rebuild',
+    name: '存销分析 Cube 重建',
+    path: '/api/tasks/inventory-sales-cube-rebuild',
+    cron: '50 8 * * *',
+    cronLabel: '仅手动触发 / 随日流水线内联（勿单独 crontab）',
+    description:
+      '周转可用时重建 SKU×仓存销分析行表；未发布则跳过并保留上一 ready。主路径是每日库存流水线 08:50 内联 step；勿单独与 08:50 流水线并行挂 crontab，仅供运维手动补跑',
+  },
+  {
     id: 'news_ingest',
     name: '新闻情报采集',
     path: '/api/tasks/news-ingest',
@@ -137,6 +146,7 @@ export const TASK_NAME_LABELS: Record<string, string> = {
   forecast_baseline: '预测基线生成',
   sales_history_maintenance: '销售历史维护',
   sales_daily_feishu_pull: '销量飞书拉取',
+  inventory_sales_cube_rebuild: '存销分析 Cube 重建',
   procurement_bulk_stock_push: '备货需求飞书推送',
   procurement_follow_up_push: '采购跟单飞书推送',
 };

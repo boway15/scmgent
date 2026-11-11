@@ -32,6 +32,7 @@ import { DemandPlanPilotPage } from '@/pages/DemandPlanPilotPage';
 import { DemandPlanDetailPage } from '@/pages/DemandPlanDetailPage';
 import { SalesForecastVersionDetailPage } from '@/pages/SalesForecastVersionDetailPage';
 import { SalesAnalyticsPage } from '@/pages/SalesAnalyticsPage';
+import { InventorySalesAnalyticsPage } from '@/pages/InventorySalesAnalyticsPage';
 import { HelpCenterPage } from '@/pages/HelpCenterPage';
 import { RegisterPage } from '@/pages/RegisterPage';
 import { AuditLogsPage } from '@/pages/AuditLogsPage';
@@ -95,6 +96,7 @@ export function AppRouter() {
           <Route path="data/forecast/strategy" element={<Navigate to="/data/forecast?tab=strategy" replace />} />
           <Route path="data/forecast/:versionId" element={<SalesForecastVersionDetailPage />} />
           <Route path="data/sales-analytics" element={<SalesAnalyticsPage />} />
+          <Route path="data/inventory-sales-analytics" element={<InventorySalesAnalyticsPage />} />
           <Route path="pmc/import" element={<Navigate to="/pmc/list?import=1" replace />} />
           <Route path="reorder/suggestions" element={<Navigate to="/pmc/suggestions" replace />} />
           <Route path="reorder/forecast" element={<Navigate to="/data/forecast" replace />} />

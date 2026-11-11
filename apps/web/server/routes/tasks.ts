@@ -33,6 +33,7 @@ import { runCommercialStatusReconcile } from '../tasks/commercialStatusReconcile
 import { runSalesDailyFeishuPull } from '../tasks/salesDailyFeishuPull.js';
 import { SALES_DAILY_FEISHU_PULL_TASK } from '../lib/feishu-sales-daily-pull-task.js';
 import { syncQcReinspection } from '../lib/qc-reinspection-sync.js';
+import { runInventorySalesCubeRebuild } from '../tasks/inventorySalesCubeRebuild.js';
 
 export const taskRoutes = new Hono();
 
@@ -356,6 +357,37 @@ taskRoutes.post('/tasks/sales-daily-feishu-pull', requireCronSecret, async (c) =
     return c.json({ skipped: true, message: result.reason, taskRunId: run.id }, 409);
   }
   return c.json({ ...result, taskRunId: run.id });
+});
+
+taskRoutes.post('/tasks/inventory-sales-cube-rebuild', requireCronSecret, async (c) => {
+  const running = await countRunningTaskRuns('inventory_sales_cube_rebuild');
+  if (running > 0) {
+    return c.json(
+      { message: '存销分析 Cube 重建正在运行，请到任务记录查看，不要重复触发', skipped: true },
+      409,
+    );
+  }
+
+  const triggeredBy = resolveTriggeredBy(c);
+  const run = await startTaskRun('inventory_sales_cube_rebuild', triggeredBy);
+  try {
+    const result = await runInventorySalesCubeRebuild(null);
+    const success = result.status !== 'failed';
+    const resultSummary =
+      result.status === 'ready'
+        ? `rows=${result.rowCount ?? 0}; runId=${result.runId}`
+        : `${result.status}:${result.message ?? ''}`;
+    await finishTaskRun(run.id, {
+      success,
+      resultSummary,
+      errorMessage: success ? undefined : result.message,
+    });
+    return c.json({ ...result, taskRunId: run.id }, success ? 200 : 500);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'inventory sales cube rebuild failed';
+    await finishTaskRun(run.id, { success: false, errorMessage: message });
+    return c.json({ message, taskRunId: run.id }, 500);
+  }
 });
 
 taskRoutes.post('/tasks/qc-reinspection-sync', requireCronSecret, async (c) => {

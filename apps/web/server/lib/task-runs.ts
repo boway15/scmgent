@@ -22,7 +22,8 @@ export type TaskName =
   | 'commercial_status_reconcile'
   | 'sales_history_maintenance'
   | 'sales_daily_feishu_pull'
-  | 'qc_reinspection_sync';
+  | 'qc_reinspection_sync'
+  | 'inventory_sales_cube_rebuild';
 
 export async function startTaskRun(taskName: TaskName, triggeredBy: string) {
   const [run] = await db

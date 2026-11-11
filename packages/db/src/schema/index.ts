@@ -7,6 +7,7 @@ export * from './inventory-health';
 export * from './sales-forecast';
 export * from './demand-plan';
 export * from './sales-analytics';
+export * from './inventory-sales-analytics';
 export * from './product-costing';
 export * from './procurement';
 export * from './procurement-lists';

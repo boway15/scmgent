@@ -7,6 +7,7 @@ import { db, reorderSuggestions, stockAlerts, inventoryDataIssues } from '@scm/d
 import { eq, and, sql } from 'drizzle-orm';
 import { syncInventorySupplyLots } from '../lib/inventory-supply-lot-sync.js';
 import { buildWarehouseStockFacts } from '../lib/inventory-warehouse-facts-build.js';
+import { runInventorySalesCubeRebuild } from './inventorySalesCubeRebuild.js';
 
 export type DailyPipelineStep = {
   name: string;
@@ -14,6 +15,20 @@ export type DailyPipelineStep = {
   summary?: string;
   error?: string;
 };
+
+const CUBE_ALREADY_RUNNING = /already running|进行中/i;
+
+function isInventorySalesCubeAlreadyRunning(message?: string | null): boolean {
+  return Boolean(message && CUBE_ALREADY_RUNNING.test(message));
+}
+
+function pushInventorySalesCubeAlreadyRunningStep(steps: DailyPipelineStep[]) {
+  steps.push({
+    name: 'inventory_sales_cube',
+    success: true,
+    summary: 'skipped:already running',
+  });
+}
 
 export async function runDailyInventoryPipeline() {
   const steps: DailyPipelineStep[] = [];
@@ -46,6 +61,34 @@ export async function runDailyInventoryPipeline() {
       success: false,
       error: err instanceof Error ? err.message : 'failed',
     });
+  }
+
+  try {
+    const cube = await runInventorySalesCubeRebuild(null);
+    if (isInventorySalesCubeAlreadyRunning(cube.message)) {
+      pushInventorySalesCubeAlreadyRunningStep(steps);
+    } else {
+      steps.push({
+        name: 'inventory_sales_cube',
+        success: cube.status !== 'failed',
+        summary:
+          cube.status === 'ready'
+            ? `rows=${cube.rowCount}`
+            : `${cube.status}:${cube.message ?? ''}`,
+        error: cube.status === 'failed' ? cube.message : undefined,
+      });
+    }
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'failed';
+    if (isInventorySalesCubeAlreadyRunning(message)) {
+      pushInventorySalesCubeAlreadyRunningStep(steps);
+    } else {
+      steps.push({
+        name: 'inventory_sales_cube',
+        success: false,
+        error: message,
+      });
+    }
   }
 
   try {

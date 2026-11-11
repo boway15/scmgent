@@ -124,6 +124,13 @@ const MENU_SEEDS: MenuSeed[] = [
         sortOrder: 10,
         isLeaf: true,
       },
+      {
+        code: 'data.inventory_sales_analytics',
+        name: '存销分析',
+        path: '/data/inventory-sales-analytics',
+        sortOrder: 15,
+        isLeaf: true,
+      },
       { code: 'data.products', name: '商品主数据', path: '/data/products', sortOrder: 20, isLeaf: true },
       { code: 'data.sales', name: '销量历史', path: '/data/sales', sortOrder: 30, isLeaf: true },
       { code: 'data.forecast', name: '销售预测', path: '/data/forecast', sortOrder: 40, isLeaf: true },
@@ -230,6 +237,7 @@ const ASSISTANT_MENU_CODES = ['assistant', 'ai.chat', 'cs.quality', 'intel.news'
 const DATA_MENU_CODES = [
   'data',
   'data.sales_analytics',
+  'data.inventory_sales_analytics',
   'data.products',
   'data.sales',
   'data.forecast',

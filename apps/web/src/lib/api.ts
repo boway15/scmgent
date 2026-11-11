@@ -4,6 +4,92 @@ import type { HorizonBand } from './forecast-horizon-meta';
 import { appendProductScopeQuery, type ProductScope } from './product-scope';
 import type { SalesAnalyticsCubePayload } from './sales-analytics-types';
 
+// -- 存销分析 Cube DTO（与 server lib/inventory-sales-cube.ts 对齐） -------
+export type InventorySalesCubeMeta = {
+  warehouses: string[];
+  thresholds: {
+    overstockThresholdDays: number;
+    slowMovingDailyMax: number;
+    slowMovingMinCoverageDays: number;
+    version: string;
+  };
+  sourceStats?: Record<string, number | string | null>;
+};
+
+export type InventorySalesAnalyticsStatus = {
+  running: boolean;
+  ready: {
+    runId: string | null;
+    snapshotDate: string | null;
+    sourceTurnoverDate: string | null;
+    sourceSalesAsOf: string | null;
+    rowCount: number | null;
+    meta: InventorySalesCubeMeta | null;
+    finishedAt: string | null;
+  };
+  failed: {
+    runId: string | null;
+    errorMessage: string | null;
+    createdAt: string | null;
+  } | null;
+  skipped: {
+    runId: string | null;
+    message: string | null;
+    createdAt: string | null;
+  } | null;
+};
+
+export type InventorySalesAnalyticsRowItem = {
+  id: string;
+  skuId: string;
+  skuCode: string;
+  warehouseCode: string;
+  productScope: string;
+  category: string | null;
+  lifecycle: string | null;
+  salesCountry: string | null;
+  qtyAvailable: number;
+  qtyInTransit: number;
+  effectiveQty: number;
+  shareMethod: string;
+  shareWeight: number | null;
+  sales7d: number | null;
+  sales14d: number | null;
+  sales30d: number | null;
+  avgDaily30d: number | null;
+  coverDays: number | null;
+  sellThrough30d: number | null;
+  primaryRisk: string | null;
+  riskTags: string[];
+};
+
+export type InventorySalesAnalyticsRowsResponse = {
+  items: InventorySalesAnalyticsRowItem[];
+  total: number;
+  page: number;
+  pageSize: number;
+  summary: {
+    rowCount: number;
+    stockoutRisk: number;
+    slowMoving: number;
+    imbalance: number;
+    unallocated: number;
+  };
+  meta: {
+    runId: string | null;
+    snapshotDate: string | null;
+  };
+};
+
+export type InventorySalesAnalyticsSkuDetail = {
+  rows: InventorySalesAnalyticsRowItem[];
+  queryReconcile: {
+    available: boolean;
+    note?: string;
+    highlights?: Record<string, string>;
+  } | null;
+};
+
 function appendRepeatedQuery(qs: URLSearchParams, key: string, values?: string[]) {
   for (const value of values ?? []) {
     const trimmed = value.trim();
@@ -5845,6 +5931,60 @@ export const api = {
     request<RuleParamSetView>(`/api/rules/${module}/param-sets/${id}/${action}`, {
       method: 'POST',
       body: JSON.stringify(data ?? {}),
+    }),
+  // -- 存销分析 Cube -------------------------------------------------------
+  getInventorySalesAnalyticsStatus: () =>
+    request<InventorySalesAnalyticsStatus>('/api/inventory-sales-analytics/status'),
+  getInventorySalesAnalyticsRows: (params?: {
+    q?: string;
+    warehouseCode?: string;
+    category?: string;
+    lifecycle?: string;
+    primaryRisk?: string;
+    salesCountry?: string;
+    productScope?: ProductScope;
+    page?: number;
+    pageSize?: number;
+  }) => {
+    const qs = new URLSearchParams();
+    if (params?.q) qs.set('q', params.q);
+    if (params?.warehouseCode) qs.set('warehouseCode', params.warehouseCode);
+    if (params?.category) qs.set('category', params.category);
+    if (params?.lifecycle) qs.set('lifecycle', params.lifecycle);
+    if (params?.primaryRisk) qs.set('primaryRisk', params.primaryRisk);
+    if (params?.salesCountry) qs.set('salesCountry', params.salesCountry);
+    if (params?.page) qs.set('page', String(params.page));
+    if (params?.pageSize) qs.set('pageSize', String(params.pageSize));
+    appendProductScopeQuery(qs, params?.productScope);
+    const query = qs.toString();
+    return request<InventorySalesAnalyticsRowsResponse>(
+      `/api/inventory-sales-analytics/rows${query ? `?${query}` : ''}`,
+    );
+  },
+  getInventorySalesAnalyticsSku: (skuId: string) =>
+    request<InventorySalesAnalyticsSkuDetail>(
+      `/api/inventory-sales-analytics/sku/${skuId}`,
+    ),
+  rebuildInventorySalesAnalytics: () =>
+    request<{ runId: string; status: string; rowCount?: number; message?: string }>(
+      '/api/inventory-sales-analytics/rebuild',
+      { method: 'POST' },
+    ),
+  exportInventorySalesAnalytics: (body: Record<string, unknown>) =>
+    request<{ jobId: string; status?: string; downloadCenterPath?: string }>(
+      '/api/inventory-sales-analytics/export',
+      {
+        method: 'POST',
+        body: JSON.stringify(body ?? {}),
+      },
+    ).then((res) => {
+      notifyExportOutcome({
+        kind: 'queued',
+        jobId: res.jobId,
+        message: '已加入下载中心，生成完成后可下载',
+        downloadCenterPath: res.downloadCenterPath ?? '/downloads',
+      });
+      return res;
     }),
 };
 

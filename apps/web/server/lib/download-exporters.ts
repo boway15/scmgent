@@ -52,6 +52,7 @@ import { getLatestInProductionQty } from './inventory-snapshot.js';
 import { resolveInventoryPosition } from './inventory-position.js';
 import { normalizeReplenishLight } from './replenish-light.js';
 import type { DownloadJobRow } from './download-jobs.js';
+import { listInventorySalesCubeRows } from './inventory-sales-cube.js';
 
 export type DownloadExportResult = {
   content: string | Buffer;
@@ -551,6 +552,69 @@ const exporters: Record<string, Exporter> = {
       contentType: CSV_TYPE,
       fileName: `inventory-data-issues-${date}-${scope}${suffix}.csv`,
       rowCount: bodyRows.length,
+    };
+  },
+
+  async inventory_sales_analytics(params) {
+    // 分页拉取全部行（pageSize 5000），避免 total > 首页条数时静默截断。
+    const EXPORT_PAGE_SIZE = 5000;
+    const baseFilters = {
+      q: str(params.q),
+      warehouseCode: str(params.warehouseCode),
+      category: str(params.category),
+      lifecycle: str(params.lifecycle),
+      primaryRisk: str(params.primaryRisk),
+      productScope: str(params.productScope),
+      salesCountry: str(params.salesCountry),
+    };
+    const allItems: Awaited<ReturnType<typeof listInventorySalesCubeRows>>['items'][number][] = [];
+    let page = 1;
+    let total = 0;
+    do {
+      const listed = await listInventorySalesCubeRows({
+        ...baseFilters,
+        page,
+        pageSize: EXPORT_PAGE_SIZE,
+      });
+      allItems.push(...listed.items);
+      total = listed.total;
+      if (listed.items.length < EXPORT_PAGE_SIZE) break;
+      page += 1;
+      // 安全上限：避免极端情况下死循环（理论 page 数 = ceil(total / 5000)）。
+      if (page > 100000) break;
+    } while (allItems.length < total);
+    const headers = [
+      'sku_code',
+      'warehouse_code',
+      'effective_qty',
+      'sales_7d',
+      'sales_14d',
+      'sales_30d',
+      'avg_daily_30d',
+      'cover_days',
+      'sell_through_30d',
+      'primary_risk',
+    ];
+    const csv = buildCsv(
+      headers,
+      allItems.map((r) => [
+        r.skuCode,
+        r.warehouseCode,
+        r.effectiveQty,
+        r.sales7d ?? '',
+        r.sales14d ?? '',
+        r.sales30d ?? '',
+        r.avgDaily30d ?? '',
+        r.coverDays ?? '',
+        r.sellThrough30d ?? '',
+        r.primaryRisk ?? '',
+      ]),
+    );
+    return {
+      content: csv,
+      contentType: CSV_TYPE,
+      fileName: `inventory-sales-analytics-${new Date().toISOString().slice(0, 10)}.csv`,
+      rowCount: allItems.length,
     };
   },
 };

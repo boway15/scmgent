@@ -834,6 +834,13 @@
       "when": 1788610600000,
       "tag": "0137_download_jobs_ttl_15d",
       "breakpoints": true
+    },
+    {
+      "idx": 119,
+      "version": "6",
+      "when": 1788697000000,
+      "tag": "0138_inventory_sales_analytics",
+      "breakpoints": true
     }
   ]
 }

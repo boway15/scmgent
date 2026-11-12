@@ -42,6 +42,8 @@ export const reorderSuggestions = pgTable('reorder_suggestions', {
     .references(() => skus.id),
   suggestedQty: integer('suggested_qty').notNull(),
   warehouseCode: varchar('warehouse_code', { length: 100 }),
+  fulfillmentRegion: varchar('fulfillment_region', { length: 20 }),
+  platform: varchar('platform', { length: 50 }),
   suggestedDate: date('suggested_date').notNull(),
   reason: text('reason'),
   healthStatus: inventoryHealthEnum('health_status'),
@@ -62,6 +64,8 @@ export const stockAlerts = pgTable('stock_alerts', {
     .notNull()
     .references(() => skus.id),
   warehouseCode: varchar('warehouse_code', { length: 100 }),
+  fulfillmentRegion: varchar('fulfillment_region', { length: 20 }),
+  platform: varchar('platform', { length: 50 }),
   alertType: alertTypeEnum('alert_type').notNull(),
   currentQty: integer('current_qty').notNull(),
   safetyQty: integer('safety_qty').notNull(),

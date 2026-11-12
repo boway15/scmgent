@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
   isMappableRegion,
+  invalidateRegionMappingCache,
+  loadRegionMappingTables,
   resolveSalesRegion,
   resolveFulfillmentRegion,
   type RegionMappingTables,
@@ -28,6 +30,40 @@ describe('region-mapping', () => {
   it('resolves mapped station and warehouse', () => {
     assert.equal(resolveSalesRegion('Amazon德国', tables), 'EU');
     assert.equal(resolveFulfillmentRegion('US-EAST', tables), 'US');
+  });
+
+  it('loads mapping tables and drops the cache on invalidate', async () => {
+    invalidateRegionMappingCache();
+    let salesRegion = 'eu';
+    const db = {
+      select(shape: Record<string, unknown>) {
+        return {
+          from: async () => {
+            if ('station' in shape) {
+              return [
+                { station: ' Amazon德国 ', salesRegion },
+                { station: 'skip', salesRegion: 'UNMAPPED' },
+              ];
+            }
+            return [{ warehouseCode: ' US-EAST ', fulfillmentRegion: 'US' }];
+          },
+        };
+      },
+    };
+
+    const first = await loadRegionMappingTables(db);
+    assert.equal(first.stations.get('Amazon德国'), 'EU');
+    assert.equal(first.stations.has('skip'), false);
+    assert.equal(resolveFulfillmentRegion('US-EAST', first), 'US');
+
+    salesRegion = 'UK';
+    const cached = await loadRegionMappingTables(db);
+    assert.equal(cached.stations.get('Amazon德国'), 'EU');
+
+    invalidateRegionMappingCache();
+    const refreshed = await loadRegionMappingTables(db);
+    assert.equal(refreshed.stations.get('Amazon德国'), 'UK');
+    invalidateRegionMappingCache();
   });
 
   it('falls back to UNMAPPED without guessing', () => {

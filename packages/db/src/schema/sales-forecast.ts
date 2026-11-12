@@ -128,6 +128,8 @@ export const forecastAccuracyMonthly = pgTable(
       .notNull()
       .references(() => skus.id, { onDelete: 'cascade' }),
     station: varchar('station', { length: 20 }).notNull(),
+    /** 销售区域。ALL 表示迁移前全站口径 */
+    salesRegion: varchar('sales_region', { length: 20 }).notNull().default('ALL'),
     platform: varchar('platform', { length: 50 }).notNull().default('ALL'),
     forecastYear: integer('forecast_year').notNull(),
     month: integer('month').notNull(),
@@ -141,7 +143,7 @@ export const forecastAccuracyMonthly = pgTable(
   (table) => ({
     uniqueIdx: uniqueIndex('forecast_accuracy_monthly_unique_idx').on(
       table.skuId,
-      table.station,
+      table.salesRegion,
       table.platform,
       table.forecastYear,
       table.month,
@@ -177,6 +179,8 @@ export const salesForecastReviewItems = pgTable(
       .notNull()
       .references(() => skus.id, { onDelete: 'cascade' }),
     station: varchar('station', { length: 20 }).notNull(),
+    /** 销售区域。ALL 表示迁移前全站口径 */
+    salesRegion: varchar('sales_region', { length: 20 }).notNull().default('ALL'),
     platform: varchar('platform', { length: 50 }).notNull().default('ALL'),
     issueType: forecastReviewIssueTypeEnum('issue_type').notNull(),
     severity: forecastReviewSeverityEnum('severity').notNull(),
@@ -202,7 +206,7 @@ export const salesForecastReviewItems = pgTable(
     identityUniqueIdx: uniqueIndex('sales_forecast_review_items_identity_unique_idx').on(
       table.versionId,
       table.skuId,
-      table.station,
+      table.salesRegion,
       table.platform,
       table.issueType,
     ),

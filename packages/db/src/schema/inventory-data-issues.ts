@@ -18,6 +18,7 @@ export const inventoryDataIssueTypeEnum = pgEnum('inventory_data_issue_type', [
   'unallocated_warehouse',
   'share_sum_mismatch',
   'unmapped_warehouse',
+  'unmapped_station',
   'position_source_mismatch',
   'position_share_gap',
 ]);

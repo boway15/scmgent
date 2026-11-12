@@ -464,8 +464,10 @@ export const salesForecastMonthly = pgTable(
     skuId: uuid('sku_id')
       .notNull()
       .references(() => skus.id, { onDelete: 'cascade' }),
-    /** 站点，如 US / DE */
+    /** 站点，如 US / DE。新行写 ALL，仅作遗留标记；业务过滤用 sales_region */
     station: varchar('station', { length: 20 }).notNull(),
+    /** 销售区域。ALL 表示迁移前全站口径 */
+    salesRegion: varchar('sales_region', { length: 20 }).notNull().default('ALL'),
     /** 在售平台，如 AMAZON / WALMART / ALL（全平台汇总） */
     platform: varchar('platform', { length: 50 }).notNull().default('ALL'),
     forecastYear: integer('forecast_year').notNull(),
@@ -495,7 +497,7 @@ export const salesForecastMonthly = pgTable(
   (table) => ({
     skuStationMonthUnique: uniqueIndex('sales_forecast_monthly_version_unique_idx').on(
       table.skuId,
-      table.station,
+      table.salesRegion,
       table.platform,
       table.forecastYear,
       table.month,

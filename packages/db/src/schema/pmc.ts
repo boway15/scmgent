@@ -64,6 +64,7 @@ export const pmcPlanItems = pgTable('pmc_plan_items', {
     .notNull()
     .references(() => skus.id),
   plannedQty: integer('planned_qty').notNull(),
+  fulfillmentRegion: varchar('fulfillment_region', { length: 20 }),
   warehouseCode: varchar('warehouse_code', { length: 100 }),
   completedQty: integer('completed_qty').default(0),
   unit: varchar('unit', { length: 20 }).notNull(),

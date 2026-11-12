@@ -135,6 +135,13 @@ const MENU_SEEDS: MenuSeed[] = [
       { code: 'data.sales', name: '销量历史', path: '/data/sales', sortOrder: 30, isLeaf: true },
       { code: 'data.forecast', name: '销售预测', path: '/data/forecast', sortOrder: 40, isLeaf: true },
       {
+        code: 'data.region_mapping',
+        name: '区域映射',
+        path: '/data/region-mapping',
+        sortOrder: 45,
+        isLeaf: true,
+      },
+      {
         code: 'data.demand_plan',
         name: '需求计划-周',
         path: '/data/demand-plan',
@@ -241,6 +248,7 @@ const DATA_MENU_CODES = [
   'data.products',
   'data.sales',
   'data.forecast',
+  'data.region_mapping',
 ] as const;
 
 const INVENTORY_MENU_CODES = [

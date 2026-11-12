@@ -841,6 +841,13 @@
       "when": 1788697000000,
       "tag": "0138_inventory_sales_analytics",
       "breakpoints": true
+    },
+    {
+      "idx": 120,
+      "version": "6",
+      "when": 1788956200000,
+      "tag": "0140_sales_fulfillment_region",
+      "breakpoints": true
     }
   ]
 }

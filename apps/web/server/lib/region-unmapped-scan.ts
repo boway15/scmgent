@@ -94,10 +94,7 @@ export function buildUnmappedRegionCandidates(input: {
   return issues;
 }
 
-async function loadUnmappedHits(since: string): Promise<{
-  stations: UnmappedRegionHit[];
-  warehouses: UnmappedRegionHit[];
-}> {
+async function loadUnmappedStationHits(since: string): Promise<UnmappedRegionHit[]> {
   const stationRows = await db
     .select({
       key: salesHistory.station,
@@ -108,6 +105,14 @@ async function loadUnmappedHits(since: string): Promise<{
     .where(and(gte(salesHistory.saleDate, since), sql`btrim(${salesHistory.station}) <> ''`))
     .groupBy(salesHistory.station);
 
+  return stationRows.map((row) => ({
+    key: row.key,
+    skuId: row.skuId,
+    qty: Number(row.qty ?? 0),
+  }));
+}
+
+async function loadUnmappedWarehouseHits(since: string): Promise<UnmappedRegionHit[]> {
   const [activeWarehouses, lotRows, factRows, salesWarehouseRows, anchor] = await Promise.all([
     db
       .select({ code: warehouses.code })
@@ -181,14 +186,38 @@ async function loadUnmappedHits(since: string): Promise<{
   for (const row of factRows) remember(row.code, row.skuId, Number(row.qty ?? 0));
   for (const row of salesWarehouseRows) remember(row.code, row.skuId, Number(row.qty ?? 0));
 
-  return {
-    stations: stationRows.map((row) => ({
-      key: row.key,
-      skuId: row.skuId,
-      qty: Number(row.qty ?? 0),
-    })),
-    warehouses: [...warehousesByCode.values()],
-  };
+  return [...warehousesByCode.values()];
+}
+
+function unmappedKeys(
+  candidates: DataIssueCandidate[],
+  issueType: DataIssueCandidate['issueType'],
+): string[] {
+  return candidates.filter((row) => row.issueType === issueType).map((row) => row.warehouseCode);
+}
+
+export async function listUnmappedStations(now: Date = new Date()): Promise<string[]> {
+  const since = shiftIsoDate(getShanghaiBusinessDate(now), -UNMAPPED_LOOKBACK_DAYS);
+  const [tables, stations] = await Promise.all([
+    loadRegionMappingTables(db),
+    loadUnmappedStationHits(since),
+  ]);
+  return unmappedKeys(
+    buildUnmappedRegionCandidates({ stations, warehouses: [], tables }),
+    'unmapped_station',
+  );
+}
+
+export async function listUnmappedWarehouses(now: Date = new Date()): Promise<string[]> {
+  const since = shiftIsoDate(getShanghaiBusinessDate(now), -UNMAPPED_LOOKBACK_DAYS);
+  const [tables, warehouses] = await Promise.all([
+    loadRegionMappingTables(db),
+    loadUnmappedWarehouseHits(since),
+  ]);
+  return unmappedKeys(
+    buildUnmappedRegionCandidates({ stations: [], warehouses, tables }),
+    'unmapped_warehouse',
+  );
 }
 
 async function upsertUnmappedRegionCandidates(detected: DataIssueCandidate[]): Promise<void> {
@@ -261,11 +290,12 @@ export async function collectUnmappedRegionCandidates(
   now: Date = new Date(),
 ): Promise<DataIssueCandidate[]> {
   const since = shiftIsoDate(getShanghaiBusinessDate(now), -UNMAPPED_LOOKBACK_DAYS);
-  const [tables, hits] = await Promise.all([
+  const [tables, stations, warehouses] = await Promise.all([
     loadRegionMappingTables(db),
-    loadUnmappedHits(since),
+    loadUnmappedStationHits(since),
+    loadUnmappedWarehouseHits(since),
   ]);
-  return buildUnmappedRegionCandidates({ ...hits, tables });
+  return buildUnmappedRegionCandidates({ stations, warehouses, tables });
 }
 
 export async function runUnmappedRegionScan(): Promise<{

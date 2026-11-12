@@ -2,6 +2,7 @@ import { and, desc, eq, ilike, inArray, or, sql, type SQL } from 'drizzle-orm';
 import { db, inventoryDataIssues, skus } from '@scm/db';
 import type { ProductScope } from './planning-accessory-filter.js';
 import { parseProductScope, productScopeSql } from './planning-accessory-filter.js';
+import { UNMAPPED_WAREHOUSE_FP_PREFIX } from './region-unmapped-scan.js';
 
 export type InventoryDataIssueListFilters = {
   status?: string;
@@ -157,10 +158,40 @@ const ERP_HINT: Record<string, string> = {
   unallocated_warehouse: '迅捷维护分仓销售占比',
   share_sum_mismatch: '迅捷校正各仓占比使合计约 100%',
   unmapped_warehouse: '迅捷确认仓名；scm-agent 补 TURNOVER_BUCKET_WAREHOUSE_MAP',
-  unmapped_station: '在区域映射中把站点配到 US/CA/EU/UK/OTHER',
+  unmapped_station: '在区域映射（/data/region-mapping）把站点配到 US/CA/EU/UK/OTHER',
   position_source_mismatch: '迅捷核对库存查询与全链库存同仓同状态数量',
   position_share_gap: '迅捷核对分仓库存；占比拆分仅作对照不改数',
 };
+
+const FULFILLMENT_UNMAPPED_LABEL = '履约区域未映射';
+const FULFILLMENT_UNMAPPED_HINT =
+  '在区域映射（/data/region-mapping）为仓库配置履约区域 US/CA/EU/UK/OTHER';
+
+export function isFulfillmentRegionUnmappedWarehouse(row: {
+  issueType: string;
+  fingerprint?: string | null;
+}): boolean {
+  return (
+    row.issueType === 'unmapped_warehouse' &&
+    (row.fingerprint ?? '').startsWith(UNMAPPED_WAREHOUSE_FP_PREFIX)
+  );
+}
+
+export function inventoryDataIssueTypeLabel(row: {
+  issueType: string;
+  fingerprint?: string | null;
+}): string {
+  if (isFulfillmentRegionUnmappedWarehouse(row)) return FULFILLMENT_UNMAPPED_LABEL;
+  return ISSUE_TYPE_LABEL[row.issueType] ?? row.issueType;
+}
+
+export function inventoryDataIssueActionHint(row: {
+  issueType: string;
+  fingerprint?: string | null;
+}): string {
+  if (isFulfillmentRegionUnmappedWarehouse(row)) return FULFILLMENT_UNMAPPED_HINT;
+  return ERP_HINT[row.issueType] ?? '';
+}
 
 export function buildInventoryDataIssueExportCsv(
   rows: InventoryDataIssueListRow[],
@@ -179,7 +210,7 @@ export function buildInventoryDataIssueExportCsv(
     '首次检出时间',
   ];
   const bodyRows = rows.map((row) => [
-    ISSUE_TYPE_LABEL[row.issueType] ?? row.issueType,
+    inventoryDataIssueTypeLabel(row),
     row.skuCode,
     row.skuName,
     row.warehouseCode,
@@ -187,7 +218,7 @@ export function buildInventoryDataIssueExportCsv(
     IMPACT_LABEL[row.impactModule] ?? row.impactModule,
     row.example,
     STATUS_LABEL[row.status] ?? row.status,
-    ERP_HINT[row.issueType] ?? '',
+    inventoryDataIssueActionHint(row),
     row.lastSeenAt instanceof Date ? row.lastSeenAt.toISOString() : String(row.lastSeenAt),
     row.createdAt instanceof Date ? row.createdAt.toISOString() : String(row.createdAt),
   ]);

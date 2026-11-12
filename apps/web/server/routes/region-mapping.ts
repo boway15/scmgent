@@ -9,7 +9,7 @@ import {
   toMappingCsv,
 } from '../lib/region-mapping-admin.js';
 import { invalidateRegionMappingCache } from '../lib/region-mapping.js';
-import { collectUnmappedRegionCandidates } from '../lib/region-unmapped-scan.js';
+import { listUnmappedStations, listUnmappedWarehouses } from '../lib/region-unmapped-scan.js';
 import { requireMenu } from '../lib/rbac.js';
 
 export const regionMappingRoutes = new Hono();
@@ -42,23 +42,26 @@ regionMappingRoutes.get('/region-mapping/stations/export', requireMenu(MENU), as
 });
 
 regionMappingRoutes.get('/region-mapping/stations', requireMenu(MENU), async (c) => {
-  const [rows, unmapped] = await Promise.all([
-    db
-      .select({
-        station: stationSalesRegionMaps.station,
-        salesRegion: stationSalesRegionMaps.salesRegion,
-      })
-      .from(stationSalesRegionMaps)
-      .orderBy(asc(stationSalesRegionMaps.station)),
-    collectUnmappedRegionCandidates(),
-  ]);
-  return c.json({
-    items: rows,
-    unmappedStations: unmapped
-      .filter((row) => row.issueType === 'unmapped_station')
-      .map((row) => row.warehouseCode),
-    regions: MAPPABLE_REGIONS,
-  });
+  try {
+    const [rows, unmappedStations] = await Promise.all([
+      db
+        .select({
+          station: stationSalesRegionMaps.station,
+          salesRegion: stationSalesRegionMaps.salesRegion,
+        })
+        .from(stationSalesRegionMaps)
+        .orderBy(asc(stationSalesRegionMaps.station)),
+      listUnmappedStations(),
+    ]);
+    return c.json({
+      items: rows,
+      unmappedStations,
+      regions: MAPPABLE_REGIONS,
+    });
+  } catch (err) {
+    console.error('[region-mapping] stations', err);
+    return c.json({ message: '区域映射查询失败' }, 500);
+  }
 });
 
 regionMappingRoutes.put('/region-mapping/stations', requireMenu(MENU), async (c) => {
@@ -124,23 +127,26 @@ regionMappingRoutes.get('/region-mapping/warehouses/export', requireMenu(MENU), 
 });
 
 regionMappingRoutes.get('/region-mapping/warehouses', requireMenu(MENU), async (c) => {
-  const [rows, unmapped] = await Promise.all([
-    db
-      .select({
-        warehouseCode: warehouseFulfillmentRegionMaps.warehouseCode,
-        fulfillmentRegion: warehouseFulfillmentRegionMaps.fulfillmentRegion,
-      })
-      .from(warehouseFulfillmentRegionMaps)
-      .orderBy(asc(warehouseFulfillmentRegionMaps.warehouseCode)),
-    collectUnmappedRegionCandidates(),
-  ]);
-  return c.json({
-    items: rows,
-    unmappedWarehouses: unmapped
-      .filter((row) => row.issueType === 'unmapped_warehouse')
-      .map((row) => row.warehouseCode),
-    regions: MAPPABLE_REGIONS,
-  });
+  try {
+    const [rows, unmappedWarehouses] = await Promise.all([
+      db
+        .select({
+          warehouseCode: warehouseFulfillmentRegionMaps.warehouseCode,
+          fulfillmentRegion: warehouseFulfillmentRegionMaps.fulfillmentRegion,
+        })
+        .from(warehouseFulfillmentRegionMaps)
+        .orderBy(asc(warehouseFulfillmentRegionMaps.warehouseCode)),
+      listUnmappedWarehouses(),
+    ]);
+    return c.json({
+      items: rows,
+      unmappedWarehouses,
+      regions: MAPPABLE_REGIONS,
+    });
+  } catch (err) {
+    console.error('[region-mapping] warehouses', err);
+    return c.json({ message: '区域映射查询失败' }, 500);
+  }
 });
 
 regionMappingRoutes.put('/region-mapping/warehouses', requireMenu(MENU), async (c) => {

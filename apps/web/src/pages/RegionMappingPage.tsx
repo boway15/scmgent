@@ -135,6 +135,13 @@ export function RegionMappingPage() {
   const warehouseItems = warehouses.data?.items ?? [];
   const unmappedStations = stations.data?.unmappedStations ?? [];
   const unmappedWarehouses = warehouses.data?.unmappedWarehouses ?? [];
+  const activeQuery = tab === 'stations' ? stations : warehouses;
+  const activeLoadError = activeQuery.isError
+    ? activeQuery.error instanceof Error
+      ? activeQuery.error.message
+      : '区域映射加载失败'
+    : '';
+  const unmappedKeys = tab === 'stations' ? unmappedStations : unmappedWarehouses;
 
   return (
     <div className="space-y-6">
@@ -200,6 +207,7 @@ export function RegionMappingPage() {
       </div>
 
       {error ? <p className="text-sm text-destructive">{error}</p> : null}
+      {activeLoadError ? <p className="text-sm text-destructive">{activeLoadError}</p> : null}
 
       <Card>
         <CardHeader>
@@ -221,17 +229,24 @@ export function RegionMappingPage() {
       <Card>
         <CardHeader>
           <CardTitle>
-            {tab === 'stations'
-              ? `未映射站点（${unmappedStations.length}）`
-              : `未映射仓库（${unmappedWarehouses.length}）`}
+            {tab === 'stations' ? '未映射站点' : '未映射仓库'}
+            {activeQuery.isSuccess ? `（${unmappedKeys.length}）` : ''}
           </CardTitle>
-          <p className="text-sm text-text-sub">近 90 天销量站点，以及活跃仓和近 90 天出现过的仓码。</p>
+          <p className="text-sm text-text-sub">
+            {tab === 'stations'
+              ? '近 90 天有销量、且未配置销售区域的站点。'
+              : '活跃仓和近 90 天出现过、且未配置履约区域的仓码。'}
+          </p>
         </CardHeader>
         <CardContent className="space-y-2">
-          {(tab === 'stations' ? unmappedStations : unmappedWarehouses).length === 0 ? (
+          {activeQuery.isError ? (
+            <p className="text-sm text-destructive">未映射清单加载失败，请稍后重试。</p>
+          ) : activeQuery.isLoading ? (
+            <p className="text-sm text-text-sub">加载中...</p>
+          ) : unmappedKeys.length === 0 ? (
             <p className="text-sm text-text-sub">当前没有未映射项。</p>
           ) : (
-            (tab === 'stations' ? unmappedStations : unmappedWarehouses).map((key) => (
+            unmappedKeys.map((key) => (
               <div key={key} className="flex flex-wrap items-center gap-2">
                 <span className="min-w-40 text-sm text-text-main">{key}</span>
                 <RegionSelect
@@ -368,10 +383,16 @@ export function RegionMappingPage() {
           {(tab === 'stations' ? stations.isLoading : warehouses.isLoading) ? (
             <p className="p-2 text-sm text-text-sub">加载中...</p>
           ) : null}
-          {tab === 'stations' && !stations.isLoading && stationItems.length === 0 ? (
+          {tab === 'stations' && stations.isError ? (
+            <p className="p-2 text-sm text-destructive">站点映射加载失败。</p>
+          ) : null}
+          {tab === 'warehouses' && warehouses.isError ? (
+            <p className="p-2 text-sm text-destructive">仓库映射加载失败。</p>
+          ) : null}
+          {tab === 'stations' && stations.isSuccess && stationItems.length === 0 ? (
             <p className="p-2 text-sm text-text-sub">还没有站点映射。</p>
           ) : null}
-          {tab === 'warehouses' && !warehouses.isLoading && warehouseItems.length === 0 ? (
+          {tab === 'warehouses' && warehouses.isSuccess && warehouseItems.length === 0 ? (
             <p className="p-2 text-sm text-text-sub">还没有仓库映射。</p>
           ) : null}
         </CardContent>

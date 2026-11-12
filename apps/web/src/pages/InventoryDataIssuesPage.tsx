@@ -40,6 +40,16 @@ const TYPE_LABEL: Record<InventoryDataIssueRow['issueType'], string> = {
 
 };
 
+function issueDisplayLabel(row: Pick<InventoryDataIssueRow, 'issueType' | 'fingerprint'>): string {
+  if (
+    row.issueType === 'unmapped_warehouse' &&
+    row.fingerprint.startsWith('fulfillment_region_unmapped:')
+  ) {
+    return '履约区域未映射';
+  }
+  return TYPE_LABEL[row.issueType];
+}
+
 
 
 const IMPACT_LABEL: Record<string, string> = {
@@ -431,7 +441,17 @@ export function InventoryDataIssuesPage() {
 
                   <tr key={row.id} className="border-b last:border-0">
 
-                    <td className="py-2 pr-3">{TYPE_LABEL[row.issueType]}</td>
+                    <td className="py-2 pr-3">
+                      {issueDisplayLabel(row)}
+                      {row.issueType === 'unmapped_warehouse' &&
+                      row.fingerprint.startsWith('fulfillment_region_unmapped:') ? (
+                        <div className="mt-1">
+                          <Link className="text-xs text-primary hover:underline" to="/data/region-mapping">
+                            配置区域映射
+                          </Link>
+                        </div>
+                      ) : null}
+                    </td>
 
                     <td className="py-2 pr-3">
 

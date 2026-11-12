@@ -50,8 +50,10 @@ type MappingDb = {
 };
 
 let regionMappingCache: RegionMappingTables | null = null;
+let regionMappingGeneration = 0;
 
 export function invalidateRegionMappingCache(): void {
+  regionMappingGeneration += 1;
   regionMappingCache = null;
 }
 
@@ -69,6 +71,7 @@ function rememberRegion(
 
 export async function loadRegionMappingTables(db: unknown): Promise<RegionMappingTables> {
   if (regionMappingCache) return regionMappingCache;
+  const loadGeneration = regionMappingGeneration;
   const reader = db as MappingDb;
   if (!reader || typeof reader.select !== 'function') {
     throw new Error('loadRegionMappingTables requires a drizzle database');
@@ -94,6 +97,9 @@ export async function loadRegionMappingTables(db: unknown): Promise<RegionMappin
     rememberRegion(warehouses, row.warehouseCode, row.fulfillmentRegion);
   }
 
-  regionMappingCache = { stations, warehouses };
-  return regionMappingCache;
+  const tables = { stations, warehouses };
+  if (loadGeneration === regionMappingGeneration) {
+    regionMappingCache = tables;
+  }
+  return tables;
 }

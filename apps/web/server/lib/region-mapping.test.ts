@@ -66,6 +66,47 @@ describe('region-mapping', () => {
     invalidateRegionMappingCache();
   });
 
+  it('does not write a load back after invalidate during the query', async () => {
+    invalidateRegionMappingCache();
+    let releaseWarehouse: (() => void) | undefined;
+    const warehouseGate = new Promise<void>((resolve) => {
+      releaseWarehouse = resolve;
+    });
+    let warehouseReads = 0;
+    const db = {
+      select(shape: Record<string, unknown>) {
+        return {
+          from: async () => {
+            if ('station' in shape) {
+              return [{ station: 'Amazon德国', salesRegion: 'EU' }];
+            }
+            warehouseReads += 1;
+            const read = warehouseReads;
+            if (read === 1) await warehouseGate;
+            return [{ warehouseCode: 'US-EAST', fulfillmentRegion: read === 1 ? 'EU' : 'US' }];
+          },
+        };
+      },
+    };
+
+    const inflight = loadRegionMappingTables(db);
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(warehouseReads, 1);
+
+    invalidateRegionMappingCache();
+    const fresh = await loadRegionMappingTables(db);
+    assert.equal(fresh.warehouses.get('US-EAST'), 'US');
+
+    releaseWarehouse?.();
+    const stale = await inflight;
+    assert.equal(stale.warehouses.get('US-EAST'), 'EU');
+
+    const cached = await loadRegionMappingTables(db);
+    assert.equal(cached.warehouses.get('US-EAST'), 'US');
+    assert.equal(warehouseReads, 2);
+    invalidateRegionMappingCache();
+  });
+
   it('falls back to UNMAPPED without guessing', () => {
     assert.equal(resolveSalesRegion('Amazon比利时', tables), 'UNMAPPED');
     assert.equal(resolveSalesRegion('美国', tables), 'UNMAPPED');

@@ -257,6 +257,174 @@ export async function loadMergedPublishedForecastBySkuIds(
   return result;
 }
 
+export type PublishedLeafRow = {
+  skuId: string;
+  salesRegion: string | null;
+  platform: string | null;
+  forecastYear: number;
+  month: number;
+  forecastDailyAvg: string | null;
+  manualDailyAvg: string | null;
+  lifecycle: string | null;
+  profileSegment: string | null;
+  horizonFactors: unknown;
+  forecastDailyP90: string | null;
+};
+
+export type PublishedLeafEntry = PublishedForecastEntry & {
+  salesRegion: string;
+  platform: string;
+};
+
+export function publishedLeafKey(salesRegion: string, platform: string): string {
+  return `${salesRegion}::${platform}`;
+}
+
+/**
+ * 纯函数：已发布版本的行 → 叶子 (sales_region × platform) 月曲线。
+ * - 遗留 `sales_region='ALL'` 行直接丢弃（不再驱动补货）
+ * - 同一区域下既有分平台又有 ALL 平台行时，只取分平台（与全站聚合同规）
+ */
+export function buildPublishedLeafEntries(
+  rows: readonly PublishedLeafRow[],
+  versionId: string | null,
+): Map<string, PublishedLeafEntry> {
+  const byRegion = new Map<string, PublishedLeafRow[]>();
+  for (const row of rows) {
+    const region = (row.salesRegion ?? '').trim().toUpperCase();
+    if (!region || region === 'ALL') continue;
+    const list = byRegion.get(region) ?? [];
+    list.push(row);
+    byRegion.set(region, list);
+  }
+
+  const result = new Map<string, PublishedLeafEntry>();
+  for (const [region, regionRows] of byRegion) {
+    const hasSpecific = regionRows.some((r) => normalizeSalesPlatform(r.platform) !== 'ALL');
+    const usable = hasSpecific
+      ? regionRows.filter((r) => normalizeSalesPlatform(r.platform) !== 'ALL')
+      : regionRows;
+    const byPlatform = new Map<string, PublishedLeafRow[]>();
+    for (const row of usable) {
+      const platform = normalizeSalesPlatform(row.platform);
+      const list = byPlatform.get(platform) ?? [];
+      list.push(row);
+      byPlatform.set(platform, list);
+    }
+    for (const [platform, leafRows] of byPlatform) {
+      let usedT99Fallback = false;
+      const map = aggregateForecastRows(
+        leafRows.map((r) => {
+          const daily = mapForecastDailyFields({
+            forecastDailyAvg: r.forecastDailyAvg ?? 0,
+            manualDailyAvg: r.manualDailyAvg,
+          });
+          let forecastDailyAvg = daily.effectiveDailyAvg;
+          if (
+            forecastDailyAvg <= 0 &&
+            (r.profileSegment ?? '').trim().toUpperCase() === 'T99'
+          ) {
+            const fallback = t99FallbackFromHorizonFactors(r.horizonFactors);
+            if (fallback > 0) {
+              forecastDailyAvg = fallback;
+              usedT99Fallback = true;
+            }
+          }
+          return {
+            forecastYear: r.forecastYear,
+            month: r.month,
+            forecastDailyAvg,
+            platform: r.platform ?? undefined,
+          };
+        }),
+      );
+      const p90Map = aggregateForecastP90Rows(
+        leafRows.map((row) => ({
+          forecastYear: row.forecastYear,
+          month: row.month,
+          forecastDailyP90: Number(row.forecastDailyP90),
+          platform: row.platform,
+        })),
+      );
+      const profileSegment = resolvePublishedSkuProfileSegment(leafRows) ?? undefined;
+      result.set(publishedLeafKey(region, platform), {
+        map,
+        p90Map,
+        lifecycle: leafRows.find((r) => r.lifecycle)?.lifecycle ?? undefined,
+        profileSegment,
+        profileClass: profileClassFromSegment(profileSegment),
+        versionId,
+        demandSource: usedT99Fallback ? 't99_fallback' : 'forecast',
+        salesRegion: region,
+        platform,
+      });
+    }
+  }
+  return result;
+}
+
+/**
+ * 补货/健康用：按 SKU 加载最新发布版的叶子 (sales_region × platform)。
+ * 不回退 `sales_region='ALL'`；无叶子的 SKU 返回空 Map。
+ */
+export async function loadPublishedLeafForecastBySkuIds(
+  skuIds: string[],
+  station: string = FORECAST_GLOBAL_STATION,
+): Promise<Map<string, Map<string, PublishedLeafEntry>>> {
+  const result = new Map<string, Map<string, PublishedLeafEntry>>();
+  if (!skuIds.length) return result;
+  for (const skuId of skuIds) result.set(skuId, new Map());
+
+  const versionBySkuId = await resolvePublishedVersionIdBySkuIds(skuIds, station, {
+    preferRegionLeaves: true,
+  });
+  const skuIdsByVersion = new Map<string, string[]>();
+  for (const [skuId, versionId] of versionBySkuId) {
+    const list = skuIdsByVersion.get(versionId) ?? [];
+    list.push(skuId);
+    skuIdsByVersion.set(versionId, list);
+  }
+
+  for (const [versionId, ids] of skuIdsByVersion) {
+    const rowsBySku = new Map<string, PublishedLeafRow[]>();
+    for (let offset = 0; offset < ids.length; offset += SKU_IN_CHUNK) {
+      const chunk = ids.slice(offset, offset + SKU_IN_CHUNK);
+      const rows = await db
+        .select({
+          skuId: salesForecastMonthly.skuId,
+          salesRegion: salesForecastMonthly.salesRegion,
+          platform: salesForecastMonthly.platform,
+          forecastYear: salesForecastMonthly.forecastYear,
+          month: salesForecastMonthly.month,
+          forecastDailyAvg: salesForecastMonthly.forecastDailyAvg,
+          manualDailyAvg: salesForecastMonthly.manualDailyAvg,
+          lifecycle: salesForecastMonthly.lifecycle,
+          profileSegment: salesForecastMonthly.profileSegment,
+          horizonFactors: salesForecastMonthly.horizonFactors,
+          forecastDailyP90: salesForecastMonthly.forecastDailyP90,
+        })
+        .from(salesForecastMonthly)
+        .where(
+          and(
+            eq(salesForecastMonthly.versionId, versionId),
+            eq(salesForecastMonthly.station, station),
+            inArray(salesForecastMonthly.skuId, chunk),
+            ne(salesForecastMonthly.salesRegion, 'ALL'),
+          ),
+        );
+      for (const row of rows) {
+        const list = rowsBySku.get(row.skuId) ?? [];
+        list.push(row);
+        rowsBySku.set(row.skuId, list);
+      }
+    }
+    for (const skuId of ids) {
+      result.set(skuId, buildPublishedLeafEntries(rowsBySku.get(skuId) ?? [], versionId));
+    }
+  }
+  return result;
+}
+
 export type PublishedForecastSkuMeta = {
   profileSegment: string | null;
   lifecycle: string | null;

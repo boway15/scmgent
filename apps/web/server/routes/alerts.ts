@@ -109,6 +109,8 @@ alertRoutes.get('/alerts', requireMenu('inventory.alert'), async (c) => {
       : undefined;
   const suggestOrder = parseRecommendYesNoQuery(c.req.query('suggestOrder'));
   const suggestShip = parseRecommendYesNoQuery(c.req.query('suggestShip'));
+  const fulfillmentRegion = c.req.query('fulfillmentRegion')?.trim();
+  const platform = c.req.query('platform')?.trim();
 
   const productScope = parseProductScope(c.req.query('productScope'));
   const projectGroupScope = await resolveRequestProjectGroupScope(c);
@@ -118,6 +120,8 @@ alertRoutes.get('/alerts', requireMenu('inventory.alert'), async (c) => {
     const pattern = `%${q}%`;
     conditions.push(or(ilike(skus.code, pattern), ilike(skus.name, pattern))!);
   }
+  if (fulfillmentRegion) conditions.push(eq(stockAlerts.fulfillmentRegion, fulfillmentRegion));
+  if (platform) conditions.push(eq(stockAlerts.platform, platform));
   if (alertType) conditions.push(eq(stockAlerts.alertType, alertType));
   if (resolved === 'open') conditions.push(eq(stockAlerts.isResolved, false));
   if (resolved === 'done') conditions.push(eq(stockAlerts.isResolved, true));
@@ -135,6 +139,8 @@ alertRoutes.get('/alerts', requireMenu('inventory.alert'), async (c) => {
     skuCode: skus.code,
     skuName: skus.name,
     warehouseCode: stockAlerts.warehouseCode,
+    fulfillmentRegion: stockAlerts.fulfillmentRegion,
+    platform: stockAlerts.platform,
     alertType: stockAlerts.alertType,
     currentQty: stockAlerts.currentQty,
     safetyQty: stockAlerts.safetyQty,
@@ -327,6 +333,8 @@ alertRoutes.get('/alerts', requireMenu('inventory.alert'), async (c) => {
         level,
         priceReason,
         q,
+        fulfillmentRegion,
+        platform,
       }),
       projectGroupScope,
     );

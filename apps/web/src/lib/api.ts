@@ -3089,6 +3089,8 @@ export const api = {
     grain?: 'sku' | 'warehouse';
     suggestOrder?: 'yes' | 'no';
     suggestShip?: 'yes' | 'no';
+    fulfillmentRegion?: string;
+    platform?: string;
   }) => {
     const qs = new URLSearchParams();
     if (params?.page) qs.set('page', String(params.page));
@@ -3101,6 +3103,8 @@ export const api = {
     if (params?.grain) qs.set('grain', params.grain);
     if (params?.suggestOrder) qs.set('suggestOrder', params.suggestOrder);
     if (params?.suggestShip) qs.set('suggestShip', params.suggestShip);
+    if (params?.fulfillmentRegion?.trim()) qs.set('fulfillmentRegion', params.fulfillmentRegion.trim());
+    if (params?.platform?.trim()) qs.set('platform', params.platform.trim());
     appendProductScopeQuery(qs, params?.productScope);
     const query = qs.toString();
     return request<{
@@ -3110,6 +3114,8 @@ export const api = {
         skuCode: string;
         skuName: string;
         warehouseCode?: string | null;
+        fulfillmentRegion?: string | null;
+        platform?: string | null;
         alertType: string;
         currentQty: number;
         safetyQty: number;
@@ -3180,6 +3186,8 @@ export const api = {
     q?: string;
     sku?: string;
     warehouse?: string;
+    fulfillmentRegion?: string;
+    platform?: string;
     status?: 'pending' | 'accepted' | 'ignored';
     queue?: 'auto' | 'manual' | 'all';
     page?: number;
@@ -3190,6 +3198,8 @@ export const api = {
     if (params?.q?.trim()) qs.set('q', params.q.trim());
     if (params?.sku?.trim()) qs.set('sku', params.sku.trim());
     if (params?.warehouse?.trim()) qs.set('warehouse', params.warehouse.trim());
+    if (params?.fulfillmentRegion?.trim()) qs.set('fulfillmentRegion', params.fulfillmentRegion.trim());
+    if (params?.platform?.trim()) qs.set('platform', params.platform.trim());
     if (params?.status) qs.set('status', params.status);
     if (params?.queue) qs.set('queue', params.queue);
     if (params?.page) qs.set('page', String(params.page));
@@ -3205,6 +3215,8 @@ export const api = {
         merchantCode?: string | null;
         merchantName?: string | null;
         warehouseCode?: string | null;
+        fulfillmentRegion?: string | null;
+        platform?: string | null;
         suggestedQty: number;
         suggestedDate: string;
         reason: string;

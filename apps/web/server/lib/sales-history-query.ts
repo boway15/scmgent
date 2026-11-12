@@ -15,6 +15,10 @@ export type DailySalesPoint = {
   saleDate: string;
   warehouseCode: string | null;
   station: string;
+  /** 导入原文渠道；补货按履约区域×渠道分桶时使用 */
+  channel?: string | null;
+  /** 行上销售区域码（飞书同步/映射补齐）；可空 */
+  salesRegion?: string | null;
 };
 
 const SKU_IN_CHUNK = 2000;
@@ -52,6 +56,8 @@ export async function loadDailySalesBySkuIds(
         saleDate: salesHistory.saleDate,
         warehouseCode: salesHistory.warehouseCode,
         station: salesHistory.station,
+        channel: salesHistory.channel,
+        salesRegion: salesHistory.salesRegion,
       })
       .from(salesHistory)
       .where(and(inArray(salesHistory.skuId, chunk), gte(salesHistory.saleDate, cutoff)));
@@ -63,6 +69,8 @@ export async function loadDailySalesBySkuIds(
         saleDate: normalizeSaleDate(row.saleDate),
         warehouseCode: row.warehouseCode,
         station: row.station ?? '',
+        channel: row.channel,
+        salesRegion: row.salesRegion,
       };
       const list = map.get(row.skuId) ?? [];
       list.push(point);

@@ -35,6 +35,8 @@ export type ClassifiedAlert = {
   skuCode: string;
   skuName: string;
   warehouseCode: string | null;
+  fulfillmentRegion: string | null;
+  platform: string | null;
   projectGroup: string | null;
   action: AlertAction;
   priceReason: PriceReason | null;
@@ -93,6 +95,8 @@ type RawRow = {
   skuCode: string;
   skuName: string;
   warehouseCode: string | null;
+  fulfillmentRegion: string | null;
+  platform: string | null;
   projectGroup: string | null;
   avgDaily: number | string | null;
   stockout: string | null;
@@ -161,6 +165,8 @@ export function classifyAlertRows(
       skuCode: row.skuCode,
       skuName: row.skuName ?? '',
       warehouseCode: row.warehouseCode,
+      fulfillmentRegion: row.fulfillmentRegion,
+      platform: row.platform,
       projectGroup: row.projectGroup,
       action: resolved.action,
       priceReason: resolved.priceReason,
@@ -301,6 +307,8 @@ async function queryClassifiedAlerts(productScope: ProductScope): Promise<Classi
       s.name AS "skuName",
       s.project_group AS "projectGroup",
       a.warehouse_code AS "warehouseCode",
+      a.fulfillment_region AS "fulfillmentRegion",
+      a.platform AS platform,
       h.avg_daily AS "avgDaily",
       h.j->>'timelineStockoutDate' AS stockout,
       h.j->>'demandShare' AS "demandShare",
@@ -363,6 +371,8 @@ function seedClassifiedAlert(seed: EligibleSkuSeed): ClassifiedAlert {
     skuCode: seed.skuCode,
     skuName: seed.skuName ?? '',
     warehouseCode: seed.warehouseCode,
+    fulfillmentRegion: null,
+    platform: null,
     projectGroup: seed.projectGroup,
     action: 'none',
     priceReason: null,
@@ -483,9 +493,15 @@ export async function listClassifiedAlerts(input: {
   level?: AlertLevel;
   priceReason?: PriceReason;
   q?: string;
+  fulfillmentRegion?: string;
+  platform?: string;
 }): Promise<ClassifiedAlert[]> {
   const needle = input.q?.trim().toLowerCase();
+  const regionFilter = input.fulfillmentRegion?.trim();
+  const platformFilter = input.platform?.trim().toUpperCase();
   const rows = (await loadClassifiedAlerts(input.productScope)).filter((row) => {
+    if (regionFilter && row.fulfillmentRegion !== regionFilter) return false;
+    if (platformFilter && (row.platform ?? '').toUpperCase() !== platformFilter) return false;
     if (row.action === 'none') return false;
     if (input.action && input.action !== 'all') {
       if (

@@ -9,6 +9,9 @@ export type StockAlertKeyParts = {
   warehouseCode: string | null;
   alertType: string;
   horizonDays?: number | null;
+  /** 履约区域 × 渠道粒度预警；旧仓粒度行为空 */
+  fulfillmentRegion?: string | null;
+  platform?: string | null;
 };
 
 /** stock_alerts 数量列为 integer；时间轴结余/覆盖天数可能为小数。 */
@@ -52,6 +55,8 @@ export function dedupeStockAlertIncoming(incoming: StockAlertIncoming[]): StockA
         warehouseCode: item.warehouseCode,
         alertType: item.alertType,
         horizonDays: item.horizonDays,
+        fulfillmentRegion: item.fulfillmentRegion,
+        platform: item.platform,
       }),
       item,
     );
@@ -64,13 +69,20 @@ export function stockAlertFingerprint(parts: StockAlertKeyParts): string {
     parts.horizonDays == null || Number.isNaN(parts.horizonDays)
       ? ''
       : String(parts.horizonDays);
-  return [parts.skuId, parts.warehouseCode ?? '', parts.alertType, horizon].join('::');
+  const base = [parts.skuId, parts.warehouseCode ?? '', parts.alertType, horizon];
+  // 仅区域×渠道粒度才追加，旧仓粒度指纹保持不变
+  if (parts.fulfillmentRegion || parts.platform) {
+    base.push(parts.fulfillmentRegion ?? '', parts.platform ?? '');
+  }
+  return base.join('::');
 }
 
 export type OpenStockAlertRef = {
   id: string;
   skuId: string;
   warehouseCode: string | null;
+  fulfillmentRegion?: string | null;
+  platform?: string | null;
   alertType: string;
   horizonDays: number | null;
   projectedQty: number | null;
@@ -79,7 +91,10 @@ export type OpenStockAlertRef = {
 
 export type StockAlertIncoming = {
   skuId: string;
-  warehouseCode: string;
+  /** 区域×渠道粒度预警不绑定物理仓，为 null */
+  warehouseCode: string | null;
+  fulfillmentRegion?: string | null;
+  platform?: string | null;
   alertType: string;
   currentQty: number;
   safetyQty: number;
@@ -124,6 +139,8 @@ export function diffStockAlertWrites(input: {
       warehouseCode: item.warehouseCode,
       alertType: item.alertType,
       horizonDays: item.horizonDays,
+      fulfillmentRegion: item.fulfillmentRegion,
+      platform: item.platform,
     });
     activeFingerprints.add(fingerprint);
     const existing = byFingerprint.get(fingerprint);

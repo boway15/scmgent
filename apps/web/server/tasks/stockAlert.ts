@@ -5,28 +5,38 @@ import { isAlertWorkflowEnabled } from '../integrations/dify.js';
 import {
   computeAllInventoryHealth,
   healthToAlertType,
+  loadForecastErrorStdDevBySkuIds,
+  loadPolicyMapsBySkuIds,
   type SkuHealthRow,
 } from '../lib/inventory-health-service.js';
 import { applyStockAlertCoverageReplace, saveHealthSnapshots } from '../lib/inventory-health-store.js';
 import {
-  regionNetworkEffectiveBySku,
   shouldEmitImmediateAlert,
   shouldPersistHorizonAlert,
   type StockAlertIncoming,
 } from '../lib/stock-alert-sync.js';
 import { loadPlanningEligibleSkuIds } from '../lib/planning-dashboard.js';
 import { syncReplenishLightFromHealth } from '../lib/replenish-light-sync.js';
-import { shouldDeferReplenishment } from '../lib/warehouse-domain.js';
+import { inArray } from 'drizzle-orm';
+import { db, skus } from '@scm/db';
+import { loadRegionMappingTables } from '../lib/region-mapping.js';
+import { shouldDeferUsRegionUnit, regionDemandDaily } from '../lib/region-channel-planning.js';
+import {
+  buildSkuRegionChannelUnits,
+  projectRegionChannelUnit,
+  type RegionChannelUnit,
+} from '../lib/region-channel-units.js';
+import { loadDailySalesBySkuIds } from '../lib/sales-history-query.js';
+import { normalizeSalesPlatformSync } from '../lib/sales-platform.js';
 import {
   loadOpenLotsBySkuWarehouse,
   syncInventorySupplyLots,
   type OpenTimelineLot,
 } from '../lib/inventory-supply-lot-sync.js';
 import { assembleWarehouseTimeline } from '../lib/inventory-timeline-service.js';
-import { deriveHorizonAlerts, filterSkippedConfirmedHorizonAlerts } from '../lib/inventory-horizon-alerts.js';
+import { deriveHorizonAlerts } from '../lib/inventory-horizon-alerts.js';
 import { DEFAULT_OVERSTOCK_THRESHOLD_DAYS } from '../lib/replenishment-coverage.js';
 import {
-  buildHorizonSkipAllocation,
   parseSharesFromSnapshot,
   type ShareParseResult,
 } from '../lib/inventory-share-allocation.js';
@@ -41,17 +51,17 @@ import {
   loadLatestRawSnapshotsBySkuIds,
   type InventorySnapshot,
 } from '../lib/inventory-snapshot.js';
-import { loadMergedPublishedForecastBySkuIds } from '../lib/forecast-published-resolve.js';
+import {
+  loadMergedPublishedForecastBySkuIds,
+  loadPublishedLeafForecastBySkuIds,
+} from '../lib/forecast-published-resolve.js';
 import {
   loadPlanningDemandDepsForSkus,
   loadPlanningDemandForSkuWarehouse,
   type LoadPlanningDemandDeps,
 } from '../lib/demand-plan-load.js';
 import { yieldToEventLoop } from '../lib/yield-event-loop.js';
-import {
-  IN_PRODUCTION_WAREHOUSE,
-  UNALLOCATED_TRANSIT_WAREHOUSE,
-} from '../lib/inventory-constants.js';
+import { UNALLOCATED_TRANSIT_WAREHOUSE } from '../lib/inventory-constants.js';
 
 const FEISHU_PREVIEW_LIMIT = 40;
 const TIMELINE_YIELD_EVERY = 1000;
@@ -111,31 +121,6 @@ export async function runStockAlert() {
   const skuIds = [...new Set(healthRows.map((row) => row.skuId))];
   const bundle = await loadTimelineBundle(skuIds);
 
-  const productionSuffix = `::${IN_PRODUCTION_WAREHOUSE}`;
-  const productionQtyBySku = new Map<string, number>();
-  for (const [key, snap] of bundle.snapshots) {
-    if (!key.endsWith(productionSuffix)) continue;
-    productionQtyBySku.set(key.slice(0, -productionSuffix.length), snap.qtyInProduction);
-  }
-  const usEffectiveBySku = regionNetworkEffectiveBySku({
-    rows: healthRows.map((row) => ({
-      skuId: row.skuId,
-      regionGroup: row.regionGroup,
-      effectiveQty: row.effectiveQty,
-      qtyInProduction: row.position.qtyInProduction,
-    })),
-    regionGroup: 'US',
-    productionQtyBySku,
-  });
-  const usRopBySku = new Map<string, number>();
-  for (const row of healthRows) {
-    if (row.regionGroup !== 'US') continue;
-    usRopBySku.set(
-      row.skuId,
-      (usRopBySku.get(row.skuId) ?? 0) + ((row.metrics.reorderPoint as number) ?? 0),
-    );
-  }
-
   const incoming: StockAlertIncoming[] = [];
   const tTimeline = Date.now();
   let timelineErrors = 0;
@@ -187,27 +172,30 @@ export async function runStockAlert() {
         row.metrics.confirmedCoverageDays = confirmedCoverageDays;
         row.metrics.timelineStockoutDate = built.timeline.stockoutDateConfirmed;
       }
-
-      if (eligibleSkuIds.has(row.skuId)) {
-        collectAlerts(
-          row,
-          built,
-          bundle.snapshots,
-          share,
-          usEffectiveBySku,
-          usRopBySku,
-          incoming,
-        );
-      }
     } catch (err) {
       timelineErrors += 1;
       console.warn(`[stockAlert] timeline skipped ${row.skuCode}/${row.warehouseCode}:`, err);
     }
   }
 
+  // 预警决策粒度：履约区域 × 渠道（仓级时间轴仅用于健康快照 / 红绿灯）
+  const unitStats = await collectRegionChannelAlerts({
+    healthRows,
+    eligibleSkuIds,
+    bundle,
+    incoming,
+  });
+
   console.info(
-    `[stockAlert] timelines done rows=${healthRows.length} elapsed=${Date.now() - tTimeline}ms errors=${timelineErrors} candidates=${incoming.length}`,
+    `[stockAlert] timelines done rows=${healthRows.length} elapsed=${Date.now() - tTimeline}ms errors=${timelineErrors} units=${unitStats.units} unitErrors=${unitStats.errors} candidates=${incoming.length}`,
   );
+  if (unitStats.demandRegionsWithoutWarehouse.size > 0) {
+    console.warn(
+      `[stockAlert] 有需求但无仓库映射的履约区域（一期不出预警）: ${[...unitStats.demandRegionsWithoutWarehouse.entries()]
+        .map(([region, n]) => `${region}×${n}SKU`)
+        .join(', ')}`,
+    );
+  }
 
   await saveHealthSnapshots(healthRows);
   await syncReplenishLightFromHealth(healthRows);
@@ -295,84 +283,194 @@ async function projectRow(row: SkuHealthRow, bundle: TimelineBundle, share: Shar
   });
 }
 
-function collectAlerts(
-  row: SkuHealthRow,
-  built: Awaited<ReturnType<typeof projectRow>>,
-  snapshots: Map<string, InventorySnapshot>,
-  share: ShareParseResult,
-  usEffectiveBySku: Map<string, number>,
-  usRopBySku: Map<string, number>,
-  incoming: StockAlertIncoming[],
-) {
-  const alertType = healthToAlertType(row.healthStatus, row.effectiveQty);
-  if (alertType && shouldEmitImmediateAlert(alertType, row.avgDaily)) {
-    let deferImmediate = false;
-    if (row.regionGroup === 'US') {
-      const warehouseRop = (row.metrics.reorderPoint as number) ?? 0;
-      deferImmediate = shouldDeferReplenishment({
-        warehouseEffective: row.effectiveQty,
-        warehouseRop,
-        networkEffective: usEffectiveBySku.get(row.skuId) ?? row.effectiveQty,
-        networkRop: usRopBySku.get(row.skuId) ?? 0,
+async function collectRegionChannelAlerts(params: {
+  healthRows: SkuHealthRow[];
+  eligibleSkuIds: Set<string>;
+  bundle: TimelineBundle;
+  incoming: StockAlertIncoming[];
+}): Promise<{
+  units: number;
+  errors: number;
+  demandRegionsWithoutWarehouse: Map<string, number>;
+}> {
+  const bySku = new Map<string, SkuHealthRow[]>();
+  for (const row of params.healthRows) {
+    if (!params.eligibleSkuIds.has(row.skuId)) continue;
+    const list = bySku.get(row.skuId) ?? [];
+    list.push(row);
+    bySku.set(row.skuId, list);
+  }
+  const skuIds = [...bySku.keys()];
+  const demandRegionsWithoutWarehouse = new Map<string, number>();
+  if (!skuIds.length) return { units: 0, errors: 0, demandRegionsWithoutWarehouse };
+
+  const [tables, leafBySku, salesBySku, policyBySku, errorStdDevBySku, skuRows] = await Promise.all([
+    loadRegionMappingTables(db),
+    loadPublishedLeafForecastBySkuIds(skuIds),
+    loadDailySalesBySkuIds(skuIds),
+    loadPolicyMapsBySkuIds(skuIds),
+    loadForecastErrorStdDevBySkuIds(skuIds),
+    loadAlertSkus(skuIds),
+  ]);
+  const skuById = new Map(skuRows.map((row) => [row.id, row]));
+
+  let units = 0;
+  let errors = 0;
+  for (const [skuId, warehouseHealth] of bySku) {
+    const sku = skuById.get(skuId);
+    if (!sku) continue;
+    try {
+      const result = buildSkuRegionChannelUnits({
+        sku,
+        warehouseHealth,
+        tables,
+        leaves: leafBySku.get(skuId) ?? new Map(),
+        salesRows: salesBySku.get(skuId) ?? [],
+        platformOf: normalizeSalesPlatformSync,
+        policyMap: policyBySku.get(skuId) ?? new Map(),
+        forecastErrorStdDev: errorStdDevBySku.get(skuId) ?? null,
       });
-    }
-    if (!deferImmediate) {
-      const safetyQty = (row.metrics.safetyStockQty as number) ?? 0;
-      const rop = (row.metrics.reorderPoint as number) ?? 0;
-      const threshold = alertType === 'below_safety' ? safetyQty : rop || safetyQty;
-      incoming.push({
-        skuId: row.skuId,
-        warehouseCode: row.warehouseCode,
-        alertType,
-        currentQty: row.effectiveQty,
-        safetyQty: threshold,
-        skuCode: `${row.skuCode}[${row.warehouseCode}]`,
-        displayType: alertType,
-      });
+      for (const region of result.demandRegionsWithoutWarehouse) {
+        demandRegionsWithoutWarehouse.set(region, (demandRegionsWithoutWarehouse.get(region) ?? 0) + 1);
+      }
+      for (const unit of result.units) {
+        units += 1;
+        const timeline = projectRegionChannelUnit({
+          skuId,
+          unit,
+          plans: result.plans,
+          snapshots: params.bundle.snapshots,
+          lotsByKey: params.bundle.lotsByKey,
+        });
+        pushRegionChannelAlerts(unit, timeline, params.incoming);
+      }
+    } catch (err) {
+      errors += 1;
+      console.warn(`[stockAlert] region unit skipped ${sku.code}:`, err);
     }
   }
+  return { units, errors, demandRegionsWithoutWarehouse };
+}
 
-  if (row.healthStatus === 'gray') return;
+async function loadAlertSkus(skuIds: string[]) {
+  const rows: Array<{
+    id: string;
+    code: string;
+    spuId: string | null;
+    merchantCode: string | null;
+    leadTimeDays: number | null;
+    unitCost: string | null;
+    lifecycle: string | null;
+    commercialStatusNorm: string | null;
+  }> = [];
+  for (let offset = 0; offset < skuIds.length; offset += 500) {
+    const chunk = skuIds.slice(offset, offset + 500);
+    const part = await db
+      .select({
+        id: skus.id,
+        code: skus.code,
+        spuId: skus.spuId,
+        merchantCode: skus.merchantCode,
+        leadTimeDays: skus.leadTimeDays,
+        unitCost: skus.unitCost,
+        lifecycle: skus.lifecycle,
+        commercialStatusNorm: skus.commercialStatusNorm,
+      })
+      .from(skus)
+      .where(inArray(skus.id, chunk));
+    rows.push(...part);
+  }
+  return rows;
+}
 
-  const timeline = built.timeline;
-  const day0 = timeline.points.find((point) => point.horizonDays === 0);
-  const coverageDays = calcConfirmedCoverageDays({
-    today: timeline.today,
-    stockoutDateConfirmed: timeline.stockoutDateConfirmed,
+function pushRegionChannelAlerts(
+  unit: RegionChannelUnit,
+  timeline: ReturnType<typeof projectRegionChannelUnit>,
+  incoming: StockAlertIncoming[],
+) {
+  const health = unit.health;
+  const day0 = timeline.timeline.points.find((point) => point.horizonDays === 0);
+  const confirmedCoverageDays = calcConfirmedCoverageDays({
+    today: timeline.timeline.today,
+    stockoutDateConfirmed: timeline.timeline.stockoutDateConfirmed,
     confirmedEndingToday: day0?.confirmedEnding ?? 0,
-    avgDaily: row.avgDaily,
+    avgDaily: health.avgDaily,
   });
+  const decisionHealth = calcTimelineDecisionHealth({
+    today: timeline.timeline.today,
+    totalLeadDays: health.totalLeadDays,
+    safetyStockDays: health.coverage.safetyStockDays,
+    overstockThresholdDays: health.coverage.overstockThresholdDays ?? DEFAULT_OVERSTOCK_THRESHOLD_DAYS,
+    suggestedQty: timeline.suggestedQty,
+    uncoverableByNewPo: timeline.timeline.uncoverableByNewPo,
+    stockoutDateConfirmed: timeline.timeline.stockoutDateConfirmed,
+    safetyBreachDateConfirmed: timeline.timeline.safetyBreachDateConfirmed,
+    confirmedCoverageDays,
+    lifecycle: health.lifecycle,
+    effectiveQty: health.effectiveQty,
+    avgDaily: health.avgDaily,
+  });
+  const regionDaily = regionDemandDaily(unit.plan);
+  const regionRop = unit.regionWarehouseHealth.reduce(
+    (sum, row) => sum + ((row.metrics.reorderPoint as number) ?? 0),
+    0,
+  );
+  const regionCoverageDays = regionDaily > 0 ? unit.plan.regionQty / regionDaily : Number.POSITIVE_INFINITY;
+  const deferUs = shouldDeferUsRegionUnit({
+    fulfillmentRegion: unit.fulfillmentRegion,
+    enabled: true,
+    warehouses: unit.regionWarehouseHealth.map((row) => ({
+      effectiveQty: row.effectiveQty,
+      reorderPoint: (row.metrics.reorderPoint as number) ?? 0,
+    })),
+    networkEffective: unit.plan.regionQty,
+    networkRop: regionRop,
+    networkCoverageDays: regionCoverageDays,
+    targetCoverageDays: health.coverage.targetCoverageDays,
+  });
+  const label = `${health.skuCode}[${unit.fulfillmentRegion}/${unit.platform}]`;
+  const alertType = healthToAlertType(decisionHealth, health.effectiveQty);
+  if (alertType && shouldEmitImmediateAlert(alertType, health.avgDaily) && !deferUs) {
+    const safetyQty = (health.metrics.safetyStockQty as number) ?? 0;
+    const rop = (health.metrics.reorderPoint as number) ?? 0;
+    incoming.push({
+      skuId: health.skuId,
+      warehouseCode: null,
+      fulfillmentRegion: unit.fulfillmentRegion,
+      platform: unit.platform,
+      alertType,
+      currentQty: health.effectiveQty,
+      safetyQty: alertType === 'below_safety' ? safetyQty : rop || safetyQty,
+      skuCode: label,
+      displayType: alertType,
+    });
+  }
+  if (decisionHealth === 'gray') return;
   const derived = deriveHorizonAlerts({
-    points: timeline.points.map((point) => ({
+    points: timeline.timeline.points.map((point) => ({
       horizonDays: point.horizonDays,
       projectedBalance: point.confirmedEnding,
     })),
-    coverageDays,
-    totalLeadDays: row.totalLeadDays,
-    overstockThresholdDays: row.coverage.overstockThresholdDays ?? DEFAULT_OVERSTOCK_THRESHOLD_DAYS,
-    stockoutDate: timeline.stockoutDateConfirmed,
-    uncoverableByNewPo: timeline.uncoverableByNewPo,
+    coverageDays: confirmedCoverageDays,
+    totalLeadDays: health.totalLeadDays,
+    overstockThresholdDays: health.coverage.overstockThresholdDays ?? DEFAULT_OVERSTOCK_THRESHOLD_DAYS,
+    stockoutDate: timeline.timeline.stockoutDateConfirmed,
+    uncoverableByNewPo: timeline.timeline.uncoverableByNewPo,
   });
-  const nativeQty = snapshotOf(snapshots, row.skuId, row.warehouseCode).qtyAvailable;
-  const skipConfirmed = buildHorizonSkipAllocation({
-    share,
-    planningWarehouse: row.warehouseCode,
-    nativeQty,
-    overseasRecordsQty: snapshotOf(snapshots, row.skuId, UNALLOCATED_TRANSIT_WAREHOUSE).qtyAvailable,
-  }).shouldSkip;
-  const horizonCandidates = filterSkippedConfirmedHorizonAlerts(derived, skipConfirmed);
-  for (const candidate of horizonCandidates) {
-    if (!shouldPersistHorizonAlert(candidate.alertType, row.healthStatus)) continue;
+  for (const candidate of derived) {
+    if (!shouldPersistHorizonAlert(candidate.alertType, decisionHealth)) continue;
     incoming.push({
-      skuId: row.skuId,
-      warehouseCode: row.warehouseCode,
+      skuId: health.skuId,
+      warehouseCode: null,
+      fulfillmentRegion: unit.fulfillmentRegion,
+      platform: unit.platform,
       alertType: candidate.alertType,
       currentQty: candidate.projectedQty,
       safetyQty: candidate.thresholdQty,
       horizonDays: candidate.horizonDays,
       projectedQty: candidate.projectedQty,
       projectedStockoutDate: candidate.projectedStockoutDate,
-      skuCode: `${row.skuCode}[${row.warehouseCode}]`,
+      skuCode: label,
       displayType: `${candidate.alertType}${candidate.horizonDays != null ? `@${candidate.horizonDays}d` : ''}`,
     });
   }

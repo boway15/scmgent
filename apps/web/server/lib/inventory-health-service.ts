@@ -62,6 +62,8 @@ import { FORECAST_GLOBAL_STATION } from './forecast-station-scope.js';
 import { calcEffectiveDailyDemand } from './effective-daily-demand.js';
 import { replenishmentSalesLookbackDays } from './sales-history-config.js';
 
+import type { ChannelShareSource, RegionPlatformUnitPlan } from './region-channel-planning.js';
+
 export const MIN_AVAILABILITY_COVERAGE = 0.3;
 
 const SKU_IN_CHUNK = 2000;
@@ -627,6 +629,265 @@ export async function computeSkuWarehouseHealth(params: {
     position,
     leadTime,
   };
+}
+
+type RegionPolicy = {
+  safetyStockMethod?: string | null;
+  safetyStockDays?: number | null;
+  safetyStockQty?: number | null;
+  serviceLevel?: number | string | null;
+  leadTimeStdDev?: number | string | null;
+  calcMethod?: string | null;
+  targetCoverageDays?: number | null;
+  overstockThresholdDays?: number | null;
+};
+
+/**
+ * 区域策略：区内各仓安全库存配置合并为一份。
+ * 天数类取最大值（保守）；任一仓为人工件数时，区域人工件数 = 各仓人工件数之和 × 渠道占比。
+ */
+export function mergeRegionPolicy(
+  policies: ReadonlyArray<RegionPolicy | undefined>,
+  channelWeight: number,
+): RegionPolicy | undefined {
+  const present = policies.filter((p): p is RegionPolicy => p != null);
+  if (!present.length) return undefined;
+  const maxOf = (pick: (p: RegionPolicy) => number | null | undefined) => {
+    const values = present.map(pick).filter((v): v is number => v != null && Number.isFinite(v));
+    return values.length ? Math.max(...values) : undefined;
+  };
+  const base =
+    [...present].sort((a, b) => (b.safetyStockDays ?? 0) - (a.safetyStockDays ?? 0))[0] ?? present[0]!;
+  const manual = present.filter((p) => p.calcMethod === 'manual' && (p.safetyStockQty ?? 0) > 0);
+  const manualQty = manual.reduce((sum, p) => sum + (p.safetyStockQty ?? 0), 0);
+  return {
+    safetyStockMethod: base.safetyStockMethod,
+    serviceLevel: base.serviceLevel,
+    leadTimeStdDev: base.leadTimeStdDev,
+    safetyStockDays: maxOf((p) => p.safetyStockDays),
+    targetCoverageDays: maxOf((p) => p.targetCoverageDays),
+    overstockThresholdDays: maxOf((p) => p.overstockThresholdDays),
+    ...(manual.length
+      ? { calcMethod: 'manual', safetyStockQty: Math.round(manualQty * channelWeight) }
+      : { calcMethod: base.calcMethod, safetyStockQty: base.safetyStockQty }),
+  };
+}
+
+export type RegionChannelHealthRow = {
+  skuId: string;
+  skuCode: string;
+  spuId: string | null;
+  merchantCode: string | null;
+  fulfillmentRegion: string;
+  platform: string;
+  /** 区域内物理仓（仅作追溯，不作决策粒度） */
+  warehouseCodes: string[];
+  effectiveQty: number;
+  regionQty: number;
+  avgDaily: number;
+  demandSource: 'forecast' | 'historical';
+  healthStatus: InventoryHealth;
+  coverageDays: number;
+  totalLeadDays: number;
+  latestOrderDays: number;
+  lifecycle?: string;
+  needsReplenishment: boolean;
+  suggestedQty: number;
+  suggestedDate: string;
+  metrics: Record<string, unknown>;
+  coverage: CoverageReplenishmentResult & { demandSource: 'forecast' | 'historical' };
+  leadTime: ResolvedLeadTime;
+};
+
+/**
+ * 履约区域 × 渠道健康（决策粒度）。入参为 { sku, fulfillmentRegion, platform } + 已加载的区域/渠道数据，纯计算无 DB。
+ * 需求 = 发布叶子 (region, platform)；无叶子回退同区同渠道历史日均；不读 sales_region='ALL'。
+ */
+export function computeRegionChannelHealth(params: {
+  sku: {
+    id: string;
+    code: string;
+    spuId: string | null;
+    merchantCode: string | null;
+    unitCost: string | null;
+    lifecycle?: string | null;
+    commercialStatusNorm?: string | null;
+  };
+  fulfillmentRegion: string;
+  platform: string;
+  unit: RegionPlatformUnitPlan;
+  channelShareSource: ChannelShareSource;
+  regionQty: number;
+  /** 区域内物理仓健康行（取交期最长者作区域交期；提供 ROP 追溯） */
+  regionWarehouseHealth: SkuHealthRow[];
+  /** 同区同渠道近窗日销（EOQ / 标准差 / 历史日均） */
+  salesRows: Array<{ qtySold: number; saleDate: string }>;
+  policyMap: Map<string, PolicyRow | undefined>;
+  forecastErrorStdDev?: number | null;
+  moq?: number;
+  ruleDefaults?: { safetyStockDays: number; overstockThresholdDays: number };
+  regionDemandShare?: number | null;
+  now?: Date;
+}): RegionChannelHealthRow {
+  const now = params.now ?? new Date();
+  const whHealth = params.regionWarehouseHealth;
+  const leadSource = [...whHealth].sort((a, b) => b.totalLeadDays - a.totalLeadDays)[0];
+  if (!leadSource) throw new Error(`computeRegionChannelHealth: region ${params.fulfillmentRegion} has no warehouses`);
+  const leadTime = leadSource.leadTime;
+
+  const demandWindowDays = replenishmentSalesLookbackDays();
+  const sales = params.salesRows.map((s) => ({ qtySold: s.qtySold, saleDate: String(s.saleDate) }));
+  let eoqCalc = calcReplenishment({
+    sales,
+    leadTimeDays: leadTime.totalLeadDays,
+    unitCost: params.sku.unitCost ? Number(params.sku.unitCost) : 1,
+  });
+  const historicalDemand = resolveHistoricalDemand({
+    sales,
+    inventoryRows: [],
+    windowDays: demandWindowDays,
+    asOf: now,
+  });
+  const historyDaily = params.unit.historyDailyAvg > 0 ? params.unit.historyDailyAvg : historicalDemand.avgDaily;
+  eoqCalc = { ...eoqCalc, avgDaily: historyDaily };
+
+  const leaf = params.unit.leaf;
+  const demandMap = leaf?.map ?? new Map<string, number>();
+  const policy = mergeRegionPolicy(
+    whHealth.map((h) => params.policyMap.get(h.warehouseCode) ?? params.policyMap.get('ALL')),
+    params.unit.weight,
+  );
+
+  const coverage = calcCoverageReplenishmentFromForecast({
+    effectiveQty: params.unit.allocatedQty,
+    forecasts: demandMap,
+    historicalAvgDaily: historyDaily,
+    productionDays: leadTime.productionDays,
+    shippingDays: leadTime.shippingDays,
+    inboundBufferDays: leadTime.inboundBufferDays,
+    safetyStockDays: policy?.safetyStockDays ?? params.ruleDefaults?.safetyStockDays ?? undefined,
+    targetCoverageDays: policy?.targetCoverageDays ?? undefined,
+    overstockThresholdDays:
+      policy?.overstockThresholdDays ?? params.ruleDefaults?.overstockThresholdDays ?? undefined,
+    moq: params.moq,
+    lifecycle: leaf?.lifecycle,
+    today: now,
+  });
+
+  const avgDaily =
+    coverage.demandSource === 'forecast'
+      ? calcForwardAvgDaily(demandMap, now, 90, historyDaily)
+      : historyDaily;
+
+  const safetyStock = resolvePlanningSafetyStock({
+    policy,
+    avgDaily,
+    demandStdDev: eoqCalc.stdDev,
+    totalLeadDays: leadTime.totalLeadDays,
+    forecastErrorStdDev: params.forecastErrorStdDev,
+    profileLeadTimeStdDev: leadTime.leadTimeStdDev,
+    defaultSafetyStockDays: params.ruleDefaults?.safetyStockDays,
+  });
+
+  const lifecycleLabel = leaf?.lifecycle ?? params.sku.lifecycle ?? null;
+  if (
+    isPlanningExcluded({
+      lifecycle: lifecycleLabel,
+      commercialStatusNorm: params.sku.commercialStatusNorm,
+    })
+  ) {
+    coverage.healthStatus = 'gray';
+    coverage.needsReplenishment = false;
+    coverage.suggestedQty = 0;
+  }
+
+  return {
+    skuId: params.sku.id,
+    skuCode: params.sku.code,
+    spuId: params.sku.spuId,
+    merchantCode: params.sku.merchantCode,
+    fulfillmentRegion: params.fulfillmentRegion,
+    platform: params.platform,
+    warehouseCodes: whHealth.map((h) => h.warehouseCode),
+    effectiveQty: params.unit.allocatedQty,
+    regionQty: params.regionQty,
+    avgDaily,
+    demandSource: coverage.demandSource,
+    healthStatus: coverage.healthStatus,
+    coverageDays: coverage.coverageDays,
+    totalLeadDays: coverage.leadTime.totalLeadDays,
+    latestOrderDays: coverage.latestOrderDays,
+    lifecycle: lifecycleLabel ?? undefined,
+    needsReplenishment: coverage.needsReplenishment,
+    suggestedQty: coverage.suggestedQty,
+    suggestedDate: coverage.suggestedDate,
+    metrics: {
+      planningCalculatedAt: now.toISOString(),
+      ...buildLeadTimeMetrics(leadTime),
+      fulfillmentRegion: params.fulfillmentRegion,
+      platform: params.platform,
+      safetyStockDays: coverage.safetyStockDays,
+      targetCoverageDays: coverage.targetCoverageDays,
+      overstockThresholdDays: coverage.overstockThresholdDays,
+      reorderPoint: safetyStock.reorderPoint,
+      safetyStockQty: safetyStock.safetyStockQty,
+      safetyStockMethod: safetyStock.method,
+      eoqQty: eoqCalc.reorderQty,
+      demandStdDev: eoqCalc.stdDev,
+      demandStdDevSource: safetyStock.demandStdDevSource,
+      demandWindowDays: historicalDemand.demandWindowDays,
+      // 区域口径：区内渠道占比 + 区域占全 SKU 需求比重；占比来源 forecast/history
+      channelShareSource: params.channelShareSource,
+      channelWeight: params.unit.weight,
+      demandShare: params.unit.weight,
+      demandShareScope: 'fulfillment_region_channel',
+      regionDemandShare: params.regionDemandShare ?? null,
+      regionDemandSource: params.unit.demandSource,
+      demandLeafVersionId: leaf?.versionId ?? null,
+      regionQty: params.regionQty,
+      channelAllocatedQty: params.unit.allocatedQty,
+      regionWarehouseCodes: whHealth.map((h) => h.warehouseCode),
+      regionWarehouseEffective: Object.fromEntries(
+        whHealth.map((h) => [h.warehouseCode, h.effectiveQty]),
+      ),
+    },
+    coverage,
+    leadTime,
+  };
+}
+
+/** 近 3 个月预测误差标准差（缺货预警里的区域×渠道单元与补货任务共用口径）。 */
+export async function loadForecastErrorStdDevBySkuIds(
+  skuIds: string[],
+): Promise<Map<string, number>> {
+  const out = new Map<string, number>();
+  for (let offset = 0; offset < skuIds.length; offset += SKU_IN_CHUNK) {
+    const chunk = skuIds.slice(offset, offset + SKU_IN_CHUNK);
+    const rows = await db
+      .select({
+        skuId: forecastAccuracyMonthly.skuId,
+        station: forecastAccuracyMonthly.station,
+        platform: forecastAccuracyMonthly.platform,
+        forecastYear: forecastAccuracyMonthly.forecastYear,
+        month: forecastAccuracyMonthly.month,
+        forecastDailyAvg: forecastAccuracyMonthly.forecastDailyAvg,
+        actualDailyAvg: forecastAccuracyMonthly.actualDailyAvg,
+        computedAt: forecastAccuracyMonthly.computedAt,
+      })
+      .from(forecastAccuracyMonthly)
+      .where(inArray(forecastAccuracyMonthly.skuId, chunk));
+    const bySku = new Map<string, typeof rows>();
+    for (const row of rows) {
+      const list = bySku.get(row.skuId) ?? [];
+      list.push(row);
+      bySku.set(row.skuId, list);
+    }
+    for (const [skuId, skuRows] of bySku) {
+      const errorStdDev = summarizePrecisionWindow(skuRows).errorStdDev;
+      if (errorStdDev != null && errorStdDev > 0) out.set(skuId, errorStdDev);
+    }
+  }
+  return out;
 }
 
 export async function computeAllInventoryHealth(): Promise<SkuHealthRow[]> {

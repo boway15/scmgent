@@ -210,6 +210,8 @@ export function AlertsPage() {
   const [keyword, setKeyword] = useState('');
   const [appliedKeyword, setAppliedKeyword] = useState('');
   const [exporting, setExporting] = useState(false);
+  const [fulfillmentRegion, setFulfillmentRegion] = useState('');
+  const [platform, setPlatform] = useState('');
 
   const summary = useQuery({
     queryKey: ['inventory-risk-counts', productScope],
@@ -228,6 +230,8 @@ export function AlertsPage() {
       grain,
       suggestOrder,
       suggestShip,
+      fulfillmentRegion,
+      platform,
     ],
     queryFn: () =>
       api.getAlerts({
@@ -240,6 +244,8 @@ export function AlertsPage() {
         grain,
         suggestOrder: suggestOrder || undefined,
         suggestShip: suggestShip || undefined,
+        fulfillmentRegion: fulfillmentRegion || undefined,
+        platform: platform || undefined,
       }),
     staleTime: 60_000,
     placeholderData: (previousData, previousQuery) => {
@@ -407,6 +413,32 @@ export function AlertsPage() {
           </Button>
         </CardHeader>
         <CardContent>
+          <div className="mb-3 flex flex-wrap gap-2">
+            <select
+              className="h-9 rounded-md border border-border bg-card px-2 text-sm"
+              value={fulfillmentRegion}
+              onChange={(event) => {
+                setFulfillmentRegion(event.target.value);
+                setPage(1);
+              }}
+            >
+              <option value="">全部履约区域</option>
+              {['US', 'CA', 'EU', 'UK', 'MX', 'BR', 'OTHER', 'UNMAPPED'].map((code) => (
+                <option key={code} value={code}>
+                  {code}
+                </option>
+              ))}
+            </select>
+            <input
+              className="h-9 rounded-md border border-border bg-card px-2 text-sm"
+              placeholder="渠道，如 AMAZON"
+              value={platform}
+              onChange={(event) => {
+                setPlatform(event.target.value.trim().toUpperCase());
+                setPage(1);
+              }}
+            />
+          </div>
           <ListSearchBar
             keyword={keyword}
             onKeywordChange={setKeyword}
@@ -642,6 +674,8 @@ function WarehouseAlertTable({ alerts, resolve }: { alerts: AlertItem[]; resolve
             <th colSpan={3} className="border-l border-border p-2 text-center font-medium text-text-main" title="周转 7/14/30 天销量">
               销量
             </th>
+            <th rowSpan={2} className="p-2 align-bottom font-normal">履约区域</th>
+            <th rowSpan={2} className="p-2 align-bottom font-normal">渠道</th>
             <th rowSpan={2} className="p-2 align-bottom font-normal">仓库</th>
             <th rowSpan={2} className="p-2 align-bottom font-normal">等级</th>
             <th rowSpan={2} className="p-2 align-bottom font-normal">分类</th>
@@ -690,6 +724,8 @@ function WarehouseAlertTable({ alerts, resolve }: { alerts: AlertItem[]; resolve
                 d14={a.turnoverSales14d}
                 d30={a.turnoverSales30d}
               />
+              <td className="p-2 font-mono text-text-sub">{a.fulfillmentRegion ?? '—'}</td>
+              <td className="p-2 font-mono text-text-sub">{a.platform ?? '—'}</td>
               <td className="p-2 font-mono text-text-sub">{a.warehouseCode ?? '—'}</td>
               <td className="p-2 font-mono">{a.level ? ALERT_LEVEL_LABEL[a.level] ?? a.level : '—'}</td>
               <td className="p-2">

@@ -13,7 +13,13 @@ import {
 } from './inventory-supply-lot-sync.js';
 import { getForecastDailyForDate, type ForecastHorizonContext } from './forecast-demand.js';
 import { loadMergedPublishedForecastBySkuIds } from './forecast-published-resolve.js';
-import { getLatestInventorySnapshot, type InventorySnapshot } from './inventory-snapshot.js';
+import {
+  emptyInventorySnapshot,
+  getLatestInventorySnapshot,
+  type InventorySnapshot,
+} from './inventory-snapshot.js';
+import { allocateRegionInventoryByChannel } from './region-channel-inventory.js';
+import { scaleLotsByWeights } from './region-channel-planning.js';
 import { addDaysIso } from './inventory-supply-lots.js';
 import {
   allocateByShare,
@@ -260,6 +266,67 @@ export function assembleWarehouseTimeline(params: {
     planningDemand,
     ...(championTimeline ? { championTimeline } : {}),
   };
+}
+
+/**
+ * 履约区域 × 渠道时间轴：区域内仓库存/批次合并后，按渠道占比分摊供给，再用该叶子的需求曲线推演。
+ * 供给 = 区域仓 native 可售 + 区域仓 lots + 已按区域摊开的未分仓池（在产/海外）lots。
+ */
+export function assembleRegionChannelTimeline(params: {
+  today?: Date;
+  fulfillmentRegion: string;
+  platform: string;
+  channelWeights: Record<string, number>;
+  regionSnapshots: InventorySnapshot[];
+  regionLots: OpenTimelineLot[];
+  avgDaily: number;
+  demandMap: Map<string, number>;
+  /** 叶子缺月 / 无叶子时的兜底日均 */
+  fallbackDaily: number;
+  totalLeadDays: number;
+  safetyStockDays: number;
+  safetyStockQty: number;
+  moq?: number;
+  farHorizon?: ForecastHorizonContext | null;
+  coverDays?: number;
+}): ReturnType<typeof assembleWarehouseTimeline> {
+  const sumField = (pick: (s: InventorySnapshot) => number) =>
+    params.regionSnapshots.reduce((sum, s) => sum + Math.max(0, pick(s)), 0);
+  const channelShare = (qty: number) =>
+    allocateRegionInventoryByChannel({
+      regionQty: qty,
+      channelWeights: params.channelWeights,
+    })[params.platform] ?? 0;
+  const snapshot: InventorySnapshot = {
+    warehouseCode: params.fulfillmentRegion,
+    qtyAvailable: channelShare(sumField((s) => s.qtyAvailable)),
+    qtyInTransit: 0,
+    qtyInProduction: 0,
+    qtyReserved: channelShare(sumField((s) => s.qtyReserved)),
+  };
+  const planningDemand: PlanningDemandResult = {
+    demandMap: params.demandMap,
+    championMap: new Map(),
+    source: 'forecast',
+    flags: [],
+    fallbackDaily: params.fallbackDaily,
+  };
+  return assembleWarehouseTimeline({
+    today: params.today,
+    warehouseCode: params.fulfillmentRegion,
+    avgDaily: params.avgDaily,
+    totalLeadDays: params.totalLeadDays,
+    safetyStockDays: params.safetyStockDays,
+    safetyStockQty: params.safetyStockQty,
+    moq: params.moq,
+    share: parseSharesFromSnapshot({}),
+    snapshot,
+    overseasSnapshot: emptyInventorySnapshot(UNALLOCATED_TRANSIT_WAREHOUSE),
+    openLots: scaleLotsByWeights(params.regionLots, params.channelWeights, params.platform),
+    planningDemand,
+    farHorizon: params.farHorizon,
+    coverDays: params.coverDays,
+  });
 }
 
 export async function buildSkuWarehouseTimeline(params: {

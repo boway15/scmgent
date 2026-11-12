@@ -29,15 +29,19 @@ export function ReorderSuggestionsPage() {
   const [pageSize, setPageSize] = useState(20);
   const [keyword, setKeyword] = useState(skuFromUrl);
   const [appliedKeyword, setAppliedKeyword] = useState(skuFromUrl);
+  const [fulfillmentRegion, setFulfillmentRegion] = useState('');
+  const [platform, setPlatform] = useState('');
 
   const { data, isLoading } = useQuery({
-    queryKey: ['reorder-suggestions', page, pageSize, appliedKeyword, productScope],
+    queryKey: ['reorder-suggestions', page, pageSize, appliedKeyword, productScope, fulfillmentRegion, platform],
     queryFn: () =>
       api.getReorderSuggestions({
         q: appliedKeyword || undefined,
         page,
         pageSize,
         productScope,
+        fulfillmentRegion: fulfillmentRegion || undefined,
+        platform: platform || undefined,
       }),
   });
   const items = data?.items ?? [];
@@ -89,7 +93,7 @@ export function ReorderSuggestionsPage() {
       <Card className="border-primary/20 bg-primary/5">
         <CardContent className="pt-6 text-sm text-text-sub">
           <p>
-            <strong className="text-text-main">补货预测</strong>：基于销量、飞书库存快照（可售+在途+在产−已分配，不含跟单）与供应链提前期计算覆盖天数与健康灯；同一 SKU 多仓缺口合并为一条<strong className="text-text-main">网络</strong>采购建议，避免重复下单。
+            <strong className="text-text-main">补货预测</strong>：按履约区域 × 渠道计算覆盖与健康灯。区域内仓库供给先汇总，再按预测（无预测则历史）渠道占比分摊；未映射仓库落入 UNMAPPED，仍会出建议。
           </p>
           <p className="mt-1">
             <strong className="text-text-main">补货建议</strong>：预测产出的只读待办清单，默认按建议下单日排序（逾期优先）。实际下单、改量请在迅捷 ERP 操作；进度以飞书采购镜像为准。
@@ -115,9 +119,37 @@ export function ReorderSuggestionsPage() {
             }}
             placeholder="SKU / 商家 / 网络"
           />
+          <div className="mb-3 flex flex-wrap gap-2">
+            <select
+              className="h-9 rounded-md border border-border bg-card px-2 text-sm"
+              value={fulfillmentRegion}
+              onChange={(event) => {
+                setFulfillmentRegion(event.target.value);
+                setPage(1);
+              }}
+            >
+              <option value="">全部履约区域</option>
+              {['US', 'CA', 'EU', 'UK', 'MX', 'BR', 'OTHER', 'UNMAPPED'].map((code) => (
+                <option key={code} value={code}>
+                  {code}
+                </option>
+              ))}
+            </select>
+            <input
+              className="h-9 rounded-md border border-border bg-card px-2 text-sm"
+              placeholder="渠道，如 AMAZON"
+              value={platform}
+              onChange={(event) => {
+                setPlatform(event.target.value.trim().toUpperCase());
+                setPage(1);
+              }}
+            />
+          </div>
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-border text-left text-text-sub">
+                <th className="p-2 font-normal">履约区域</th>
+                <th className="p-2 font-normal">渠道</th>
                 <th className="p-2 font-normal">网络</th>
                 <th className="p-2 font-normal">SKU</th>
                 <th className="p-2 font-normal">商家</th>
@@ -138,6 +170,8 @@ export function ReorderSuggestionsPage() {
                   item.status === 'pending' && isSuggestedOrderOverdue(item.suggestedDate);
                 return (
                 <tr key={item.id} className="border-b border-border/60">
+                  <td className="p-2 font-mono text-text-main">{item.fulfillmentRegion ?? '—'}</td>
+                  <td className="p-2 font-mono text-text-main">{item.platform ?? '—'}</td>
                   <td className="p-2 font-mono text-primary">
                     {item.warehouseCode ?? '网络'}
                     {Array.isArray(item.metrics?.triggerWarehouses) &&

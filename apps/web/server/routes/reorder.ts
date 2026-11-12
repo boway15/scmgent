@@ -25,6 +25,8 @@ reorderRoutes.get('/reorder/suggestions', requireMenu('pmc.suggestion'), async (
   const queue = c.req.query('queue') ?? 'auto';
   const q = c.req.query('q')?.trim() || c.req.query('sku')?.trim();
   const warehouse = c.req.query('warehouse')?.trim();
+  const fulfillmentRegion = c.req.query('fulfillmentRegion')?.trim();
+  const platform = c.req.query('platform')?.trim();
 
   const productScope = parseProductScope(c.req.query('productScope'));
   const projectGroupScope = await resolveRequestProjectGroupScope(c);
@@ -41,6 +43,12 @@ reorderRoutes.get('/reorder/suggestions', requireMenu('pmc.suggestion'), async (
   }
   if (warehouse) {
     conditions.push(eq(reorderSuggestions.warehouseCode, warehouse));
+  }
+  if (fulfillmentRegion) {
+    conditions.push(eq(reorderSuggestions.fulfillmentRegion, fulfillmentRegion));
+  }
+  if (platform) {
+    conditions.push(eq(reorderSuggestions.platform, platform));
   }
   if (q) {
     const pattern = `%${q}%`;
@@ -64,6 +72,8 @@ reorderRoutes.get('/reorder/suggestions', requireMenu('pmc.suggestion'), async (
       merchantCode: skus.merchantCode,
       merchantName: skus.merchantName,
       warehouseCode: reorderSuggestions.warehouseCode,
+      fulfillmentRegion: reorderSuggestions.fulfillmentRegion,
+      platform: reorderSuggestions.platform,
       suggestedQty: reorderSuggestions.suggestedQty,
       suggestedDate: reorderSuggestions.suggestedDate,
       reason: reorderSuggestions.reason,

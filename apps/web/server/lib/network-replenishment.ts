@@ -53,6 +53,9 @@ export type ReplenishmentCandidate = {
   spuId: string | null;
   replenishLight: string;
   warehouseCode: string | null;
+  /** 履约区域 × 渠道决策粒度（一期履约区域 = 销售区域） */
+  fulfillmentRegion?: string | null;
+  platform?: string | null;
   suggestedQty: number;
   suggestedDate: string;
   reason: string;

@@ -266,6 +266,8 @@ export async function autoResolveStaleStockAlerts(
       id: stockAlerts.id,
       skuId: stockAlerts.skuId,
       warehouseCode: stockAlerts.warehouseCode,
+      fulfillmentRegion: stockAlerts.fulfillmentRegion,
+      platform: stockAlerts.platform,
       alertType: stockAlerts.alertType,
       horizonDays: stockAlerts.horizonDays,
     })
@@ -278,6 +280,8 @@ export async function autoResolveStaleStockAlerts(
       fingerprint: stockAlertFingerprint({
         skuId: row.skuId,
         warehouseCode: row.warehouseCode,
+        fulfillmentRegion: row.fulfillmentRegion,
+        platform: row.platform,
         alertType: row.alertType,
         horizonDays: row.horizonDays,
       }),
@@ -307,6 +311,8 @@ function normalizeStockAlertRow(row: StockAlertIncoming) {
   return {
     skuId: row.skuId,
     warehouseCode: row.warehouseCode,
+    fulfillmentRegion: row.fulfillmentRegion ?? null,
+    platform: row.platform ?? null,
     alertType: row.alertType as typeof stockAlerts.$inferInsert.alertType,
     currentQty: stockAlertIntegerQty(row.currentQty),
     safetyQty: stockAlertIntegerQty(row.safetyQty),

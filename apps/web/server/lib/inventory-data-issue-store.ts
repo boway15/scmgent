@@ -3,6 +3,7 @@ import { db, inventoryDataIssues } from '@scm/db';
 import { chunkRowsForInsert } from './inventory-health-store.js';
 import {
   planDataIssueUpsert,
+  withoutPreservedFingerprints,
   type DataIssueCandidate,
   type ExistingDataIssue,
 } from './inventory-data-issues.js';
@@ -38,13 +39,21 @@ export async function loadExistingDataIssues(
   return [...openRows, ...dismissedRows];
 }
 
-export async function applyDataIssueUpsert(detected: DataIssueCandidate[]): Promise<{
+export async function applyDataIssueUpsert(
+  detected: DataIssueCandidate[],
+  options?: { preserveFingerprintPrefixes?: string[] },
+): Promise<{
   inserted: number;
   refreshed: number;
   autoResolved: number;
 }> {
   const existing = await loadExistingDataIssues(detected.map((row) => row.fingerprint));
   const plan = planDataIssueUpsert({ existing, detected });
+  const autoResolve = withoutPreservedFingerprints(
+    plan.autoResolve,
+    existing,
+    options?.preserveFingerprintPrefixes ?? [],
+  );
   const now = new Date();
 
   if (plan.insert.length) {
@@ -77,7 +86,7 @@ export async function applyDataIssueUpsert(detected: DataIssueCandidate[]): Prom
       .where(eq(inventoryDataIssues.id, row.id));
   }
 
-  if (plan.autoResolve.length) {
+  if (autoResolve.length) {
     await db
       .update(inventoryDataIssues)
       .set({
@@ -89,7 +98,7 @@ export async function applyDataIssueUpsert(detected: DataIssueCandidate[]): Prom
       .where(
         inArray(
           inventoryDataIssues.id,
-          plan.autoResolve.map((row) => row.id),
+          autoResolve.map((row) => row.id),
         ),
       );
   }
@@ -97,7 +106,7 @@ export async function applyDataIssueUpsert(detected: DataIssueCandidate[]): Prom
   return {
     inserted: plan.insert.length,
     refreshed: plan.refresh.length,
-    autoResolved: plan.autoResolve.length,
+    autoResolved: autoResolve.length,
   };
 }
 
@@ -123,6 +132,7 @@ export async function countOpenDataIssuesByType(): Promise<Record<string, number
     unallocated_warehouse: 0,
     share_sum_mismatch: 0,
     unmapped_warehouse: 0,
+    unmapped_station: 0,
     position_source_mismatch: 0,
     position_share_gap: 0,
   };

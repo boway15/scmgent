@@ -1024,6 +1024,7 @@ export type InventoryDataIssueRow = {
     | 'unallocated_warehouse'
     | 'share_sum_mismatch'
     | 'unmapped_warehouse'
+    | 'unmapped_station'
     | 'position_source_mismatch'
     | 'position_share_gap';
   impactModule: string;
@@ -5969,6 +5970,72 @@ export const api = {
     request<{ runId: string; status: string; rowCount?: number; message?: string }>(
       '/api/inventory-sales-analytics/rebuild',
       { method: 'POST' },
+    ),
+  getStationRegionMappings: () =>
+    request<{
+      items: Array<{ station: string; salesRegion: string }>;
+      unmappedStations: string[];
+      regions: string[];
+    }>('/api/region-mapping/stations'),
+  saveStationRegionMapping: (body: { station: string; salesRegion: string }) =>
+    request<{ station: string; salesRegion: string }>('/api/region-mapping/stations', {
+      method: 'PUT',
+      body: JSON.stringify(body),
+    }),
+  deleteStationRegionMapping: (station: string) =>
+    request<{ deleted: number }>(
+      `/api/region-mapping/stations?station=${encodeURIComponent(station)}`,
+      { method: 'DELETE' },
+    ),
+  importStationRegionMappings: async (file: File) => {
+    const body = new FormData();
+    body.set('file', file);
+    const res = await apiFetch(apiUrl('/api/region-mapping/stations/import'), {
+      method: 'POST',
+      body,
+    });
+    if (!res.ok) {
+      const payload = (await res.json().catch(() => ({}))) as { message?: string };
+      throw new Error(payload.message ?? '站点映射导入失败');
+    }
+    return res.json() as Promise<{ imported: number }>;
+  },
+  exportStationRegionMappings: () =>
+    apiFetch(apiUrl('/api/region-mapping/stations/export')).then((res) =>
+      handleExportResponse(res, 'station-region-maps.csv'),
+    ),
+  getWarehouseRegionMappings: () =>
+    request<{
+      items: Array<{ warehouseCode: string; fulfillmentRegion: string }>;
+      unmappedWarehouses: string[];
+      regions: string[];
+    }>('/api/region-mapping/warehouses'),
+  saveWarehouseRegionMapping: (body: { warehouseCode: string; fulfillmentRegion: string }) =>
+    request<{ warehouseCode: string; fulfillmentRegion: string }>('/api/region-mapping/warehouses', {
+      method: 'PUT',
+      body: JSON.stringify(body),
+    }),
+  deleteWarehouseRegionMapping: (warehouseCode: string) =>
+    request<{ deleted: number }>(
+      `/api/region-mapping/warehouses?warehouseCode=${encodeURIComponent(warehouseCode)}`,
+      { method: 'DELETE' },
+    ),
+  importWarehouseRegionMappings: async (file: File) => {
+    const body = new FormData();
+    body.set('file', file);
+    const res = await apiFetch(apiUrl('/api/region-mapping/warehouses/import'), {
+      method: 'POST',
+      body,
+    });
+    if (!res.ok) {
+      const payload = (await res.json().catch(() => ({}))) as { message?: string };
+      throw new Error(payload.message ?? '仓库映射导入失败');
+    }
+    return res.json() as Promise<{ imported: number }>;
+  },
+  exportWarehouseRegionMappings: () =>
+    apiFetch(apiUrl('/api/region-mapping/warehouses/export')).then((res) =>
+      handleExportResponse(res, 'warehouse-region-maps.csv'),
     ),
   exportInventorySalesAnalytics: (body: Record<string, unknown>) =>
     request<{ jobId: string; status?: string; downloadCenterPath?: string }>(

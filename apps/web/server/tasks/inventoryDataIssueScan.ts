@@ -13,6 +13,11 @@ import {
   type DataIssueWarehouseFact,
 } from '../lib/inventory-data-issues.js';
 import { applyDataIssueUpsert } from '../lib/inventory-data-issue-store.js';
+import {
+  runUnmappedRegionScan,
+  UNMAPPED_STATION_FP_PREFIX,
+  UNMAPPED_WAREHOUSE_FP_PREFIX,
+} from '../lib/region-unmapped-scan.js';
 import { buildAllocationBySku } from '../lib/inventory-supply-lot-sync.js';
 import { getShanghaiBusinessDate } from '../lib/inventory-daily-snapshot.js';
 import type { WarehouseFactBucket } from '../lib/inventory-warehouse-facts.js';
@@ -141,12 +146,25 @@ export async function runInventoryDataIssueScan() {
     skus: detectSkus,
     warehouseFacts,
   });
-  const upsert = await applyDataIssueUpsert(detected);
+  const upsert = await applyDataIssueUpsert(detected, {
+    preserveFingerprintPrefixes: [UNMAPPED_STATION_FP_PREFIX, UNMAPPED_WAREHOUSE_FP_PREFIX],
+  });
+  let stationIssues = 0;
+  let warehouseIssues = 0;
+  try {
+    const region = await runUnmappedRegionScan();
+    stationIssues = region.stationIssues;
+    warehouseIssues = region.warehouseIssues;
+  } catch (err) {
+    console.error('[region-unmapped-scan]', err);
+  }
   return {
     scannedLots: lots.length,
     scannedSkus: detectSkus.length,
     scannedFacts: warehouseFacts.length,
     detected: detected.length,
     ...upsert,
+    stationIssues,
+    warehouseIssues,
   };
 }

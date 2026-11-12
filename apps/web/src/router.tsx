@@ -27,6 +27,7 @@ import { FobSettlementDetailPage } from '@/pages/FobSettlementDetailPage';
 import { ProductMasterPage } from '@/pages/ProductMasterPage';
 import { DashboardPage } from '@/pages/DashboardPage';
 import { SalesHistoryPage } from '@/pages/SalesHistoryPage';
+import { RegionMappingPage } from '@/pages/RegionMappingPage';
 import { SalesForecastListPage } from '@/pages/SalesForecastListPage';
 import { DemandPlanPilotPage } from '@/pages/DemandPlanPilotPage';
 import { DemandPlanDetailPage } from '@/pages/DemandPlanDetailPage';
@@ -90,6 +91,7 @@ export function AppRouter() {
           <Route path="data/products" element={<ProductMasterPage />} />
           <Route path="data/import" element={<ImportLegacyRedirect />} />
           <Route path="data/sales" element={<SalesHistoryPage />} />
+          <Route path="data/region-mapping" element={<RegionMappingPage />} />
           <Route path="data/forecast" element={<SalesForecastListPage />} />
           <Route path="data/demand-plan" element={<DemandPlanPilotPage />} />
           <Route path="data/demand-plan/:id" element={<DemandPlanDetailPage />} />

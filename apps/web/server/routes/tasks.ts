@@ -181,7 +181,7 @@ taskRoutes.post('/tasks/inventory-data-issue-scan', requireCronSecret, async (c)
     const result = await runInventoryDataIssueScan();
     await finishTaskRun(run.id, {
       success: true,
-      resultSummary: `detected=${result.detected}; inserted=${result.inserted}; autoResolved=${result.autoResolved}`,
+      resultSummary: `detected=${result.detected}; inserted=${result.inserted}; autoResolved=${result.autoResolved}; unmappedStations=${result.stationIssues}; unmappedWarehouses=${result.warehouseIssues}`,
     });
     return c.json({ ...result, taskRunId: run.id });
   } catch (err) {

@@ -96,7 +96,7 @@ export async function runDailyInventoryPipeline() {
     steps.push({
       name: 'inventory_data_issue_scan',
       success: true,
-      summary: `detected=${dataIssues.detected}; inserted=${dataIssues.inserted}; autoResolved=${dataIssues.autoResolved}`,
+      summary: `detected=${dataIssues.detected}; inserted=${dataIssues.inserted}; autoResolved=${dataIssues.autoResolved}; unmappedStations=${dataIssues.stationIssues}; unmappedWarehouses=${dataIssues.warehouseIssues}`,
     });
   } catch (err) {
     steps.push({

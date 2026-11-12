@@ -32,6 +32,8 @@ const TYPE_LABEL: Record<InventoryDataIssueRow['issueType'], string> = {
 
   unmapped_warehouse: '新仓库未映射',
 
+  unmapped_station: '站点未映射销售区域',
+
   position_source_mismatch: '查询/全链数量不一致',
 
   position_share_gap: '影子在库 vs 占比拟物',
@@ -175,6 +177,8 @@ export function InventoryDataIssuesPage() {
     share_sum_mismatch: 0,
 
     unmapped_warehouse: 0,
+
+    unmapped_station: 0,
 
     position_source_mismatch: 0,
 

@@ -13,6 +13,7 @@ export const DATA_ISSUE_TYPES = [
   'unallocated_warehouse',
   'share_sum_mismatch',
   'unmapped_warehouse',
+  'unmapped_station',
   'position_source_mismatch',
   'position_share_gap',
 ] as const;
@@ -265,4 +266,20 @@ export function planDataIssueUpsert(input: {
   }
 
   return { insert, refresh, autoResolve };
+}
+
+/** 主扫描结案时保留区域映射问题，避免下一轮未映射扫描被误结案后反复重开。 */
+export function withoutPreservedFingerprints<T extends { id: string }>(
+  autoResolve: T[],
+  existing: Array<{ id: string; fingerprint: string }>,
+  prefixes: string[],
+): T[] {
+  if (!prefixes.length) return autoResolve;
+  const preserved = new Set(
+    existing
+      .filter((row) => prefixes.some((prefix) => row.fingerprint.startsWith(prefix)))
+      .map((row) => row.id),
+  );
+  if (!preserved.size) return autoResolve;
+  return autoResolve.filter((row) => !preserved.has(row.id));
 }

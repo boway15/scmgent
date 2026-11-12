@@ -47,6 +47,7 @@ function buildDataIssueWhere(filters: InventoryDataIssueListFilters): SQL | unde
           | 'unallocated_warehouse'
           | 'share_sum_mismatch'
           | 'unmapped_warehouse'
+          | 'unmapped_station'
           | 'position_source_mismatch'
           | 'position_share_gap',
       ),
@@ -133,6 +134,7 @@ const ISSUE_TYPE_LABEL: Record<string, string> = {
   unallocated_warehouse: '未分仓',
   share_sum_mismatch: '占比偏离',
   unmapped_warehouse: '新仓库未映射',
+  unmapped_station: '站点未映射销售区域',
   position_source_mismatch: '查询/全链数量不一致',
   position_share_gap: '影子在库 vs 占比拟物',
 };
@@ -155,6 +157,7 @@ const ERP_HINT: Record<string, string> = {
   unallocated_warehouse: '迅捷维护分仓销售占比',
   share_sum_mismatch: '迅捷校正各仓占比使合计约 100%',
   unmapped_warehouse: '迅捷确认仓名；scm-agent 补 TURNOVER_BUCKET_WAREHOUSE_MAP',
+  unmapped_station: '在区域映射中把站点配到 US/CA/EU/UK/OTHER',
   position_source_mismatch: '迅捷核对库存查询与全链库存同仓同状态数量',
   position_share_gap: '迅捷核对分仓库存；占比拆分仅作对照不改数',
 };

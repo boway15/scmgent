@@ -117,17 +117,7 @@ export async function resolvePublishedVersionIdBySkuIds(
       })),
   );
 
-  if (!preferRegion) return resolved;
-
-  // 回退：无区域叶子的 SKU 取遗留 sales_region='ALL' 行的最新发布版本
-  const missingSkuIds = skuIds.filter((id) => !resolved.has(id));
-  if (missingSkuIds.length) {
-    const fallback = await resolvePublishedVersionIdBySkuIds(missingSkuIds, station, {
-      preferRegionLeaves: false,
-    });
-    for (const [skuId, versionId] of fallback) resolved.set(skuId, versionId);
-  }
-
+  // 新主路径不回退遗留 sales_region='ALL'（迁移前全站口径仅只读查看）
   return resolved;
 }
 
@@ -211,36 +201,6 @@ export async function loadMergedPublishedForecastBySkuIds(
         const list = rowsBySku.get(row.skuId) ?? [];
         list.push(row);
         rowsBySku.set(row.skuId, list);
-      }
-    }
-
-    // 回退：preferRegion 时若该 SKU 无区域叶子，取遗留 ALL 行
-    if (preferRegion) {
-      const fallbackSkuIds = ids.filter((id) => !(rowsBySku.get(id)?.length));
-      for (const skuId of fallbackSkuIds) {
-        const fallbackRows = await db
-          .select({
-            forecastYear: salesForecastMonthly.forecastYear,
-            month: salesForecastMonthly.month,
-            forecastDailyAvg: salesForecastMonthly.forecastDailyAvg,
-            manualDailyAvg: salesForecastMonthly.manualDailyAvg,
-            lifecycle: salesForecastMonthly.lifecycle,
-            platform: salesForecastMonthly.platform,
-            profileSegment: salesForecastMonthly.profileSegment,
-            horizonFactors: salesForecastMonthly.horizonFactors,
-            forecastDailyP90: salesForecastMonthly.forecastDailyP90,
-          })
-          .from(salesForecastMonthly)
-          .where(
-            and(
-              eq(salesForecastMonthly.versionId, versionId),
-              eq(salesForecastMonthly.station, station),
-              eq(salesForecastMonthly.skuId, skuId),
-              eq(salesForecastMonthly.salesRegion, 'ALL'),
-            ),
-          );
-        const list = fallbackRows.map((r) => ({ skuId, ...r }));
-        rowsBySku.set(skuId, list);
       }
     }
 
@@ -384,6 +344,7 @@ export async function loadPublishedForecastSkuMetaBySkuIds(
             eq(salesForecastMonthly.versionId, versionId),
             eq(salesForecastMonthly.station, station),
             inArray(salesForecastMonthly.skuId, chunk),
+            ne(salesForecastMonthly.salesRegion, 'ALL'),
           ),
         );
       for (const row of rows) {
@@ -406,7 +367,7 @@ export async function loadPublishedForecastSkuMetaBySkuIds(
         if (daily <= 0) continue;
         const monthKey = forecastMonthKey(row.forecastYear, row.month);
         const platformMap = monthByPlatform.get(platform) ?? new Map<string, number>();
-        platformMap.set(monthKey, daily);
+        platformMap.set(monthKey, (platformMap.get(monthKey) ?? 0) + daily);
         monthByPlatform.set(platform, platformMap);
       }
       result.set(skuId, {

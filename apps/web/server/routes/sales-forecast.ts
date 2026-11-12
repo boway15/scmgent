@@ -855,10 +855,11 @@ salesForecastRoutes.get('/sales-forecasts/sku-detail', requireMenu('data.forecas
   const versionId = c.req.query('versionId')?.trim();
   const skuId = c.req.query('skuId')?.trim();
   const skuCode = c.req.query('skuCode')?.trim();
-  const station = c.req.query('station')?.trim();
+  const station = c.req.query('station')?.trim() || 'ALL';
+  const salesRegion = c.req.query('salesRegion')?.trim().toUpperCase() || undefined;
   const platform = c.req.query('platform')?.trim();
-  if (!versionId || !station || !platform) {
-    return c.json({ message: 'versionId, station and platform are required' }, 400);
+  if (!versionId || !platform) {
+    return c.json({ message: 'versionId and platform are required' }, 400);
   }
   if (!skuId && !skuCode) {
     return c.json({ message: 'skuId or skuCode is required' }, 400);
@@ -949,7 +950,9 @@ salesForecastRoutes.get('/sales-forecasts/sku-detail', requireMenu('data.forecas
         and(
           eq(salesForecastReviewItems.versionId, versionId),
           eq(salesForecastReviewItems.skuId, resolvedSkuId),
-          eq(salesForecastReviewItems.station, station),
+          salesRegion
+            ? eq(salesForecastReviewItems.salesRegion, salesRegion)
+            : eq(salesForecastReviewItems.station, station),
           eq(salesForecastReviewItems.platform, platform),
         ),
       )

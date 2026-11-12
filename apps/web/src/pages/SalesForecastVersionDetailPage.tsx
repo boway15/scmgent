@@ -61,6 +61,13 @@ export function SalesForecastVersionDetailPage() {
   const [guardIssues, setGuardIssues] = useState<Array<{ level: string; code: string; message: string }>>([]);
   const [guardReason, setGuardReason] = useState('');
   const [publishAction, setPublishAction] = useState<'publish' | 'merge' | null>(null);
+  const [salesRegionFilter, setSalesRegionFilter] = useState<string>('');
+  const [rollupView, setRollupView] = useState<
+    | 'region_platform'
+    | 'region_all_platforms'
+    | 'all_regions_platform'
+    | 'all_regions_all_platforms'
+  >('region_platform');
 
   const { data: version, isLoading, isError } = useQuery({
     queryKey: ['sales-forecast-version', versionId],
@@ -116,6 +123,17 @@ export function SalesForecastVersionDetailPage() {
     next.set('view', view);
     setSearchParams(next);
   };
+
+  const { data: rollupMeta } = useQuery({
+    queryKey: ['sales-forecast-rollup', versionId, rollupView],
+    queryFn: () =>
+      api.getSalesForecastRollup({
+        versionId,
+        rollupView,
+      }),
+    enabled: Boolean(versionId),
+    staleTime: 30_000,
+  });
 
   const { data: versionSummary } = useQuery({
     queryKey: ['sales-forecast-version-summary', versionId],
@@ -340,11 +358,62 @@ export function SalesForecastVersionDetailPage() {
               回测草稿（仅供准确率复盘）
             </span>
           )}
+          {rollupMeta?.legacy ? (
+            <span className="inline-flex items-center rounded-md bg-amber-500/15 px-2 py-1 text-xs text-amber-900 dark:text-amber-100">
+              迁移前全站口径
+            </span>
+          ) : null}
           <Link to="/data/forecast" className="text-sm text-primary hover:underline">
             返回列表
           </Link>
         </div>
       </PageHeader>
+
+      <Card className="border-border/80">
+        <CardContent className="flex flex-wrap items-end gap-3 py-3 text-sm">
+          <label className="space-y-1">
+            <span className="text-xs text-text-sub">销售区域</span>
+            <select
+              className="block h-9 rounded-md border border-border bg-background px-2"
+              value={salesRegionFilter}
+              onChange={(e) => setSalesRegionFilter(e.target.value)}
+            >
+              <option value="">全部区域叶子</option>
+              {['US', 'CA', 'EU', 'UK', 'OTHER', 'UNMAPPED'].map((code) => (
+                <option key={code} value={code}>
+                  {code}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="space-y-1">
+            <span className="text-xs text-text-sub">加总视图</span>
+            <select
+              className="block h-9 rounded-md border border-border bg-background px-2"
+              value={rollupView}
+              onChange={(e) =>
+                setRollupView(
+                  e.target.value as
+                    | 'region_platform'
+                    | 'region_all_platforms'
+                    | 'all_regions_platform'
+                    | 'all_regions_all_platforms',
+                )
+              }
+            >
+              <option value="region_platform">分区域 × 分渠道</option>
+              <option value="region_all_platforms">分区域 × 全渠道</option>
+              <option value="all_regions_platform">全区域 × 分渠道</option>
+              <option value="all_regions_all_platforms">全区域 × 全渠道</option>
+            </select>
+          </label>
+          <p className="text-xs text-text-sub">
+            加总行数 {rollupMeta?.items.length ?? 0}
+            {salesRegionFilter ? ` · 筛选 ${salesRegionFilter}` : ''}
+            （明细矩阵仍按渠道展示；区域筛选供列表 API / 后续抽屉对齐）
+          </p>
+        </CardContent>
+      </Card>
 
       {pipelineBusy ? (
         <div className="rounded-md border border-violet-500/30 bg-violet-500/10 px-4 py-3 text-sm text-violet-950 dark:text-violet-100">

@@ -9,6 +9,7 @@ import {
   meanSeasonalIndex,
   monthOf,
 } from './forecast-seasonal-index.js';
+import { loadRegionMappingTables, resolveSalesRegion } from './region-mapping.js';
 
 export const AGGREGATE_GUARD_CODE = 'aggregate_vs_seasonal_baseline';
 export const AGGREGATE_GUARD_MIN_BASELINE_QTY = 300;
@@ -127,8 +128,13 @@ export async function loadAggregateGuardIssues(versionId: string): Promise<Forec
   if (kept.length === 0) return [];
 
   const skuIds = [...new Set(kept.map((row) => row.skuId))];
-  const recentDaily = await loadRecentDailyBySkuPlatform(skuIds, cap);
-  const monthlyDaily = await loadRecentMonthlyDailyBySkuPlatform(skuIds, capMonth.year, capMonth.month);
+  const recentDaily = hasRegionLeaves
+    ? await loadRecentDailyBySkuRegionPlatform(skuIds, cap)
+    : await loadRecentDailyBySkuPlatform(skuIds, cap);
+  // 月表无 station：仅遗留全站版本可回退月销；区域叶子只用归区后的日销近窗
+  const monthlyDaily = hasRegionLeaves
+    ? new Map<string, number>()
+    : await loadRecentMonthlyDailyBySkuPlatform(skuIds, capMonth.year, capMonth.month);
 
   const grouped = new Map<string, AggregateGuardGroup>();
   for (const row of kept) {
@@ -137,7 +143,10 @@ export async function loadAggregateGuardIssues(versionId: string): Promise<Forec
       forecastDailyAvg: row.forecastDailyAvg,
       manualDailyAvg: row.manualDailyAvg,
     }).effectiveDailyAvg;
-    const pairKey = `${row.skuId}::${row.platform}`;
+    const region = row.salesRegion && row.salesRegion !== 'ALL' ? row.salesRegion : null;
+    const pairKey = region
+      ? `${row.skuId}::${region}::${row.platform}`
+      : `${row.skuId}::${row.platform}`;
     const recent = recentDaily.get(pairKey) || monthlyDaily.get(pairKey) || 0;
     const seasonal = context.resolve({
       category: row.category,
@@ -197,6 +206,47 @@ async function loadRecentDailyBySkuPlatform(skuIds: string[], cap: Date): Promis
   for (const row of rows) {
     const channel = (row.channel ?? 'UNKNOWN').trim().toUpperCase() || 'UNKNOWN';
     map.set(`${row.skuId}::${channel}`, (Number(row.qty) || 0) / 90);
+  }
+  return map;
+}
+
+/** 近 90 日销按 sku × sales_region × platform 归区（护栏区域叶子基准） */
+async function loadRecentDailyBySkuRegionPlatform(
+  skuIds: string[],
+  cap: Date,
+): Promise<Map<string, number>> {
+  const end = cap.toISOString().slice(0, 10);
+  const startDate = new Date(cap.getTime());
+  startDate.setUTCDate(startDate.getUTCDate() - 89);
+  const start = startDate.toISOString().slice(0, 10);
+  const tables = await loadRegionMappingTables(db);
+  const rows = await db
+    .select({
+      skuId: salesHistory.skuId,
+      channel: salesHistory.channel,
+      station: salesHistory.station,
+      qty: sql<number>`sum(${salesHistory.qtySold})::float`,
+    })
+    .from(salesHistory)
+    .where(
+      and(
+        inArray(salesHistory.skuId, skuIds),
+        gte(salesHistory.saleDate, start),
+        lte(salesHistory.saleDate, end),
+      ),
+    )
+    .groupBy(salesHistory.skuId, salesHistory.channel, salesHistory.station);
+
+  const qty = new Map<string, number>();
+  for (const row of rows) {
+    const channel = (row.channel ?? 'UNKNOWN').trim().toUpperCase() || 'UNKNOWN';
+    const region = resolveSalesRegion(row.station, tables);
+    const key = `${row.skuId}::${region}::${channel}`;
+    qty.set(key, (qty.get(key) ?? 0) + (Number(row.qty) || 0));
+  }
+  const map = new Map<string, number>();
+  for (const [key, total] of qty) {
+    map.set(key, total / 90);
   }
   return map;
 }

@@ -1,11 +1,14 @@
-import { eq, and, sql } from 'drizzle-orm';
+import { eq, and, sql, inArray, gte, lte } from 'drizzle-orm';
 import {
   db,
   salesForecastMonthly,
   skus,
   forecastAccuracyMonthly,
   salesForecastReviewItems,
+  salesHistory,
 } from '@scm/db';
+import { loadRegionMappingTables, resolveSalesRegion } from './region-mapping.js';
+import { daysInCalendarMonth } from './forecast-baseline.js';
 import { getPrimaryPublishedVersionId } from './forecast-version.js';
 import { formatForecastMonth } from './forecast-demand.js';
 import { segmentLabel } from './forecast-profile-class.js';
@@ -63,8 +66,57 @@ type ReviewItemWriter = Pick<typeof db, 'insert' | 'update'>;
 /** 准确率落库批大小，避免单事务过大 */
 const ACCURACY_UPSERT_CHUNK = 250;
 
-function actualDailyLookupKey(skuId: string, channel: string): string {
+function actualDailyLookupKey(skuId: string, channel: string, salesRegion?: string): string {
+  if (salesRegion && salesRegion !== 'ALL') return `${skuId}|${salesRegion}|${channel}`;
   return `${skuId}|${channel}`;
+}
+
+/** 实际日均按销售区域归区（日表 station → resolveSalesRegion） */
+async function loadActualMonthlyDailyAvgByRegion(input: {
+  pairs: Array<{ skuId: string; channel: string; salesRegion: string }>;
+  year: number;
+  month: number;
+}): Promise<Map<string, number>> {
+  const result = new Map<string, number>();
+  if (!input.pairs.length) return result;
+  const dim = daysInCalendarMonth(input.year, input.month);
+  const monthStart = `${input.year}-${String(input.month).padStart(2, '0')}-01`;
+  const monthEndDate = new Date(Date.UTC(input.year, input.month, 0));
+  const monthEnd = monthEndDate.toISOString().slice(0, 10);
+  const tables = await loadRegionMappingTables(db);
+  const skuIds = [...new Set(input.pairs.map((p) => p.skuId))];
+  const channels = [...new Set(input.pairs.map((p) => p.channel))];
+  const qtyByKey = new Map<string, number>();
+  for (let i = 0; i < skuIds.length; i += ACCURACY_UPSERT_CHUNK) {
+    const chunk = skuIds.slice(i, i + ACCURACY_UPSERT_CHUNK);
+    const rows = await db
+      .select({
+        skuId: salesHistory.skuId,
+        channel: salesHistory.channel,
+        station: salesHistory.station,
+        totalQty: sql<number>`coalesce(sum(${salesHistory.qtySold}), 0)::float`,
+      })
+      .from(salesHistory)
+      .where(
+        and(
+          inArray(salesHistory.skuId, chunk),
+          inArray(salesHistory.channel, channels),
+          gte(salesHistory.saleDate, monthStart),
+          lte(salesHistory.saleDate, monthEnd),
+        ),
+      )
+      .groupBy(salesHistory.skuId, salesHistory.channel, salesHistory.station);
+    for (const row of rows) {
+      const channel = (row.channel ?? 'UNKNOWN').trim().toUpperCase() || 'UNKNOWN';
+      const region = resolveSalesRegion(row.station, tables);
+      const key = actualDailyLookupKey(row.skuId, channel, region);
+      qtyByKey.set(key, (qtyByKey.get(key) ?? 0) + (Number(row.totalQty) || 0));
+    }
+  }
+  for (const [key, qty] of qtyByKey) {
+    result.set(key, dim > 0 ? qty / dim : 0);
+  }
+  return result;
 }
 
 export function shouldRefreshLowAccuracyReviewItem(status: ReviewStatus): boolean {
@@ -248,6 +300,7 @@ export function buildLowAccuracyReviewItem(input: {
   skuId: string;
   skuCode: string;
   station: string;
+  salesRegion?: string;
   platform: string;
   targetYear: number;
   targetMonth: number;
@@ -270,6 +323,7 @@ export function buildLowAccuracyReviewItem(input: {
   return {
     skuId: input.skuId,
     station: input.station,
+    salesRegion: input.salesRegion ?? 'ALL',
     platform: input.platform,
     issueType: 'low_accuracy',
     severity: 'warning',
@@ -317,6 +371,7 @@ async function upsertLowAccuracyReviewItem(
       versionId: identity.versionId,
       skuId: identity.skuId,
       station: identity.station,
+      salesRegion: identity.salesRegion,
       platform: identity.platform,
       issueType: identity.issueType,
       ...values,
@@ -325,7 +380,7 @@ async function upsertLowAccuracyReviewItem(
       target: [
         salesForecastReviewItems.versionId,
         salesForecastReviewItems.skuId,
-        salesForecastReviewItems.station,
+        salesForecastReviewItems.salesRegion,
         salesForecastReviewItems.platform,
         salesForecastReviewItems.issueType,
       ],
@@ -338,7 +393,7 @@ async function upsertLowAccuracyReviewItem(
       and(
         eq(salesForecastReviewItems.versionId, identity.versionId),
         eq(salesForecastReviewItems.skuId, identity.skuId),
-        eq(salesForecastReviewItems.station, identity.station),
+        eq(salesForecastReviewItems.salesRegion, identity.salesRegion),
         eq(salesForecastReviewItems.platform, identity.platform),
         eq(salesForecastReviewItems.issueType, identity.issueType),
         eq(salesForecastReviewItems.status, 'pending'),
@@ -377,11 +432,12 @@ export async function computeForecastAccuracyForMonth(
   const platformCond = forecastPlatformCondition(salesForecastMonthly.platform, options?.platform);
   if (platformCond) forecastConditions.push(platformCond);
 
-  const forecastRows = await db
+  const forecastRowsRaw = await db
     .select({
       skuId: salesForecastMonthly.skuId,
       skuCode: skus.code,
       station: salesForecastMonthly.station,
+      salesRegion: salesForecastMonthly.salesRegion,
       platform: salesForecastMonthly.platform,
       forecastYear: salesForecastMonthly.forecastYear,
       month: salesForecastMonthly.month,
@@ -395,14 +451,29 @@ export async function computeForecastAccuracyForMonth(
     .innerJoin(skus, eq(skus.id, salesForecastMonthly.skuId))
     .where(and(...forecastConditions));
 
+  const hasRegionLeaves = forecastRowsRaw.some((row) => row.salesRegion && row.salesRegion !== 'ALL');
+  const forecastRows = hasRegionLeaves
+    ? forecastRowsRaw.filter((row) => row.salesRegion && row.salesRegion !== 'ALL')
+    : forecastRowsRaw;
+
   let upserted = 0;
   let highMapeCount = 0;
 
-  const actualDailyMap = await loadActualMonthlyDailyAvgForPairs({
-    pairs: forecastRows.map((row) => ({ skuId: row.skuId, channel: row.platform })),
-    year: targetYear,
-    month: targetMonth,
-  });
+  const actualDailyMap = hasRegionLeaves
+    ? await loadActualMonthlyDailyAvgByRegion({
+        pairs: forecastRows.map((row) => ({
+          skuId: row.skuId,
+          channel: row.platform,
+          salesRegion: row.salesRegion,
+        })),
+        year: targetYear,
+        month: targetMonth,
+      })
+    : await loadActualMonthlyDailyAvgForPairs({
+        pairs: forecastRows.map((row) => ({ skuId: row.skuId, channel: row.platform })),
+        year: targetYear,
+        month: targetMonth,
+      });
 
   const computedAt = new Date();
 
@@ -411,6 +482,7 @@ export async function computeForecastAccuracyForMonth(
     type AccuracyUpsertRow = {
       skuId: string;
       station: string;
+      salesRegion: string;
       platform: string;
       forecastYear: number;
       month: number;
@@ -426,8 +498,11 @@ export async function computeForecastAccuracyForMonth(
 
     for (const row of chunk) {
       const forecastDaily = Number(row.forecastDailyAvg);
+      const salesRegion = row.salesRegion ?? 'ALL';
       const actualDaily =
-        actualDailyMap.get(actualDailyLookupKey(row.skuId, row.platform)) ?? 0;
+        actualDailyMap.get(
+          actualDailyLookupKey(row.skuId, row.platform, hasRegionLeaves ? salesRegion : undefined),
+        ) ?? 0;
 
       if (!shouldPersistAccuracyRow({ forecastDaily, actualDaily })) {
         continue;
@@ -444,6 +519,7 @@ export async function computeForecastAccuracyForMonth(
               skuId: row.skuId,
               skuCode: row.skuCode,
               station: row.station,
+              salesRegion,
               platform: row.platform,
               targetYear,
               targetMonth,
@@ -459,6 +535,7 @@ export async function computeForecastAccuracyForMonth(
       accuracyRows.push({
         skuId: row.skuId,
         station: row.station,
+        salesRegion,
         platform: row.platform,
         forecastYear: targetYear,
         month: targetMonth,
@@ -483,7 +560,7 @@ export async function computeForecastAccuracyForMonth(
         .onConflictDoUpdate({
           target: [
             forecastAccuracyMonthly.skuId,
-            forecastAccuracyMonthly.station,
+            forecastAccuracyMonthly.salesRegion,
             forecastAccuracyMonthly.platform,
             forecastAccuracyMonthly.forecastYear,
             forecastAccuracyMonthly.month,

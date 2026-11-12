@@ -31,6 +31,7 @@ describe('forecast-accuracy', () => {
     assert.deepEqual(item, {
       skuId: 'sku-1',
       station: 'US',
+      salesRegion: 'ALL',
       platform: 'AMAZON',
       issueType: 'low_accuracy',
       severity: 'warning',

@@ -5128,6 +5128,7 @@ export const api = {
   getSalesForecasts: (params?: {
     skuCode?: string;
     station?: string;
+    salesRegion?: string;
     platform?: string;
     versionId?: string;
     forecastMonth?: string;
@@ -5138,6 +5139,7 @@ export const api = {
     const qs = new URLSearchParams();
     if (params?.skuCode) qs.set('skuCode', params.skuCode);
     if (params?.station) qs.set('station', params.station);
+    if (params?.salesRegion) qs.set('salesRegion', params.salesRegion);
     if (params?.platform) qs.set('platform', params.platform);
     if (params?.versionId) qs.set('versionId', params.versionId);
     if (params?.forecastMonth) qs.set('forecastMonth', params.forecastMonth);
@@ -5151,6 +5153,7 @@ export const api = {
         skuCode: string;
         skuName: string;
         station: string;
+        salesRegion?: string;
         platform: string;
         forecastMonth: string;
         forecastYear: number;
@@ -5167,6 +5170,32 @@ export const api = {
       page: number;
       pageSize: number;
     }>(`/api/sales-forecasts${query ? `?${query}` : ''}`);
+  },
+  getSalesForecastRollup: (params: {
+    versionId: string;
+    rollupView?:
+      | 'region_platform'
+      | 'region_all_platforms'
+      | 'all_regions_platform'
+      | 'all_regions_all_platforms';
+    skuCode?: string;
+  }) => {
+    const qs = new URLSearchParams();
+    qs.set('versionId', params.versionId);
+    if (params.rollupView) qs.set('rollupView', params.rollupView);
+    if (params.skuCode) qs.set('skuCode', params.skuCode);
+    return request<{
+      view: string;
+      legacy: boolean;
+      items: Array<{
+        skuId: string;
+        salesRegion: string;
+        platform: string;
+        forecastYear: number;
+        month: number;
+        effectiveDailyAvg: number;
+      }>;
+    }>(`/api/sales-forecasts/rollup?${qs.toString()}`);
   },
   updateSalesForecast: (
     id: string,

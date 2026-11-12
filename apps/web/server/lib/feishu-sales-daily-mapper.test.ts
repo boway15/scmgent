@@ -81,6 +81,30 @@ describe('mapFeishuSalesDailyRecords', () => {
     assert.deepEqual(mapped.dates, ['2026-10-17', '2026-10-18', '2026-10-19']);
   });
 
+  it('reads 区域 and 仓库 from Feishu fields', () => {
+    const mapped = mapFeishuSalesDailyRecords([
+      record({
+        Sku: 'R1',
+        '付款日期(站点)': '2026-10-19',
+        站点: 'Amazon德国',
+        区域: '欧洲',
+        仓库: 'PLATFORM-EU',
+        销量: '2',
+      }),
+      record({
+        Sku: 'R2',
+        '付款日期(站点)': '2026-10-19',
+        站点: 'Amazon美国',
+        销量: '1',
+      }),
+    ]);
+    const bySku = Object.fromEntries(mapped.rows.map((row) => [row.skuCode, row]));
+    assert.equal(bySku.R1.salesRegionRaw, '欧洲');
+    assert.equal(bySku.R1.warehouseCode, 'PLATFORM-EU');
+    assert.equal(bySku.R2.salesRegionRaw, null);
+    assert.equal(bySku.R2.warehouseCode, null);
+  });
+
   it('reads channel from the 平台 field and keeps station from 站点', () => {
     const mapped = mapFeishuSalesDailyRecords([
       record({

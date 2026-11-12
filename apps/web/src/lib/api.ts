@@ -2297,6 +2297,7 @@ export const api = {
         qtySold: number;
         channel?: string | null;
         station?: string | null;
+        salesRegion?: string | null;
         warehouseCode?: string | null;
         source: string;
       }>;

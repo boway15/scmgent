@@ -17,6 +17,12 @@ export type DailySalesRow = {
   category: string;
   saleDate: string;
   qtySold: number;
+  /** 飞书/导入「区域」原文（汉字或码）；入库前归一 */
+  salesRegionRaw?: string | null;
+  /** 已解析的销售区域码；可由同步或站点映射写入 */
+  salesRegion?: string | null;
+  /** 飞书「仓库」；导入可空 */
+  warehouseCode?: string | null;
 };
 
 export type DailySalesDiagnostics = {

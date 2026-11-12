@@ -345,6 +345,7 @@ export function SalesHistoryPage() {
                     <th className="p-2 font-normal">品类</th>
                     <th className="p-2 font-normal">销量</th>
                     <th className="p-2 font-normal">站点</th>
+                    <th className="p-2 font-normal">区域</th>
                     <th className="p-2 font-normal">平台</th>
                     <th className="p-2 font-normal">发货仓</th>
                     <th className="p-2 font-normal">来源</th>
@@ -363,6 +364,7 @@ export function SalesHistoryPage() {
                       <td className="p-2 text-text-sub" title={row.station || undefined}>
                         <span className="block truncate whitespace-nowrap">{row.station || '-'}</span>
                       </td>
+                      <td className="p-2 font-mono text-text-sub">{row.salesRegion || '-'}</td>
                       <td className="p-2 text-text-sub" title={row.channel ?? undefined}>
                         <span className="block truncate">{row.channel ?? '-'}</span>
                       </td>
@@ -374,7 +376,7 @@ export function SalesHistoryPage() {
                   ))}
                   {!dailyData?.items.length && (
                     <tr>
-                      <td colSpan={9} className="p-4 text-center text-text-hint">
+                      <td colSpan={10} className="p-4 text-center text-text-hint">
                         暂无日销量数据，请点击上方「导入销量」
                       </td>
                     </tr>

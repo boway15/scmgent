@@ -1,0 +1,51 @@
+ALTER TABLE "sales_history" ADD COLUMN IF NOT EXISTS "sales_region" varchar(20);
+CREATE INDEX IF NOT EXISTS "sales_history_sales_region_idx" ON "sales_history" ("sales_region");
+
+-- 站点 → 销售区域种子（来源：映射-区域有哪些站点.csv）
+INSERT INTO "station_sales_region_maps" ("station", "sales_region")
+VALUES
+  ('Amazon巴西', 'BR'),
+  ('沃尔玛加拿大', 'CA'),
+  ('Amazon加拿大', 'CA'),
+  ('德国', 'EU'),
+  ('Amazon爱尔兰', 'EU'),
+  ('Amazon比利时', 'EU'),
+  ('Amazon波兰', 'EU'),
+  ('Amazon德国', 'EU'),
+  ('Amazon法国', 'EU'),
+  ('Amazon荷兰', 'EU'),
+  ('Amazon西班牙', 'EU'),
+  ('Amazon意大利', 'EU'),
+  ('B2B小包', 'EU'),
+  ('manomano-France', 'EU'),
+  ('manomano-FRMF', 'EU'),
+  ('OTTO德国', 'EU'),
+  ('Real德国', 'EU'),
+  ('Shopify德国', 'EU'),
+  ('Shopify法国', 'EU'),
+  ('Shopify西班牙', 'EU'),
+  ('Shopify意大利', 'EU'),
+  ('Temu德国', 'EU'),
+  ('Tiktok德国', 'EU'),
+  ('Tiktok法国', 'EU'),
+  ('Tiktok西班牙', 'EU'),
+  ('Tiktok意大利', 'EU'),
+  ('wayfair欧洲', 'EU'),
+  ('Amazon墨西哥', 'MX'),
+  ('Amazon英国', 'UK'),
+  ('Shopify英国', 'UK'),
+  ('Tiktok英国', 'UK'),
+  ('wayfair英国', 'UK'),
+  ('美国', 'US'),
+  ('速卖通英语', 'US'),
+  ('沃尔玛', 'US'),
+  ('Amazon美国', 'US'),
+  ('Overstock美国', 'US'),
+  ('Shein美国', 'US'),
+  ('Shopify美国', 'US'),
+  ('TEMU-US', 'US'),
+  ('Tiktok美国', 'US'),
+  ('wayfair', 'US')
+ON CONFLICT ("station") DO UPDATE SET
+  "sales_region" = EXCLUDED."sales_region",
+  "updated_at" = now();

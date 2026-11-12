@@ -358,7 +358,12 @@ export const salesHistory = pgTable(
     channel: varchar('channel', { length: 100 }),
     /** 导入原文站点，如 Amazon美国、wayfair英国；不在入库时收成 US / EU / UK */
     station: varchar('station', { length: 100 }).notNull().default(''),
-    /** 实际发货仓 code，如 US-WEST */
+    /**
+     * 销售区域码（US/CA/EU/UK/MX/BR/OTHER）。
+     * 飞书同步优先写入；为空时由站点映射补齐；仍未知可空。
+     */
+    salesRegion: varchar('sales_region', { length: 20 }),
+    /** 实际发货仓 code，如 US-WEST；飞书同步写入，导入可空 */
     warehouseCode: varchar('warehouse_code', { length: 100 }),
     /** 品类快照，导入时从 SKU 主数据写入 */
     category: varchar('category', { length: 200 }),

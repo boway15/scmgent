@@ -38,6 +38,10 @@ export function mapFeishuSalesDailyRecords(records: BitableRecord[]): FeishuSale
     const saleDate = extractFieldValue(fields['付款日期(站点)']);
     const stationLabel = extractFieldValue(fields['站点']);
     const platformLabel = extractFieldValue(fields['平台']);
+    const regionLabel = extractFieldValue(fields['区域']);
+    const warehouseLabel = extractFieldValue(
+      fields['仓库'] ?? fields['仓库编码'] ?? fields.Warehouse ?? '',
+    ).trim();
     const qty = parseQty(extractFieldValue(fields['销量']));
     if (!skuCode || !ISO_DATE.test(saleDate) || !stationLabel || qty == null) {
       skipped += 1;
@@ -55,6 +59,8 @@ export function mapFeishuSalesDailyRecords(records: BitableRecord[]): FeishuSale
       category: extractFieldValue(fields['品类']),
       saleDate,
       qtySold: qty,
+      salesRegionRaw: regionLabel.trim() ? regionLabel.trim() : null,
+      warehouseCode: warehouseLabel || null,
     });
   }
 

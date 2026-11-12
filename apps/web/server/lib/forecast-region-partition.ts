@@ -6,18 +6,21 @@
  * 便于在 forecast-collaboration 中按 (sku × region × platform) 训练叶子。
  */
 import type { RegionMappingTables, RuntimeRegion } from './region-mapping.js';
-import { resolveSalesRegion } from './region-mapping.js';
+import { isMappableRegion, resolveSalesRegion } from './region-mapping.js';
 
-/** 带站点原文的行（日销）。warehouseCode 仍保留以兼容旧过滤路径。 */
+/** 带站点/行上区域的日销行。warehouseCode 仍保留以兼容旧过滤路径。 */
 export type RegionPartitionableRow = {
   station?: string | null;
+  /** 已入库的销售区域码；优先于站点映射 */
+  salesRegion?: string | null;
   warehouseCode?: string | null;
 };
 
 /**
- * 把行按 `resolveSalesRegion(row.station)` 分组。
- * - 未映射或空站点 → 'UNMAPPED'
- * - 不做任何国名/文案启发式猜区
+ * 把行按销售区域分组。
+ * - 优先行上 `salesRegion`（飞书同步/映射补齐后的码）
+ * - 否则 `resolveSalesRegion(station)`
+ * - 未映射或空 → 'UNMAPPED'
  */
 export function groupRowsBySalesRegion<T extends RegionPartitionableRow>(
   rows: readonly T[],
@@ -25,7 +28,11 @@ export function groupRowsBySalesRegion<T extends RegionPartitionableRow>(
 ): Map<RuntimeRegion, T[]> {
   const groups = new Map<RuntimeRegion, T[]>();
   for (const row of rows) {
-    const region = resolveSalesRegion(row.station ?? null, tables);
+    const coded = row.salesRegion?.trim().toUpperCase();
+    const region: RuntimeRegion =
+      coded && (isMappableRegion(coded) || coded === 'UNMAPPED')
+        ? (coded as RuntimeRegion)
+        : resolveSalesRegion(row.station ?? null, tables);
     const list = groups.get(region) ?? [];
     list.push(row);
     groups.set(region, list);

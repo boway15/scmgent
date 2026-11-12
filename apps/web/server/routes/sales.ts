@@ -39,6 +39,7 @@ function parseSalesFilters(
   const channel = c.req.query('channel')?.trim();
   const warehouse = c.req.query('warehouse')?.trim();
   const station = c.req.query('station')?.trim();
+  const salesRegion = c.req.query('salesRegion')?.trim().toUpperCase();
   const category = c.req.query('category')?.trim();
   const conditions = [];
   if (skuCode) conditions.push(eq(skus.code, skuCode));
@@ -54,6 +55,7 @@ function parseSalesFilters(
   }
   if (warehouse) conditions.push(eq(salesHistory.warehouseCode, warehouse));
   if (station) conditions.push(eq(salesHistory.station, station));
+  if (salesRegion) conditions.push(eq(salesHistory.salesRegion, salesRegion));
   if (category) {
     const categoryCondition = categoryMatchesFilterCondition(
       salesHistory.category,
@@ -156,6 +158,7 @@ salesRoutes.get('/sales/history', requireMenu('data.sales'), async (c) => {
       qtySold: salesHistory.qtySold,
       channel: salesHistory.channel,
       station: salesHistory.station,
+      salesRegion: salesHistory.salesRegion,
       warehouseCode: salesHistory.warehouseCode,
       source: salesHistory.source,
       createdAt: salesHistory.createdAt,
@@ -301,6 +304,7 @@ salesRoutes.get('/sales/history/export', requireMenu('data.sales'), async (c) =>
       qtySold: salesHistory.qtySold,
       channel: salesHistory.channel,
       station: salesHistory.station,
+      salesRegion: salesHistory.salesRegion,
       warehouseCode: salesHistory.warehouseCode,
     })
     .from(salesHistory)
@@ -321,6 +325,7 @@ salesRoutes.get('/sales/history/export', requireMenu('data.sales'), async (c) =>
       'qty_sold',
       'channel',
       'station',
+      'sales_region',
       'warehouse_code',
     ],
     rows.map((r) => [
@@ -331,6 +336,7 @@ salesRoutes.get('/sales/history/export', requireMenu('data.sales'), async (c) =>
       r.qtySold,
       r.channel ?? '',
       r.station?.trim() ? r.station : '',
+      r.salesRegion ?? '',
       r.warehouseCode ?? '',
     ]),
   );

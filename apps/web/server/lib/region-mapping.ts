@@ -8,6 +8,7 @@ import {
   type MappableRegion,
   type RuntimeRegion,
 } from './region-codes.js';
+import { normalizeSalesRegionLabel } from './region-label.js';
 
 export { isMappableRegion, type MappableRegion, type RuntimeRegion };
 
@@ -34,6 +35,20 @@ export function resolveFulfillmentRegion(
 ): RuntimeRegion {
   if (!warehouseCode?.trim()) return 'UNMAPPED';
   return tables.warehouses.get(warehouseCode.trim()) ?? 'UNMAPPED';
+}
+
+/**
+ * 销量入库用区域：优先行上区域（飞书汉字/码归一），否则站点映射；仍未知则 null（展示为空，不写 UNMAPPED）。
+ */
+export function resolveInboundSalesRegion(
+  regionRaw: string | null | undefined,
+  station: string | null | undefined,
+  tables: RegionMappingTables,
+): string | null {
+  const fromRow = normalizeSalesRegionLabel(regionRaw);
+  if (fromRow) return fromRow;
+  if (!station?.trim()) return null;
+  return tables.stations.get(normalizeStationKey(station)) ?? null;
 }
 
 type MappingRow = {

@@ -12,14 +12,22 @@ import { assessUnknownChannelShare, normalizeSalesPlatformSync } from './sales-p
 import { schedulePostImportSalesAnalyticsCubeRebuild } from './sales-analytics-cube.js';
 import { preserveImportedSalesStation } from './sales-report-parser.js';
 import { yieldToEventLoop } from './yield-event-loop.js';
+import {
+  loadRegionMappingTables,
+  resolveInboundSalesRegion,
+} from './region-mapping.js';
 
 export type SalesHistoryImportPlanRow = {
   skuId: string;
   saleDate: string;
   qtySold: number;
   channel: string;
-  /** Canonical analytics site: US / EU / UK / 其他 */
+  /** 导入原文站点 */
   station: string;
+  /** 销售区域码；可空 */
+  salesRegion: string | null;
+  /** 发货仓；可空 */
+  warehouseCode: string | null;
   category: string | null;
 };
 
@@ -90,6 +98,12 @@ function dedupeSalesHistoryPlanRows(rows: SalesHistoryImportPlanRow[]): SalesHis
       if (row.category && !existing.category) {
         existing.category = row.category;
       }
+      if (row.salesRegion && !existing.salesRegion) {
+        existing.salesRegion = row.salesRegion;
+      }
+      if (row.warehouseCode && !existing.warehouseCode) {
+        existing.warehouseCode = row.warehouseCode;
+      }
       continue;
     }
     merged.set(key, { ...row });
@@ -122,10 +136,18 @@ export function buildSalesHistoryImportPlan(
     const categoryFromImport = row.category.trim() || null;
     const key = `${skuId}::${row.saleDate}::${channel}::${station}`;
     const existing = planned.get(key);
+    const salesRegion = row.salesRegion?.trim() || null;
+    const warehouseCode = row.warehouseCode?.trim() || null;
     if (existing) {
       existing.qtySold += row.qtySold;
       if (categoryFromImport && !existing.category) {
         existing.category = categoryFromImport;
+      }
+      if (salesRegion && !existing.salesRegion) {
+        existing.salesRegion = salesRegion;
+      }
+      if (warehouseCode && !existing.warehouseCode) {
+        existing.warehouseCode = warehouseCode;
       }
     } else {
       planned.set(key, {
@@ -134,6 +156,8 @@ export function buildSalesHistoryImportPlan(
         qtySold: row.qtySold,
         channel,
         station,
+        salesRegion,
+        warehouseCode,
         category: categoryFromImport || resolveSkuCategoryFromMaster(categoryBySkuId, skuId),
       });
     }
@@ -180,7 +204,15 @@ export async function persistDailySalesRowsAsHistory(
   }
 
   const categoryBySkuId = await loadSkuCategoryMap(Array.from(new Set(skuIdByCode.values())));
-  const plan = buildSalesHistoryImportPlan(rows, skuIdByCode, categoryBySkuId);
+  const mappingTables = await loadRegionMappingTables(db);
+  const enrichedRows: DailySalesRow[] = rows.map((row) => ({
+    ...row,
+    salesRegion:
+      row.salesRegion?.trim() ||
+      resolveInboundSalesRegion(row.salesRegionRaw, row.station, mappingTables),
+    warehouseCode: row.warehouseCode?.trim() || null,
+  }));
+  const plan = buildSalesHistoryImportPlan(enrichedRows, skuIdByCode, categoryBySkuId);
   const planRows = dedupeSalesHistoryPlanRows(plan.rows);
 
   let insertedSalesRows = 0;
@@ -204,6 +236,8 @@ export async function persistDailySalesRowsAsHistory(
           qtySold: row.qtySold,
           channel: row.channel,
           station: row.station,
+          salesRegion: row.salesRegion || undefined,
+          warehouseCode: row.warehouseCode || undefined,
           category: row.category,
           source: 'import' as const,
           importBatchId: importBatchId || undefined,
@@ -219,6 +253,8 @@ export async function persistDailySalesRowsAsHistory(
         set: {
           qtySold,
           category: sql`coalesce(excluded.category, ${salesHistory.category})`,
+          salesRegion: sql`coalesce(excluded.sales_region, ${salesHistory.salesRegion})`,
+          warehouseCode: sql`coalesce(excluded.warehouse_code, ${salesHistory.warehouseCode})`,
           importBatchId: sql`excluded.import_batch_id`,
         },
       })

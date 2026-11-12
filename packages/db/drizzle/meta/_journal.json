@@ -848,6 +848,13 @@
       "when": 1788956200000,
       "tag": "0140_sales_fulfillment_region",
       "breakpoints": true
+    },
+    {
+      "idx": 122,
+      "version": "6",
+      "when": 1789042600000,
+      "tag": "0141_sales_history_region_warehouse",
+      "breakpoints": true
     }
   ]
 }

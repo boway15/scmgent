@@ -4,6 +4,7 @@ import {
   isMappableRegion,
   invalidateRegionMappingCache,
   loadRegionMappingTables,
+  resolveInboundSalesRegion,
   resolveSalesRegion,
   resolveFulfillmentRegion,
   type RegionMappingTables,
@@ -112,5 +113,16 @@ describe('region-mapping', () => {
     assert.equal(resolveSalesRegion('美国', tables), 'UNMAPPED');
     assert.equal(resolveFulfillmentRegion('CA-TORONTO', tables), 'UNMAPPED');
     assert.equal(resolveSalesRegion(null, tables), 'UNMAPPED');
+  });
+
+  it('resolves inbound sales region: row label first, else station map, else null', () => {
+    assert.equal(resolveInboundSalesRegion('欧洲', 'Amazon美国', tables), 'EU');
+    assert.equal(resolveInboundSalesRegion('', 'Amazon德国', tables), 'EU');
+    assert.equal(resolveInboundSalesRegion(null, '未知站', tables), null);
+  });
+
+  it('accepts MX and BR as mappable regions', () => {
+    assert.equal(isMappableRegion('MX'), true);
+    assert.equal(isMappableRegion('BR'), true);
   });
 });

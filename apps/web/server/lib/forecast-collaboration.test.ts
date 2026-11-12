@@ -56,6 +56,7 @@ describe('forecast-collaboration', () => {
       {
         skuId: 'sku-2',
         station: 'US',
+        salesRegion: 'ALL',
         platform: 'ALL',
         issueType: 'missing_history',
         severity: 'info',
@@ -65,6 +66,7 @@ describe('forecast-collaboration', () => {
       {
         skuId: 'sku-2',
         station: 'US',
+        salesRegion: 'ALL',
         platform: 'ALL',
         issueType: 'missing_history',
         severity: 'warning',
@@ -209,22 +211,22 @@ describe('forecast-collaboration', () => {
     const identity = buildReviewItemIdentity('version-1', {
       skuId: 'sku-1',
       station: 'US',
+      salesRegion: 'US',
       platform: 'AMAZON',
       issueType: 'trend_shift',
-      severity: 'warning',
-      message: 'Trend changed',
     });
 
     assert.deepEqual(identity, {
       versionId: 'version-1',
       skuId: 'sku-1',
       station: 'US',
+      salesRegion: 'US',
       platform: 'AMAZON',
       issueType: 'trend_shift',
     });
     assert.equal(
       buildReviewItemKey(identity),
-      'version-1::sku-1::US::AMAZON::trend_shift',
+      'version-1::sku-1::US::US::AMAZON::trend_shift',
     );
   });
 

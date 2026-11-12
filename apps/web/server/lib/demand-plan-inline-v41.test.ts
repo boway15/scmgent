@@ -11,6 +11,7 @@ describe('demand-plan-inline-v41', () => {
       saleDate: date,
       qtySold: qty,
       warehouseCode: null,
+      station: 'US',
     });
     const dailyAmazon = Array.from({ length: 90 }, (_, i) => {
       const d = new Date(Date.UTC(2026, 7, 5 + i));
@@ -44,6 +45,7 @@ describe('demand-plan-inline-v41', () => {
       saleDate: date,
       qtySold: qty,
       warehouseCode: null,
+      station: 'US',
     });
     const dailyAmazon = Array.from({ length: 90 }, (_, i) => {
       const d = new Date(Date.UTC(2026, 7, 5 + i));

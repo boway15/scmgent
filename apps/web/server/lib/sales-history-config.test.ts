@@ -36,9 +36,9 @@ describe('sales-history-config', () => {
 describe('sales-history-query', () => {
   it('groups daily sales by sku id', () => {
     const rows: DailySalesPoint[] = [
-      { skuId: 'a', qtySold: 1, saleDate: '2026-01-01', warehouseCode: null },
-      { skuId: 'b', qtySold: 2, saleDate: '2026-01-02', warehouseCode: 'US-WEST' },
-      { skuId: 'a', qtySold: 3, saleDate: '2026-01-03', warehouseCode: null },
+      { skuId: 'a', qtySold: 1, saleDate: '2026-01-01', warehouseCode: null, station: 'US' },
+      { skuId: 'b', qtySold: 2, saleDate: '2026-01-02', warehouseCode: 'US-WEST', station: 'US' },
+      { skuId: 'a', qtySold: 3, saleDate: '2026-01-03', warehouseCode: null, station: 'US' },
     ];
     const map = groupDailySalesBySkuId(rows);
     assert.equal(map.get('a')?.length, 2);

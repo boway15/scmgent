@@ -16,6 +16,7 @@ export const AGGREGATE_GUARD_MIN_BASELINE_QTY = 300;
 export type AggregateGuardGroup = {
   projectGroup: string;
   station: string;
+  salesRegion: string;
   forecastYear: number;
   month: number;
   forecastQty: number;
@@ -36,7 +37,10 @@ export function buildAggregateGuardIssues(
   const issues: ForecastValidationIssue[] = [];
   for (const group of groups) {
     const monthLabel = `${group.forecastYear}-${String(group.month).padStart(2, '0')}`;
-    const label = `${group.projectGroup || '(未分组)'} / ${group.station || 'ALL'} / ${monthLabel}`;
+    const scopeLabel = group.salesRegion && group.salesRegion !== 'ALL'
+      ? `${group.projectGroup || '(未分组)'} / ${group.salesRegion} / ${monthLabel}`
+      : `${group.projectGroup || '(未分组)'} / ${group.station || 'ALL'} / ${monthLabel}`;
+    const label = scopeLabel;
     if (group.baselineQty <= 0 && group.forecastQty <= 0) continue;
     if (group.baselineQty < minBaselineQty) {
       issues.push({
@@ -101,6 +105,7 @@ export async function loadAggregateGuardIssues(versionId: string): Promise<Forec
     .select({
       skuId: salesForecastMonthly.skuId,
       station: salesForecastMonthly.station,
+      salesRegion: salesForecastMonthly.salesRegion,
       platform: salesForecastMonthly.platform,
       forecastYear: salesForecastMonthly.forecastYear,
       month: salesForecastMonthly.month,
@@ -114,8 +119,11 @@ export async function loadAggregateGuardIssues(versionId: string): Promise<Forec
     .innerJoin(skus, eq(skus.id, salesForecastMonthly.skuId))
     .where(eq(salesForecastMonthly.versionId, versionId));
 
+  const hasRegionLeaves = rows.some((row) => row.salesRegion && row.salesRegion !== 'ALL');
   const hasSpecificPlatform = rows.some((row) => row.platform !== 'ALL');
-  const kept = hasSpecificPlatform ? rows.filter((row) => row.platform !== 'ALL') : rows;
+  let kept = rows;
+  if (hasSpecificPlatform) kept = kept.filter((row) => row.platform !== 'ALL');
+  if (hasRegionLeaves) kept = kept.filter((row) => row.salesRegion && row.salesRegion !== 'ALL');
   if (kept.length === 0) return [];
 
   const skuIds = [...new Set(kept.map((row) => row.skuId))];
@@ -139,10 +147,12 @@ export async function loadAggregateGuardIssues(versionId: string): Promise<Forec
     const mean3 = meanSeasonalIndex(seasonal.byMonth, capMonth.year, capMonth.month, 3);
     const target = seasonal.byMonth[row.month] ?? 1;
     const baselineDaily = mean3 > 0 ? recent * (target / mean3) : recent;
-    const key = `${row.projectGroup ?? ''}::${row.station}::${row.forecastYear}::${row.month}`;
+    const groupKey = (row.salesRegion && row.salesRegion !== 'ALL') ? row.salesRegion : row.station;
+    const key = `${row.projectGroup ?? ''}::${groupKey}::${row.forecastYear}::${row.month}`;
     const current = grouped.get(key) ?? {
       projectGroup: row.projectGroup?.trim() || '(未分组)',
       station: row.station,
+      salesRegion: row.salesRegion ?? 'ALL',
       forecastYear: row.forecastYear,
       month: row.month,
       forecastQty: 0,

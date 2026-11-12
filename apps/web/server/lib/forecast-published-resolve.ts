@@ -1,4 +1,4 @@
-import { and, eq, inArray } from 'drizzle-orm';
+import { and, eq, inArray, ne } from 'drizzle-orm';
 import { db, salesForecastMonthly, salesForecastVersions } from '@scm/db';
 import {
   aggregateForecastP90Rows,
@@ -70,9 +70,11 @@ const SKU_IN_CHUNK = 2000;
 export async function resolvePublishedVersionIdBySkuIds(
   skuIds: string[],
   station: string = FORECAST_GLOBAL_STATION,
+  options?: { preferRegionLeaves?: boolean },
 ): Promise<Map<string, string>> {
   if (!skuIds.length) return new Map();
 
+  const preferRegion = options?.preferRegionLeaves ?? true;
   const rows: Array<{
     skuId: string;
     versionId: string | null;
@@ -99,12 +101,13 @@ export async function resolvePublishedVersionIdBySkuIds(
         and(
           inArray(salesForecastMonthly.skuId, chunk),
           eq(salesForecastMonthly.station, station),
+          preferRegion ? ne(salesForecastMonthly.salesRegion, 'ALL') : undefined,
         ),
       );
     rows.push(...chunkRows);
   }
 
-  return pickLatestPublishedVersionPerSku(
+  const resolved = pickLatestPublishedVersionPerSku(
     rows
       .filter((row): row is typeof row & { versionId: string } => Boolean(row.versionId))
       .map((row) => ({
@@ -113,6 +116,19 @@ export async function resolvePublishedVersionIdBySkuIds(
         publishedAt: row.publishedAt,
       })),
   );
+
+  if (!preferRegion) return resolved;
+
+  // 回退：无区域叶子的 SKU 取遗留 sales_region='ALL' 行的最新发布版本
+  const missingSkuIds = skuIds.filter((id) => !resolved.has(id));
+  if (missingSkuIds.length) {
+    const fallback = await resolvePublishedVersionIdBySkuIds(missingSkuIds, station, {
+      preferRegionLeaves: false,
+    });
+    for (const [skuId, versionId] of fallback) resolved.set(skuId, versionId);
+  }
+
+  return resolved;
 }
 
 export async function resolvePublishedVersionIdForSku(
@@ -126,11 +142,15 @@ export async function resolvePublishedVersionIdForSku(
 export async function loadMergedPublishedForecastBySkuIds(
   skuIds: string[],
   station: string = FORECAST_GLOBAL_STATION,
+  options?: { preferRegionLeaves?: boolean },
 ): Promise<Map<string, PublishedForecastEntry>> {
   const result = new Map<string, PublishedForecastEntry>();
   if (!skuIds.length) return result;
 
-  const versionBySkuId = await resolvePublishedVersionIdBySkuIds(skuIds, station);
+  const preferRegion = options?.preferRegionLeaves ?? true;
+  const versionBySkuId = await resolvePublishedVersionIdBySkuIds(skuIds, station, {
+    preferRegionLeaves: preferRegion,
+  });
   const empty: PublishedForecastEntry = { map: new Map(), lifecycle: undefined, versionId: null };
 
   for (const skuId of skuIds) {
@@ -184,12 +204,43 @@ export async function loadMergedPublishedForecastBySkuIds(
             eq(salesForecastMonthly.versionId, versionId),
             eq(salesForecastMonthly.station, station),
             inArray(salesForecastMonthly.skuId, chunk),
+            preferRegion ? ne(salesForecastMonthly.salesRegion, 'ALL') : undefined,
           ),
         );
       for (const row of rows) {
         const list = rowsBySku.get(row.skuId) ?? [];
         list.push(row);
         rowsBySku.set(row.skuId, list);
+      }
+    }
+
+    // 回退：preferRegion 时若该 SKU 无区域叶子，取遗留 ALL 行
+    if (preferRegion) {
+      const fallbackSkuIds = ids.filter((id) => !(rowsBySku.get(id)?.length));
+      for (const skuId of fallbackSkuIds) {
+        const fallbackRows = await db
+          .select({
+            forecastYear: salesForecastMonthly.forecastYear,
+            month: salesForecastMonthly.month,
+            forecastDailyAvg: salesForecastMonthly.forecastDailyAvg,
+            manualDailyAvg: salesForecastMonthly.manualDailyAvg,
+            lifecycle: salesForecastMonthly.lifecycle,
+            platform: salesForecastMonthly.platform,
+            profileSegment: salesForecastMonthly.profileSegment,
+            horizonFactors: salesForecastMonthly.horizonFactors,
+            forecastDailyP90: salesForecastMonthly.forecastDailyP90,
+          })
+          .from(salesForecastMonthly)
+          .where(
+            and(
+              eq(salesForecastMonthly.versionId, versionId),
+              eq(salesForecastMonthly.station, station),
+              eq(salesForecastMonthly.skuId, skuId),
+              eq(salesForecastMonthly.salesRegion, 'ALL'),
+            ),
+          );
+        const list = fallbackRows.map((r) => ({ skuId, ...r }));
+        rowsBySku.set(skuId, list);
       }
     }
 

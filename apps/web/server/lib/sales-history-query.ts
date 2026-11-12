@@ -14,6 +14,7 @@ export type DailySalesPoint = {
   qtySold: number;
   saleDate: string;
   warehouseCode: string | null;
+  station: string;
 };
 
 const SKU_IN_CHUNK = 2000;
@@ -50,6 +51,7 @@ export async function loadDailySalesBySkuIds(
         qtySold: salesHistory.qtySold,
         saleDate: salesHistory.saleDate,
         warehouseCode: salesHistory.warehouseCode,
+        station: salesHistory.station,
       })
       .from(salesHistory)
       .where(and(inArray(salesHistory.skuId, chunk), gte(salesHistory.saleDate, cutoff)));
@@ -60,6 +62,7 @@ export async function loadDailySalesBySkuIds(
         qtySold: row.qtySold,
         saleDate: normalizeSaleDate(row.saleDate),
         warehouseCode: row.warehouseCode,
+        station: row.station ?? '',
       };
       const list = map.get(row.skuId) ?? [];
       list.push(point);
@@ -94,11 +97,17 @@ export async function loadDailySalesBySkuIdsInRange(input: {
   fromDate: string;
   toDate: string;
   platform: string;
+  /** 仅包含这些站点（归一后精确匹配）；空表示不限 */
+  stationIn?: string[];
+  /** 排除这些站点（用于 UNMAPPED 桶：排除所有已映射站点） */
+  stationNotIn?: string[];
 }): Promise<Map<string, DailySalesPoint[]>> {
   const map = new Map<string, DailySalesPoint[]>();
   if (!input.skuIds.length) return map;
 
   const platformCond = await platformChannelCondition(input.platform);
+  const stationIn = input.stationIn?.filter((s) => s.trim()) ?? [];
+  const stationNotIn = input.stationNotIn?.filter((s) => s.trim()) ?? [];
 
   for (let offset = 0; offset < input.skuIds.length; offset += SKU_IN_CHUNK) {
     const chunk = input.skuIds.slice(offset, offset + SKU_IN_CHUNK);
@@ -108,6 +117,19 @@ export async function loadDailySalesBySkuIdsInRange(input: {
       lte(salesHistory.saleDate, input.toDate),
     ];
     if (platformCond) conditions.push(platformCond);
+    if (stationIn.length) conditions.push(inArray(salesHistory.station, stationIn));
+    if (stationNotIn.length) {
+      conditions.push(
+        or(
+          isNull(salesHistory.station),
+          sql`${salesHistory.station} = ''`,
+          sql`(${salesHistory.station}) NOT IN (${sql.join(
+            stationNotIn.map((s) => sql`${s}`),
+            sql`, `,
+          )})`,
+        )!,
+      );
+    }
 
     const rows = await db
       .select({
@@ -115,6 +137,7 @@ export async function loadDailySalesBySkuIdsInRange(input: {
         qtySold: salesHistory.qtySold,
         saleDate: salesHistory.saleDate,
         warehouseCode: salesHistory.warehouseCode,
+        station: salesHistory.station,
       })
       .from(salesHistory)
       .where(and(...conditions));
@@ -125,6 +148,7 @@ export async function loadDailySalesBySkuIdsInRange(input: {
         qtySold: row.qtySold,
         saleDate: normalizeSaleDate(row.saleDate),
         warehouseCode: row.warehouseCode,
+        station: row.station ?? '',
       };
       const list = map.get(row.skuId) ?? [];
       list.push(point);

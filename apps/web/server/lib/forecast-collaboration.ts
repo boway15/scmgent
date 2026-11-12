@@ -80,7 +80,6 @@ import {
 } from './forecast-profile-snapshot.js';
 import { loadForecastCalibrationConfig, resolveSeasonalIndexMode, type SeasonalIndexMode } from './forecast-profile-config.js';
 import { buildSeasonalIndexContext, persistSeasonalIndexSnapshot } from './forecast-seasonal-index.js';
-import { synthesizeDailySalesFromMonthly } from './forecast-monthly-daily-fallback.js';
 import {
   applyStationSiPortfolioReshape,
   shouldRunSiReshapeAfterGenerate,
@@ -99,12 +98,15 @@ import {
   resolveT99SystemFloorDaily,
   stationForWarehouse,
 } from './forecast-demand.js';
-import { DEFAULT_MONTHLY_HISTORY_LOOKBACK_MONTHS } from './sales-history-monthly.js';
 import {
   loadDailySalesBySkuIdsInRange,
-  loadFirstSaleDateBySkuIds,
-  loadMonthlySalesBySkuIds,
 } from './sales-history-query.js';
+import {
+  buildSalesRegionBuckets,
+  deriveMonthlyQtyFromDaily,
+  firstSaleDateFromRows,
+} from './forecast-region-partition.js';
+import { loadRegionMappingTables } from './region-mapping.js';
 import type { MonthlyTrendRow } from './sales-report-parser.js';
 import {
   emptyEligibilityStats,
@@ -158,6 +160,7 @@ export type ReviewIssueType =
 export type ReviewItemDraft = {
   skuId: string;
   station: string;
+  salesRegion?: string;
   platform: string;
   issueType: ReviewIssueType;
   severity: 'critical' | 'warning' | 'info';
@@ -169,6 +172,7 @@ export type ReviewItemIdentity = {
   versionId: string;
   skuId: string;
   station: string;
+  salesRegion: string;
   platform: string;
   issueType: ReviewIssueType;
 };
@@ -261,6 +265,7 @@ export function buildReviewItemsForForecast(input: {
   skuId: string;
   skuCode?: string;
   station: string;
+  salesRegion?: string;
   platform: string;
   lifecycle: SalesLifecycle;
   baselineDailyAvg?: number;
@@ -277,6 +282,7 @@ export function buildReviewItemsForForecast(input: {
   const base = {
     skuId: input.skuId,
     station: input.station,
+    salesRegion: input.salesRegion ?? 'ALL',
     platform: input.platform,
     suggestedDailyAvg: input.suggestedDailyAvg,
   };
@@ -576,12 +582,13 @@ export function computeCategoryReferenceBySku(
 
 export function buildReviewItemIdentity(
   versionId: string,
-  item: Pick<ReviewItemDraft, 'skuId' | 'station' | 'platform' | 'issueType'>,
+  item: Pick<ReviewItemDraft, 'skuId' | 'station' | 'salesRegion' | 'platform' | 'issueType'>,
 ): ReviewItemIdentity {
   return {
     versionId,
     skuId: item.skuId,
     station: item.station,
+    salesRegion: item.salesRegion ?? 'ALL',
     platform: item.platform,
     issueType: item.issueType,
   };
@@ -592,6 +599,7 @@ export function buildReviewItemKey(input: ReviewItemIdentity): string {
     input.versionId,
     input.skuId,
     input.station,
+    input.salesRegion,
     input.platform,
     input.issueType,
   ].join('::');
@@ -961,10 +969,12 @@ async function generateBaselineForecastVersionForStation(input: {
   };
 
   if (platforms.length === 1) {
-    return finish(await generateBaselineForStationPlatform({
+    const regionBuckets = await resolveSalesRegionBuckets();
+    return finish(await generateBaselineForPlatformRegions({
       ...input,
       seasonalIndexMode,
       platform: platforms[0]!,
+      regionBuckets,
       purgePlatformScope: resolveBaselinePurgePlatformScope({
         purgeSkuScope: input.purgeSkuScope,
         platformCount: 1,
@@ -977,13 +987,15 @@ async function generateBaselineForecastVersionForStation(input: {
   let totalForecastRows = 0;
   let totalReviewRows = 0;
   const mergedEligibilityStats = emptyEligibilityStats();
+  const regionBuckets = await resolveSalesRegionBuckets();
 
   for (let index = 0; index < platforms.length; index++) {
     const platform = platforms[index]!;
-    const part = await generateBaselineForStationPlatform({
+    const part = await generateBaselineForPlatformRegions({
       ...input,
       seasonalIndexMode,
       platform,
+      regionBuckets,
       existingVersionId: versionId ?? lastResult?.version.id,
       purgeSkuScope: Boolean(input.purgeSkuScope) && index === 0,
       purgePlatformScope: resolveBaselinePurgePlatformScope({
@@ -1018,6 +1030,94 @@ async function generateBaselineForecastVersionForStation(input: {
   });
 }
 
+async function resolveSalesRegionBuckets() {
+  try {
+    const tables = await loadRegionMappingTables(db);
+    return buildSalesRegionBuckets(tables);
+  } catch (err) {
+    // 映射表未就绪时退化为单一 UNMAPPED 桶（全部销量归 UNMAPPED），不阻断生成
+    console.warn(
+      '[forecast] region mapping tables unavailable, falling back to UNMAPPED bucket:',
+      err instanceof Error ? err.message : err,
+    );
+    return [{ region: 'UNMAPPED' as const }];
+  }
+}
+
+/**
+ * 对一个 platform 跨销售区域生成叶子。purgePlatformScope 仅传给首个区域，
+ * 由 purgeForecastVersionScope(station=ALL) 一次性清掉该 platform 旧行（含遗留 ALL 行）。
+ */
+async function generateBaselineForPlatformRegions(input: {
+  station: string;
+  platform: string;
+  regionBuckets: ReturnType<typeof buildSalesRegionBuckets>;
+  projectGroup?: string;
+  projectGroups?: string[];
+  skuCode?: string;
+  versionName?: string;
+  monthCount?: number;
+  today?: Date | string;
+  startMonth?: string;
+  createdBy?: string;
+  algoMode?: ForecastAlgoMode;
+  existingVersionId?: string;
+  useGlobalVersion?: boolean;
+  purgeSkuScope?: boolean;
+  purgePlatformScope?: 'all' | 'current';
+  forceNewVersion?: boolean;
+  flexBiasShadow?: boolean;
+  seasonalIndexMode?: SeasonalIndexMode;
+  excludeAccessories?: boolean;
+}) {
+  let versionId = input.existingVersionId;
+  let lastResult: Awaited<ReturnType<typeof generateBaselineForStationPlatform>> | undefined;
+  let totalForecastRows = 0;
+  let totalReviewRows = 0;
+  const mergedEligibilityStats = emptyEligibilityStats();
+  const generatedRegions: string[] = [];
+
+  for (let regionIndex = 0; regionIndex < input.regionBuckets.length; regionIndex++) {
+    const bucket = input.regionBuckets[regionIndex]!;
+    const part = await generateBaselineForStationPlatform({
+      ...input,
+      seasonalIndexMode: input.seasonalIndexMode,
+      platform: input.platform,
+      region: bucket.region,
+      stationIn: bucket.stationIn,
+      stationNotIn: bucket.stationNotIn,
+      existingVersionId: versionId ?? lastResult?.version.id,
+      purgeSkuScope: Boolean(input.purgeSkuScope) && regionIndex === 0,
+      purgePlatformScope: regionIndex === 0 ? input.purgePlatformScope : undefined,
+    });
+    versionId = part.version.id;
+    lastResult = part;
+    totalForecastRows += part.forecastRows;
+    totalReviewRows += part.reviewRows;
+    if (part.forecastRows > 0) generatedRegions.push(bucket.region);
+    if (part.eligibilityStats) {
+      mergedEligibilityStats.eligible += part.eligibilityStats.eligible;
+      mergedEligibilityStats.skipped += part.eligibilityStats.skipped;
+      for (const tier of ['core', 'mid', 'tail'] as const) {
+        mergedEligibilityStats.byTier[tier] += part.eligibilityStats.byTier[tier];
+      }
+    }
+  }
+
+  if (!lastResult) {
+    throw new Error('无法生成预测：未配置可用区域');
+  }
+
+  return {
+    version: lastResult.version,
+    forecastRows: totalForecastRows,
+    reviewRows: totalReviewRows,
+    eligibilityStats: mergedEligibilityStats,
+    platformsGenerated: [input.platform],
+    regionsGenerated: generatedRegions,
+  };
+}
+
 async function generateBaselineForStationPlatform(input: {
   station: string;
   platform: string;
@@ -1038,9 +1138,16 @@ async function generateBaselineForStationPlatform(input: {
   flexBiasShadow?: boolean;
   seasonalIndexMode?: SeasonalIndexMode;
   excludeAccessories?: boolean;
+  /** 销售区域叶子；新基线写入 salesRegion=region, station='ALL' */
+  region?: string;
+  /** 仅包含这些站点（归一后精确匹配）；空表示不限 */
+  stationIn?: string[];
+  /** 排除这些站点（用于 UNMAPPED 桶） */
+  stationNotIn?: string[];
 }) {
   const station = resolveForecastGenerationStation(input.station);
   const platform = normalizeSalesPlatform(input.platform);
+  const salesRegion = (input.region ?? 'ALL').toUpperCase();
   const projectGroupFilters = resolveProjectGroupFilters(input);
   const skuCodes = splitForecastSkuCodes(input.skuCode);
   let version = input.existingVersionId ? await getForecastVersionById(input.existingVersionId) : null;
@@ -1195,51 +1302,57 @@ async function generateBaselineForStationPlatform(input: {
     : null;
   const lookbackFrom = toDateOnly(addDays(today, -DEFAULT_SALES_HISTORY_LOOKBACK_DAYS));
   const lookbackTo = toDateOnly(today);
-  const monthlyCutoff = subtractMonthsUtc(today, DEFAULT_MONTHLY_HISTORY_LOOKBACK_MONTHS);
-  const monthlyMaxYear = recentWindowEnd.getUTCFullYear();
-  const monthlyMaxMonth = recentWindowEnd.getUTCMonth() + 1;
   const skuIds = skuRows.map((sku) => sku.id);
-  const [loadedDailyBySku, monthlyBySku, firstSaleBySku, dailyAllBySku] = await Promise.all([
+  const stationFilter = {
+    stationIn: input.stationIn,
+    stationNotIn: input.stationNotIn,
+  };
+  const [loadedDailyBySku, firstSaleBySku, dailyAllBySku] = await Promise.all([
     loadDailySalesBySkuIdsInRange({
       skuIds,
       fromDate: lookbackFrom,
       toDate: lookbackTo,
       platform,
+      ...stationFilter,
     }),
-    loadMonthlySalesBySkuIds({
-      skuIds,
-      platform,
-      minYear: monthlyCutoff.getUTCFullYear(),
-      minMonth: monthlyCutoff.getUTCMonth() + 1,
-      maxYear: monthlyMaxYear,
-      maxMonth: monthlyMaxMonth,
-    }),
-    loadFirstSaleDateBySkuIds({
-      skuIds,
-      platform,
-    }),
+    Promise.resolve(new Map<string, string | null>()),
     useAllCatV41
       ? loadDailySalesBySkuIdsInRange({
           skuIds,
           fromDate: lookbackFrom,
           toDate: lookbackTo,
           platform: 'ALL',
+          ...stationFilter,
         })
       : Promise.resolve(new Map()),
   ]);
-  const dailyBySku =
-    loadedDailyBySku.size === 0 && monthlyBySku.size > 0
-      ? synthesizeDailySalesFromMonthly({
-          monthlyBySku,
-          fromDate: lookbackFrom,
-          toDate: lookbackTo,
-        })
-      : loadedDailyBySku;
-  if (loadedDailyBySku.size === 0 && dailyBySku.size > 0) {
-    console.info(
-      `[forecast] no daily sales in ${lookbackFrom}..${lookbackTo} for ${platform}; synthesized ${dailyBySku.size} SKUs from monthly history`,
-    );
+
+  // 区域桶：从日销按 (saleYear, month) 派生月序列（sales_history_monthly 缺 station 列）
+  const monthlyBySku = new Map<string, Array<{ saleYear: number; month: number; qtySold: number }>>();
+  for (const [skuId, dailyRows] of loadedDailyBySku) {
+    const derived = deriveMonthlyQtyFromDaily(dailyRows);
+    if (derived.length) monthlyBySku.set(skuId, derived);
   }
+  for (const sku of skuRows) {
+    const dailyRows = loadedDailyBySku.get(sku.id) ?? [];
+    const firstSale = firstSaleDateFromRows(dailyRows);
+    firstSaleBySku.set(sku.id, firstSale);
+  }
+
+  // 空区域早退：该 region×platform 在回看窗内无销量，跳过叶子生成
+  if (loadedDailyBySku.size === 0 && !skuCodes.length) {
+    console.info(
+      `[forecast] no daily sales in ${lookbackFrom}..${lookbackTo} for ${platform} region=${salesRegion}; skipped`,
+    );
+    return {
+      version,
+      forecastRows: 0,
+      reviewRows: 0,
+      eligibilityStats: emptyEligibilityStats(),
+      platformsGenerated: [platform],
+    };
+  }
+  const dailyBySku = loadedDailyBySku;
 
   const recent30Since = addDays(recentWindowEnd, -29);
   const recent90Since = addDays(recentWindowEnd, -89);
@@ -1419,6 +1532,7 @@ async function generateBaselineForStationPlatform(input: {
         skuId: sku.id,
         station,
         platform,
+        salesRegion,
         issueType: 'forecast_skipped',
         severity: 'info',
         message: `${sku.code} 近 90 天无销量且历史不足，已跳过预测生成`,
@@ -1516,6 +1630,7 @@ async function generateBaselineForStationPlatform(input: {
           skuId: sku.id,
           station,
           platform,
+          salesRegion,
           issueType: 'forecast_skipped',
           severity: 'info',
           message: `${sku.code} ${anchorTier} 近端弱销/走弱，已跳过保底预测（ghost 防控）`,
@@ -1550,6 +1665,7 @@ async function generateBaselineForStationPlatform(input: {
           forecastDrafts.push({
             skuId: sku.id,
             station,
+            salesRegion,
             platform,
             forecastYear: horizonMonth.forecastYear,
             month: horizonMonth.month,
@@ -1582,6 +1698,7 @@ async function generateBaselineForStationPlatform(input: {
               skuId: sku.id,
               station,
               platform,
+              salesRegion,
               issueType: 'forecast_skipped',
               severity: 'info',
               message: `${sku.code} ${anchorTier} 近端弱销/走弱，已跳过保底预测（ghost 防控）`,
@@ -1595,6 +1712,7 @@ async function generateBaselineForStationPlatform(input: {
         forecastDrafts.push({
           skuId: sku.id,
           station,
+          salesRegion,
           platform,
           forecastYear: horizonMonth.forecastYear,
           month: horizonMonth.month,
@@ -1626,6 +1744,7 @@ async function generateBaselineForStationPlatform(input: {
           skuId: sku.id,
           station,
           platform,
+          salesRegion,
           issueType: 'forecast_skipped',
           severity: wroteForecast ? 'warning' : 'info',
           message: buildT99ReviewMessage({
@@ -1680,6 +1799,7 @@ async function generateBaselineForStationPlatform(input: {
         skuId: sku.id,
         station,
         platform,
+        salesRegion,
         issueType: 'forecast_skipped',
         severity: 'info',
         message: `${sku.code} D 类问题款近 90 天无销量，已跳过保底预测（ghost 防控）`,
@@ -1696,6 +1816,7 @@ async function generateBaselineForStationPlatform(input: {
           skuId: sku.id,
           station,
           platform,
+          salesRegion,
           issueType: 'forecast_skipped',
           severity: 'info',
           message: `${sku.code} 非 T1 主攻层（${salesTier}），主攻阶段跳过预测`,
@@ -1941,6 +2062,7 @@ async function generateBaselineForStationPlatform(input: {
       forecastDrafts.push({
         skuId: sku.id,
         station,
+        salesRegion,
         platform,
         forecastYear: horizonMonth.forecastYear,
         month: horizonMonth.month,
@@ -1969,6 +2091,7 @@ async function generateBaselineForStationPlatform(input: {
         skuId: sku.id,
         skuCode: sku.code,
         station,
+        salesRegion,
         platform,
         lifecycle,
         baselineDailyAvg: baselineDailyAvgForReview,
@@ -2019,6 +2142,7 @@ async function generateBaselineForStationPlatform(input: {
     await upsertReviewItem(version.id, {
       skuId: candidate.skuId,
       station,
+      salesRegion,
       platform,
       issueType: 'high_value',
       severity: 'critical',
@@ -2200,15 +2324,12 @@ function warehouseCodesForStation(
     .map(([warehouseCode]) => warehouseCode);
 }
 
-function subtractMonthsUtc(date: Date, months: number): Date {
-  return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth() - months, 1));
-}
-
 const FORECAST_FLUSH_SIZE = 500;
 
 type ForecastMonthlyDraft = {
   skuId: string;
   station: string;
+  salesRegion: string;
   platform: string;
   forecastYear: number;
   month: number;
@@ -2249,7 +2370,7 @@ async function upsertReviewItem(versionId: string, item: ReviewItemDraft) {
       and(
         eq(salesForecastReviewItems.versionId, identity.versionId),
         eq(salesForecastReviewItems.skuId, identity.skuId),
-        eq(salesForecastReviewItems.station, identity.station),
+        eq(salesForecastReviewItems.salesRegion, identity.salesRegion),
         eq(salesForecastReviewItems.platform, identity.platform),
         eq(salesForecastReviewItems.issueType, identity.issueType),
       ),
@@ -2275,6 +2396,7 @@ async function upsertReviewItem(versionId: string, item: ReviewItemDraft) {
     versionId: identity.versionId,
     skuId: identity.skuId,
     station: identity.station,
+    salesRegion: identity.salesRegion,
     platform: identity.platform,
     issueType: identity.issueType,
     ...values,
@@ -2289,7 +2411,7 @@ async function upsertForecastMonthlyRow(input: ForecastMonthlyDraft) {
     .where(
       and(
         eq(salesForecastMonthly.skuId, input.skuId),
-        eq(salesForecastMonthly.station, input.station),
+        eq(salesForecastMonthly.salesRegion, input.salesRegion),
         eq(salesForecastMonthly.platform, input.platform),
         eq(salesForecastMonthly.forecastYear, input.forecastYear),
         eq(salesForecastMonthly.month, input.month),
@@ -2328,6 +2450,7 @@ async function upsertForecastMonthlyRow(input: ForecastMonthlyDraft) {
   await db.insert(salesForecastMonthly).values({
     skuId: input.skuId,
     station: input.station,
+    salesRegion: input.salesRegion,
     platform: input.platform,
     forecastYear: input.forecastYear,
     month: input.month,

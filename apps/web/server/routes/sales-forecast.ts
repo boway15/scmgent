@@ -74,6 +74,10 @@ import {
 import { buildForecastImpactPreview, compareForecastDemandChange } from '../lib/forecast-impact.js';
 import { generateBaselineForecastVersion } from '../lib/forecast-collaboration.js';
 import {
+  rollupForecastLeaves,
+  type ForecastRollupView,
+} from '../lib/forecast-region-rollup.js';
+import {
   parseAndValidateForecastStartMonth,
   resolveForecastStartMonthAsOf,
 } from '../lib/forecast-start-month.js';
@@ -301,6 +305,7 @@ function mapForecastRow(row: {
   skuCode: string;
   skuName: string;
   station: string;
+  salesRegion?: string | null;
   platform: string;
   forecastYear: number;
   month: number;
@@ -321,6 +326,7 @@ function mapForecastRow(row: {
   });
   return {
     ...row,
+    salesRegion: row.salesRegion ?? 'ALL',
     forecastMonth: formatForecastMonth(row.forecastYear, row.month),
     forecastDailyAvg: daily.forecastDailyAvg,
     manualDailyAvg: daily.manualDailyAvg,
@@ -1331,6 +1337,88 @@ salesForecastRoutes.get('/sales-forecasts/horizon', requireMenu('data.forecast')
   return c.json(result);
 });
 
+const ROLLUP_VIEWS: readonly ForecastRollupView[] = [
+  'region_platform',
+  'region_all_platforms',
+  'all_regions_platform',
+  'all_regions_all_platforms',
+];
+
+function parseRollupView(raw: string | undefined): ForecastRollupView | undefined {
+  const value = raw?.trim().toLowerCase() as ForecastRollupView | undefined;
+  return value && (ROLLUP_VIEWS as readonly string[]).includes(value) ? value : undefined;
+}
+
+/**
+ * 区域×渠道加总视图：读版本叶子（sales_region <> 'ALL'），按 rollupView 加总。
+ * 遗留 sales_region='ALL' 行不参与加总（避免双计）；若版本仅含遗留行，返回 legacy=true 标记。
+ */
+salesForecastRoutes.get('/sales-forecasts/rollup', requireMenu('data.forecast'), async (c) => {
+  const versionId = c.req.query('versionId')?.trim();
+  if (!versionId) return c.json({ message: 'versionId is required' }, 400);
+  const view = parseRollupView(c.req.query('rollupView')) ?? 'region_platform';
+  const skuCode = c.req.query('skuCode')?.trim() || undefined;
+  const platform = c.req.query('platform')?.trim() || undefined;
+
+  const conditions = [
+    eq(salesForecastMonthly.versionId, versionId),
+    sql`${salesForecastMonthly.salesRegion} <> 'ALL'`,
+  ];
+  if (skuCode) conditions.push(eq(skus.code, skuCode));
+  if (platform) {
+    const code = await resolveSalesPlatformCode(platform);
+    if (code) conditions.push(eq(salesForecastMonthly.platform, code));
+  }
+  const rows = await db
+    .select({
+      skuId: salesForecastMonthly.skuId,
+      skuCode: skus.code,
+      salesRegion: salesForecastMonthly.salesRegion,
+      platform: salesForecastMonthly.platform,
+      forecastYear: salesForecastMonthly.forecastYear,
+      month: salesForecastMonthly.month,
+      forecastDailyAvg: salesForecastMonthly.forecastDailyAvg,
+      manualDailyAvg: salesForecastMonthly.manualDailyAvg,
+    })
+    .from(salesForecastMonthly)
+    .innerJoin(skus, eq(skus.id, salesForecastMonthly.skuId))
+    .where(and(...conditions));
+
+  const leaves = rows.map((row) => {
+    const daily = mapForecastDailyFields({
+      forecastDailyAvg: row.forecastDailyAvg,
+      manualDailyAvg: row.manualDailyAvg,
+    });
+    return {
+      skuId: row.skuId,
+      salesRegion: row.salesRegion,
+      platform: row.platform,
+      forecastYear: row.forecastYear,
+      month: row.month,
+      effectiveDailyAvg: daily.effectiveDailyAvg,
+    };
+  });
+
+  const rolled = rollupForecastLeaves(leaves, view);
+
+  // 检测是否为遗留版本（无区域叶子）
+  const legacyCheck = await db
+    .select({ count: sql<number>`count(*)::int` })
+    .from(salesForecastMonthly)
+    .where(
+      and(
+        eq(salesForecastMonthly.versionId, versionId),
+        eq(salesForecastMonthly.salesRegion, 'ALL'),
+      ),
+    );
+
+  return c.json({
+    view,
+    items: rolled,
+    legacy: rows.length === 0 && (legacyCheck[0]?.count ?? 0) > 0,
+  });
+});
+
 salesForecastRoutes.get('/sales-forecasts/horizon/export', requireMenu('data.forecast'), async (c) => {
   const { empty: scopeEmpty, scope: projectGroupScope } =
     await resolveForecastRouteProjectGroupScope(c);
@@ -2138,6 +2226,7 @@ salesForecastRoutes.get('/sales-forecasts', requireMenu('data.forecast'), async 
     await resolveForecastRouteProjectGroupScope(c);
   const skuCode = c.req.query('skuCode')?.trim();
   const station = c.req.query('station')?.trim();
+  const salesRegion = c.req.query('salesRegion')?.trim().toUpperCase() || undefined;
   const platform = c.req.query('platform')?.trim();
   const parsedYear = parseOptionalIntegerQuery(c.req.query('year')?.trim(), 'year');
   if (parsedYear.error) return c.json({ message: parsedYear.error }, 400);
@@ -2158,6 +2247,7 @@ salesForecastRoutes.get('/sales-forecasts', requireMenu('data.forecast'), async 
   const skuScopeCond = skuProjectGroupCondition(projectGroupScope);
   if (skuScopeCond) conditions.push(skuScopeCond);
   if (station) conditions.push(eq(salesForecastMonthly.station, station));
+  if (salesRegion) conditions.push(eq(salesForecastMonthly.salesRegion, salesRegion));
   if (platform) {
     const code = await resolveSalesPlatformCode(platform);
     if (code) conditions.push(eq(salesForecastMonthly.platform, code));
@@ -2190,6 +2280,7 @@ salesForecastRoutes.get('/sales-forecasts', requireMenu('data.forecast'), async 
       skuCode: skus.code,
       skuName: skus.name,
       station: salesForecastMonthly.station,
+      salesRegion: salesForecastMonthly.salesRegion,
       platform: salesForecastMonthly.platform,
       forecastYear: salesForecastMonthly.forecastYear,
       month: salesForecastMonthly.month,

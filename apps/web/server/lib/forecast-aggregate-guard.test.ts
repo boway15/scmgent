@@ -23,6 +23,7 @@ describe('forecast-aggregate-guard', () => {
       {
         projectGroup: '小组',
         station: 'US',
+        salesRegion: 'US',
         forecastYear: 2026,
         month: 11,
         forecastQty: 100,
@@ -37,7 +38,8 @@ describe('forecast-aggregate-guard', () => {
     const issues = buildAggregateGuardIssues([
       {
         projectGroup: '组A',
-        station: 'US',
+        station: 'ALL',
+        salesRegion: 'EU',
         forecastYear: 2026,
         month: 11,
         forecastQty: 1000,
@@ -54,5 +56,20 @@ describe('forecast-aggregate-guard', () => {
       '原因',
     );
     assert.equal(other[0]?.level, 'error');
+  });
+
+  it('labels groups by sales_region when present', () => {
+    const issues = buildAggregateGuardIssues([
+      {
+        projectGroup: '组A',
+        station: 'ALL',
+        salesRegion: 'EU',
+        forecastYear: 2026,
+        month: 11,
+        forecastQty: 1000,
+        baselineQty: 3000,
+      },
+    ]);
+    assert.match(issues[0]?.message ?? '', /\/ EU \/ 2026-11/);
   });
 });

@@ -95,12 +95,13 @@ describe('forecast-accuracy', () => {
       versionId: 'version-1',
       skuId: 'sku-1',
       station: 'US',
+      salesRegion: 'ALL',
       platform: 'AMAZON',
       issueType: 'low_accuracy',
     });
     assert.equal(
       buildReviewItemKey(identity),
-      'version-1::sku-1::US::AMAZON::low_accuracy',
+      'version-1::sku-1::US::ALL::AMAZON::low_accuracy',
     );
   });
 

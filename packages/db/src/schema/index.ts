@@ -27,3 +27,4 @@ export * from './inventory-data-issues';
 export * from './region-mapping';
 export * from './inventory-dest-allocations';
 export * from './rules';
+export * from './region-mapping';

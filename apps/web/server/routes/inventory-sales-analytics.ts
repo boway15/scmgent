@@ -1,4 +1,5 @@
 import { Hono } from 'hono';
+import type { Context } from 'hono';
 import { getCurrentUser } from '../lib/auth-context.js';
 import { requireMenu } from '../lib/rbac.js';
 import {
@@ -6,6 +7,9 @@ import {
   getInventorySalesCubeStatus,
   listInventorySalesCubeRows,
   getInventorySalesCubeSkuDetail,
+  getInventorySalesAnalyticsOverview,
+  normalizeCubeMultiFilter,
+  type InventorySalesCubeQueryFilters,
 } from '../lib/inventory-sales-cube.js';
 import { createDownloadJob, DownloadJobLimitError } from '../lib/download-jobs.js';
 import { kickDownloadWorker } from '../lib/download-worker.js';
@@ -15,10 +19,70 @@ export const inventorySalesAnalyticsRoutes = new Hono();
 
 const MENU = 'data.inventory_sales_analytics';
 
+function parseIncludeIdle(raw: string | undefined): boolean {
+  const v = raw?.trim().toLowerCase();
+  return v === '1' || v === 'true' || v === 'yes';
+}
+
+/** 多选 query：重复键优先；否则回退单键（可逗号分隔，兼容旧调用）。 */
+function readMultiQuery(c: Context, multiKey: string, singleKey: string): string[] {
+  const fromMulti = (c.req.queries(multiKey) ?? []).flatMap((item) =>
+    item.split(/[,，;；]/).map((part) => part.trim()).filter(Boolean),
+  );
+  if (fromMulti.length) return [...new Set(fromMulti)];
+  const single = c.req.query(singleKey)?.trim();
+  if (!single) return [];
+  return [
+    ...new Set(
+      single
+        .split(/[,，;；]/)
+        .map((part) => part.trim())
+        .filter(Boolean),
+    ),
+  ];
+}
+
+function parseAnalyticsFilters(c: Context): InventorySalesCubeQueryFilters {
+  return {
+    q: c.req.query('q')?.trim(),
+    warehouseCodes: normalizeCubeMultiFilter(
+      readMultiQuery(c, 'warehouseCodes', 'warehouseCode'),
+      '仓库',
+    ),
+    categories: normalizeCubeMultiFilter(readMultiQuery(c, 'categories', 'category'), '品类'),
+    lifecycles: normalizeCubeMultiFilter(readMultiQuery(c, 'lifecycles', 'lifecycle'), '生命周期'),
+    primaryRisk: c.req.query('primaryRisk')?.trim(),
+    productScope: c.req.query('productScope')?.trim(),
+    salesCountry: c.req.query('salesCountry')?.trim(),
+    coverBand: c.req.query('coverBand')?.trim(),
+    includeIdle: parseIncludeIdle(c.req.query('includeIdle')),
+  };
+}
+
+function filterParseErrorStatus(msg: string): 400 | null {
+  if (/coverBand|最多选择|最多填写/i.test(msg)) return 400;
+  return null;
+}
+
 inventorySalesAnalyticsRoutes.get(
   '/inventory-sales-analytics/status',
   requireMenu(MENU),
   async (c) => c.json(await getInventorySalesCubeStatus()),
+);
+
+inventorySalesAnalyticsRoutes.get(
+  '/inventory-sales-analytics/overview',
+  requireMenu(MENU),
+  async (c) => {
+    try {
+      return c.json(await getInventorySalesAnalyticsOverview(parseAnalyticsFilters(c)));
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'overview failed';
+      const status = filterParseErrorStatus(msg);
+      if (status) return c.json({ message: msg }, status);
+      throw err;
+    }
+  },
 );
 
 inventorySalesAnalyticsRoutes.get(
@@ -30,18 +94,19 @@ inventorySalesAnalyticsRoutes.get(
       c.req.query('pageSize')?.trim(),
       20,
     );
-    const result = await listInventorySalesCubeRows({
-      q: c.req.query('q')?.trim(),
-      warehouseCode: c.req.query('warehouseCode')?.trim(),
-      category: c.req.query('category')?.trim(),
-      lifecycle: c.req.query('lifecycle')?.trim(),
-      primaryRisk: c.req.query('primaryRisk')?.trim(),
-      productScope: c.req.query('productScope')?.trim(),
-      salesCountry: c.req.query('salesCountry')?.trim(),
-      page,
-      pageSize,
-    });
-    return c.json(result);
+    try {
+      const result = await listInventorySalesCubeRows({
+        ...parseAnalyticsFilters(c),
+        page,
+        pageSize,
+      });
+      return c.json(result);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'list failed';
+      const status = filterParseErrorStatus(msg);
+      if (status) return c.json({ message: msg }, status);
+      throw err;
+    }
   },
 );
 

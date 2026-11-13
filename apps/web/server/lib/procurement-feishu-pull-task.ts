@@ -76,6 +76,6 @@ export async function runProcurementFeishuPullTask(
     const message = err instanceof Error ? err.message : 'Feishu pull failed';
     console.error(`[procurement-pull] ${listType} failed:`, message, err);
     await finishTaskRun(runId, { success: false, errorMessage: message });
-    return { skipped: true as const, reason: message };
+    return { failed: true as const, reason: message };
   }
 }

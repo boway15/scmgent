@@ -31,6 +31,7 @@ import {
 } from './inventory-constants.js';
 import { readTurnoverSnapshot } from './inventory-turnover-snapshot.js';
 import { getShanghaiBusinessDate } from './inventory-daily-snapshot.js';
+import { parseForecastSkuQuery } from './forecast-sku-query.js';
 import {
   resolveInventoryPositionFromSnapshot,
   PLANNING_INVENTORY_DEDUPE_MODE,
@@ -48,6 +49,9 @@ import {
   buildRiskTags,
   calcCoverDays,
   calcSellThrough30d,
+  COVER_BAND_LABELS,
+  COVER_BAND_VERSION,
+  isCoverBandKey,
 } from './inventory-sales-metrics.js';
 import { isAccessorySku } from './sku-encoding.js';
 import type { ProductScope } from './planning-accessory-filter.js';
@@ -351,15 +355,30 @@ async function loadLatestInventoryRecordsBySkuIds(
   return result;
 }
 
+/**
+ * 销量入湖延迟：当天及昨天通常未同步。
+ * 7/14/30 窗口截止日 = 上海业务日 − lagDays（默认 2）。
+ */
+export const INVENTORY_SALES_CUBE_SALES_LAG_DAYS = 2;
+
+/** 由 Cube 业务日推导销量窗口截止日（含同步延迟）。 */
+export function resolveSalesWindowAsOf(
+  businessDate: string,
+  lagDays: number = INVENTORY_SALES_CUBE_SALES_LAG_DAYS,
+): string {
+  return addDaysIso(businessDate, -lagDays);
+}
+
 /** 批量加载 SKU 7/14/30 日窗口销量（按 sku_id 聚合，闭区间）。 */
 async function loadSalesWindowsBySkuIds(params: {
   skuIds: string[];
-  businessDate: string;
+  /** 销量窗口截止日（已含同步延迟，不是原始业务日） */
+  salesAsOf: string;
 }): Promise<Map<string, { sales7d: number; sales14d: number; sales30d: number }>> {
   const result = new Map<string, { sales7d: number; sales14d: number; sales30d: number }>();
   if (!params.skuIds.length) return result;
 
-  const end = params.businessDate;
+  const end = params.salesAsOf;
   const start30 = addDaysIso(end, -29); // 30 天闭区间 [start30, end]
   const start14 = addDaysIso(end, -13);
   const start7 = addDaysIso(end, -6);
@@ -499,10 +518,12 @@ export async function rebuildInventorySalesCube(opts?: {
 
     const skuMetas = await loadActiveSkuMetas();
     const skuIds = skuMetas.map((s) => s.id);
+    // 历史销量有同步延迟：窗口截至业务日−2，避免把未入湖的当天/昨天算进近 N 日
+    const salesAsOf = resolveSalesWindowAsOf(snapshotDate);
 
     const [invBySku, salesBySku, leadTimeCaches, whRows] = await Promise.all([
       loadLatestInventoryRecordsBySkuIds(skuIds),
-      loadSalesWindowsBySkuIds({ skuIds, businessDate: snapshotDate }),
+      loadSalesWindowsBySkuIds({ skuIds, salesAsOf }),
       loadLeadTimeCaches(skuIds),
       db
         .select({ code: warehouses.code })
@@ -517,6 +538,7 @@ export async function rebuildInventorySalesCube(opts?: {
     const allRows: Array<{
       skuId: string;
       skuCode: string;
+      qtyDomesticUnshipped: number;
       row: CubeRowForSku;
     }> = [];
 
@@ -526,6 +548,9 @@ export async function rebuildInventorySalesCube(opts?: {
       const overseas = nativeByWarehouse.get(UNALLOCATED_TRANSIT_WAREHOUSE);
       const overseasAvailable = overseas?.qtyAvailable ?? 0;
       const overseasInTransit = overseas?.qtyInTransit ?? 0;
+      // 国内未发：IN-PRODUCTION 逻辑仓在产量（已下单供应商未发出）；SKU 级，不计入仓有效供给
+      const domestic = nativeByWarehouse.get(IN_PRODUCTION_WAREHOUSE);
+      const qtyDomesticUnshipped = Math.max(0, domestic?.qtyInProduction ?? 0);
       const sales = salesBySku.get(sku.id) ?? {
         sales7d: 0,
         sales14d: 0,
@@ -573,7 +598,12 @@ export async function rebuildInventorySalesCube(opts?: {
       });
 
       for (const row of rows) {
-        allRows.push({ skuId: sku.id, skuCode: sku.code, row });
+        allRows.push({
+          skuId: sku.id,
+          skuCode: sku.code,
+          qtyDomesticUnshipped,
+          row,
+        });
       }
     }
 
@@ -592,6 +622,7 @@ export async function rebuildInventorySalesCube(opts?: {
           salesCountry: r.row.salesCountry,
           qtyAvailable: r.row.qtyAvailable,
           qtyInTransit: r.row.qtyInTransit,
+          qtyDomesticUnshipped: r.qtyDomesticUnshipped,
           effectiveQty: r.row.effectiveQty,
           shareMethod: r.row.shareMethod,
           shareWeight: r.row.shareWeight,
@@ -626,7 +657,7 @@ export async function rebuildInventorySalesCube(opts?: {
       .set({
         status: 'ready',
         sourceTurnoverDate: turnoverRun.snapshotDate,
-        sourceSalesAsOf: snapshotDate,
+        sourceSalesAsOf: salesAsOf,
         rowCount: allRows.length,
         meta,
         finishedAt: new Date(),
@@ -784,17 +815,127 @@ async function getLatestReadyRunId(): Promise<string | null> {
   return row?.id ?? null;
 }
 
-export type ListInventorySalesCubeRowsFilters = {
+export type InventorySalesCubeQueryFilters = {
+  /** SKU：单值模糊；多值（逗号/空格/分号）精确匹配，与销量预测同口径 */
   q?: string;
-  warehouseCode?: string;
-  category?: string;
-  lifecycle?: string;
+  /** 物理仓多选；空=全部 */
+  warehouseCodes?: string[];
+  /** 品类多选；含 `__none__` 表示空品类 */
+  categories?: string[];
+  /** 生命周期多选；含 `__none__` 表示空生命周期 */
+  lifecycles?: string[];
   primaryRisk?: string;
   productScope?: string;
   salesCountry?: string;
+  /** 覆盖组距；见 CoverBandKey */
+  coverBand?: string;
+  /**
+   * 是否包含「有效供给=0 且近30d销量=0」的空闲行。
+   * 默认 false：不展示无库存且无动销行。
+   */
+  includeIdle?: boolean;
+};
+
+const MAX_CUBE_FILTER_VALUES = 50;
+const NONE_BUCKET_KEY = '__none__';
+
+/** 规范化多选筛选项：去空白、去重，超限抛错。 */
+export function normalizeCubeMultiFilter(
+  values: string[] | undefined,
+  label: string,
+): string[] | undefined {
+  if (!values?.length) return undefined;
+  const next = [...new Set(values.map((v) => v.trim()).filter(Boolean))];
+  if (next.length > MAX_CUBE_FILTER_VALUES) {
+    throw new Error(`${label}最多选择 ${MAX_CUBE_FILTER_VALUES} 个`);
+  }
+  return next.length ? next : undefined;
+}
+
+function multiOrNoneFilter(
+  values: string[],
+  column: typeof inventorySalesCubeRows.category | typeof inventorySalesCubeRows.lifecycle,
+) {
+  const hasNone = values.includes(NONE_BUCKET_KEY);
+  const concretes = values.filter((v) => v !== NONE_BUCKET_KEY);
+  const parts = [];
+  if (hasNone) {
+    parts.push(sql`(${column} IS NULL OR TRIM(${column}) = '')`);
+  }
+  if (concretes.length) {
+    parts.push(inArray(column, concretes));
+  }
+  if (!parts.length) return undefined;
+  return parts.length === 1 ? parts[0]! : or(...parts);
+}
+
+export type ListInventorySalesCubeRowsFilters = InventorySalesCubeQueryFilters & {
   page: number;
   pageSize: number;
 };
+
+function coverBandSqlExpr() {
+  return sql<string>`CASE
+    WHEN ${inventorySalesCubeRows.coverDays} IS NULL THEN 'no_velocity'
+    WHEN ${inventorySalesCubeRows.coverDays} <= 14 THEN 'd0_14'
+    WHEN ${inventorySalesCubeRows.coverDays} <= 30 THEN 'd15_30'
+    WHEN ${inventorySalesCubeRows.coverDays} <= 90 THEN 'd31_90'
+    ELSE 'd90_plus'
+  END`;
+}
+
+function buildInventorySalesCubeWhere(runId: string, filters: InventorySalesCubeQueryFilters) {
+  const conditions = [eq(inventorySalesCubeRows.runId, runId)];
+  const skuQuery = parseForecastSkuQuery(filters.q);
+  if (skuQuery.kind === 'fuzzy') {
+    conditions.push(ilike(inventorySalesCubeRows.skuCode, `%${skuQuery.token}%`));
+  } else if (skuQuery.kind === 'exact') {
+    if (skuQuery.codes.length > MAX_CUBE_FILTER_VALUES) {
+      throw new Error(`SKU 最多填写 ${MAX_CUBE_FILTER_VALUES} 个`);
+    }
+    conditions.push(inArray(sql`upper(${inventorySalesCubeRows.skuCode})`, skuQuery.codes));
+  }
+  const warehouseCodes = normalizeCubeMultiFilter(filters.warehouseCodes, '仓库');
+  if (warehouseCodes?.length) {
+    conditions.push(inArray(inventorySalesCubeRows.warehouseCode, warehouseCodes));
+  }
+  const categories = normalizeCubeMultiFilter(filters.categories, '品类');
+  if (categories?.length) {
+    const catCond = multiOrNoneFilter(categories, inventorySalesCubeRows.category);
+    if (catCond) conditions.push(catCond);
+  }
+  const lifecycles = normalizeCubeMultiFilter(filters.lifecycles, '生命周期');
+  if (lifecycles?.length) {
+    const lifeCond = multiOrNoneFilter(lifecycles, inventorySalesCubeRows.lifecycle);
+    if (lifeCond) conditions.push(lifeCond);
+  }
+  if (filters.primaryRisk) {
+    if (filters.primaryRisk === 'none') {
+      conditions.push(isNull(inventorySalesCubeRows.primaryRisk));
+    } else {
+      conditions.push(eq(inventorySalesCubeRows.primaryRisk, filters.primaryRisk));
+    }
+  }
+  if (filters.productScope) {
+    conditions.push(eq(inventorySalesCubeRows.productScope, filters.productScope));
+  }
+  if (filters.salesCountry) {
+    conditions.push(eq(inventorySalesCubeRows.salesCountry, filters.salesCountry));
+  }
+  if (filters.coverBand) {
+    if (!isCoverBandKey(filters.coverBand)) {
+      throw new Error(`无效的 coverBand：${filters.coverBand}`);
+    }
+    conditions.push(sql`${coverBandSqlExpr()} = ${filters.coverBand}`);
+  }
+  // 默认隐藏：有效供给=0 且近30d销量为空/0（无库存且无动销）
+  if (!filters.includeIdle) {
+    conditions.push(
+      sql`(${inventorySalesCubeRows.effectiveQty} > 0 OR COALESCE(${inventorySalesCubeRows.sales30d}, 0) > 0)`,
+    );
+  }
+  return and(...conditions);
+}
 
 export type InventorySalesCubeRowItem = {
   id: string;
@@ -807,6 +948,8 @@ export type InventorySalesCubeRowItem = {
   salesCountry: string | null;
   qtyAvailable: number;
   qtyInTransit: number;
+  /** 国内未发（已下单供应商未发出）；SKU 级，不计入 effectiveQty */
+  qtyDomesticUnshipped: number;
   effectiveQty: number;
   shareMethod: string;
   shareWeight: number | null;
@@ -853,30 +996,7 @@ export async function listInventorySalesCubeRows(
     };
   }
 
-  const conditions = [eq(inventorySalesCubeRows.runId, runId)];
-  if (filters.q?.trim()) {
-    conditions.push(ilike(inventorySalesCubeRows.skuCode, `%${filters.q.trim()}%`));
-  }
-  if (filters.warehouseCode) {
-    conditions.push(eq(inventorySalesCubeRows.warehouseCode, filters.warehouseCode));
-  }
-  if (filters.category) {
-    conditions.push(eq(inventorySalesCubeRows.category, filters.category));
-  }
-  if (filters.lifecycle) {
-    conditions.push(eq(inventorySalesCubeRows.lifecycle, filters.lifecycle));
-  }
-  if (filters.primaryRisk) {
-    conditions.push(eq(inventorySalesCubeRows.primaryRisk, filters.primaryRisk));
-  }
-  if (filters.productScope) {
-    conditions.push(eq(inventorySalesCubeRows.productScope, filters.productScope));
-  }
-  if (filters.salesCountry) {
-    conditions.push(eq(inventorySalesCubeRows.salesCountry, filters.salesCountry));
-  }
-  const where = and(...conditions);
-
+  const where = buildInventorySalesCubeWhere(runId, filters);
   const offset = (filters.page - 1) * filters.pageSize;
   const [rows, [totalRow], [summaryRow], [runMeta]] = await Promise.all([
     db
@@ -891,6 +1011,7 @@ export async function listInventorySalesCubeRows(
         salesCountry: inventorySalesCubeRows.salesCountry,
         qtyAvailable: inventorySalesCubeRows.qtyAvailable,
         qtyInTransit: inventorySalesCubeRows.qtyInTransit,
+        qtyDomesticUnshipped: inventorySalesCubeRows.qtyDomesticUnshipped,
         effectiveQty: inventorySalesCubeRows.effectiveQty,
         shareMethod: inventorySalesCubeRows.shareMethod,
         shareWeight: inventorySalesCubeRows.shareWeight,
@@ -934,6 +1055,7 @@ export async function listInventorySalesCubeRows(
   return {
     items: rows.map((r) => ({
       ...r,
+      qtyDomesticUnshipped: r.qtyDomesticUnshipped ?? 0,
       riskTags: r.riskTags ?? [],
     })),
     total: Number(totalRow?.total ?? 0),
@@ -949,6 +1071,282 @@ export async function listInventorySalesCubeRows(
     meta: {
       runId,
       snapshotDate: runMeta?.snapshotDate ?? null,
+    },
+  };
+}
+
+export type InventorySalesBreakdownBucket = {
+  key: string;
+  label: string;
+  rowCount: number;
+  effectiveQtySum: number;
+  sales30dSum: number;
+};
+
+export type InventorySalesAnalyticsOverview = {
+  totals: {
+    rowCount: number;
+    effectiveQtySum: number;
+    sales7dSum: number;
+    sales14dSum: number;
+    sales30dSum: number;
+    avgCoverDays: number | null;
+    withVelocityRowCount: number;
+    stockoutRisk: number;
+    slowMoving: number;
+    imbalance: number;
+    unallocated: number;
+  };
+  breakdowns: {
+    byRisk: InventorySalesBreakdownBucket[];
+    byWarehouse: InventorySalesBreakdownBucket[];
+    byCategory: InventorySalesBreakdownBucket[];
+    byLifecycle: InventorySalesBreakdownBucket[];
+    byCoverBand: InventorySalesBreakdownBucket[];
+  };
+  meta: {
+    runId: string | null;
+    snapshotDate: string | null;
+    sourceSalesAsOf: string | null;
+    coverBandsVersion: typeof COVER_BAND_VERSION;
+  };
+};
+
+const RISK_BUCKET_LABELS: Record<string, string> = {
+  stockout_risk: '缺货风险',
+  slow_moving: '滞销',
+  imbalance: '仓间失衡',
+  unallocated: '未分配',
+  none: '无主风险',
+};
+
+function mapBreakdownRows(
+  rows: Array<{
+    key: string | null;
+    rowCount: number;
+    effectiveQtySum: string | number | null;
+    sales30dSum: string | number | null;
+  }>,
+  labelOf: (key: string) => string,
+  options?: { emptyAsNone?: boolean },
+): InventorySalesBreakdownBucket[] {
+  const merged = new Map<string, InventorySalesBreakdownBucket>();
+  for (const r of rows) {
+    const raw = r.key;
+    const key = options?.emptyAsNone
+      ? raw == null || !String(raw).trim()
+        ? NONE_BUCKET_KEY
+        : String(raw).trim()
+      : (raw ?? NONE_BUCKET_KEY);
+    const rowCount = Number(r.rowCount ?? 0);
+    const effectiveQtySum = Number(r.effectiveQtySum ?? 0);
+    const sales30dSum = Number(r.sales30dSum ?? 0);
+    const prev = merged.get(key);
+    if (prev) {
+      prev.rowCount += rowCount;
+      prev.effectiveQtySum += effectiveQtySum;
+      prev.sales30dSum += sales30dSum;
+    } else {
+      merged.set(key, {
+        key,
+        label: labelOf(key),
+        rowCount,
+        effectiveQtySum,
+        sales30dSum,
+      });
+    }
+  }
+  return [...merged.values()]
+    .filter((b) => b.rowCount > 0)
+    .sort((a, b) => b.rowCount - a.rowCount || a.key.localeCompare(b.key));
+}
+
+export async function getInventorySalesAnalyticsOverview(
+  filters: InventorySalesCubeQueryFilters,
+): Promise<InventorySalesAnalyticsOverview> {
+  const empty: InventorySalesAnalyticsOverview = {
+    totals: {
+      rowCount: 0,
+      effectiveQtySum: 0,
+      sales7dSum: 0,
+      sales14dSum: 0,
+      sales30dSum: 0,
+      avgCoverDays: null,
+      withVelocityRowCount: 0,
+      stockoutRisk: 0,
+      slowMoving: 0,
+      imbalance: 0,
+      unallocated: 0,
+    },
+    breakdowns: {
+      byRisk: [],
+      byWarehouse: [],
+      byCategory: [],
+      byLifecycle: [],
+      byCoverBand: [],
+    },
+    meta: {
+      runId: null,
+      snapshotDate: null,
+      sourceSalesAsOf: null,
+      coverBandsVersion: COVER_BAND_VERSION,
+    },
+  };
+
+  const runId = await getLatestReadyRunId();
+  if (!runId) return empty;
+
+  const where = buildInventorySalesCubeWhere(runId, filters);
+  const sumEffective = sql<string>`COALESCE(SUM(${inventorySalesCubeRows.effectiveQty}), 0)`;
+  const sumSales30 = sql<string>`COALESCE(SUM(COALESCE(${inventorySalesCubeRows.sales30d}, 0)), 0)`;
+  const sumSales7 = sql<string>`COALESCE(SUM(COALESCE(${inventorySalesCubeRows.sales7d}, 0)), 0)`;
+  const sumSales14 = sql<string>`COALESCE(SUM(COALESCE(${inventorySalesCubeRows.sales14d}, 0)), 0)`;
+
+  const [
+    [totalsRow],
+    riskRows,
+    warehouseRows,
+    categoryRows,
+    lifecycleRows,
+    coverBandRows,
+    [runMeta],
+  ] = await Promise.all([
+    db
+      .select({
+        rowCount: count(),
+        effectiveQtySum: sumEffective,
+        sales7dSum: sumSales7,
+        sales14dSum: sumSales14,
+        sales30dSum: sumSales30,
+        avgCoverDays: sql<string | null>`AVG(${inventorySalesCubeRows.coverDays})`,
+        withVelocityRowCount: count(
+          sql`CASE WHEN ${inventorySalesCubeRows.coverDays} IS NOT NULL THEN 1 END`,
+        ),
+        stockoutRisk: count(
+          sql`CASE WHEN ${inventorySalesCubeRows.primaryRisk} = 'stockout_risk' THEN 1 END`,
+        ),
+        slowMoving: count(
+          sql`CASE WHEN ${inventorySalesCubeRows.primaryRisk} = 'slow_moving' THEN 1 END`,
+        ),
+        imbalance: count(
+          sql`CASE WHEN ${inventorySalesCubeRows.primaryRisk} = 'imbalance' THEN 1 END`,
+        ),
+        unallocated: count(
+          sql`CASE WHEN ${inventorySalesCubeRows.primaryRisk} = 'unallocated' THEN 1 END`,
+        ),
+      })
+      .from(inventorySalesCubeRows)
+      .where(where),
+    db
+      .select({
+        key: inventorySalesCubeRows.primaryRisk,
+        rowCount: count(),
+        effectiveQtySum: sumEffective,
+        sales30dSum: sumSales30,
+      })
+      .from(inventorySalesCubeRows)
+      .where(where)
+      .groupBy(inventorySalesCubeRows.primaryRisk),
+    db
+      .select({
+        key: inventorySalesCubeRows.warehouseCode,
+        rowCount: count(),
+        effectiveQtySum: sumEffective,
+        sales30dSum: sumSales30,
+      })
+      .from(inventorySalesCubeRows)
+      .where(where)
+      .groupBy(inventorySalesCubeRows.warehouseCode),
+    db
+      .select({
+        key: inventorySalesCubeRows.category,
+        rowCount: count(),
+        effectiveQtySum: sumEffective,
+        sales30dSum: sumSales30,
+      })
+      .from(inventorySalesCubeRows)
+      .where(where)
+      .groupBy(inventorySalesCubeRows.category),
+    db
+      .select({
+        key: inventorySalesCubeRows.lifecycle,
+        rowCount: count(),
+        effectiveQtySum: sumEffective,
+        sales30dSum: sumSales30,
+      })
+      .from(inventorySalesCubeRows)
+      .where(where)
+      .groupBy(inventorySalesCubeRows.lifecycle),
+    db
+      .select({
+        key: coverBandSqlExpr().as('cover_band'),
+        rowCount: count(),
+        effectiveQtySum: sumEffective,
+        sales30dSum: sumSales30,
+      })
+      .from(inventorySalesCubeRows)
+      .where(where)
+      .groupBy(coverBandSqlExpr()),
+    db
+      .select({
+        snapshotDate: inventorySalesCubeRuns.snapshotDate,
+        sourceSalesAsOf: inventorySalesCubeRuns.sourceSalesAsOf,
+      })
+      .from(inventorySalesCubeRuns)
+      .where(eq(inventorySalesCubeRuns.id, runId))
+      .limit(1),
+  ]);
+
+  const avgRaw = totalsRow?.avgCoverDays;
+  const avgCoverDays =
+    avgRaw == null || avgRaw === ''
+      ? null
+      : Number.isFinite(Number(avgRaw))
+        ? Number(avgRaw)
+        : null;
+
+  return {
+    totals: {
+      rowCount: Number(totalsRow?.rowCount ?? 0),
+      effectiveQtySum: Number(totalsRow?.effectiveQtySum ?? 0),
+      sales7dSum: Number(totalsRow?.sales7dSum ?? 0),
+      sales14dSum: Number(totalsRow?.sales14dSum ?? 0),
+      sales30dSum: Number(totalsRow?.sales30dSum ?? 0),
+      avgCoverDays,
+      withVelocityRowCount: Number(totalsRow?.withVelocityRowCount ?? 0),
+      stockoutRisk: Number(totalsRow?.stockoutRisk ?? 0),
+      slowMoving: Number(totalsRow?.slowMoving ?? 0),
+      imbalance: Number(totalsRow?.imbalance ?? 0),
+      unallocated: Number(totalsRow?.unallocated ?? 0),
+    },
+    breakdowns: {
+      byRisk: mapBreakdownRows(
+        riskRows.map((r) => ({ ...r, key: r.key ?? 'none' })),
+        (k) => RISK_BUCKET_LABELS[k] ?? k,
+      ),
+      byWarehouse: mapBreakdownRows(warehouseRows, (k) => k),
+      byCategory: mapBreakdownRows(
+        categoryRows,
+        (k) => (k === NONE_BUCKET_KEY ? '未分类' : k),
+        { emptyAsNone: true },
+      ),
+      byLifecycle: mapBreakdownRows(
+        lifecycleRows,
+        (k) => (k === NONE_BUCKET_KEY ? '未标注' : k),
+        { emptyAsNone: true },
+      ),
+      byCoverBand: mapBreakdownRows(coverBandRows, (k) =>
+        isCoverBandKey(k) ? COVER_BAND_LABELS[k] : k,
+      ).sort((a, b) => {
+        const order = ['d0_14', 'd15_30', 'd31_90', 'd90_plus', 'no_velocity'];
+        return order.indexOf(a.key) - order.indexOf(b.key);
+      }),
+    },
+    meta: {
+      runId,
+      snapshotDate: runMeta?.snapshotDate ?? null,
+      sourceSalesAsOf: runMeta?.sourceSalesAsOf ?? null,
+      coverBandsVersion: COVER_BAND_VERSION,
     },
   };
 }
@@ -982,6 +1380,7 @@ export async function getInventorySalesCubeSkuDetail(
       salesCountry: inventorySalesCubeRows.salesCountry,
       qtyAvailable: inventorySalesCubeRows.qtyAvailable,
       qtyInTransit: inventorySalesCubeRows.qtyInTransit,
+      qtyDomesticUnshipped: inventorySalesCubeRows.qtyDomesticUnshipped,
       effectiveQty: inventorySalesCubeRows.effectiveQty,
       shareMethod: inventorySalesCubeRows.shareMethod,
       shareWeight: inventorySalesCubeRows.shareWeight,

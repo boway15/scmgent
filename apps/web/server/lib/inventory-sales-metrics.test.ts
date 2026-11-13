@@ -5,6 +5,7 @@ import {
   calcCoverDays,
   calcSellThrough30d,
   buildRiskTags,
+  coverBandFromDays,
 } from './inventory-sales-metrics.js';
 import type { ShareParseResult } from './inventory-share-allocation.js';
 
@@ -106,5 +107,16 @@ describe('inventory-sales-metrics', () => {
     });
     assert.ok(r.tags.includes('imbalance'));
     assert.equal(r.primaryRisk, 'stockout_risk');
+  });
+
+  it('maps cover days into fixed command-center bands', () => {
+    assert.equal(coverBandFromDays(null), 'no_velocity');
+    assert.equal(coverBandFromDays(0), 'd0_14');
+    assert.equal(coverBandFromDays(14), 'd0_14');
+    assert.equal(coverBandFromDays(15), 'd15_30');
+    assert.equal(coverBandFromDays(30), 'd15_30');
+    assert.equal(coverBandFromDays(31), 'd31_90');
+    assert.equal(coverBandFromDays(90), 'd31_90');
+    assert.equal(coverBandFromDays(91), 'd90_plus');
   });
 });

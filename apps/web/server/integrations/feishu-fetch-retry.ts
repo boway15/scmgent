@@ -47,11 +47,23 @@ export async function withFeishuFetchRetry<T>(
     }
   }
 
-  if (lastError instanceof Error && lastError.message.toLowerCase() === 'terminated') {
-    throw new Error(
-      `飞书请求中断（terminated）：连接被对端或中间层关闭，已重试 ${retries} 次仍失败`,
-      { cause: lastError },
-    );
+  if (lastError instanceof Error) {
+    const msg = lastError.message.toLowerCase();
+    if (msg === 'terminated') {
+      throw new Error(
+        `飞书请求中断（terminated）：连接被对端或中间层关闭，已重试 ${retries} 次仍失败`,
+        { cause: lastError },
+      );
+    }
+    if (msg.includes('fetch failed')) {
+      const cause = (lastError as Error & { cause?: unknown }).cause;
+      const causeMsg =
+        cause instanceof Error ? cause.message : cause != null ? String(cause) : '';
+      throw new Error(
+        `飞书网络请求失败（fetch failed）${causeMsg ? `：${causeMsg}` : ''}，已重试 ${retries} 次仍失败。请检查容器出网、DNS 与飞书可达性`,
+        { cause: lastError },
+      );
+    }
   }
   throw lastError;
 }

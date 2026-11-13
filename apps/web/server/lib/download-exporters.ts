@@ -558,14 +558,29 @@ const exporters: Record<string, Exporter> = {
   async inventory_sales_analytics(params) {
     // 分页拉取全部行（pageSize 5000），避免 total > 首页条数时静默截断。
     const EXPORT_PAGE_SIZE = 5000;
+    const asList = (v: unknown): string[] | undefined => {
+      if (Array.isArray(v)) {
+        const next = v.map((item) => String(item).trim()).filter(Boolean);
+        return next.length ? next : undefined;
+      }
+      const single = str(v);
+      if (!single) return undefined;
+      const next = single
+        .split(/[,，;；]/)
+        .map((part) => part.trim())
+        .filter(Boolean);
+      return next.length ? next : undefined;
+    };
     const baseFilters = {
       q: str(params.q),
-      warehouseCode: str(params.warehouseCode),
-      category: str(params.category),
-      lifecycle: str(params.lifecycle),
+      warehouseCodes: asList(params.warehouseCodes) ?? asList(params.warehouseCode),
+      categories: asList(params.categories) ?? asList(params.category),
+      lifecycles: asList(params.lifecycles) ?? asList(params.lifecycle),
       primaryRisk: str(params.primaryRisk),
       productScope: str(params.productScope),
       salesCountry: str(params.salesCountry),
+      coverBand: str(params.coverBand),
+      includeIdle: params.includeIdle === true || params.includeIdle === '1' || params.includeIdle === 'true',
     };
     const allItems: Awaited<ReturnType<typeof listInventorySalesCubeRows>>['items'][number][] = [];
     let page = 1;
@@ -583,31 +598,48 @@ const exporters: Record<string, Exporter> = {
       // 安全上限：避免极端情况下死循环（理论 page 数 = ceil(total / 5000)）。
       if (page > 100000) break;
     } while (allItems.length < total);
+    // 表头/展示与存销分析页主表一致
+    const PRIMARY_RISK_LABEL: Record<string, string> = {
+      stockout_risk: '缺货风险',
+      slow_moving: '滞销',
+      imbalance: '仓间失衡',
+      unallocated: '未分配',
+    };
+    const fmtInt = (n: number | null | undefined) =>
+      n == null || Number.isNaN(n) ? '—' : String(Math.round(n));
+    const fmtNum = (n: number | null | undefined) => {
+      if (n == null || Number.isNaN(n)) return '—';
+      return String(Math.round(n * 10) / 10);
+    };
+    const fmtRate = (n: number | null | undefined) =>
+      n == null || Number.isNaN(n) ? '—' : `${(n * 100).toFixed(1)}%`;
     const headers = [
-      'sku_code',
-      'warehouse_code',
-      'effective_qty',
-      'sales_7d',
-      'sales_14d',
-      'sales_30d',
-      'avg_daily_30d',
-      'cover_days',
-      'sell_through_30d',
-      'primary_risk',
+      'SKU',
+      '仓',
+      '有效供给',
+      '国内未发',
+      '7d',
+      '14d',
+      '30d',
+      '日均',
+      '覆盖(天)',
+      '动销率',
+      '主风险',
     ];
     const csv = buildCsv(
       headers,
       allItems.map((r) => [
         r.skuCode,
         r.warehouseCode,
-        r.effectiveQty,
-        r.sales7d ?? '',
-        r.sales14d ?? '',
-        r.sales30d ?? '',
-        r.avgDaily30d ?? '',
-        r.coverDays ?? '',
-        r.sellThrough30d ?? '',
-        r.primaryRisk ?? '',
+        fmtInt(r.effectiveQty),
+        fmtInt(r.qtyDomesticUnshipped ?? 0),
+        fmtInt(r.sales7d),
+        fmtInt(r.sales14d),
+        fmtInt(r.sales30d),
+        fmtNum(r.avgDaily30d),
+        fmtNum(r.coverDays),
+        fmtRate(r.sellThrough30d),
+        r.primaryRisk ? (PRIMARY_RISK_LABEL[r.primaryRisk] ?? r.primaryRisk) : '—',
       ]),
     );
     return {

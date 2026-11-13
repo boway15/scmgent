@@ -70,6 +70,6 @@ export async function runProcurementOpsPullTask(runId: string) {
     const message = err instanceof Error ? err.message : 'Feishu procurement ops pull failed';
     console.error('[procurement-ops-pull] failed:', message, err);
     await finishTaskRun(runId, { success: false, errorMessage: message });
-    return { skipped: true as const, reason: message };
+    return { failed: true as const, reason: message };
   }
 }

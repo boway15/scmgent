@@ -43,7 +43,8 @@ import { BulkStockRequestPage, ProcurementFollowUpPage } from '@/pages/Procureme
 import { ProductCostingListPage } from '@/pages/ProductCostingListPage';
 import { ProductCostingDetailPage } from '@/pages/ProductCostingDetailPage';
 import { HomeRedirect } from '@/components/HomeRedirect';
-import { PlaceholderPage } from '@/pages/PlaceholderPage';
+import { NotFoundPage } from '@/pages/NotFoundPage';
+import { LEGACY_ROUTE_REDIRECTS } from '@/lib/legacy-routes';
 import { SystemTasksPage } from '@/pages/SystemTasksPage';
 import { DownloadsPage } from '@/pages/DownloadsPage';
 import { RuleCenterPage } from '@/pages/RuleCenterPage';
@@ -94,7 +95,6 @@ export function AppRouter() {
           <Route path="data/products" element={<ProductMasterPage />} />
           <Route path="data/import" element={<ImportLegacyRedirect />} />
           <Route path="data/sales" element={<SalesHistoryPage />} />
-          <Route path="data/region-mapping" element={<RegionMappingPage />} />
           <Route path="data/forecast" element={<SalesForecastListPage />} />
           <Route path="data/demand-plan" element={<DemandPlanPilotPage />} />
           <Route path="data/demand-plan/:id" element={<DemandPlanDetailPage />} />
@@ -121,10 +121,17 @@ export function AppRouter() {
           <Route path="system/tasks" element={<SystemTasksPage />} />
           <Route path="downloads" element={<DownloadsPage />} />
           <Route path="system/rules" element={<RuleCenterPage />} />
+          <Route path="system/region-mapping" element={<RegionMappingPage />} />
           <Route path="intel/news" element={<NewsIntelPage />} />
           <Route path="cs/quality" element={<CsReplyQualityPage />} />
           <Route path="system/menus" element={<Navigate to="/system/roles" replace />} />
-          <Route path="*" element={<PlaceholderPage title="404" description="页面不存在或无访问权限。" />} />
+          {Object.entries(LEGACY_ROUTE_REDIRECTS).map(([from, to]) => {
+            const routePath = from.replace(/^\//, '');
+            return (
+              <Route key={from} path={routePath} element={<Navigate to={to} replace />} />
+            );
+          })}
+          <Route path="*" element={<NotFoundPage />} />
         </Route>
       </Route>
     </Routes>

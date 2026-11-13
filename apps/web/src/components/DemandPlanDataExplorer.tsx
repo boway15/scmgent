@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
+import { DataQuerySubmitButton, DataQueryToolbar } from '@/components/data-query';
 import { Input } from '@/components/ui/input';
 import { CategorySearchSelect } from '@/components/CategorySearchSelect';
 import { DemandPlanHorizonPanel } from '@/components/DemandPlanHorizonPanel';
@@ -150,7 +150,7 @@ export function DemandPlanDataExplorer({
       </CardHeader>
       <CardContent className="space-y-4">
         {grain === 'week' ? <ProductScopeSwitch /> : null}
-        <div className="relative z-30 flex flex-wrap items-end gap-x-3 gap-y-3 overflow-visible rounded-md border border-border/80 bg-muted/20 p-3">
+        <DataQueryToolbar>
           {grain === 'week' ? (
             <HorizonChannelFilters
               splitChannels={splitChannels}
@@ -206,10 +206,8 @@ export function DemandPlanDataExplorer({
               />
             </>
           ) : null}
-          <Button className="shrink-0" variant="outline" onClick={() => applyFilters()}>
-            查询
-          </Button>
-        </div>
+          <DataQuerySubmitButton onClick={() => applyFilters()} />
+        </DataQueryToolbar>
 
         {!fixedVersionId ? (
           <p className="text-sm text-text-sub">未指定需求计划版本。</p>

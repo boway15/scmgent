@@ -3,6 +3,12 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
+import {
+  DataQueryField,
+  DataQuerySection,
+  DataQuerySubmitButton,
+  DataQueryToolbar,
+} from '@/components/data-query';
 import { Input } from '@/components/ui/input';
 import { PageHeader } from '@/components/PageHeader';
 import { ListPagination } from '@/components/ListPagination';
@@ -225,77 +231,99 @@ export function SalesHistoryPage() {
         </p>
       ) : null}
 
-      <Card>
-        <CardHeader>
-          <CardTitle>筛选</CardTitle>
-          <p className="text-sm text-text-sub">
-            {dimension === 'daily'
-              ? '日销量：滚动保留近一年明细，默认近 90 天，用于核对补货算法输入'
-              : '月销量：全历史月汇总，用于同比与长周期分析'}
-          </p>
-        </CardHeader>
-        <CardContent className="flex flex-wrap items-center gap-2">
-          <Input
-            placeholder="SKU 编号"
-            className="h-9 w-36"
-            value={skuCode}
-            onChange={(e) => setSkuCode(e.target.value)}
-          />
+      <DataQuerySection
+        description={
+          dimension === 'daily'
+            ? '日销量：滚动保留近一年明细，默认近 90 天，用于核对补货算法输入'
+            : '月销量：全历史月汇总，用于同比与长周期分析'
+        }
+      >
+        <DataQueryToolbar>
+          <DataQueryField label="SKU 编号">
+            <Input
+              placeholder="SKU"
+              className="h-9 w-36 font-mono"
+              value={skuCode}
+              onChange={(e) => setSkuCode(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && applyFilters()}
+            />
+          </DataQueryField>
           {dimension === 'daily' ? (
             <>
-              <Input type="date" className="h-9 w-40" value={from} onChange={(e) => setFrom(e.target.value)} />
-              <Input type="date" className="h-9 w-40" value={to} onChange={(e) => setTo(e.target.value)} />
+              <DataQueryField label="起始日">
+                <Input
+                  type="date"
+                  className="h-9 w-40"
+                  value={from}
+                  onChange={(e) => setFrom(e.target.value)}
+                />
+              </DataQueryField>
+              <DataQueryField label="截止日">
+                <Input type="date" className="h-9 w-40" value={to} onChange={(e) => setTo(e.target.value)} />
+              </DataQueryField>
             </>
           ) : (
             <>
-              <Input
-                type="month"
-                className="h-9 w-40"
-                value={monthFrom}
-                onChange={(e) => setMonthFrom(e.target.value)}
-              />
-              <Input
-                type="month"
-                className="h-9 w-40"
-                value={monthTo}
-                onChange={(e) => setMonthTo(e.target.value)}
-              />
+              <DataQueryField label="起始月">
+                <Input
+                  type="month"
+                  className="h-9 w-40"
+                  value={monthFrom}
+                  onChange={(e) => setMonthFrom(e.target.value)}
+                />
+              </DataQueryField>
+              <DataQueryField label="截止月">
+                <Input
+                  type="month"
+                  className="h-9 w-40"
+                  value={monthTo}
+                  onChange={(e) => setMonthTo(e.target.value)}
+                />
+              </DataQueryField>
             </>
           )}
-          <select
-            className="h-9 min-w-28 rounded-md border border-border bg-background px-2 text-sm"
-            value={channel}
-            onChange={(e) => setChannel(e.target.value)}
-          >
-            <option value="">全部平台</option>
-            {(platforms ?? []).map((item) => (
-              <option key={item.code} value={item.code}>
-                {item.name || item.code}
-              </option>
-            ))}
-          </select>
+          <DataQueryField label="平台">
+            <select
+              className="h-9 min-w-28 rounded-md border border-border bg-card px-2 text-sm"
+              value={channel}
+              onChange={(e) => setChannel(e.target.value)}
+            >
+              <option value="">全部平台</option>
+              {(platforms ?? []).map((item) => (
+                <option key={item.code} value={item.code}>
+                  {item.name || item.code}
+                </option>
+              ))}
+            </select>
+          </DataQueryField>
           {dimension === 'daily' ? (
             <>
-              <Input
-                placeholder="站点原文"
-                className="h-9 w-36"
-                value={station}
-                onChange={(e) => setStation(e.target.value)}
-              />
-              <Input
-                placeholder="发货仓"
-                className="h-9 w-32"
-                value={warehouse}
-                onChange={(e) => setWarehouse(e.target.value)}
-              />
+              <DataQueryField label="站点原文">
+                <Input
+                  placeholder="可选"
+                  className="h-9 w-36"
+                  value={station}
+                  onChange={(e) => setStation(e.target.value)}
+                />
+              </DataQueryField>
+              <DataQueryField label="发货仓">
+                <Input
+                  placeholder="可选"
+                  className="h-9 w-32"
+                  value={warehouse}
+                  onChange={(e) => setWarehouse(e.target.value)}
+                />
+              </DataQueryField>
             </>
           ) : null}
-          <CategorySearchSelect value={category} onChange={setCategory} />
-          <Button variant="outline" onClick={applyFilters}>
-            查询
-          </Button>
-        </CardContent>
-      </Card>
+          <div className="w-56 shrink-0">
+            <DataQueryField label="品类">
+              <CategorySearchSelect value={category} onChange={setCategory} />
+            </DataQueryField>
+          </div>
+          <DataQuerySubmitButton onClick={applyFilters} />
+        </DataQueryToolbar>
+      </DataQuerySection>
 
       {pendingSalesImport && dimension === 'daily' ? (
         <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">

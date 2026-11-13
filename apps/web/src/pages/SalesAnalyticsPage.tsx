@@ -18,6 +18,7 @@ import { PageHeader } from '@/components/PageHeader';
 import { ForecastPanel, type FcScope } from '@/components/sales-analytics/ForecastPanel';
 import { MatrixSection } from '@/components/sales-analytics/MatrixSection';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { DataQuerySection, DataQueryToolbar } from '@/components/data-query';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { nextPeriodLabel } from '@/lib/sales-analytics-forecast';
@@ -439,31 +440,31 @@ export function SalesAnalyticsPage() {
             ))}
           </div>
 
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-base">分析维度与筛选</CardTitle>
-              <p className="text-sm text-text-sub">
+          <DataQuerySection
+            description={
+              <>
                 项目组取品类路径中间段（事业部\项目组\品类）。月度从最早有销量的月份起，含日表已裁剪、只留在月销量里的历史；周度只含仍保留的日销量。期段按
-                {gran === 'week' ? '周' : '月'}起止过滤，默认全部。
-              </p>
-            </CardHeader>
-            <CardContent className="flex flex-wrap items-end gap-4">
+                {gran === 'week' ? '周' : '月'}起止过滤，默认全部；选项变更后立即生效。
+              </>
+            }
+          >
+            <DataQueryToolbar>
               {DIM_META.map((dim) => (
                 <DimMultiSelect
                   key={dim.key}
-                  label={`${dim.label}筛选`}
+                  label={`${dim.label}`}
                   options={cube.meta[dim.metaKey]}
                   selected={sel[dim.key]}
                   onChange={(next) => setSel((prev) => (prev ? { ...prev, [dim.key]: next } : prev))}
                 />
               ))}
-              <div className="min-w-[220px]">
-                <p className="mb-1 text-sm text-text-sub">
-                  期段筛选（{gran === 'week' ? '周' : '月'}起 → 止）
-                </p>
+              <div className="min-w-[220px] text-sm">
+                <span className="mb-1 block text-text-sub">
+                  期段（{gran === 'week' ? '周' : '月'}起 → 止）
+                </span>
                 <div className="flex items-center gap-2">
                   <select
-                    className="h-9 rounded-md border border-input bg-card px-2 text-sm"
+                    className="h-9 rounded-md border border-border bg-card px-2 text-sm"
                     value={safeStart}
                     onChange={(e) => {
                       const v = Number(e.target.value);
@@ -479,7 +480,7 @@ export function SalesAnalyticsPage() {
                   </select>
                   <span className="text-text-sub">→</span>
                   <select
-                    className="h-9 rounded-md border border-input bg-card px-2 text-sm"
+                    className="h-9 rounded-md border border-border bg-card px-2 text-sm"
                     value={safeEnd}
                     onChange={(e) => {
                       const v = Number(e.target.value);
@@ -495,8 +496,8 @@ export function SalesAnalyticsPage() {
                   </select>
                 </div>
               </div>
-            </CardContent>
-          </Card>
+            </DataQueryToolbar>
+          </DataQuerySection>
 
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
             {[

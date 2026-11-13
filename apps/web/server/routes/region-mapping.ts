@@ -14,7 +14,8 @@ import { requireMenu } from '../lib/rbac.js';
 
 export const regionMappingRoutes = new Hono();
 
-const MENU = 'data.region_mapping';
+const menuGuard = requireMenu('system.region_mapping', 'data.region_mapping');
+regionMappingRoutes.use('*', menuGuard);
 
 async function readCsvText(c: { req: { header: (name: string) => string | undefined; formData: () => Promise<FormData>; text: () => Promise<string> } }): Promise<string> {
   const contentType = c.req.header('content-type') ?? '';
@@ -27,7 +28,7 @@ async function readCsvText(c: { req: { header: (name: string) => string | undefi
   return c.req.text();
 }
 
-regionMappingRoutes.get('/region-mapping/stations/export', requireMenu(MENU), async (c) => {
+regionMappingRoutes.get('/region-mapping/stations/export',  async (c) => {
   const rows = await db
     .select({
       key: stationSalesRegionMaps.station,
@@ -41,7 +42,7 @@ regionMappingRoutes.get('/region-mapping/stations/export', requireMenu(MENU), as
   });
 });
 
-regionMappingRoutes.get('/region-mapping/stations', requireMenu(MENU), async (c) => {
+regionMappingRoutes.get('/region-mapping/stations',  async (c) => {
   try {
     const [rows, unmappedStations] = await Promise.all([
       db
@@ -64,7 +65,7 @@ regionMappingRoutes.get('/region-mapping/stations', requireMenu(MENU), async (c)
   }
 });
 
-regionMappingRoutes.put('/region-mapping/stations', requireMenu(MENU), async (c) => {
+regionMappingRoutes.put('/region-mapping/stations',  async (c) => {
   const parsed = parseStationMappingBody(await c.req.json().catch(() => ({})));
   if (!parsed.ok) return c.json({ message: parsed.message }, 400);
   const now = new Date();
@@ -79,7 +80,7 @@ regionMappingRoutes.put('/region-mapping/stations', requireMenu(MENU), async (c)
   return c.json({ station: parsed.station, salesRegion: parsed.salesRegion });
 });
 
-regionMappingRoutes.post('/region-mapping/stations/import', requireMenu(MENU), async (c) => {
+regionMappingRoutes.post('/region-mapping/stations/import',  async (c) => {
   const parsed = parseMappingCsv(await readCsvText(c), 'station');
   if (!parsed.ok) return c.json({ message: parsed.message }, 400);
   const now = new Date();
@@ -98,7 +99,7 @@ regionMappingRoutes.post('/region-mapping/stations/import', requireMenu(MENU), a
   return c.json({ imported: parsed.rows.length });
 });
 
-regionMappingRoutes.delete('/region-mapping/stations', requireMenu(MENU), async (c) => {
+regionMappingRoutes.delete('/region-mapping/stations',  async (c) => {
   const queryStation = c.req.query('station')?.trim() ?? '';
   const body = queryStation ? {} : await c.req.json().catch(() => ({}));
   const station = queryStation || (typeof body.station === 'string' ? body.station.trim() : '');
@@ -112,7 +113,7 @@ regionMappingRoutes.delete('/region-mapping/stations', requireMenu(MENU), async 
   return c.json({ deleted: removed.length });
 });
 
-regionMappingRoutes.get('/region-mapping/warehouses/export', requireMenu(MENU), async (c) => {
+regionMappingRoutes.get('/region-mapping/warehouses/export',  async (c) => {
   const rows = await db
     .select({
       key: warehouseFulfillmentRegionMaps.warehouseCode,
@@ -126,7 +127,7 @@ regionMappingRoutes.get('/region-mapping/warehouses/export', requireMenu(MENU), 
   });
 });
 
-regionMappingRoutes.get('/region-mapping/warehouses', requireMenu(MENU), async (c) => {
+regionMappingRoutes.get('/region-mapping/warehouses',  async (c) => {
   try {
     const [rows, unmappedWarehouses] = await Promise.all([
       db
@@ -149,7 +150,7 @@ regionMappingRoutes.get('/region-mapping/warehouses', requireMenu(MENU), async (
   }
 });
 
-regionMappingRoutes.put('/region-mapping/warehouses', requireMenu(MENU), async (c) => {
+regionMappingRoutes.put('/region-mapping/warehouses',  async (c) => {
   const parsed = parseWarehouseMappingBody(await c.req.json().catch(() => ({})));
   if (!parsed.ok) return c.json({ message: parsed.message }, 400);
   const now = new Date();
@@ -171,7 +172,7 @@ regionMappingRoutes.put('/region-mapping/warehouses', requireMenu(MENU), async (
   });
 });
 
-regionMappingRoutes.post('/region-mapping/warehouses/import', requireMenu(MENU), async (c) => {
+regionMappingRoutes.post('/region-mapping/warehouses/import',  async (c) => {
   const parsed = parseMappingCsv(await readCsvText(c), 'warehouse');
   if (!parsed.ok) return c.json({ message: parsed.message }, 400);
   const now = new Date();
@@ -190,7 +191,7 @@ regionMappingRoutes.post('/region-mapping/warehouses/import', requireMenu(MENU),
   return c.json({ imported: parsed.rows.length });
 });
 
-regionMappingRoutes.delete('/region-mapping/warehouses', requireMenu(MENU), async (c) => {
+regionMappingRoutes.delete('/region-mapping/warehouses',  async (c) => {
   const queryCode = c.req.query('warehouseCode')?.trim() ?? '';
   const body = queryCode ? {} : await c.req.json().catch(() => ({}));
   const warehouseCode =

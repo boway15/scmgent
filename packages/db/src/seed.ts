@@ -142,13 +142,6 @@ const MENU_SEEDS: MenuSeed[] = [
       { code: 'data.sales', name: '销量历史', path: '/data/sales', sortOrder: 30, isLeaf: true },
       { code: 'data.forecast', name: '销售预测', path: '/data/forecast', sortOrder: 40, isLeaf: true },
       {
-        code: 'data.region_mapping',
-        name: '区域映射',
-        path: '/data/region-mapping',
-        sortOrder: 45,
-        isLeaf: true,
-      },
-      {
         code: 'data.demand_plan',
         name: '需求计划-周',
         path: '/data/demand-plan',
@@ -196,6 +189,13 @@ const MENU_SEEDS: MenuSeed[] = [
       { code: 'system.roles', name: '角色与菜单', path: '/system/roles', sortOrder: 20, isLeaf: true },
       { code: 'system.tasks', name: '定时任务', path: '/system/tasks', sortOrder: 30, isLeaf: true },
       { code: 'system.logs', name: '操作日志', icon: 'ScrollText', path: '/system/logs', sortOrder: 40, isLeaf: true },
+      {
+        code: 'system.region_mapping',
+        name: '区域映射',
+        path: '/system/region-mapping',
+        sortOrder: 45,
+        isLeaf: true,
+      },
     ],
   },
 ];
@@ -231,6 +231,7 @@ const DEPRECATED_MENU_CODES = [
   'pmc.list',
   'pmc.tracking',
   'pmc.shipments',
+  'data.region_mapping',
 ];
 
 const SUPPLY_MENU_CODES = [
@@ -254,7 +255,6 @@ const DATA_MENU_CODES = [
   'data.products',
   'data.sales',
   'data.forecast',
-  'data.region_mapping',
 ] as const;
 
 const INVENTORY_MENU_CODES = [
@@ -283,6 +283,7 @@ const ROLE_MENU_CODES: Record<string, string[]> = {
     'system.roles',
     'system.logs',
     'system.tasks',
+    'system.region_mapping',
   ],
   pmc_planner: [
     ...INVENTORY_MENU_CODES,
@@ -298,6 +299,7 @@ const ROLE_MENU_CODES: Record<string, string[]> = {
     'cs.quality',
     'help',
     'downloads',
+    'system.region_mapping',
   ],
   warehouse: [
     'inventory',
@@ -312,6 +314,7 @@ const ROLE_MENU_CODES: Record<string, string[]> = {
     'cs.quality',
     'help',
     'downloads',
+    'system.region_mapping',
   ],
   purchaser: [
     ...INVENTORY_MENU_CODES,
@@ -324,6 +327,7 @@ const ROLE_MENU_CODES: Record<string, string[]> = {
     'cs.quality',
     'help',
     'downloads',
+    'system.region_mapping',
   ],
   viewer: [
     'inventory',
@@ -344,6 +348,7 @@ const ROLE_MENU_CODES: Record<string, string[]> = {
     'cs.quality',
     'help',
     'downloads',
+    'system.region_mapping',
   ],
 };
 

@@ -2,6 +2,11 @@ import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import { Button } from '@/components/ui/button';
+import {
+  DataQueryField,
+  DataQuerySubmitButton,
+  DataQueryToolbar,
+} from '@/components/data-query';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { ListPagination } from '@/components/ListPagination';
@@ -58,26 +63,28 @@ export function DemandPlanAccuracyPanel({ versionId }: Props) {
         </Button>
       </CardHeader>
       <CardContent className="space-y-4">
-        <div className="flex flex-wrap items-end gap-2">
-          <div>
-            <label className="mb-1 block text-xs text-text-sub">SKU</label>
+        <DataQueryToolbar>
+          <DataQueryField label="SKU">
             <Input
-              className="h-8 w-48"
+              className="h-9 w-48 font-mono"
               value={skuCode}
               placeholder="编码，可多值"
               onChange={(e) => setSkuCode(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  setAppliedSku(skuCode.trim());
+                  setPage(1);
+                }
+              }}
             />
-          </div>
-          <Button
-            size="sm"
+          </DataQueryField>
+          <DataQuerySubmitButton
             onClick={() => {
               setAppliedSku(skuCode.trim());
               setPage(1);
             }}
-          >
-            查询
-          </Button>
-        </div>
+          />
+        </DataQueryToolbar>
 
         {data?.totals ? (
           <p className="text-sm text-text-sub">

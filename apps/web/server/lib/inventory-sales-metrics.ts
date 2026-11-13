@@ -102,3 +102,36 @@ export function buildRiskTags(params: {
   const primaryRisk = order.find((t) => tags.includes(t)) ?? null;
   return { tags, primaryRisk };
 }
+
+/** 指挥台覆盖组距（与缺货提前期阈值独立） */
+export const COVER_BAND_VERSION = 'v1' as const;
+
+export type CoverBandKey = 'd0_14' | 'd15_30' | 'd31_90' | 'd90_plus' | 'no_velocity';
+
+export const COVER_BAND_LABELS: Record<CoverBandKey, string> = {
+  d0_14: '0–14 天',
+  d15_30: '15–30 天',
+  d31_90: '31–90 天',
+  d90_plus: '90 天以上',
+  no_velocity: '无动销',
+};
+
+export const COVER_BAND_KEYS: CoverBandKey[] = [
+  'd0_14',
+  'd15_30',
+  'd31_90',
+  'd90_plus',
+  'no_velocity',
+];
+
+export function coverBandFromDays(coverDays: number | null | undefined): CoverBandKey {
+  if (coverDays == null || !Number.isFinite(coverDays)) return 'no_velocity';
+  if (coverDays <= 14) return 'd0_14';
+  if (coverDays <= 30) return 'd15_30';
+  if (coverDays <= 90) return 'd31_90';
+  return 'd90_plus';
+}
+
+export function isCoverBandKey(value: string): value is CoverBandKey {
+  return (COVER_BAND_KEYS as string[]).includes(value);
+}

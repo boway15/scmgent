@@ -68,6 +68,8 @@ export const inventorySalesCubeRows = pgTable(
     salesCountry: varchar('sales_country', { length: 64 }),
     qtyAvailable: integer('qty_available').notNull().default(0),
     qtyInTransit: integer('qty_in_transit').notNull().default(0),
+    /** SKU 级国内未发（IN-PRODUCTION）；不计入 effectiveQty / 覆盖天数 */
+    qtyDomesticUnshipped: integer('qty_domestic_unshipped').notNull().default(0),
     effectiveQty: integer('effective_qty').notNull().default(0),
     shareMethod: varchar('share_method', { length: 32 }).notNull(),
     shareWeight: doublePrecision('share_weight'),

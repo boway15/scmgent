@@ -1,17 +1,20 @@
 import { useEffect, useRef, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { CategorySearchSelect } from '@/components/CategorySearchSelect';
 import { ForecastHorizonPanel } from '@/components/ForecastHorizonPanel';
-import { FORECAST_ALLCAT_V41_TIER_OPTIONS } from '@/lib/forecast-labels';
 import type { ForecastHorizonRow } from '@/components/ForecastSkuDetailDrawer';
 import { ProductScopeSwitch } from '@/components/ProductScopeSwitch';
 import { HorizonChannelFilters } from '@/components/planning-horizon/HorizonChannelFilters';
+import { HorizonSkuTierFilters } from '@/components/planning-horizon/HorizonSkuTierFilters';
 import {
   channelQuery,
   initialChannelSelection,
 } from '@/components/planning-horizon/useHorizonChannelQuery';
+import {
+  DataQuerySubmitButton,
+  DataQueryToolbar,
+} from '@/components/data-query';
 
 type VersionOption = {
   id: string;
@@ -100,6 +103,8 @@ export function ForecastDataExplorer({
     split?: boolean;
     primaryPlatform?: string;
     platforms?: string[];
+    pendingCalibration?: boolean;
+    profileSegment?: string;
   }) => {
     const query = channelQuery({
       split: next?.split ?? splitChannels,
@@ -107,11 +112,11 @@ export function ForecastDataExplorer({
       platforms: next?.platforms ?? selectedPlatforms,
     });
     setApplied({
-      skuCode,
+      skuCode: skuCode.trim(),
       ...query,
       categories,
-      profileSegment,
-      pendingCalibration,
+      profileSegment: (next?.profileSegment ?? profileSegment).trim(),
+      pendingCalibration: next?.pendingCalibration ?? pendingCalibration,
       versionId: fixedVersionId,
     });
   };
@@ -119,14 +124,8 @@ export function ForecastDataExplorer({
   const togglePendingCalibration = () => {
     const next = !pendingCalibration;
     setPendingCalibration(next);
-    setApplied({
-      skuCode,
-      ...channelQuery({ split: splitChannels, primaryPlatform, platforms: selectedPlatforms }),
-      categories,
-      profileSegment,
-      pendingCalibration: next,
-      versionId: fixedVersionId,
-    });
+    if (next) setProfileSegment('');
+    applyFilters({ pendingCalibration: next, profileSegment: next ? '' : profileSegment });
   };
 
   const setGrain = (nextSplit: boolean) => {
@@ -165,7 +164,7 @@ export function ForecastDataExplorer({
       <CardContent className="space-y-4">
         {topSection}
         <ProductScopeSwitch />
-        <div className="relative z-30 flex flex-wrap items-end gap-2 overflow-visible">
+        <DataQueryToolbar>
           <HorizonChannelFilters
             splitChannels={splitChannels}
             onSplitChange={setGrain}
@@ -199,48 +198,22 @@ export function ForecastDataExplorer({
               placeholder="搜索品类…"
             />
           </div>
-          <div className="flex flex-col gap-1 text-sm">
-            <span className="block text-text-sub">分层</span>
-            <select
-              className="flex h-9 min-w-28 rounded-md border border-border bg-card px-2 text-sm"
-              value={profileSegment}
-              onChange={(e) => {
-                const next = e.target.value;
-                setProfileSegment(next);
-                setPendingCalibration(false);
-                setApplied({
-                  skuCode,
-                  ...channelQuery({
-                    split: splitChannels,
-                    primaryPlatform,
-                    platforms: selectedPlatforms,
-                  }),
-                  categories,
-                  profileSegment: next,
-                  pendingCalibration: false,
-                  versionId: fixedVersionId,
-                });
-              }}
-            >
-              {FORECAST_ALLCAT_V41_TIER_OPTIONS.map((opt) => (
-                <option key={opt.value || 'all'} value={opt.value}>
-                  {opt.label}
-                </option>
-              ))}
-            </select>
-          </div>
-          <Button variant="outline" onClick={() => applyFilters()}>
-            查询
-          </Button>
-          {showPendingCalibrationShortcut && (
-            <Button
-              variant={pendingCalibration ? 'default' : 'outline'}
-              onClick={togglePendingCalibration}
-            >
-              待校准（T99）
-            </Button>
-          )}
-        </div>
+          <HorizonSkuTierFilters
+            profileSegment={pendingCalibration ? 'T99' : profileSegment}
+            onProfileSegmentChange={setProfileSegment}
+            pendingCalibration={pendingCalibration}
+            onTogglePendingCalibration={togglePendingCalibration}
+            showPendingCalibrationShortcut={showPendingCalibrationShortcut}
+            onApply={(next) => {
+              if (next?.pendingCalibration === false) setPendingCalibration(false);
+              applyFilters({
+                profileSegment: next?.profileSegment,
+                pendingCalibration: next?.pendingCalibration,
+              });
+            }}
+          />
+          <DataQuerySubmitButton onClick={() => applyFilters()} />
+        </DataQueryToolbar>
 
         {!fixedVersionId ? (
           <p className="text-sm text-text-sub">未指定预测版本。</p>

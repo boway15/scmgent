@@ -6,6 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { PageHeader } from '@/components/PageHeader';
+import { DataQuerySubmitButton, DataQueryToolbar } from '@/components/data-query';
 import { ListPagination } from '@/components/ListPagination';
 import { ProductMasterSkuTable } from '@/components/ProductMasterSkuTable';
 import { ImportDrawer } from '@/components/import/ImportDrawer';
@@ -336,26 +337,28 @@ export function ProductMasterPage() {
             <CardTitle>SPU 列表</CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
-            <div className="grid gap-2 rounded-md border border-border bg-muted/20 p-4 md:grid-cols-4">
+            <DataQueryToolbar>
               <Input
+                className="h-9 w-48"
                 placeholder="SPU / 名称"
                 value={spuFilters.q}
                 onChange={(e) => setSpuFilters({ ...spuFilters, q: e.target.value })}
+                onKeyDown={(e) => e.key === 'Enter' && applySpuFilters()}
               />
               <Input
+                className="h-9 w-36"
                 placeholder="品类"
                 value={spuFilters.category}
                 onChange={(e) => setSpuFilters({ ...spuFilters, category: e.target.value })}
               />
               <Input
+                className="h-9 w-36"
                 placeholder="品牌"
                 value={spuFilters.brand}
                 onChange={(e) => setSpuFilters({ ...spuFilters, brand: e.target.value })}
               />
-              <Button variant="outline" onClick={applySpuFilters}>
-                查询
-              </Button>
-            </div>
+              <DataQuerySubmitButton onClick={applySpuFilters} />
+            </DataQueryToolbar>
             <div className="flex flex-wrap gap-2">
               <Input placeholder="SPU 编号" className="h-9 w-36" value={spuForm.code} onChange={(e) => setSpuForm({ ...spuForm, code: e.target.value })} />
               <Input placeholder="名称" className="h-9 w-48" value={spuForm.name} onChange={(e) => setSpuForm({ ...spuForm, name: e.target.value })} />
@@ -426,17 +429,16 @@ export function ProductMasterPage() {
             <CardTitle>商家主数据</CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
-            <div className="flex flex-wrap gap-2 rounded-md border border-border bg-muted/20 p-4">
+            <DataQueryToolbar>
               <Input
                 placeholder="商家编号 / 名称"
                 className="h-9 w-64"
                 value={merchantQ}
                 onChange={(e) => setMerchantQ(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && applyMerchantFilters()}
               />
-              <Button variant="outline" size="sm" onClick={applyMerchantFilters}>
-                查询
-              </Button>
-            </div>
+              <DataQuerySubmitButton onClick={applyMerchantFilters} />
+            </DataQueryToolbar>
             <div className="flex flex-wrap gap-2">
               <Input placeholder="商家编号" className="h-9 w-36" value={merchantForm.code} onChange={(e) => setMerchantForm({ ...merchantForm, code: e.target.value })} />
               <Input placeholder="名称" className="h-9 w-48" value={merchantForm.name} onChange={(e) => setMerchantForm({ ...merchantForm, name: e.target.value })} />
@@ -498,51 +500,58 @@ export function ProductMasterPage() {
             <CardTitle>SKU 概览</CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
-            <div className="grid gap-2 rounded-md border border-border bg-muted/20 p-4 md:grid-cols-4 lg:grid-cols-8">
+            <DataQueryToolbar>
               <Input
+                className="h-9 w-40"
                 placeholder="SKU / 名称"
                 value={skuFilters.q}
                 onChange={(e) => setSkuFilters({ ...skuFilters, q: e.target.value })}
+                onKeyDown={(e) => e.key === 'Enter' && applySkuFilters()}
               />
               <Input
+                className="h-9 w-32"
                 placeholder="品类"
                 value={skuFilters.category}
                 onChange={(e) => setSkuFilters({ ...skuFilters, category: e.target.value })}
               />
               <Input
+                className="h-9 w-32"
                 placeholder="项目组"
                 value={skuFilters.projectGroup}
                 onChange={(e) => setSkuFilters({ ...skuFilters, projectGroup: e.target.value })}
               />
               <Input
-                placeholder="生命周期（系统按销量计算）"
+                className="h-9 w-44"
+                placeholder="生命周期"
                 value={skuFilters.lifecycle}
                 onChange={(e) => setSkuFilters({ ...skuFilters, lifecycle: e.target.value })}
               />
               <Input
+                className="h-9 w-28"
                 placeholder="销售国家"
                 value={skuFilters.salesCountry}
                 onChange={(e) => setSkuFilters({ ...skuFilters, salesCountry: e.target.value })}
               />
               <Input
+                className="h-9 w-32"
                 placeholder="供应商编码"
                 value={skuFilters.merchantCode}
                 onChange={(e) => setSkuFilters({ ...skuFilters, merchantCode: e.target.value })}
               />
               <Input
+                className="h-9 w-28"
                 placeholder="负责人"
                 value={skuFilters.ownerName}
                 onChange={(e) => setSkuFilters({ ...skuFilters, ownerName: e.target.value })}
               />
               <Input
+                className="h-9 w-28"
                 placeholder="开发人员"
                 value={skuFilters.developerName}
                 onChange={(e) => setSkuFilters({ ...skuFilters, developerName: e.target.value })}
               />
-              <Button variant="outline" onClick={applySkuFilters}>
-                查询
-              </Button>
-            </div>
+              <DataQuerySubmitButton onClick={applySkuFilters} />
+            </DataQueryToolbar>
             <div className="flex flex-wrap gap-2">
               <Input placeholder="SKU 编号" className="h-9 w-36" value={skuForm.code} onChange={(e) => setSkuForm({ ...skuForm, code: e.target.value })} />
               <Input placeholder="名称" className="h-9 w-40" value={skuForm.name} onChange={(e) => setSkuForm({ ...skuForm, name: e.target.value })} />

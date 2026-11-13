@@ -42,6 +42,7 @@ import { bitableSyncRoutes } from './routes/bitable-sync.js';
 import { newsIntelRoutes } from './routes/news-intel.js';
 import { csReplyQualityRoutes } from './routes/cs-reply-quality.js';
 import { qcReinspectionRoutes } from './routes/qc-reinspection.js';
+import { regionMappingRoutes } from './routes/region-mapping.js';
 
 import { taskRoutes } from './routes/tasks.js';
 import { downloadRoutes } from './routes/downloads.js';
@@ -182,6 +183,7 @@ app.route('/api', shipmentRoutes);
 app.route('/api', newsIntelRoutes);
 app.route('/api', csReplyQualityRoutes);
 app.route('/api', qcReinspectionRoutes);
+app.route('/api', regionMappingRoutes);
 
 if (serveStaticFiles) {
   app.use('/*', serveStatic({ root: distRoot }));

@@ -67,6 +67,6 @@ export async function runInventoryQueryPullTask(runId: string) {
     const message = err instanceof Error ? err.message : 'Feishu inventory query pull failed';
     console.error('[inventory-query-pull] failed:', message, err);
     await finishTaskRun(runId, { success: false, errorMessage: message });
-    return { skipped: true as const, reason: message };
+    return { failed: true as const, reason: message };
   }
 }

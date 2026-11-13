@@ -278,44 +278,50 @@ taskRoutes.post('/tasks/news-ingest', requireCronSecret, async (c) => {
   }
 });
 
+type PullTaskHttpResult = {
+  skipped?: boolean;
+  failed?: boolean;
+  reason?: string;
+  [key: string]: unknown;
+};
+
+function respondPullTaskResult(c: Context, result: PullTaskHttpResult, taskRunId: string) {
+  // skipped 可能是业务计数字段（number），互斥跳过必须严格 === true
+  if (result.skipped === true) {
+    return c.json({ skipped: true, message: result.reason, taskRunId }, 409);
+  }
+  if (result.failed === true) {
+    return c.json({ message: result.reason ?? 'task failed', taskRunId }, 500);
+  }
+  return c.json({ ...result, taskRunId });
+}
+
 taskRoutes.post('/tasks/procurement-bulk-stock-pull', requireCronSecret, async (c) => {
   const triggeredBy = resolveTriggeredBy(c);
   const run = await startTaskRun(procurementPullTaskName('bulk_stock_request'), triggeredBy);
   const result = await runProcurementBulkStockPull(run.id);
-  if (result.skipped) {
-    return c.json({ skipped: true, message: result.reason, taskRunId: run.id }, 409);
-  }
-  return c.json({ ...result, taskRunId: run.id });
+  return respondPullTaskResult(c, result, run.id);
 });
 
 taskRoutes.post('/tasks/procurement-follow-up-pull', requireCronSecret, async (c) => {
   const triggeredBy = resolveTriggeredBy(c);
   const run = await startTaskRun(procurementPullTaskName('purchase_follow_up'), triggeredBy);
   const result = await runProcurementFollowUpPull(run.id);
-  if (result.skipped) {
-    return c.json({ skipped: true, message: result.reason, taskRunId: run.id }, 409);
-  }
-  return c.json({ ...result, taskRunId: run.id });
+  return respondPullTaskResult(c, result, run.id);
 });
 
 taskRoutes.post('/tasks/inventory-query-pull', requireCronSecret, async (c) => {
   const triggeredBy = resolveTriggeredBy(c);
   const run = await startTaskRun(INVENTORY_QUERY_PULL_TASK, triggeredBy);
   const result = await runInventoryQueryPull(run.id);
-  if (result.skipped) {
-    return c.json({ skipped: true, message: result.reason, taskRunId: run.id }, 409);
-  }
-  return c.json({ ...result, taskRunId: run.id });
+  return respondPullTaskResult(c, result, run.id);
 });
 
 taskRoutes.post('/tasks/procurement-ops-pull', requireCronSecret, async (c) => {
   const triggeredBy = resolveTriggeredBy(c);
   const run = await startTaskRun(PROCUREMENT_OPS_PULL_TASK, triggeredBy);
   const result = await runProcurementOpsPull(run.id);
-  if (result.skipped) {
-    return c.json({ skipped: true, message: result.reason, taskRunId: run.id }, 409);
-  }
-  return c.json({ ...result, taskRunId: run.id });
+  return respondPullTaskResult(c, result, run.id);
 });
 
 taskRoutes.post('/tasks/commercial-status-reconcile', requireCronSecret, async (c) => {
@@ -343,20 +349,14 @@ taskRoutes.post('/tasks/inventory-turnover-pull', requireCronSecret, async (c) =
   const triggeredBy = resolveTriggeredBy(c);
   const run = await startTaskRun(INVENTORY_TURNOVER_PULL_TASK, triggeredBy);
   const result = await runInventoryTurnoverPull(run.id);
-  if (result.skipped) {
-    return c.json({ skipped: true, message: result.reason, taskRunId: run.id }, 409);
-  }
-  return c.json({ ...result, taskRunId: run.id });
+  return respondPullTaskResult(c, result, run.id);
 });
 
 taskRoutes.post('/tasks/sales-daily-feishu-pull', requireCronSecret, async (c) => {
   const triggeredBy = resolveTriggeredBy(c);
   const run = await startTaskRun(SALES_DAILY_FEISHU_PULL_TASK, triggeredBy);
   const result = await runSalesDailyFeishuPull(run.id);
-  if (result.skipped) {
-    return c.json({ skipped: true, message: result.reason, taskRunId: run.id }, 409);
-  }
-  return c.json({ ...result, taskRunId: run.id });
+  return respondPullTaskResult(c, result, run.id);
 });
 
 taskRoutes.post('/tasks/inventory-sales-cube-rebuild', requireCronSecret, async (c) => {

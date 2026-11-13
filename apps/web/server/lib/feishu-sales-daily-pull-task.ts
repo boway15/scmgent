@@ -38,6 +38,6 @@ export async function runSalesDailyFeishuPullTask(runId: string) {
     const message = err instanceof Error ? err.message : 'sales daily feishu pull failed';
     console.error('[sales-daily-feishu-pull] failed:', message, err);
     await finishTaskRun(runId, { success: false, errorMessage: message });
-    return { skipped: true as const, reason: message };
+    return { failed: true as const, reason: message };
   }
 }

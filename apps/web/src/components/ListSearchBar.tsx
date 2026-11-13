@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { Button } from '@/components/ui/button';
+import { DataQuerySubmitButton, DataQueryToolbar } from '@/components/data-query';
 import { Input } from '@/components/ui/input';
 
 type ListSearchBarProps = {
@@ -18,7 +18,7 @@ export function ListSearchBar({
   children,
 }: ListSearchBarProps) {
   return (
-    <div className="mb-4 flex flex-wrap items-center gap-2">
+    <DataQueryToolbar className="mb-4">
       <Input
         className="h-9 w-64"
         placeholder={placeholder}
@@ -32,10 +32,8 @@ export function ListSearchBar({
         }}
         aria-label="列表搜索"
       />
-      <Button size="sm" variant="outline" onClick={onSearch}>
-        查询
-      </Button>
+      <DataQuerySubmitButton size="sm" onClick={onSearch} />
       {children}
-    </div>
+    </DataQueryToolbar>
   );
 }

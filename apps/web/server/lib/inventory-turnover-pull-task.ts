@@ -65,7 +65,7 @@ export async function runInventoryTurnoverPullTask(
           ? outcome.body.message
           : '库存周转飞书同步校验失败';
       await finishTaskRun(runId, { success: false, errorMessage: message });
-      return { skipped: true as const, reason: message };
+      return { failed: true as const, reason: message };
     }
 
     const body = outcome.body;
@@ -96,7 +96,7 @@ export async function runInventoryTurnoverPullTask(
         resultSummary: JSON.stringify(payload),
       });
       console.warn(`[inventory-turnover-pull] incomplete: ${message}`);
-      return { skipped: true as const, reason: message, ...payload };
+      return { failed: true as const, reason: message, ...payload };
     }
 
     await finishTaskRun(runId, {
@@ -111,6 +111,6 @@ export async function runInventoryTurnoverPullTask(
     const message = err instanceof Error ? err.message : 'Feishu inventory turnover pull failed';
     console.error('[inventory-turnover-pull] failed:', message, err);
     await finishTaskRun(runId, { success: false, errorMessage: message });
-    return { skipped: true as const, reason: message };
+    return { failed: true as const, reason: message };
   }
 }

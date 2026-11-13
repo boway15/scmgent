@@ -50,6 +50,8 @@ export type InventorySalesAnalyticsRowItem = {
   salesCountry: string | null;
   qtyAvailable: number;
   qtyInTransit: number;
+  /** 国内未发（已下单供应商未发出）；不计入有效供给 */
+  qtyDomesticUnshipped: number;
   effectiveQty: number;
   shareMethod: string;
   shareWeight: number | null;
@@ -88,6 +90,43 @@ export type InventorySalesAnalyticsSkuDetail = {
     note?: string;
     highlights?: Record<string, string>;
   } | null;
+};
+
+export type InventorySalesBreakdownBucket = {
+  key: string;
+  label: string;
+  rowCount: number;
+  effectiveQtySum: number;
+  sales30dSum: number;
+};
+
+export type InventorySalesAnalyticsOverview = {
+  totals: {
+    rowCount: number;
+    effectiveQtySum: number;
+    sales7dSum: number;
+    sales14dSum: number;
+    sales30dSum: number;
+    avgCoverDays: number | null;
+    withVelocityRowCount: number;
+    stockoutRisk: number;
+    slowMoving: number;
+    imbalance: number;
+    unallocated: number;
+  };
+  breakdowns: {
+    byRisk: InventorySalesBreakdownBucket[];
+    byWarehouse: InventorySalesBreakdownBucket[];
+    byCategory: InventorySalesBreakdownBucket[];
+    byLifecycle: InventorySalesBreakdownBucket[];
+    byCoverBand: InventorySalesBreakdownBucket[];
+  };
+  meta: {
+    runId: string | null;
+    snapshotDate: string | null;
+    sourceSalesAsOf: string | null;
+    coverBandsVersion: string;
+  };
 };
 
 function appendRepeatedQuery(qs: URLSearchParams, key: string, values?: string[]) {
@@ -1708,6 +1747,22 @@ function importRequestError(body: { message?: string; errors?: unknown }, fallba
   return err;
 }
 
+export type RegionCodeOption = { code: string; label: string };
+
+export type StationRegionMapItem = {
+  id: string;
+  station: string;
+  salesRegion: string;
+  updatedAt?: string;
+};
+
+export type WarehouseRegionMapItem = {
+  id: string;
+  warehouseCode: string;
+  fulfillmentRegion: string;
+  updatedAt?: string;
+};
+
 export type QcReinspectionListItem = {
   id: string;
   sourceRecordId: string;
@@ -1844,10 +1899,44 @@ export const api = {
     const query = qs.toString();
     return request<PaginatedResult<TaskRunSummary>>(`/api/tasks/runs${query ? `?${query}` : ''}`);
   },
-  runScheduledTask: (path: string) =>
-    request<Record<string, unknown> & { skipped?: boolean; message?: string }>(path, {
-      method: 'POST',
-    }),
+  runScheduledTask: async (path: string) => {
+    const url = apiUrl(path);
+    let res: Response;
+    try {
+      res = await apiFetch(url, { method: 'POST' });
+    } catch (err) {
+      const hint =
+        typeof window !== 'undefined' && window.location.hostname === 'localhost'
+          ? '（Windows Docker 请改用 http://127.0.0.1:8081 访问，localhost 可能走 IPv6 导致请求失败）'
+          : '';
+      const msg = err instanceof Error ? err.message : String(err);
+      throw new Error(`${msg}${hint}`);
+    }
+    const text = await res.text();
+    let body: Record<string, unknown> & { skipped?: boolean; message?: string } = {};
+    if (text) {
+      try {
+        body = JSON.parse(text) as typeof body;
+      } catch {
+        if (!res.ok) {
+          throw new Error(`HTTP ${res.status}: ${text.slice(0, 200)}`);
+        }
+        throw new Error(`Invalid JSON from ${url}`);
+      }
+    }
+    // 互斥/未配置跳过：后端 409 + skipped===true，按成功交给页面展示「已跳过」
+    if (res.status === 409 && body.skipped === true) {
+      return body;
+    }
+    if (!res.ok) {
+      const message =
+        typeof body.message === 'string' && body.message
+          ? body.message
+          : res.statusText || text.slice(0, 200);
+      throw new Error(message ? `HTTP ${res.status}: ${message}` : `HTTP ${res.status}`);
+    }
+    return body;
+  },
   getNewsIntelStatus: () =>
     request<{
       enabled: boolean;
@@ -6009,6 +6098,47 @@ export const api = {
       refreshed: number;
       whitelistSize: number;
     }>('/api/quality/reinspection/sync', { method: 'POST' }),
+  getRegionMappingMeta: () =>
+    request<{ regions: RegionCodeOption[] }>('/api/region-mapping/meta'),
+  getStationRegionMaps: () =>
+    request<{ items: StationRegionMapItem[]; unmappedStations: string[] }>(
+      '/api/region-mapping/stations',
+    ),
+  upsertStationRegionMap: (body: { station: string; salesRegion: string }) =>
+    request<{ item: StationRegionMapItem }>('/api/region-mapping/stations', {
+      method: 'PUT',
+      body: JSON.stringify(body),
+    }),
+  deleteStationRegionMap: (station: string) =>
+    request<{ ok: boolean }>(`/api/region-mapping/stations/${encodeURIComponent(station)}`, {
+      method: 'DELETE',
+    }),
+  importStationRegionMapsCsv: (csvText: string) =>
+    request<{ imported: number }>('/api/region-mapping/stations/import', {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/csv; charset=utf-8' },
+      body: csvText,
+    }),
+  getWarehouseRegionMaps: () =>
+    request<{ items: WarehouseRegionMapItem[]; unmappedWarehouses: string[] }>(
+      '/api/region-mapping/warehouses',
+    ),
+  upsertWarehouseRegionMap: (body: { warehouseCode: string; fulfillmentRegion: string }) =>
+    request<{ item: WarehouseRegionMapItem }>('/api/region-mapping/warehouses', {
+      method: 'PUT',
+      body: JSON.stringify(body),
+    }),
+  deleteWarehouseRegionMap: (warehouseCode: string) =>
+    request<{ ok: boolean }>(
+      `/api/region-mapping/warehouses/${encodeURIComponent(warehouseCode)}`,
+      { method: 'DELETE' },
+    ),
+  importWarehouseRegionMapsCsv: (csvText: string) =>
+    request<{ imported: number }>('/api/region-mapping/warehouses/import', {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/csv; charset=utf-8' },
+      body: csvText,
+    }),
   getRuleModules: () => request<{ items: RuleModuleView[] }>('/api/rules'),
   getRuleParamSets: (module: string) =>
     request<{ items: RuleParamSetView[] }>(`/api/rules/${module}/param-sets`),
@@ -6043,24 +6173,55 @@ export const api = {
   // -- 存销分析 Cube -------------------------------------------------------
   getInventorySalesAnalyticsStatus: () =>
     request<InventorySalesAnalyticsStatus>('/api/inventory-sales-analytics/status'),
-  getInventorySalesAnalyticsRows: (params?: {
+  getInventorySalesAnalyticsOverview: (params?: {
     q?: string;
-    warehouseCode?: string;
-    category?: string;
-    lifecycle?: string;
+    warehouseCodes?: string[];
+    categories?: string[];
+    lifecycles?: string[];
     primaryRisk?: string;
     salesCountry?: string;
+    coverBand?: string;
+    /** true=包含无库存且无近30d销量行；默认不传即隐藏 */
+    includeIdle?: boolean;
+    productScope?: ProductScope;
+  }) => {
+    const qs = new URLSearchParams();
+    if (params?.q) qs.set('q', params.q);
+    appendRepeatedQuery(qs, 'warehouseCodes', params?.warehouseCodes);
+    appendRepeatedQuery(qs, 'categories', params?.categories);
+    appendRepeatedQuery(qs, 'lifecycles', params?.lifecycles);
+    if (params?.primaryRisk) qs.set('primaryRisk', params.primaryRisk);
+    if (params?.salesCountry) qs.set('salesCountry', params.salesCountry);
+    if (params?.coverBand) qs.set('coverBand', params.coverBand);
+    if (params?.includeIdle) qs.set('includeIdle', '1');
+    appendProductScopeQuery(qs, params?.productScope);
+    const query = qs.toString();
+    return request<InventorySalesAnalyticsOverview>(
+      `/api/inventory-sales-analytics/overview${query ? `?${query}` : ''}`,
+    );
+  },
+  getInventorySalesAnalyticsRows: (params?: {
+    q?: string;
+    warehouseCodes?: string[];
+    categories?: string[];
+    lifecycles?: string[];
+    primaryRisk?: string;
+    salesCountry?: string;
+    coverBand?: string;
+    includeIdle?: boolean;
     productScope?: ProductScope;
     page?: number;
     pageSize?: number;
   }) => {
     const qs = new URLSearchParams();
     if (params?.q) qs.set('q', params.q);
-    if (params?.warehouseCode) qs.set('warehouseCode', params.warehouseCode);
-    if (params?.category) qs.set('category', params.category);
-    if (params?.lifecycle) qs.set('lifecycle', params.lifecycle);
+    appendRepeatedQuery(qs, 'warehouseCodes', params?.warehouseCodes);
+    appendRepeatedQuery(qs, 'categories', params?.categories);
+    appendRepeatedQuery(qs, 'lifecycles', params?.lifecycles);
     if (params?.primaryRisk) qs.set('primaryRisk', params.primaryRisk);
     if (params?.salesCountry) qs.set('salesCountry', params.salesCountry);
+    if (params?.coverBand) qs.set('coverBand', params.coverBand);
+    if (params?.includeIdle) qs.set('includeIdle', '1');
     if (params?.page) qs.set('page', String(params.page));
     if (params?.pageSize) qs.set('pageSize', String(params.pageSize));
     appendProductScopeQuery(qs, params?.productScope);

@@ -1,76 +1,42 @@
-# Task 2 Report: 规则框架核心（参数描述 + 分层解析）
+# Task 2 报告：周版本列表 status + createdByName
 
-## 实现摘要
+## Status: DONE
 
-在 `apps/web/server/rules/core/` 新增纯函数规则核心库，未改动数据库、补货任务或 UI。
+## 变更摘要
 
-| 文件 | 职责 |
-|------|------|
-| `param.ts` | `ParamSpec` / `ParamSchema` 类型、`defaultsOf`、`checkParamValue`、`validateParamPatch` |
-| `resolve.ts` | `SCOPE_PRIORITY` 分层解析、`resolveParams`、作用域上下文与 `ParamSource` 溯源 |
-| `define.ts` | `RuleTraceItem`、`RuleModuleMeta`、`defineRuleModule`（恒等元数据注册） |
-| `param.test.ts` | 默认值与 patch 校验 |
-| `resolve.test.ts` | 无集默认、按 key 覆盖、忽略不匹配 scope、跳过非法/未知键 |
+### `apps/web/server/routes/demand-plans.ts`
 
-导出名称与类型与 task brief 一致，供后续任务导入。
+仅改动 `GET /demand-plans` 列表块（约 L131–201）：
 
-## TDD：RED / GREEN
+1. **`@scm/db` 导入** 增加 `users`。
+2. **查询参数 `status`**：`trim` 后非空则 `eq(demandPlanVersions.status, status)`（无额外 enum 校验，与 brief 及 `forecast-version` 列表模式一致）。
+3. **列表 select** 增加 `createdByName: users.name`。
+4. **列表查询** `leftJoin(users, eq(demandPlanVersions.createdBy, users.id))`。
+5. **count 查询** 仍为 `from(demandPlanVersions).where(where)`，未 join users，避免重复计数。
 
-### Step 2 — param RED
-
-```text
-pnpm --filter @scm/web exec tsx --test server/rules/core/param.test.ts
-```
-
-结果：`ERR_MODULE_NOT_FOUND`（无法找到 `./param.js`），测试套件 fail 1。
-
-### Step 4 — param GREEN
-
-同上命令。
-
-结果：`fail 0`，4 tests pass（defaultsOf ×1，validateParamPatch ×3）。
-
-### Step 6 — resolve RED（预期）
-
-在仅存在 `resolve.test.ts`、无 `resolve.ts` 时，预期与 param 相同为 `ERR_MODULE_NOT_FOUND`。实现 `resolve.ts` 前应按 brief 先跑失败；本任务在写入 `resolve.test.ts` 后于同轮次完成 `resolve.ts`/`define.ts`，随后验证通过。
-
-### Step 8 — 全量 GREEN
-
-```text
-pnpm --filter @scm/web exec tsx --test server/rules/core/param.test.ts server/rules/core/resolve.test.ts
-```
-
-结果：
-
-```text
-ℹ tests 8
-ℹ pass 8
-ℹ fail 0
-```
-
-## 变更文件
-
-- `apps/web/server/rules/core/param.ts`（新建）
-- `apps/web/server/rules/core/param.test.ts`（新建）
-- `apps/web/server/rules/core/resolve.ts`（新建）
-- `apps/web/server/rules/core/resolve.test.ts`（新建）
-- `apps/web/server/rules/core/define.ts`（新建）
-
-## Commit
-
-- SHA: `c382478bf29289dcff289a9f0d344942ea86303d`
-- Subject: `feat(rules): param schema, layered resolver and module definition`
+未改动同文件内 download-center / 导出 / 其它路由逻辑。
 
 ## 自检
 
-- [x] 代码与 brief 片段一致（含中文错误文案、`GLOBAL_SCOPE_VALUE`、`checkParamValue` 导出供 resolve 复用）。
-- [x] `resolveParams` 按 `SCOPE_PRIORITY` 从低到高叠加，同 key 后层覆盖；无效值与 schema 外键跳过；`paramSetIds` 为实际贡献参数的 set id 集合。
-- [x] 测试断言与 brief 一致（含 `paramSetIds.sort()` 与 DE 仓 invalid coverDays 回退 global 40）。
-- [x] 仅 `git add apps/web/server/rules/core`，未纳入 `.tmp-*` 等无关文件。
-- [ ] `define.ts` / `defineRuleModule` 暂无单测（brief 未要求）；后续模块任务应覆盖。
-- [ ] 未新增 barrel `index.ts`（brief 未要求）；调用方按 `./param.js`、`./resolve.js`、`./define.js` 直接导入。
+- [x] count 与 list 共用同一 `where`（含 status / scope / q）
+- [x] `createdBy` 外键存在于 `demand_plan_versions` schema
+- [x] 对齐 `listForecastVersionsPage` 的 join + count 分离模式
+- [x] 未 git commit
+- [x] ESLint/IDE：本文件无新增 lint
+
+## 测试
+
+| 命令 | 结果 |
+|------|------|
+| `npx tsx --test server/routes/demand-plans.test.ts` | 3 pass / 2 fail（`parseGenerateBody` 期望缺少 `startWeek` 字段，与本次改动无关） |
+
+未新增 list 集成测试；Task 2 brief 未要求。
 
 ## 关注点
 
-- `paramSetIds` 顺序依赖 `Set` 插入顺序（SCOPE_PRIORITY 遍历顺序），测试用 `.sort()` 比较；若产品需要稳定展示顺序，后续可显式排序。
-- 同 scope 多条 `ActiveParamSet` 时 `sets.find` 取第一条；DB 层应保证同 scope 唯一或后续任务定义合并策略。
+- `status` 为任意字符串等值过滤；无效值返回空列表，非 400（与多数列表路由一致）。
+- `createdBy` 为空或用户已删时 `createdByName` 为 `null`（left join）。
+
+## Commits
+
+无（按用户要求）

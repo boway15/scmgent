@@ -56,7 +56,11 @@ export function SystemTasksPage() {
       setMessage(null);
     },
     onSuccess: (result) => {
-      const skipped = result && typeof result === 'object' && 'skipped' in result && result.skipped;
+      const skipped =
+        result &&
+        typeof result === 'object' &&
+        'skipped' in result &&
+        (result as { skipped?: unknown }).skipped === true;
       setMessage(
         skipped
           ? `已跳过：${(result as { message?: string }).message ?? '任务互斥或进行中'}`

@@ -3,6 +3,7 @@ import { describe, it } from 'node:test';
 import {
   buildCubeRowsForSku,
   assertNoRunningCube,
+  resolveSalesWindowAsOf,
   type BuildCubeRowsForSkuInput,
 } from './inventory-sales-cube.js';
 import type { ShareParseResult } from './inventory-share-allocation.js';
@@ -179,5 +180,12 @@ describe('assertNoRunningCube', () => {
     assert.doesNotThrow(() =>
       assertNoRunningCube({ running: [], force: false }),
     );
+  });
+});
+
+describe('resolveSalesWindowAsOf', () => {
+  it('ends sales windows 2 days before business date (sync lag)', () => {
+    assert.equal(resolveSalesWindowAsOf('2026-11-11'), '2026-11-09');
+    assert.equal(resolveSalesWindowAsOf('2026-03-01'), '2026-02-27');
   });
 });

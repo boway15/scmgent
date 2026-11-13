@@ -44,4 +44,22 @@ describe('withFeishuFetchRetry', () => {
         err.message.includes('terminated'),
     );
   });
+
+  it('wraps exhausted fetch failed errors with cause detail', async () => {
+    await assert.rejects(
+      () =>
+        withFeishuFetchRetry(
+          async () => {
+            throw Object.assign(new TypeError('fetch failed'), {
+              cause: new Error('getaddrinfo ENOTFOUND open.feishu.cn'),
+            });
+          },
+          { retries: 2, baseDelayMs: 0 },
+        ),
+      (err: unknown) =>
+        err instanceof Error &&
+        err.message.includes('飞书网络请求失败') &&
+        err.message.includes('ENOTFOUND'),
+    );
+  });
 });

@@ -6272,6 +6272,11 @@ export const api = {
     apiFetch(apiUrl('/api/region-mapping/stations/export')).then((res) =>
       handleExportResponse(res, 'station-region-maps.csv'),
     ),
+  backfillSalesHistoryRegionsFromStations: () =>
+    request<{ updated: number; message?: string }>(
+      '/api/region-mapping/stations/backfill-sales-history',
+      { method: 'POST' },
+    ),
   getWarehouseRegionMappings: () =>
     request<{
       items: Array<{ warehouseCode: string; fulfillmentRegion: string }>;
@@ -6304,6 +6309,45 @@ export const api = {
   exportWarehouseRegionMappings: () =>
     apiFetch(apiUrl('/api/region-mapping/warehouses/export')).then((res) =>
       handleExportResponse(res, 'warehouse-region-maps.csv'),
+    ),
+  backfillSalesHistoryRegionsFromWarehouses: () =>
+    request<{ updated: number; message?: string }>(
+      '/api/region-mapping/warehouses/backfill-sales-history',
+      { method: 'POST' },
+    ),
+  getSkuStationWarehouseRefStats: () =>
+    request<{ refCount: number; uniqueCount: number; dominantCount: number }>(
+      '/api/region-mapping/sku-warehouse-refs/stats',
+    ),
+  importSkuStationWarehouseRefs: async (file: File) => {
+    const body = new FormData();
+    body.set('file', file);
+    const res = await apiFetch(apiUrl('/api/region-mapping/sku-warehouse-refs/import'), {
+      method: 'POST',
+      body,
+    });
+    const payload = (await res.json().catch(() => ({}))) as {
+      message?: string;
+      upserted?: number;
+      uniqueWarehouseGroups?: number;
+    };
+    if (!res.ok) throw new Error(payload.message ?? 'SKU 站点仓参考导入失败');
+    return payload;
+  },
+  backfillSalesHistoryWarehouseFromUniqueRefs: () =>
+    request<{ updated: number; refRows: number; message?: string }>(
+      '/api/region-mapping/warehouses/backfill-warehouse-from-refs',
+      { method: 'POST' },
+    ),
+  backfillSalesHistoryWarehouseFromDominantRefs: () =>
+    request<{ updated: number; refRows: number; message?: string }>(
+      '/api/region-mapping/warehouses/backfill-warehouse-dominant',
+      { method: 'POST' },
+    ),
+  backfillSalesHistoryWarehouseFromSalesRegionRefs: () =>
+    request<{ updated: number; refRows: number; message?: string }>(
+      '/api/region-mapping/warehouses/backfill-warehouse-by-sales-region',
+      { method: 'POST' },
     ),
   exportInventorySalesAnalytics: (body: Record<string, unknown>) =>
     request<{ jobId: string; status?: string; downloadCenterPath?: string }>(

@@ -42,6 +42,7 @@ export function RegionMappingPage() {
   const [draftRegion, setDraftRegion] = useState('EU');
   const [rowRegion, setRowRegion] = useState<Record<string, string>>({});
   const [error, setError] = useState('');
+  const [backfillMessage, setBackfillMessage] = useState('');
 
   const stations = useQuery({
     queryKey: ['region-mapping', 'stations'],
@@ -50,6 +51,11 @@ export function RegionMappingPage() {
   const warehouses = useQuery({
     queryKey: ['region-mapping', 'warehouses'],
     queryFn: () => api.getWarehouseRegionMappings(),
+  });
+  const skuWhRefStats = useQuery({
+    queryKey: ['region-mapping', 'sku-warehouse-refs', 'stats'],
+    queryFn: () => api.getSkuStationWarehouseRefStats(),
+    enabled: tab === 'warehouses',
   });
 
   const regions = (tab === 'stations' ? stations.data?.regions : warehouses.data?.regions) ?? [
@@ -110,14 +116,62 @@ export function RegionMappingPage() {
     },
     onError: (err: Error) => setError(err.message),
   });
-
+  const backfillStations = useMutation({
+    mutationFn: api.backfillSalesHistoryRegionsFromStations,
+    onSuccess: (data) => {
+      setError('');
+      setBackfillMessage(`按站点回刷完成：更新 ${data.updated} 行销售区域。`);
+    },
+    onError: (err: Error) => setError(err.message),
+  });
+  const backfillWarehouses = useMutation({
+    mutationFn: api.backfillSalesHistoryRegionsFromWarehouses,
+    onSuccess: (data) => {
+      setError('');
+      setBackfillMessage(`按仓库补区域完成：更新 ${data.updated} 行。`);
+    },
+    onError: (err: Error) => setError(err.message),
+  });
+  const importSkuWhRefs = useMutation({
+    mutationFn: api.importSkuStationWarehouseRefs,
+    onSuccess: (data) => {
+      setError('');
+      setBackfillMessage(
+        `参考导入：唯一仓 ${data.uniqueWarehouseGroups ?? 0} 组，写入 ${data.upserted ?? 0} 条。`,
+      );
+      invalidate();
+      qc.invalidateQueries({ queryKey: ['region-mapping', 'sku-warehouse-refs'] });
+    },
+    onError: (err: Error) => setError(err.message),
+  });
+  const backfillWarehouseFromRefs = useMutation({
+    mutationFn: api.backfillSalesHistoryWarehouseFromUniqueRefs,
+    onSuccess: (data) => {
+      setError('');
+      setBackfillMessage(`策略 A（唯一仓）：补仓 ${data.updated} 行。`);
+    },
+    onError: (err: Error) => setError(err.message),
+  });
+  const backfillWarehouseDominant = useMutation({
+    mutationFn: api.backfillSalesHistoryWarehouseFromDominantRefs,
+    onSuccess: (data) => {
+      setError('');
+      setBackfillMessage(`策略 B（主仓）：补仓 ${data.updated} 行。`);
+    },
+    onError: (err: Error) => setError(err.message),
+  });
   const busy =
     saveStation.isPending ||
     saveWarehouse.isPending ||
     deleteStation.isPending ||
     deleteWarehouse.isPending ||
     importStation.isPending ||
-    importWarehouse.isPending;
+    importWarehouse.isPending ||
+    backfillStations.isPending ||
+    backfillWarehouses.isPending ||
+    importSkuWhRefs.isPending ||
+    backfillWarehouseFromRefs.isPending ||
+    backfillWarehouseDominant.isPending;
 
   const saveNew = () => {
     if (!draftKey.trim() || !draftRegion) {
@@ -147,9 +201,77 @@ export function RegionMappingPage() {
     <div className="space-y-6">
       <PageHeader
         title="区域映射"
-        description="站点决定销售区域，仓库决定履约区域。目标只能是 US / CA / EU / UK / OTHER。"
+        description={
+          tab === 'stations'
+            ? '站点→销售区域。空区域的历史销量可用下方按钮按映射回刷。'
+            : `仓库→履约区域。SKU 参考 A:${skuWhRefStats.data?.uniqueCount ?? '…'} / B:${skuWhRefStats.data?.dominantCount ?? '…'} 条。`
+        }
       >
         <div className="flex flex-wrap gap-2">
+          {tab === 'stations' ? (
+            <Button
+              variant="secondary"
+              size="sm"
+              disabled={busy}
+              onClick={() => {
+                setBackfillMessage('');
+                backfillStations.mutate();
+              }}
+            >
+              {backfillStations.isPending ? '回刷中…' : '回刷空区域（按站点）'}
+            </Button>
+          ) : (
+            <>
+              <Button
+                variant="secondary"
+                size="sm"
+                disabled={busy}
+                onClick={() => {
+                  setBackfillMessage('');
+                  backfillWarehouseFromRefs.mutate();
+                }}
+              >
+                {backfillWarehouseFromRefs.isPending ? '补仓中…' : '策略 A：唯一仓'}
+              </Button>
+              <Button
+                variant="secondary"
+                size="sm"
+                disabled={busy}
+                onClick={() => {
+                  setBackfillMessage('');
+                  backfillWarehouseDominant.mutate();
+                }}
+              >
+                {backfillWarehouseDominant.isPending ? '补仓中…' : '策略 B：主仓'}
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={busy}
+                onClick={() => {
+                  setBackfillMessage('');
+                  backfillWarehouses.mutate();
+                }}
+              >
+                {backfillWarehouses.isPending ? '回刷中…' : '按仓库补销售区域'}
+              </Button>
+              <label className="inline-flex h-9 cursor-pointer items-center rounded-md border border-primary/30 bg-primary/5 px-3 text-sm text-text-main hover:bg-primary/10">
+                {importSkuWhRefs.isPending ? '导入中…' : '导入 SKU 站点仓参考'}
+                <input
+                  className="hidden"
+                  type="file"
+                  accept=".csv,text/csv"
+                  onChange={(event) => {
+                    const file = event.target.files?.[0];
+                    event.target.value = '';
+                    if (!file) return;
+                    setBackfillMessage('');
+                    importSkuWhRefs.mutate(file);
+                  }}
+                />
+              </label>
+            </>
+          )}
           <Button
             variant="outline"
             disabled={busy}
@@ -207,6 +329,7 @@ export function RegionMappingPage() {
       </div>
 
       {error ? <p className="text-sm text-destructive">{error}</p> : null}
+      {backfillMessage ? <p className="text-sm text-text-sub">{backfillMessage}</p> : null}
       {activeLoadError ? <p className="text-sm text-destructive">{activeLoadError}</p> : null}
 
       <Card>

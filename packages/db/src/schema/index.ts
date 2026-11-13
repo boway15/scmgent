@@ -25,6 +25,7 @@ export * from './shipments';
 export * from './inventory-supply-lots';
 export * from './inventory-data-issues';
 export * from './region-mapping';
+export * from './sku-station-warehouse-ref';
 export * from './inventory-dest-allocations';
 export * from './rules';
 export * from './region-mapping';

@@ -10,7 +10,18 @@ import {
 } from '../lib/region-mapping-admin.js';
 import { invalidateRegionMappingCache } from '../lib/region-mapping.js';
 import { listUnmappedStations, listUnmappedWarehouses } from '../lib/region-unmapped-scan.js';
-import { requireMenu } from '../lib/rbac.js';
+import {
+  backfillSalesHistorySalesRegionFromStations,
+  backfillSalesHistorySalesRegionFromWarehouses,
+} from '../lib/sales-history-region-backfill.js';
+import {
+  backfillSalesHistoryWarehouseFromDominantRefs,
+  backfillSalesHistoryWarehouseFromSalesRegionRefs,
+  backfillSalesHistoryWarehouseFromUniqueRefs,
+  getSkuWarehouseRefStats,
+  importSkuStationWarehouseRefsFromCsv,
+} from '../lib/sales-history-warehouse-backfill.js';
+import { requireMenu, requireWrite } from '../lib/rbac.js';
 
 export const regionMappingRoutes = new Hono();
 
@@ -98,6 +109,20 @@ regionMappingRoutes.post('/region-mapping/stations/import',  async (c) => {
   invalidateRegionMappingCache();
   return c.json({ imported: parsed.rows.length });
 });
+
+regionMappingRoutes.post(
+  '/region-mapping/stations/backfill-sales-history',
+  requireWrite(),
+  async (c) => {
+    try {
+      const result = await backfillSalesHistorySalesRegionFromStations();
+      return c.json(result);
+    } catch (err) {
+      console.error('[region-mapping] backfill stations', err);
+      return c.json({ message: '历史销量区域回刷失败' }, 500);
+    }
+  },
+);
 
 regionMappingRoutes.delete('/region-mapping/stations',  async (c) => {
   const queryStation = c.req.query('station')?.trim() ?? '';
@@ -190,6 +215,103 @@ regionMappingRoutes.post('/region-mapping/warehouses/import',  async (c) => {
   invalidateRegionMappingCache();
   return c.json({ imported: parsed.rows.length });
 });
+
+regionMappingRoutes.post(
+  '/region-mapping/warehouses/backfill-sales-history',
+  requireWrite(),
+  async (c) => {
+    try {
+      const result = await backfillSalesHistorySalesRegionFromWarehouses();
+      return c.json(result);
+    } catch (err) {
+      console.error('[region-mapping] backfill warehouses', err);
+      return c.json({ message: '历史销量区域回刷失败' }, 500);
+    }
+  },
+);
+
+regionMappingRoutes.get('/region-mapping/sku-warehouse-refs/stats', async (c) => {
+  return c.json(await getSkuWarehouseRefStats());
+});
+
+regionMappingRoutes.post(
+  '/region-mapping/sku-warehouse-refs/import',
+  requireWrite(),
+  async (c) => {
+    try {
+      const contentType = c.req.header('content-type') ?? '';
+      let payload: string | Buffer;
+      if (contentType.includes('multipart/form-data')) {
+        const form = await c.req.formData();
+        const file = form.get('file') ?? form.get('csv');
+        if (file instanceof File) payload = Buffer.from(await file.arrayBuffer());
+        else payload = typeof file === 'string' ? file : '';
+      } else {
+        payload = await c.req.text();
+      }
+      if (!payload || (typeof payload === 'string' && !payload.trim())) {
+        return c.json({ message: 'CSV 为空' }, 400);
+      }
+      const result = await importSkuStationWarehouseRefsFromCsv(payload);
+      return c.json(result);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'SKU 站点仓参考导入失败';
+      console.error('[region-mapping] sku-warehouse-refs import', err);
+      return c.json({ message }, 400);
+    }
+  },
+);
+
+regionMappingRoutes.post(
+  '/region-mapping/warehouses/backfill-warehouse-from-refs',
+  requireWrite(),
+  async (c) => {
+    try {
+      const result = await backfillSalesHistoryWarehouseFromUniqueRefs();
+      if (result.refRows === 0) {
+        return c.json({ ...result, message: '请先导入 SKU 站点仓参考 CSV' }, 400);
+      }
+      return c.json(result);
+    } catch (err) {
+      console.error('[region-mapping] backfill warehouse from refs', err);
+      return c.json({ message: '按唯一仓补仓失败' }, 500);
+    }
+  },
+);
+
+regionMappingRoutes.post(
+  '/region-mapping/warehouses/backfill-warehouse-dominant',
+  requireWrite(),
+  async (c) => {
+    try {
+      const result = await backfillSalesHistoryWarehouseFromDominantRefs();
+      if (result.refRows === 0) {
+        return c.json({ ...result, message: '请先重新导入 CSV（含策略 B 主仓参考）' }, 400);
+      }
+      return c.json(result);
+    } catch (err) {
+      console.error('[region-mapping] backfill dominant warehouse', err);
+      return c.json({ message: '按主仓补仓（策略 B）失败' }, 500);
+    }
+  },
+);
+
+regionMappingRoutes.post(
+  '/region-mapping/warehouses/backfill-warehouse-by-sales-region',
+  requireWrite(),
+  async (c) => {
+    try {
+      const result = await backfillSalesHistoryWarehouseFromSalesRegionRefs();
+      if (result.refRows === 0) {
+        return c.json({ ...result, message: '请先导入 SKU 站点仓参考 CSV' }, 400);
+      }
+      return c.json(result);
+    } catch (err) {
+      console.error('[region-mapping] backfill warehouse by sales region', err);
+      return c.json({ message: '按销售区域补仓（策略 C）失败' }, 500);
+    }
+  },
+);
 
 regionMappingRoutes.delete('/region-mapping/warehouses',  async (c) => {
   const queryCode = c.req.query('warehouseCode')?.trim() ?? '';

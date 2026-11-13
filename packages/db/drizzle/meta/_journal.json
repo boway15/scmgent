@@ -876,6 +876,20 @@
       "when": 1789215400000,
       "tag": "0143_region_menu_system_path",
       "breakpoints": true
+    },
+    {
+      "idx": 125,
+      "version": "6",
+      "when": 1789301800000,
+      "tag": "0144_sku_station_warehouse_ref",
+      "breakpoints": true
+    },
+    {
+      "idx": 126,
+      "version": "6",
+      "when": 1789388200000,
+      "tag": "0145_warehouse_fulfillment_region_seed",
+      "breakpoints": true
     }
   ]
 }

@@ -855,6 +855,20 @@
       "when": 1789042600000,
       "tag": "0141_sales_history_region_warehouse",
       "breakpoints": true
+    },
+    {
+      "idx": 123,
+      "version": "6",
+      "when": 1789129000000,
+      "tag": "0142_product_costing_bom_m1_status",
+      "breakpoints": true
+    },
+    {
+      "idx": 124,
+      "version": "6",
+      "when": 1789215400000,
+      "tag": "0143_region_menu_system_path",
+      "breakpoints": true
     }
   ]
 }

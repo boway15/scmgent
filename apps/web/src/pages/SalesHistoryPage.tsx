@@ -22,6 +22,22 @@ import { useProductScope } from '@/lib/product-scope';
 const DEFAULT_PAGE_SIZE = 20;
 type SalesDimension = 'daily' | 'monthly';
 
+const salesTableWrap =
+  'max-h-[min(70vh,720px)] overflow-auto rounded-md border border-border bg-card';
+const salesTh =
+  'sticky top-0 z-10 whitespace-nowrap border-b border-border bg-muted p-2.5 text-left text-xs font-medium text-text-sub';
+const salesTd = 'border-b border-border/50 p-2.5 align-top text-sm';
+const salesTr = 'group hover:bg-muted/30';
+
+function formatSourceLabel(source: string | null | undefined) {
+  const raw = source?.trim() ?? '';
+  if (!raw) return '—';
+  const lower = raw.toLowerCase();
+  if (lower === 'import') return '导入';
+  if (lower.includes('feishu') || lower === '飞书') return '飞书';
+  return raw;
+}
+
 function RegionBadge({ code }: { code?: string | null }) {
   const value = code?.trim();
   if (!value) return <span className="text-text-hint">—</span>;
@@ -35,13 +51,22 @@ function RegionBadge({ code }: { code?: string | null }) {
 function CellText({
   value,
   className,
+  clamp = 1,
 }: {
   value: string;
   className?: string;
+  clamp?: 1 | 2;
 }) {
   return (
-    <td className={cn('p-2', className)} title={value}>
-      <span className="block truncate">{value}</span>
+    <td className={cn(salesTd, className)} title={value}>
+      <span
+        className={cn(
+          'block text-text-main',
+          clamp === 2 ? 'line-clamp-2 leading-snug' : 'truncate',
+        )}
+      >
+        {value}
+      </span>
     </td>
   );
 }
@@ -347,11 +372,22 @@ export function SalesHistoryPage() {
       ) : null}
 
       {data && (
-        <p className="text-sm text-text-sub">
-          共 {data.summary.rowCount.toLocaleString()} 条
-          {dimension === 'daily' ? '日销量' : '月销量'}明细，销量合计{' '}
-          <span className="font-numeric text-primary">{data.summary.totalQty.toLocaleString()}</span>
-        </p>
+        <div className="flex flex-wrap items-center gap-4 rounded-lg border border-border bg-muted/40 px-4 py-3 text-sm">
+          <span className="text-text-sub">
+            共{' '}
+            <span className="font-numeric font-medium text-text-main">
+              {data.summary.rowCount.toLocaleString()}
+            </span>{' '}
+            条{dimension === 'daily' ? '日' : '月'}销量明细
+          </span>
+          <span className="hidden h-4 w-px bg-border sm:inline" aria-hidden />
+          <span className="text-text-sub">
+            销量合计{' '}
+            <span className="font-numeric text-base font-semibold text-primary">
+              {data.summary.totalQty.toLocaleString()}
+            </span>
+          </span>
+        </div>
       )}
 
       <Card>
@@ -362,56 +398,69 @@ export function SalesHistoryPage() {
           {isLoading ? (
             <p className="text-text-sub">加载中...</p>
           ) : dimension === 'daily' ? (
-            <div className="overflow-x-auto">
-              <table className="w-full table-fixed text-sm">
-                <colgroup>
-                  <col className="w-[7rem]" />
-                  <col className="w-[8rem]" />
-                  <col className="w-[12rem]" />
-                  <col className="w-[14rem]" />
-                  <col className="w-[4.5rem]" />
-                  <col className="w-[9.5rem]" />
-                  <col className="w-[6rem]" />
-                  <col className="w-[6rem]" />
-                  <col className="w-[4.5rem]" />
-                </colgroup>
+            <div className={salesTableWrap}>
+              <table className="w-full min-w-[1180px] border-collapse text-sm">
                 <thead>
-                  <tr className="border-b border-border text-left text-text-sub">
-                    <th className="p-2 font-normal">日期</th>
-                    <th className="p-2 font-normal">SKU</th>
-                    <th className="p-2 font-normal">名称</th>
-                    <th className="p-2 font-normal">品类</th>
-                    <th className="p-2 font-normal">销量</th>
-                    <th className="p-2 font-normal">站点</th>
-                    <th className="p-2 font-normal">区域</th>
-                    <th className="p-2 font-normal">平台</th>
-                    <th className="p-2 font-normal">发货仓</th>
-                    <th className="p-2 font-normal">来源</th>
+                  <tr>
+                    <th className={cn(salesTh, 'left-0 z-20 min-w-[6.5rem] shadow-[2px_0_4px_-2px_rgba(0,0,0,0.06)]')}>
+                      日期
+                    </th>
+                    <th className={cn(salesTh, 'sticky left-[6.5rem] z-20 min-w-[7.5rem] shadow-[2px_0_4px_-2px_rgba(0,0,0,0.06)]')}>
+                      SKU
+                    </th>
+                    <th className={cn(salesTh, 'min-w-[11rem] max-w-[14rem]')}>名称</th>
+                    <th className={cn(salesTh, 'min-w-[10rem] max-w-[12rem]')}>品类</th>
+                    <th className={cn(salesTh, 'text-right')}>销量</th>
+                    <th className={cn(salesTh, 'min-w-[8rem]')}>站点</th>
+                    <th className={cn(salesTh, 'text-center')}>区域</th>
+                    <th className={cn(salesTh, 'min-w-[6.5rem]')}>平台</th>
+                    <th className={cn(salesTh, 'min-w-[5.5rem]')}>发货仓</th>
+                    <th className={cn(salesTh, 'min-w-[4rem]')}>来源</th>
                   </tr>
                 </thead>
                 <tbody>
                   {dailyData?.items.map((row) => (
-                    <tr key={row.id} className="border-b border-border/60">
-                      <td className="p-2 whitespace-nowrap">{String(row.saleDate).slice(0, 10)}</td>
-                      <td className="p-2 font-mono" title={row.skuCode}>
+                    <tr key={row.id} className={salesTr}>
+                      <td
+                        className={cn(
+                          salesTd,
+                          'sticky left-0 z-10 whitespace-nowrap bg-card font-mono text-text-main shadow-[2px_0_4px_-2px_rgba(0,0,0,0.06)] group-hover:bg-muted/30',
+                        )}
+                      >
+                        {String(row.saleDate).slice(0, 10)}
+                      </td>
+                      <td
+                        className={cn(
+                          salesTd,
+                          'sticky left-[6.5rem] z-10 max-w-[7.5rem] bg-card font-mono text-primary shadow-[2px_0_4px_-2px_rgba(0,0,0,0.06)] group-hover:bg-muted/30',
+                        )}
+                        title={row.skuCode}
+                      >
                         <span className="block truncate">{row.skuCode}</span>
                       </td>
-                      <CellText value={row.skuName || '-'} />
-                      <CellText value={row.category ?? '-'} className="text-text-sub" />
-                      <td className="p-2 font-numeric text-primary">{row.qtySold}</td>
-                      <td className="p-2 text-text-sub" title={row.station || undefined}>
-                        <span className="block truncate whitespace-nowrap">{row.station || '-'}</span>
+                      <CellText value={row.skuName || '—'} clamp={2} />
+                      <CellText value={row.category ?? '—'} className="text-xs text-text-sub" clamp={2} />
+                      <td className={cn(salesTd, 'text-right font-numeric tabular-nums font-medium text-primary')}>
+                        {row.qtySold.toLocaleString()}
                       </td>
-                      <td className="p-2">
+                      <td className={cn(salesTd, 'max-w-[10rem] text-text-sub')} title={row.station || undefined}>
+                        <span className="block truncate">{row.station || '—'}</span>
+                      </td>
+                      <td className={cn(salesTd, 'text-center')}>
                         <RegionBadge code={row.salesRegion} />
                       </td>
-                      <td className="p-2 text-text-sub" title={row.channel ?? undefined}>
-                        <span className="block truncate">{row.channel ?? '-'}</span>
+                      <td className={cn(salesTd, 'font-mono text-xs text-text-sub')} title={row.channel ?? undefined}>
+                        <span className="block truncate">{row.channel?.toUpperCase() ?? '—'}</span>
                       </td>
-                      <td className="p-2 font-mono text-text-sub" title={row.warehouseCode ?? undefined}>
-                        <span className="block truncate">{row.warehouseCode ?? '-'}</span>
+                      <td
+                        className={cn(salesTd, 'max-w-[6rem] font-mono text-xs text-text-sub')}
+                        title={row.warehouseCode ?? undefined}
+                      >
+                        <span className="block truncate">{row.warehouseCode ?? '—'}</span>
                       </td>
-                      <td className="p-2 text-text-sub">{row.source}</td>
+                      <td className={cn(salesTd, 'whitespace-nowrap text-xs text-text-sub')}>
+                        {formatSourceLabel(row.source)}
+                      </td>
                     </tr>
                   ))}
                   {!dailyData?.items.length && (
@@ -425,42 +474,35 @@ export function SalesHistoryPage() {
               </table>
             </div>
           ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full table-fixed text-sm">
-                <colgroup>
-                  <col className="w-[6rem]" />
-                  <col className="w-[8rem]" />
-                  <col className="w-[12rem]" />
-                  <col className="w-[16rem]" />
-                  <col className="w-[5rem]" />
-                  <col className="w-[7rem]" />
-                  <col className="w-[5rem]" />
-                </colgroup>
+            <div className={salesTableWrap}>
+              <table className="w-full min-w-[900px] border-collapse text-sm">
                 <thead>
-                  <tr className="border-b border-border text-left text-text-sub">
-                    <th className="p-2 font-normal">月份</th>
-                    <th className="p-2 font-normal">SKU</th>
-                    <th className="p-2 font-normal">名称</th>
-                    <th className="p-2 font-normal">品类</th>
-                    <th className="p-2 font-normal">月销量</th>
-                    <th className="p-2 font-normal">平台</th>
-                    <th className="p-2 font-normal">来源</th>
+                  <tr>
+                    <th className={salesTh}>月份</th>
+                    <th className={salesTh}>SKU</th>
+                    <th className={cn(salesTh, 'min-w-[11rem]')}>名称</th>
+                    <th className={cn(salesTh, 'min-w-[12rem]')}>品类</th>
+                    <th className={cn(salesTh, 'text-right')}>月销量</th>
+                    <th className={salesTh}>平台</th>
+                    <th className={salesTh}>来源</th>
                   </tr>
                 </thead>
                 <tbody>
                   {monthlyData?.items.map((row) => (
-                    <tr key={row.id} className="border-b border-border/60">
-                      <td className="p-2 font-mono whitespace-nowrap">{row.saleMonth}</td>
-                      <td className="p-2 font-mono" title={row.skuCode}>
+                    <tr key={row.id} className={salesTr}>
+                      <td className={cn(salesTd, 'font-mono whitespace-nowrap')}>{row.saleMonth}</td>
+                      <td className={cn(salesTd, 'max-w-[8rem] font-mono text-primary')} title={row.skuCode}>
                         <span className="block truncate">{row.skuCode}</span>
                       </td>
-                      <CellText value={row.skuName || '-'} />
-                      <CellText value={row.category ?? '-'} className="text-text-sub" />
-                      <td className="p-2 font-numeric text-primary">{row.qtySold}</td>
-                      <td className="p-2 text-text-sub" title={row.channel}>
-                        <span className="block truncate">{row.channel}</span>
+                      <CellText value={row.skuName || '—'} clamp={2} />
+                      <CellText value={row.category ?? '—'} className="text-xs text-text-sub" clamp={2} />
+                      <td className={cn(salesTd, 'text-right font-numeric tabular-nums font-medium text-primary')}>
+                        {row.qtySold.toLocaleString()}
                       </td>
-                      <td className="p-2 text-text-sub">{row.source}</td>
+                      <td className={cn(salesTd, 'font-mono text-xs text-text-sub')} title={row.channel}>
+                        <span className="block truncate">{row.channel?.toUpperCase()}</span>
+                      </td>
+                      <td className={cn(salesTd, 'text-xs text-text-sub')}>{formatSourceLabel(row.source)}</td>
                     </tr>
                   ))}
                   {!monthlyData?.items.length && (

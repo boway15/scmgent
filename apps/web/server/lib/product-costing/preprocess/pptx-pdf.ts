@@ -3,7 +3,6 @@ import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import { ensureProjectDir, resolveStoragePath, writeProjectFile } from '../storage.js';
-import { extractPptxSlideTexts } from './pptx-text.js';
 import type { PageBundle, PreprocessOptions } from './types.js';
 
 const execFileAsync = promisify(execFile);
@@ -17,6 +16,31 @@ async function which(cmd: string): Promise<string | null> {
   } catch {
     return null;
   }
+}
+
+async function extractPptxTextByPage(sourceAbs: string): Promise<Map<number, string>> {
+  const map = new Map<number, string>();
+  const unzipBin = await which('unzip');
+  if (!unzipBin) return map;
+  try {
+    const { stdout: listing } = await execFileAsync(unzipBin, ['-Z1', sourceAbs]);
+    const slides = listing
+      .split(/\r?\n/)
+      .map((s) => s.trim())
+      .filter((n) => /^ppt\/slides\/slide\d+\.xml$/i.test(n))
+      .sort((a, b) => Number(a.match(/(\d+)/)?.[1] ?? 0) - Number(b.match(/(\d+)/)?.[1] ?? 0));
+    for (const name of slides) {
+      const pageNo = Number(name.match(/(\d+)/)?.[1] ?? 0);
+      const { stdout: xml } = await execFileAsync(unzipBin, ['-p', sourceAbs, name], {
+        maxBuffer: 8 * 1024 * 1024,
+      });
+      const texts = [...xml.matchAll(/<a:t[^>]*>([^<]*)<\/a:t>/g)].map((m) => m[1]).filter(Boolean);
+      map.set(pageNo, texts.join('\n'));
+    }
+  } catch {
+    /* optional text path — vision pages still work */
+  }
+  return map;
 }
 
 /**
@@ -48,7 +72,7 @@ export async function preprocessWithLibreOffice(opts: PreprocessOptions): Promis
   }
 
   const prefix = path.join(workDir, 'page');
-  await execFileAsync(pdftoppm, ['-png', '-r', '96', pdfAbs, prefix], { timeout: 180_000 });
+  await execFileAsync(pdftoppm, ['-png', '-r', '120', pdfAbs, prefix], { timeout: 180_000 });
   const pngs = (await readdir(workDir))
     .filter((f) => /^page-\d+\.png$/i.test(f) || /^page\d+\.png$/i.test(f))
     .sort((a, b) => {
@@ -59,7 +83,7 @@ export async function preprocessWithLibreOffice(opts: PreprocessOptions): Promis
   if (!pngs.length) throw new Error('pdftoppm 未生成页图');
 
   const textByPage = lower.endsWith('.pptx')
-    ? await extractPptxSlideTexts(sourceAbs)
+    ? await extractPptxTextByPage(sourceAbs)
     : new Map<number, string>();
 
   const pages: PageBundle[] = [];

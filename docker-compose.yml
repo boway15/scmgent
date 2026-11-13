@@ -78,7 +78,7 @@ services:
       DOWNLOAD_DATA_DIR: /data/downloads
       COSTING_PREPROCESS_MODE: ${COSTING_PREPROCESS_MODE:-auto}
       DIFY_WORKFLOW_TIMEOUT_MS: ${DIFY_WORKFLOW_TIMEOUT_MS:-300000}
-      COSTING_EXTRACT_BATCH_SIZE: ${COSTING_EXTRACT_BATCH_SIZE:-1}
+      COSTING_EXTRACT_BATCH_SIZE: ${COSTING_EXTRACT_BATCH_SIZE:-2}
       # 导入与 HTTP 同进程；生产默认 max=1 会卡死页面
       DB_POOL_MAX: "10"
       # 日表 + 月表双轨（见 apps/web/server/lib/sales-history-config.ts）

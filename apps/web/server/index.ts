@@ -34,6 +34,7 @@ import { authMiddleware } from './middleware/auth.js';
 import { requireWrite, requireBusinessRead } from './lib/rbac.js';
 import { procurementRoutes } from './routes/procurement.js';
 import { procurementListRoutes } from './routes/procurement-lists.js';
+import { productCostingRoutes } from './routes/product-costing.js';
 import { pmcRoutes } from './routes/pmc.js';
 import { logisticsRoutes } from './routes/logistics.js';
 import { bitableSyncRoutes } from './routes/bitable-sync.js';
@@ -153,7 +154,7 @@ app.route('/api', alertRoutes);
 app.route('/api', reorderRoutes);
 app.route('/api', procurementRoutes);
 app.route('/api', procurementListRoutes);
-// 产品成本核算 API 暂不挂载（菜单已下线）；代码见 routes/product-costing.ts
+app.route('/api', productCostingRoutes);
 app.route('/api', pmcRoutes);
 app.route('/api', logisticsRoutes);
 app.route('/api', bitableSyncRoutes);

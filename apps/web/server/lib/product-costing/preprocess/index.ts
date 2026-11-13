@@ -2,7 +2,6 @@ import { access } from 'node:fs/promises';
 import { preprocessWithFixture } from './fixture.js';
 import { preprocessWithLibreOffice } from './pptx-pdf.js';
 import { preprocessPptxTextOnly } from './pptx-text.js';
-import { preprocessRasterImage, isRasterImageFile } from './raster-image.js';
 import { resolveStoragePath } from '../storage.js';
 import type { PageBundle, PreprocessOptions } from './types.js';
 
@@ -38,10 +37,6 @@ async function assertSourceExists(opts: PreprocessOptions): Promise<void> {
  */
 export async function preprocessDesignFile(opts: PreprocessOptions): Promise<PageBundle[]> {
   await assertSourceExists(opts);
-
-  if (isRasterImageFile(opts.fileName)) {
-    return preprocessRasterImage(opts);
-  }
 
   const mode = getPreprocessMode();
   if (mode === 'fixture') return preprocessWithFixture(opts);

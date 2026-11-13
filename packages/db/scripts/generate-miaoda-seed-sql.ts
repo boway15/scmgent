@@ -49,6 +49,7 @@ const MENU_SEEDS: MenuSeed[] = [
     children: [
       { code: 'procurement.bulk_stock', name: '大件备货申请', path: '/procurement/bulk-stock', sortOrder: 1, isLeaf: true },
       { code: 'procurement.follow_up', name: '采购跟单', path: '/procurement/follow-up', sortOrder: 2, isLeaf: true },
+      { code: 'procurement.costing', name: '产品成本核算', path: '/procurement/costing', sortOrder: 3, isLeaf: true },
     ],
   },
   {

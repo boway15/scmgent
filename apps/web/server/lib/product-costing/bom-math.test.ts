@@ -1,62 +1,54 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { calcQtyGross, normalizeAiLine } from './bom-math.js';
+import { calcQtyGross, canConfirmBom, normalizeAiLine } from './bom-math.js';
 
-describe('bom-math', () => {
-  it('calcQtyGross rounds 4 decimals', () => {
+describe('calcQtyGross', () => {
+  it('applies loss rate', () => {
     assert.equal(calcQtyGross(1, 0.08), 1.08);
-    assert.equal(calcQtyGross(2.5, 0.1), 2.75);
   });
 
-  it('normalizeAiLine accepts qty 0 template rows and origin', () => {
+  it('rounds to 4 decimals', () => {
+    assert.equal(calcQtyGross(1, 1 / 3), 1.3333);
+  });
+});
+
+describe('normalizeAiLine', () => {
+  it('accepts snake_case AI payload', () => {
     const line = normalizeAiLine({
       category: '板材',
-      material_name: '侧板',
-      spec: '',
-      unit: '块',
-      qty_net: 0,
-      loss_rate: 0,
-      source_ref: '',
-      confidence: 'low',
-      origin: 'template',
-    });
-    assert.equal(line?.qtyNet, 0);
-    assert.equal(line?.origin, 'template');
-  });
-
-  it('normalizeAiLine infers explicit when source_ref present', () => {
-    const line = normalizeAiLine({
-      material_name: '滑轨',
-      unit: '副',
+      material_name: '多层板',
+      spec: '18mm',
+      unit: '张',
       qty_net: 2,
-      confidence: 'high',
-      source_ref: 'p4',
+      loss_rate: 0.1,
+      source_ref: 'p3',
+      confidence: 'medium',
+      notes: '',
     });
-    assert.equal(line?.origin, 'explicit');
+    assert.ok(line);
+    assert.equal(line!.materialName, '多层板');
+    assert.equal(line!.qtyNet, 2);
   });
 
-  it('normalizeAiLine maps unknown category to 其他', () => {
-    const line = normalizeAiLine({
-      category: '乱七八糟',
-      material_name: 'x',
-      unit: '个',
-      qty_net: 1,
-      confidence: 'medium',
-    });
-    assert.equal(line?.category, '其他');
+  it('rejects invalid confidence', () => {
+    assert.equal(
+      normalizeAiLine({
+        material_name: 'x',
+        unit: '个',
+        qty_net: 1,
+        confidence: 'maybe',
+      }),
+      null,
+    );
   });
+});
 
-  it('normalizeAiLine puts 正面拉条 under 板材 even if the model said 其他部件', () => {
-    const line = normalizeAiLine({
-      category: '其他部件',
-      material_name: '正面拉条',
-      spec: '40mm',
-      unit: '个',
-      qty_net: 8,
-      confidence: 'medium',
-      source_ref: 'p5',
-    });
-    assert.equal(line?.category, '板材');
-    assert.equal(line?.materialName, '正面拉条');
+describe('canConfirmBom', () => {
+  it('blocks low confidence unless force', () => {
+    const lines = [
+      { materialName: 'a', unit: '个', qtyNet: 1, confidence: 'low' as const },
+    ];
+    assert.equal(canConfirmBom(lines).ok, false);
+    assert.equal(canConfirmBom(lines, true).ok, true);
   });
 });

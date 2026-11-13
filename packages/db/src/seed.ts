@@ -75,6 +75,13 @@ const MENU_SEEDS: MenuSeed[] = [
         sortOrder: 60,
         isLeaf: true,
       },
+      {
+        code: 'procurement.costing',
+        name: '产品成本核算',
+        path: '/procurement/costing',
+        sortOrder: 3,
+        isLeaf: true,
+      },
     ],
   },
   {
@@ -224,8 +231,6 @@ const DEPRECATED_MENU_CODES = [
   'pmc.list',
   'pmc.tracking',
   'pmc.shipments',
-  // 2026-10：产品成本核算暂不交付；恢复时从 DEPRECATED 移回 MENU_SEEDS 与 SUPPLY_MENU_CODES
-  'procurement.costing',
 ];
 
 const SUPPLY_MENU_CODES = [
@@ -233,6 +238,7 @@ const SUPPLY_MENU_CODES = [
   'pmc.suggestion',
   'procurement.bulk_stock',
   'procurement.follow_up',
+  'procurement.costing',
 ] as const;
 
 const QUALITY_MENU_CODES = ['quality', 'quality.reinspection'] as const;
@@ -329,6 +335,7 @@ const ROLE_MENU_CODES: Record<string, string[]> = {
     'pmc.suggestion',
     'procurement.bulk_stock',
     'procurement.follow_up',
+    'procurement.costing',
     ...QUALITY_MENU_CODES,
     ...LOGISTICS_MENU_CODES,
     ...DATA_MENU_CODES.filter((code) => code !== 'data.products'),

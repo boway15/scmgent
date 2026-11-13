@@ -11,6 +11,7 @@ export * from './inventory-sales-analytics';
 export * from './product-costing';
 export * from './procurement';
 export * from './procurement-lists';
+export * from './product-costing';
 export * from './pmc';
 export * from './ai';
 export * from './logistics';

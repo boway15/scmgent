@@ -22,6 +22,16 @@ import { useProductScope } from '@/lib/product-scope';
 const DEFAULT_PAGE_SIZE = 20;
 type SalesDimension = 'daily' | 'monthly';
 
+function RegionBadge({ code }: { code?: string | null }) {
+  const value = code?.trim();
+  if (!value) return <span className="text-text-hint">—</span>;
+  return (
+    <span className="inline-flex min-w-[2.25rem] justify-center rounded-md bg-primary/10 px-1.5 py-0.5 font-mono text-xs font-medium text-primary">
+      {value}
+    </span>
+  );
+}
+
 function CellText({
   value,
   className,
@@ -392,7 +402,9 @@ export function SalesHistoryPage() {
                       <td className="p-2 text-text-sub" title={row.station || undefined}>
                         <span className="block truncate whitespace-nowrap">{row.station || '-'}</span>
                       </td>
-                      <td className="p-2 font-mono text-text-sub">{row.salesRegion || '-'}</td>
+                      <td className="p-2">
+                        <RegionBadge code={row.salesRegion} />
+                      </td>
                       <td className="p-2 text-text-sub" title={row.channel ?? undefined}>
                         <span className="block truncate">{row.channel ?? '-'}</span>
                       </td>

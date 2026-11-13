@@ -6328,7 +6328,10 @@ export const api = {
     });
     const payload = (await res.json().catch(() => ({}))) as {
       message?: string;
+      sourceRows?: number;
       upserted?: number;
+      upsertedUnique?: number;
+      upsertedDominant?: number;
       uniqueWarehouseGroups?: number;
     };
     if (!res.ok) throw new Error(payload.message ?? 'SKU 站点仓参考导入失败');

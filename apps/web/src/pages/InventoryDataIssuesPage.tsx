@@ -446,7 +446,7 @@ export function InventoryDataIssuesPage() {
                       {row.issueType === 'unmapped_warehouse' &&
                       row.fingerprint.startsWith('fulfillment_region_unmapped:') ? (
                         <div className="mt-1">
-                          <Link className="text-xs text-primary hover:underline" to="/data/region-mapping">
+                          <Link className="text-xs text-primary hover:underline" to="/system/region-mapping">
                             配置区域映射
                           </Link>
                         </div>

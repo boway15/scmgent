@@ -7,7 +7,7 @@ import {
   salesForecastReviewItems,
   salesHistory,
 } from '@scm/db';
-import { loadRegionMappingTables, resolveSalesRegion } from './region-mapping.js';
+import { loadRegionMappingTables, resolveSalesRowRegion } from './region-mapping.js';
 import { daysInCalendarMonth } from './forecast-baseline.js';
 import { getPrimaryPublishedVersionId } from './forecast-version.js';
 import { formatForecastMonth } from './forecast-demand.js';
@@ -94,6 +94,7 @@ async function loadActualMonthlyDailyAvgByRegion(input: {
         skuId: salesHistory.skuId,
         channel: salesHistory.channel,
         station: salesHistory.station,
+        salesRegion: salesHistory.salesRegion,
         totalQty: sql<number>`coalesce(sum(${salesHistory.qtySold}), 0)::float`,
       })
       .from(salesHistory)
@@ -105,10 +106,18 @@ async function loadActualMonthlyDailyAvgByRegion(input: {
           lte(salesHistory.saleDate, monthEnd),
         ),
       )
-      .groupBy(salesHistory.skuId, salesHistory.channel, salesHistory.station);
+      .groupBy(
+        salesHistory.skuId,
+        salesHistory.channel,
+        salesHistory.station,
+        salesHistory.salesRegion,
+      );
     for (const row of rows) {
       const channel = (row.channel ?? 'UNKNOWN').trim().toUpperCase() || 'UNKNOWN';
-      const region = resolveSalesRegion(row.station, tables);
+      const region = resolveSalesRowRegion(
+        { salesRegion: row.salesRegion, station: row.station },
+        tables,
+      );
       const key = actualDailyLookupKey(row.skuId, channel, region);
       qtyByKey.set(key, (qtyByKey.get(key) ?? 0) + (Number(row.totalQty) || 0));
     }

@@ -11,9 +11,15 @@ import {
 import { resolveAiAssistModeFromMonths } from '@/lib/forecast-detail-columns';
 import {
   formatForecastChannelLabel,
+  formatSalesRegionLabel,
   resolveHorizonPlatformScope,
 } from '@/lib/forecast-horizon-meta';
-import { appendPlatformBreakdownToTitle } from '@/lib/forecast-platform-breakdown';
+import { appendMergedEffectiveBreakdownToTitle } from '@/lib/forecast-platform-breakdown';
+import {
+  CALIBRATION_LEAF_VIEW_HINT,
+  canExportCalibrationTable,
+  isMergedRegionCalibrationView,
+} from '@/lib/forecast-calibration-view';
 import { isAllCatV41ForecastCell, isT99ForecastTier } from '@/lib/forecast-horizon-display';
 import { cn } from '@/lib/utils';
 import type { ForecastHorizonRow } from '@/components/ForecastSkuDetailDrawer';
@@ -77,10 +83,14 @@ const effectiveCellTitle = (
   cell: Parameters<typeof cellDailyTitle>[0],
   profileSegment: string | null | undefined,
   mergedChannel: boolean,
+  mergedRegion: boolean,
 ) => {
   const base = cellDailyTitle(cell, profileSegment);
-  if (!mergedChannel) return base;
-  return appendPlatformBreakdownToTitle(base, cell.platformBreakdown);
+  if (!mergedChannel && !mergedRegion) return base;
+  return appendMergedEffectiveBreakdownToTitle(base, {
+    platformBreakdown: mergedChannel ? cell.platformBreakdown : undefined,
+    regionBreakdown: mergedRegion ? cell.regionBreakdown : undefined,
+  });
 };
 
 const formatPct = (value: number) => `${Math.round(value * 100)}%`;
@@ -94,13 +104,22 @@ type QueryFilters = {
   categories?: string[];
   profileSegment?: string;
   pendingCalibration?: boolean;
+  salesRegion?: string;
+  salesRegions?: string[];
+  splitByRegion?: boolean;
 };
+
+/** 区域/平台码列：等宽小字号，与需求计划矩阵分平台列一致 */
+const FORECAST_DIMENSION_CELL_CLASS = 'p-2 whitespace-nowrap font-mono text-xs';
 
 type Props = {
   active: boolean;
   filters: QueryFilters;
   pageSize?: number;
-  onSkuClick?: (row: ForecastHorizonRow, ctx: { platform: string }) => void;
+  onSkuClick?: (
+    row: ForecastHorizonRow,
+    ctx: { platform: string; splitByRegion: boolean; salesRegions: string[] },
+  ) => void;
   /** 草稿可导入人工校准；与季节指数等系统改写无关 */
   calibrationImportEnabled?: boolean;
   /** 导出校准表：草稿与已发布均可，便于运营对照生效日均 */
@@ -128,6 +147,28 @@ export function ForecastHorizonPanel({
     if (initialCalibrationImportOpen) setImportOpen(true);
   }, [initialCalibrationImportOpen]);
 
+  useEffect(() => {
+    setPage(1);
+  }, [filters.salesRegion, filters.salesRegions, filters.splitByRegion, filters.channelView, filters.skuCode, filters.platform]);
+
+  const channelView = filters.channelView;
+  const splitByRegion = filters.splitByRegion === true;
+  const salesRegions = filters.salesRegions?.length
+    ? filters.salesRegions
+    : filters.salesRegion
+      ? [filters.salesRegion]
+      : undefined;
+  const salesRegionsForCalibration = salesRegions ?? [];
+  const mergedRegionView = isMergedRegionCalibrationView({
+    splitByRegion,
+    salesRegions: salesRegionsForCalibration,
+  });
+  const calibrationExportReady = canExportCalibrationTable({
+    channelView: filters.channelView,
+    splitByRegion,
+    salesRegions: salesRegionsForCalibration,
+  });
+
   const { data: horizon, isLoading } = useQuery({
     queryKey: [
       'sales-forecast-horizon',
@@ -141,12 +182,14 @@ export function ForecastHorizonPanel({
       api.getSalesForecastHorizon({
         versionId: filters.versionId,
         skuCode: filters.skuCode || undefined,
-        channelView: filters.channelView,
+        channelView,
+        salesRegions,
+        splitByRegion,
         platforms:
-          filters.channelView === 'by_channel' && filters.platforms?.length
+          channelView === 'by_channel' && filters.platforms?.length
             ? filters.platforms
             : undefined,
-        platform: filters.channelView
+        platform: channelView
           ? undefined
           : resolveHorizonPlatformScope(filters.platform),
         categories: filters.categories?.length ? filters.categories : undefined,
@@ -166,13 +209,13 @@ export function ForecastHorizonPanel({
   const showCalibrationExport = calibrationExportEnabled || calibrationImportEnabled;
   const importNeedsByChannel =
     (calibrationImportEnabled || showCalibrationExport) &&
-    filters.channelView !== 'by_channel';
+    channelView !== 'by_channel';
 
   const handleExport = async (mode: 'wide' | 'detail' | 'calibration') => {
     if (!filters.versionId) return;
     if (mode === 'calibration') {
-      if (filters.channelView !== 'by_channel') {
-        window.alert('请先将「平台展示」切换为「分平台」，再导出校准表。');
+      if (!calibrationExportReady) {
+        window.alert(CALIBRATION_LEAF_VIEW_HINT);
         return;
       }
     } else if (
@@ -191,12 +234,14 @@ export function ForecastHorizonPanel({
         versionId: filters.versionId,
         mode,
         skuCode: filters.skuCode || undefined,
-        channelView: filters.channelView,
+        channelView,
+        salesRegions,
+        splitByRegion,
         platforms:
-          filters.channelView === 'by_channel' && filters.platforms?.length
+          channelView === 'by_channel' && filters.platforms?.length
             ? filters.platforms
             : undefined,
-        platform: filters.channelView
+        platform: channelView
           ? undefined
           : resolveHorizonPlatformScope(filters.platform),
         categories: filters.categories?.length ? filters.categories : undefined,
@@ -213,10 +258,16 @@ export function ForecastHorizonPanel({
   };
 
   const clickPlatform = (row: ForecastHorizonRow) => {
-    if (filters.channelView === 'by_channel') return row.platform;
-    if (filters.channelView === 'merged') return 'ALL';
+    if (channelView === 'by_channel') return row.platform;
+    if (channelView === 'merged') return 'ALL';
     return resolveHorizonPlatformScope(filters.platform);
   };
+
+  const skuClickCtx = (row: ForecastHorizonRow) => ({
+    platform: clickPlatform(row),
+    splitByRegion,
+    salesRegions: salesRegionsForCalibration,
+  });
 
   const channelLabel = (platform: string) => formatForecastChannelLabel(platform);
 
@@ -226,7 +277,7 @@ export function ForecastHorizonPanel({
         <button
           type="button"
           className="text-left hover:text-primary"
-          onClick={() => onSkuClick(row, { platform: clickPlatform(row) })}
+          onClick={() => onSkuClick(row, skuClickCtx(row))}
         >
           <div className="font-medium text-primary underline-offset-2 hover:underline">{row.skuCode}</div>
           <div className="max-w-[140px] truncate text-xs text-text-sub" title={row.skuName}>
@@ -301,11 +352,11 @@ export function ForecastHorizonPanel({
             <Button
               size="sm"
               variant="outline"
-              disabled={!canExport || exporting != null || filters.channelView !== 'by_channel'}
+              disabled={!canExport || exporting != null || !calibrationExportReady}
               title={
-                filters.channelView !== 'by_channel'
-                  ? '请先切换为「分平台」'
-                  : '仅含导入所需列，推荐发给运营'
+                calibrationExportReady
+                  ? '仅含导入所需列，推荐发给运营'
+                  : CALIBRATION_LEAF_VIEW_HINT
               }
               onClick={() => void handleExport('calibration')}
             >
@@ -335,7 +386,9 @@ export function ForecastHorizonPanel({
         <p className="text-sm text-text-sub">
           {horizon?.accessoryEmptyReason === 'excluded_at_generation'
             ? FORECAST_EMPTY_EXCLUDED
-            : '暂无预测数据。'}
+            : salesRegions?.length
+              ? `区域 ${salesRegions.join('、')} 下没有预测行。迁移前全站口径只有「全部」，按具体区域筛选会是空的。`
+              : '暂无预测数据。'}
           {horizon?.accessoryEmptyReason !== 'excluded_at_generation' &&
           filters.channelView === 'by_channel' &&
           (filters.platforms?.length ?? 0) > 0 ? (
@@ -348,6 +401,7 @@ export function ForecastHorizonPanel({
             <thead>
               <tr className="border-b border-border text-left text-text-sub">
                 <th className="sticky left-0 z-10 bg-card p-2 font-normal">SKU</th>
+                <th className="p-2 font-normal">区域</th>
                 <th className="p-2 font-normal">平台</th>
                 <th className="p-2 font-normal">生命周期</th>
                 <th className="p-2 font-normal">分层</th>
@@ -360,9 +414,12 @@ export function ForecastHorizonPanel({
             </thead>
             <tbody>
               {horizon.items.map((row) => (
-                <tr key={`${row.skuId}:${row.station}:${row.platform}`} className="border-b border-border/60">
+                <tr key={`${row.skuId}:${row.salesRegion ?? ''}:${row.station}:${row.platform}`} className="border-b border-border/60">
                   <td className="sticky left-0 z-10 bg-card p-2">{renderSkuCell(row)}</td>
-                  <td className="p-2">{channelLabel(row.platform)}</td>
+                  <td className={FORECAST_DIMENSION_CELL_CLASS}>
+                    {formatSalesRegionLabel(row.salesRegion)}
+                  </td>
+                  <td className={FORECAST_DIMENSION_CELL_CLASS}>{channelLabel(row.platform)}</td>
                   <td className="p-2 text-text-sub">{formatLifecycleLabel(row.lifecycle)}</td>
                   <td className="p-2 text-xs text-text-sub whitespace-nowrap" title={row.profileSegment ?? undefined}>
                     {row.profileSegment
@@ -395,6 +452,7 @@ export function ForecastHorizonPanel({
                               cell,
                               row.profileSegment,
                               filters.channelView === 'merged',
+                              mergedRegionView,
                             )
                           : '暂无预测'
                       }
@@ -417,12 +475,13 @@ export function ForecastHorizonPanel({
       ) : viewMode === 'history' ? (
         <div className="overflow-auto">
           <p className="mb-2 text-xs text-text-sub">
-            历史为销量月表折算日均（件/天），按平台汇总。
+            历史为销量月表折算日均（件/天）。预测列随区域切换；历史月表仍是平台汇总，尚未按销售区域拆开。
           </p>
           <table className="min-w-full text-sm">
             <thead>
               <tr className="border-b border-border text-left text-text-sub">
                 <th className="sticky left-0 z-10 bg-card p-2 font-normal">SKU</th>
+                <th className="p-2 font-normal">区域</th>
                 <th className="p-2 font-normal">平台</th>
                 <th className="p-2 font-normal">生命周期</th>
                 {(horizon.historyHorizon ?? []).map((col) => (
@@ -434,9 +493,12 @@ export function ForecastHorizonPanel({
             </thead>
             <tbody>
               {horizon.items.map((row) => (
-                <tr key={`hist-${row.skuId}:${row.station}:${row.platform}`} className="border-b border-border/60">
+                <tr key={`hist-${row.skuId}:${row.salesRegion ?? ''}:${row.station}:${row.platform}`} className="border-b border-border/60">
                   <td className="sticky left-0 z-10 bg-card p-2">{renderSkuCell(row)}</td>
-                  <td className="p-2">{channelLabel(row.platform)}</td>
+                  <td className={FORECAST_DIMENSION_CELL_CLASS}>
+                    {formatSalesRegionLabel(row.salesRegion)}
+                  </td>
+                  <td className={FORECAST_DIMENSION_CELL_CLASS}>{channelLabel(row.platform)}</td>
                   <td className="p-2 text-text-sub">{formatLifecycleLabel(row.lifecycle)}</td>
                   {(row.historyMonths ?? []).map((cell) => (
                     <td
@@ -462,6 +524,7 @@ export function ForecastHorizonPanel({
               <tr className="border-b border-border text-left text-text-sub">
                 <th className="p-2 font-normal">时段</th>
                 <th className="p-2 font-normal">SKU</th>
+                <th className="p-2 font-normal">区域</th>
                 <th className="p-2 font-normal">平台</th>
                 <th className="p-2 font-normal">绝对月</th>
                 <th className="p-2 font-normal">生命周期</th>
@@ -504,7 +567,7 @@ export function ForecastHorizonPanel({
                           type="button"
                           className="text-left text-primary hover:underline"
                           onClick={() =>
-                            onSkuClick(row, { platform: clickPlatform(row) })
+                            onSkuClick(row, skuClickCtx(row))
                           }
                         >
                           {row.skuCode}
@@ -516,7 +579,10 @@ export function ForecastHorizonPanel({
                         {row.category ?? '-'}
                       </div>
                     </td>
-                    <td className="p-2 whitespace-nowrap">{channelLabel(row.platform)}</td>
+                    <td className={FORECAST_DIMENSION_CELL_CLASS}>
+                      {formatSalesRegionLabel(row.salesRegion)}
+                    </td>
+                    <td className={FORECAST_DIMENSION_CELL_CLASS}>{channelLabel(row.platform)}</td>
                     <td className="p-2 font-numeric whitespace-nowrap">{cell.monthLabel}</td>
                     <td className="p-2">{formatLifecycleLabel(row.lifecycle)}</td>
                     {historyPadding.map((pad, idx) => (
@@ -539,7 +605,7 @@ export function ForecastHorizonPanel({
                           type="button"
                           className="text-left text-primary hover:underline"
                           onClick={() =>
-                            onSkuClick(row, { platform: clickPlatform(row) })
+                            onSkuClick(row, skuClickCtx(row))
                           }
                         >
                           {row.skuCode}
@@ -551,7 +617,10 @@ export function ForecastHorizonPanel({
                         {row.category ?? '-'}
                       </div>
                     </td>
-                    <td className="p-2 whitespace-nowrap">{channelLabel(row.platform)}</td>
+                    <td className={FORECAST_DIMENSION_CELL_CLASS}>
+                      {formatSalesRegionLabel(row.salesRegion)}
+                    </td>
+                    <td className={FORECAST_DIMENSION_CELL_CLASS}>{channelLabel(row.platform)}</td>
                     <td className="p-2 font-numeric whitespace-nowrap">{cell.monthLabel}</td>
                     <td className="p-2">{formatLifecycleLabel(cell.lifecycle ?? row.lifecycle)}</td>
                     <td className="p-2">{formatConfidenceLabel(cell.confidenceLevel)}</td>
@@ -586,10 +655,14 @@ export function ForecastHorizonPanel({
                     <td
                       className="p-2 font-numeric text-primary font-medium cursor-help"
                       title={
-                        filters.channelView === 'merged'
-                          ? appendPlatformBreakdownToTitle(
+                        filters.channelView === 'merged' || mergedRegionView
+                          ? appendMergedEffectiveBreakdownToTitle(
                               `生效 ${formatFactor(cellEffective(cell))}`,
-                              cell.platformBreakdown,
+                              {
+                                platformBreakdown:
+                                  filters.channelView === 'merged' ? cell.platformBreakdown : undefined,
+                                regionBreakdown: mergedRegionView ? cell.regionBreakdown : undefined,
+                              },
                             )
                           : undefined
                       }

@@ -12,6 +12,14 @@ import {
 } from '@/lib/inventory-query-columns';
 import { ProductScopeSwitch } from '@/components/ProductScopeSwitch';
 import { useProductScope } from '@/lib/product-scope';
+import { FeishuMirrorSnapshotTable } from '@/components/FeishuMirrorSnapshotTable';
+import { InventorySnapshotStatusLine } from '@/components/InventorySnapshotStatusLine';
+import { useResizableColumnWidths } from '@/hooks/use-resizable-column-widths';
+import {
+  defaultFeishuMirrorColumnWidth,
+  loadInventoryQueryColumnWidths,
+  saveInventoryQueryColumnWidths,
+} from '@/lib/feishu-mirror-column-widths';
 
 const DEFAULT_PAGE_SIZE = 20;
 
@@ -25,6 +33,17 @@ function downloadBlob(blob: Blob, filename: string) {
 }
 
 export function InventoryQueryPage() {
+  const columnWidths = useResizableColumnWidths({
+    storageKey: 'scm.inventory-query.column-widths-v3',
+    loadWidths: loadInventoryQueryColumnWidths,
+    saveWidths: saveInventoryQueryColumnWidths,
+    defaultColumnWidth: defaultFeishuMirrorColumnWidth,
+    maxWidth: 360,
+    legacyStorageKeys: [
+      'scm.inventory-query.column-widths-v1',
+      'scm.inventory-query.column-widths-v2',
+    ],
+  });
   const { productScope } = useProductScope();
   const [q, setQ] = useState('');
   const [category, setCategory] = useState('');
@@ -166,8 +185,8 @@ export function InventoryQueryPage() {
           </Button>
         </div>
       </PageHeader>
-      <p className="text-sm text-muted-foreground -mt-2 mb-2">
-        飞书分仓明细镜像；每日 07:20 自动同步，可切换历史日期。
+      <p className="-mt-2 mb-2 text-sm text-text-sub">
+        飞书分仓明细镜像；每日 07:20 自动同步，可切换历史日期。列头右缘可拖动调宽，点击行查看全字段。
       </p>
 
       <Card>
@@ -178,9 +197,9 @@ export function InventoryQueryPage() {
           <ProductScopeSwitch />
           <div className="flex flex-wrap items-end gap-3">
             <label className="space-y-1 text-sm">
-              <span className="text-muted-foreground">快照日期</span>
+              <span className="text-text-sub">快照日期</span>
               <select
-                className="flex h-9 w-44 rounded-md border border-input bg-transparent px-3 text-sm"
+                className="flex h-9 w-44 rounded-md border border-input bg-card px-3 text-sm text-text-main"
                 value={snapshotDate || data?.selectedSnapshotDate || ''}
                 onChange={(e) => {
                   setSnapshotDate(e.target.value);
@@ -224,79 +243,38 @@ export function InventoryQueryPage() {
             />
             <Button onClick={applyFilters}>查询</Button>
           </div>
-          <div className="text-sm text-muted-foreground">
-            {data?.isStale ? (
-              <span className="text-amber-700">
-                今日尚未成功同步，当前展示 {data.selectedSnapshotDate} 快照
-                {data.syncedAt ? `（同步于 ${new Date(data.syncedAt).toLocaleString()}）` : ''}
-              </span>
-            ) : data?.syncedAt ? (
-              <span>
-                快照 {data.selectedSnapshotDate}，同步于{' '}
-                {new Date(data.syncedAt).toLocaleString()}
-              </span>
-            ) : (
-              <span>尚无库存查询快照，请等待每日 07:20 任务或在系统任务页触发。</span>
-            )}
+          <div className="text-sm">
+            <InventorySnapshotStatusLine
+              isStale={data?.isStale}
+              selectedSnapshotDate={data?.selectedSnapshotDate}
+              syncedAt={data?.syncedAt}
+              emptyMessage="尚无库存查询快照，请等待每日 07:20 任务或在系统任务页触发。"
+            />
           </div>
         </CardContent>
       </Card>
 
       <Card>
-        <CardContent className="p-0">
-          <div className="max-h-[min(70vh,720px)] overflow-x-auto overflow-y-auto overscroll-x-contain">
-            <table className="w-max min-w-full border-collapse text-sm">
-              <thead className="sticky top-0 z-10 bg-muted/95 backdrop-blur">
-                <tr>
-                  {appliedColumns.map((col) => (
-                    <th
-                      key={col}
-                      className="whitespace-nowrap border-b px-3 py-2 text-left font-medium"
-                    >
-                      {col}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {listQuery.isLoading ? (
-                  <tr>
-                    <td
-                      className="px-3 py-6 text-muted-foreground"
-                      colSpan={Math.max(appliedColumns.length, 1)}
-                    >
-                      加载中…
-                    </td>
-                  </tr>
-                ) : !data?.items.length ? (
-                  <tr>
-                    <td
-                      className="px-3 py-6 text-muted-foreground"
-                      colSpan={Math.max(appliedColumns.length, 1)}
-                    >
-                      暂无数据
-                    </td>
-                  </tr>
-                ) : (
-                  data.items.map((item) => (
-                    <tr
-                      key={item.skuCode}
-                      className="cursor-pointer border-b hover:bg-muted/40"
-                      onClick={() =>
-                        setDrawerItem({ skuCode: item.skuCode, payload: item.payload })
-                      }
-                    >
-                      {appliedColumns.map((col) => (
-                        <td key={col} className="whitespace-nowrap px-3 py-2">
-                          {item.payload[col] ?? (col === 'SKU' ? item.skuCode : '—')}
-                        </td>
-                      ))}
-                    </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
-          </div>
+        <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+          <CardTitle className="text-base">分仓明细</CardTitle>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => columnWidths.resetWidths(appliedColumns)}
+          >
+            重置列宽
+          </Button>
+        </CardHeader>
+        <CardContent className="p-0 pt-0">
+          <FeishuMirrorSnapshotTable
+            columns={appliedColumns}
+            items={data?.items ?? []}
+            loading={listQuery.isLoading}
+            getWidth={columnWidths.getWidth}
+            onResizeStart={columnWidths.onResizeStart}
+            layoutKey={columnWidths.layoutKey}
+            onRowClick={(item) => setDrawerItem({ skuCode: item.skuCode, payload: item.payload })}
+          />
           <div className="border-t p-3">
             <ListPagination
               page={page}
@@ -380,7 +358,7 @@ export function InventoryQueryPage() {
                 key={key}
                 className="grid grid-cols-[10rem_1fr] gap-2 border-b border-border/60 py-1"
               >
-                <dt className="text-muted-foreground">{key}</dt>
+                <dt className="text-text-sub">{key}</dt>
                 <dd className="break-all">{value || '—'}</dd>
               </div>
             ))}

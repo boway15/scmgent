@@ -53,6 +53,8 @@ export function SalesForecastVersionDetailPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const [selectedHorizonRow, setSelectedHorizonRow] = useState<ForecastHorizonRow | null>(null);
   const [selectedHorizonPlatform, setSelectedHorizonPlatform] = useState('ALL');
+  const [selectedHorizonSplitByRegion, setSelectedHorizonSplitByRegion] = useState(false);
+  const [selectedHorizonSalesRegions, setSelectedHorizonSalesRegions] = useState<string[]>([]);
   const [accuracyPage, setAccuracyPage] = useState(1);
   const [accuracyMissPage, setAccuracyMissPage] = useState(1);
   const [accuracyListTab, setAccuracyListTab] = useState<AccuracyListTab>('detail');
@@ -61,13 +63,6 @@ export function SalesForecastVersionDetailPage() {
   const [guardIssues, setGuardIssues] = useState<Array<{ level: string; code: string; message: string }>>([]);
   const [guardReason, setGuardReason] = useState('');
   const [publishAction, setPublishAction] = useState<'publish' | 'merge' | null>(null);
-  const [salesRegionFilter, setSalesRegionFilter] = useState<string>('');
-  const [rollupView, setRollupView] = useState<
-    | 'region_platform'
-    | 'region_all_platforms'
-    | 'all_regions_platform'
-    | 'all_regions_all_platforms'
-  >('region_platform');
 
   const { data: version, isLoading, isError } = useQuery({
     queryKey: ['sales-forecast-version', versionId],
@@ -125,11 +120,11 @@ export function SalesForecastVersionDetailPage() {
   };
 
   const { data: rollupMeta } = useQuery({
-    queryKey: ['sales-forecast-rollup', versionId, rollupView],
+    queryKey: ['sales-forecast-rollup', versionId, 'legacy'],
     queryFn: () =>
       api.getSalesForecastRollup({
         versionId,
-        rollupView,
+        rollupView: 'region_platform',
       }),
     enabled: Boolean(versionId),
     staleTime: 30_000,
@@ -300,9 +295,15 @@ export function SalesForecastVersionDetailPage() {
   const setAccuracyListPage =
     accuracyListTab === 'miss' ? setAccuracyMissPage : setAccuracyPage;
 
-  const handleSkuClick = (row: ForecastHorizonRow, ctx?: { platform: string }) => {
+  const handleSkuClick = (
+    row: ForecastHorizonRow,
+    _versionId: string,
+    ctx: { platform: string; splitByRegion: boolean; salesRegions: string[] },
+  ) => {
     setSelectedHorizonRow(row);
     setSelectedHorizonPlatform(ctx?.platform ?? row.platform ?? 'ALL');
+    setSelectedHorizonSplitByRegion(ctx?.splitByRegion ?? false);
+    setSelectedHorizonSalesRegions(ctx?.salesRegions ?? []);
   };
 
   const availableViews = useMemo(() => {
@@ -368,52 +369,6 @@ export function SalesForecastVersionDetailPage() {
           </Link>
         </div>
       </PageHeader>
-
-      <Card className="border-border/80">
-        <CardContent className="flex flex-wrap items-end gap-3 py-3 text-sm">
-          <label className="space-y-1">
-            <span className="text-xs text-text-sub">销售区域</span>
-            <select
-              className="block h-9 rounded-md border border-border bg-background px-2"
-              value={salesRegionFilter}
-              onChange={(e) => setSalesRegionFilter(e.target.value)}
-            >
-              <option value="">全部区域叶子</option>
-              {['US', 'CA', 'EU', 'UK', 'OTHER', 'UNMAPPED'].map((code) => (
-                <option key={code} value={code}>
-                  {code}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="space-y-1">
-            <span className="text-xs text-text-sub">加总视图</span>
-            <select
-              className="block h-9 rounded-md border border-border bg-background px-2"
-              value={rollupView}
-              onChange={(e) =>
-                setRollupView(
-                  e.target.value as
-                    | 'region_platform'
-                    | 'region_all_platforms'
-                    | 'all_regions_platform'
-                    | 'all_regions_all_platforms',
-                )
-              }
-            >
-              <option value="region_platform">分区域 × 分渠道</option>
-              <option value="region_all_platforms">分区域 × 全渠道</option>
-              <option value="all_regions_platform">全区域 × 分渠道</option>
-              <option value="all_regions_all_platforms">全区域 × 全渠道</option>
-            </select>
-          </label>
-          <p className="text-xs text-text-sub">
-            加总行数 {rollupMeta?.items.length ?? 0}
-            {salesRegionFilter ? ` · 筛选 ${salesRegionFilter}` : ''}
-            （明细矩阵仍按渠道展示；区域筛选供列表 API / 后续抽屉对齐）
-          </p>
-        </CardContent>
-      </Card>
 
       {pipelineBusy ? (
         <div className="rounded-md border border-violet-500/30 bg-violet-500/10 px-4 py-3 text-sm text-violet-950 dark:text-violet-100">
@@ -597,8 +552,8 @@ export function SalesForecastVersionDetailPage() {
           title={activeView === 'review' ? '复核数据矩阵' : '预测数据明细'}
           description={
             activeView === 'review'
-              ? '常规商品与 T99 在同一矩阵展示；T99 为系统保守保底（断销时为 0）；可用分层筛选或「待校准（T99）」快捷按钮定位未校准 SKU，点击 SKU 在抽屉中 AI 辅助或人工校准。'
-              : '合计为一个 SKU 一行，分平台时每个平台各一行。未来矩阵为预测日均，历史矩阵为销量折算实际日均。点击 SKU 查看当前平台的因子与逐月详情，导出与列表一致。'
+              ? '常规商品与 T99 在同一矩阵展示；T99 为系统保守保底（断销时为 0）。区域与平台一样，可合计或拆开后查询。点击 SKU 可在抽屉中校准。'
+              : '区域与平台各自合计或拆开。合计且选全部是该维度加总；分区域、分平台时每个取值各一行。点击 SKU 查看该行详情，导出与列表一致。'
           }
           onSkuClick={handleSkuClick}
           calibrationExportEnabled
@@ -819,6 +774,8 @@ export function SalesForecastVersionDetailPage() {
           setSelectedHorizonPlatform('ALL');
         }}
         calibrationEditable={version.status === 'draft'}
+        horizonSplitByRegion={selectedHorizonSplitByRegion}
+        horizonSalesRegions={selectedHorizonSalesRegions}
         forecastMonthCount={version.stats.monthCount > 0 ? version.stats.monthCount : undefined}
       />
     </div>

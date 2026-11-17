@@ -15,10 +15,16 @@ import {
   MAX_FORECAST_MONTH_COUNT,
   buildForwardMonthLabels,
   formatForecastChannelLabel,
+  formatSalesRegionLabel,
   isMergedForecastChannel,
   resolveHorizonPlatformScope,
 } from '@/lib/forecast-horizon-meta';
-import { appendPlatformBreakdownToTitle } from '@/lib/forecast-platform-breakdown';
+import {
+  CALIBRATION_LEAF_VIEW_HINT,
+  canEditForecastCalibration,
+  isMergedRegionCalibrationView,
+} from '@/lib/forecast-calibration-view';
+import { appendMergedEffectiveBreakdownToTitle } from '@/lib/forecast-platform-breakdown';
 import {
   isAllCatV41ForecastCell,
   isT99ForecastTier,
@@ -89,6 +95,12 @@ export type ForecastHorizonMonthCell = {
     manualDailyAvg: number | null;
     effectiveDailyAvg: number;
   }>;
+  regionBreakdown?: Array<{
+    salesRegion: string;
+    forecastDailyAvg: number;
+    manualDailyAvg: number | null;
+    effectiveDailyAvg: number;
+  }>;
 };
 
 export type ForecastHorizonRow = {
@@ -98,6 +110,7 @@ export type ForecastHorizonRow = {
   category: string | null;
   station: string;
   platform: string;
+  salesRegion?: string | null;
   lifecycle: string | null;
   forecastProfileClass?: string | null;
   profileSegment?: string | null;
@@ -119,6 +132,9 @@ type Props = {
   horizonPlatform?: string;
   /** 草稿复核页允许编辑校准值 */
   calibrationEditable?: boolean;
+  /** 打开抽屉时矩阵的区域展示口径（与列表一致） */
+  horizonSplitByRegion?: boolean;
+  horizonSalesRegions?: string[];
   /** 生成预测时选择的月数；用于 AI 辅助预测与明细展示，避免仅按库内已有月份推断 */
   forecastMonthCount?: number;
 };
@@ -149,6 +165,7 @@ function CalibrationCells({
   onSaved,
   systemCellTitle,
   effectiveHoverTitle,
+  readonlyHint,
 }: {
   cell: ForecastHorizonMonthCell;
   editable: boolean;
@@ -157,6 +174,8 @@ function CalibrationCells({
   systemCellTitle?: string;
   /** 合计视角悬停「生效」列展示分平台明细 */
   effectiveHoverTitle?: string;
+  /** 不可编辑时展示在「校准」列的说明 */
+  readonlyHint?: string;
 }) {
   const [manualInput, setManualInput] = useState(
     cell.manualDailyAvg != null ? String(cell.manualDailyAvg) : '',
@@ -250,8 +269,17 @@ function CalibrationCells({
     return (
       <>
         {systemCell}
-        <td className="p-2 font-numeric text-text-sub whitespace-nowrap">
-          {hasCalibration ? formatFactor(cell.manualDailyAvg) : '—'}
+        <td
+          className="p-2 font-numeric text-text-sub whitespace-nowrap"
+          title={readonlyHint}
+        >
+          {readonlyHint && !hasCalibration ? (
+            <span className="text-[10px] leading-tight text-text-sub">须分平台+分区域</span>
+          ) : hasCalibration ? (
+            formatFactor(cell.manualDailyAvg)
+          ) : (
+            '—'
+          )}
         </td>
         <td className="p-2 font-numeric whitespace-nowrap">
           <span
@@ -372,6 +400,8 @@ export function ForecastSkuDetailDrawer({
   onClose,
   horizonPlatform,
   calibrationEditable = false,
+  horizonSplitByRegion = false,
+  horizonSalesRegions = [],
   forecastMonthCount,
 }: Props) {
   const dialogRef = useRef<HTMLDialogElement>(null);
@@ -429,6 +459,7 @@ export function ForecastSkuDetailDrawer({
       resolvedSkuId,
       row?.skuCode,
       row?.station,
+      row?.salesRegion,
       platformScope,
       horizonMonthCount,
       DRAWER_HISTORY_MONTH_COUNT,
@@ -441,6 +472,8 @@ export function ForecastSkuDetailDrawer({
         skuCode: resolvedSkuId || row?.skuId ? undefined : row!.skuCode,
         station: row!.station,
         platform: platformScope,
+        salesRegion: row?.salesRegion && row.salesRegion !== 'ALL' ? row.salesRegion : undefined,
+        splitByRegion: Boolean(row?.salesRegion && row.salesRegion !== 'ALL'),
         page: 1,
         pageSize: 1,
         monthCount: horizonMonthCount,
@@ -468,7 +501,22 @@ export function ForecastSkuDetailDrawer({
       : null;
   const isLoading = detailLoading || horizonLoading;
   const versionIsDraft = horizonRowData?.version?.status === 'draft';
-  const canEditCalibration = calibrationEditable && versionIsDraft && !mergedChannelView;
+  const canEditCalibration =
+    calibrationEditable &&
+    versionIsDraft &&
+    canEditForecastCalibration({
+      mergedChannelView,
+      splitByRegion: horizonSplitByRegion,
+      salesRegions: horizonSalesRegions,
+    });
+  const mergedRegionView = isMergedRegionCalibrationView({
+    splitByRegion: horizonSplitByRegion,
+    salesRegions: horizonSalesRegions,
+  });
+  const calibrationReadonlyHint =
+    versionIsDraft && calibrationEditable && !canEditCalibration
+      ? CALIBRATION_LEAF_VIEW_HINT
+      : undefined;
   const profileSegment =
     displayRow?.profileSegment ?? detail?.context?.profileSegment ?? null;
   const monthCells = (displayRow?.months ?? []) as ForecastHorizonMonthCell[];
@@ -546,7 +594,14 @@ export function ForecastSkuDetailDrawer({
                 {displayRow.skuName || '—'}
               </h2>
               <p className="mt-1 text-sm text-text-sub">
-                {formatForecastChannelLabel(displayRow.platform)}
+                <span className="inline-flex flex-wrap items-center gap-1.5">
+                  <span className="rounded border border-border bg-muted/40 px-1.5 py-0.5 font-mono text-xs text-text-main">
+                    {formatSalesRegionLabel(displayRow.salesRegion)}
+                  </span>
+                  <span className="rounded border border-primary/30 bg-primary/5 px-1.5 py-0.5 font-mono text-xs text-primary">
+                    {formatForecastChannelLabel(displayRow.platform)}
+                  </span>
+                </span>
                 {displayRow.category ? ` · ${displayRow.category}` : ''}
                 {' · '}
                 {formatLifecycleLabel(displayRow.lifecycle)}
@@ -663,10 +718,12 @@ export function ForecastSkuDetailDrawer({
                       ? ' T99 为系统保守保底（断销时为 0）；锚定/季节/混合水平仅供诊断，与列表矩阵一致。'
                       : null}
                     {canEditCalibration
-                      ? ' 当前为草稿且为分平台视角，可编辑校准。'
-                      : mergedChannelView && versionIsDraft
-                        ? ' 合计/全平台为各渠道加总展示，不可在此编辑校准；请切换矩阵「分平台」或「导入校准」。'
-                        : ' 已发布版本只读。'}
+                      ? ' 当前为草稿，且矩阵为分平台 + 分区域，可在此编辑校准。'
+                      : calibrationReadonlyHint
+                        ? ` ${CALIBRATION_LEAF_VIEW_HINT}`
+                        : !versionIsDraft
+                          ? ' 已发布版本只读。'
+                          : null}
                     {' 已发生月份展示实际日均，便于对照生效值；未来月份为 -。'}
                   </p>
                   <div className="overflow-auto">
@@ -779,7 +836,10 @@ export function ForecastSkuDetailDrawer({
                           <ForecastColumnHeader
                             className="whitespace-nowrap"
                             label="校准"
-                            help={getForecastHorizonColumnHelp('calibration', columnHelpCtx)}
+                            help={
+                              calibrationReadonlyHint ??
+                              getForecastHorizonColumnHelp('calibration', columnHelpCtx)
+                            }
                           />
                           <ForecastColumnHeader
                             className="whitespace-nowrap"
@@ -983,13 +1043,21 @@ export function ForecastSkuDetailDrawer({
                             <CalibrationCells
                               cell={cell}
                               editable={canEditCalibration}
+                              readonlyHint={calibrationReadonlyHint}
                               onSaved={invalidateForecast}
                               systemCellTitle={v41SystemTitle}
                               effectiveHoverTitle={
-                                mergedChannelView
-                                  ? appendPlatformBreakdownToTitle(
+                                mergedChannelView || mergedRegionView
+                                  ? appendMergedEffectiveBreakdownToTitle(
                                       `合计生效 ${formatFactor(effectiveDaily(cell))}`,
-                                      cell.platformBreakdown,
+                                      {
+                                        platformBreakdown: mergedChannelView
+                                          ? cell.platformBreakdown
+                                          : undefined,
+                                        regionBreakdown: mergedRegionView
+                                          ? cell.regionBreakdown
+                                          : undefined,
+                                      },
                                     )
                                   : undefined
                               }

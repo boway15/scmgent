@@ -9,6 +9,7 @@
     "db:generate": "pnpm --filter @scm/db generate",
     "db:migrate": "pnpm --filter @scm/db migrate",
     "db:seed": "pnpm --filter @scm/db seed",
+    "region-mapping:from-xlsx": "pnpm --filter @scm/web exec node ../../scripts/gen-region-mapping-from-xlsx.mjs --sql",
     "db:seed:sql": "pnpm --filter @scm/db seed:sql",
     "miaoda:init-sql": "pnpm --filter @scm/db init:sql",
     "zip:miaoda": "pnpm db:seed:sql && pnpm miaoda:init-sql && pnpm --filter @scm/web zip:miaoda",

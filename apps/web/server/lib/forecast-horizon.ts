@@ -1,4 +1,4 @@
-import { and, asc, eq, ilike, inArray, sql, type SQL } from 'drizzle-orm';
+import { and, asc, eq, ilike, inArray, ne, sql, type SQL } from 'drizzle-orm';
 import { db, salesForecastMonthly, skus } from '@scm/db';
 import {
   buildMonthlyForecastHorizon,
@@ -341,6 +341,14 @@ export type ForecastPlatformDailyBreakdown = {
   effectiveDailyAvg: number;
 };
 
+/** 合区域视角悬停：各销售区域系统/校准/生效日均（同月多区域叶子加总） */
+export type ForecastRegionDailyBreakdown = {
+  salesRegion: string;
+  forecastDailyAvg: number;
+  manualDailyAvg: number | null;
+  effectiveDailyAvg: number;
+};
+
 export type ForecastHorizonCell = {
   id: string;
   forecastYear: number;
@@ -376,6 +384,8 @@ export type ForecastHorizonCell = {
   aiAssistMode?: 'auto' | 'human' | null;
   /** 多平台合计时各渠道生效明细（矩阵/抽屉悬停） */
   platformBreakdown?: ForecastPlatformDailyBreakdown[];
+  /** 合区域时各销售区域生效明细（矩阵/抽屉悬停） */
+  regionBreakdown?: ForecastRegionDailyBreakdown[];
 };
 
 export type ForecastHistoryCell = {
@@ -393,6 +403,8 @@ export type ForecastHorizonRow = {
   category: string | null;
   station: string;
   platform: string;
+  /** 销售区域。ALL 表示全区域加总或迁移前全站口径 */
+  salesRegion: string;
   lifecycle: string | null;
   forecastProfileClass: string | null;
   profileSegment: string | null;
@@ -439,7 +451,80 @@ type ForecastIdentity = {
   category: string | null;
   station: string;
   platform: string;
+  salesRegion?: string;
 };
+
+type ForecastRegionScope = {
+  /** 指定区域时只读这些区域叶子；空表示不按区域缩小 */
+  filterRegions: string[];
+  /** 版本已有区域叶子时，加总排除遗留 sales_region=ALL，避免和分区域行双计 */
+  hideLegacyAll: boolean;
+};
+
+function normalizeRegionCodes(regions?: string[]): string[] {
+  return [
+    ...new Set(
+      (regions ?? [])
+        .map((code) => code.trim().toUpperCase())
+        .filter(Boolean),
+    ),
+  ];
+}
+
+async function resolveForecastRegionScope(
+  versionId: string,
+  salesRegions?: string[],
+): Promise<ForecastRegionScope> {
+  const filterRegions = normalizeRegionCodes(salesRegions);
+  if (filterRegions.length) return { filterRegions, hideLegacyAll: false };
+  const sample = await db
+    .select({ id: salesForecastMonthly.id })
+    .from(salesForecastMonthly)
+    .where(
+      and(
+        eq(salesForecastMonthly.versionId, versionId),
+        ne(salesForecastMonthly.salesRegion, 'ALL'),
+      ),
+    )
+    .limit(1);
+  return { filterRegions: [], hideLegacyAll: sample.length > 0 };
+}
+
+function regionScopeCondition(scope: ForecastRegionScope): SQL | undefined {
+  if (scope.filterRegions.length === 1) {
+    return eq(salesForecastMonthly.salesRegion, scope.filterRegions[0]!);
+  }
+  if (scope.filterRegions.length > 1) {
+    return inArray(salesForecastMonthly.salesRegion, scope.filterRegions);
+  }
+  if (scope.hideLegacyAll) return ne(salesForecastMonthly.salesRegion, 'ALL');
+  return undefined;
+}
+
+function pushRegionScope(conditions: SQL[], scope: ForecastRegionScope) {
+  const condition = regionScopeCondition(scope);
+  if (condition) conditions.push(condition);
+}
+
+function displayedSalesRegion(
+  splitByRegion: boolean,
+  identityRegion: string | null | undefined,
+  scope: ForecastRegionScope,
+): string {
+  if (splitByRegion) return identityRegion || 'ALL';
+  if (scope.filterRegions.length === 1) return scope.filterRegions[0]!;
+  return 'ALL';
+}
+
+function horizonIdentityKey(input: {
+  skuId: string;
+  platform: string;
+  salesRegion?: string | null;
+  splitByRegion: boolean;
+}): string {
+  if (!input.splitByRegion) return `${input.skuId}::${input.platform}`;
+  return `${input.skuId}::${input.platform}::${input.salesRegion || 'ALL'}`;
+}
 
 function numericOrNull(value: string | number | null | undefined): number | null {
   if (value == null) return null;
@@ -816,6 +901,7 @@ type ForecastDetailRow = {
   id: string;
   skuId: string;
   station: string;
+  salesRegion?: string | null;
   platform: string;
   forecastYear: number;
   month: number;
@@ -857,6 +943,44 @@ function resolveAnchorForecastDetailRow(rows: ForecastDetailRow[]): ForecastDeta
   if (!firstMonth) return null;
   const anchorRows = rows.filter((row) => isSameForecastMonth(row, firstMonth));
   return pickPrimaryForecastDetailRow(anchorRows);
+}
+
+function buildRegionBreakdownFromRows(
+  rows: ForecastDetailRow[],
+): ForecastRegionDailyBreakdown[] | undefined {
+  const byRegion = new Map<string, { forecast: number; manual: number; effective: number; hasManual: boolean }>();
+  for (const row of rows) {
+    const region = (row.salesRegion ?? 'ALL').trim().toUpperCase();
+    if (!region || region === 'ALL') continue;
+    const daily = mapForecastDailyFields({
+      forecastDailyAvg: row.forecastDailyAvg,
+      manualDailyAvg: row.manualDailyAvg,
+    });
+    const bucket = byRegion.get(region) ?? {
+      forecast: 0,
+      manual: 0,
+      effective: 0,
+      hasManual: false,
+    };
+    bucket.forecast += daily.forecastDailyAvg;
+    bucket.effective += daily.effectiveDailyAvg;
+    if (daily.manualDailyAvg != null) {
+      bucket.hasManual = true;
+      bucket.manual += daily.manualDailyAvg;
+    }
+    byRegion.set(region, bucket);
+  }
+  if (byRegion.size <= 1) return undefined;
+  return [...byRegion.entries()]
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([salesRegion, bucket]) => ({
+      salesRegion,
+      forecastDailyAvg: Math.round(bucket.forecast * 10_000) / 10_000,
+      manualDailyAvg: bucket.hasManual
+        ? Math.round(bucket.manual * 10_000) / 10_000
+        : null,
+      effectiveDailyAvg: Math.round(bucket.effective * 10_000) / 10_000,
+    }));
 }
 
 function aggregateHorizonCellsForIdentity(input: {
@@ -957,6 +1081,8 @@ function aggregateHorizonCellsForIdentity(input: {
           })
         : undefined;
 
+    const regionBreakdown = buildRegionBreakdownFromRows(monthRows);
+
     const aiAssist = parseAiAssistMeta(primaryRow.horizonFactors);
     const forecastDailyP10 = sumNullableDaily(monthRows, 'forecastDailyP10');
     const forecastDailyP90 = sumNullableDaily(monthRows, 'forecastDailyP90');
@@ -972,6 +1098,7 @@ function aggregateHorizonCellsForIdentity(input: {
       forecastDailyP50: forecastDailyAvg,
       forecastDailyP90,
       platformBreakdown,
+      regionBreakdown,
       adjustReason: primaryRow.adjustReason ?? null,
       baselineDailyAvg,
       lifecycle: primaryRow.lifecycle,
@@ -1012,6 +1139,8 @@ async function listForecastHorizonAggregated(input: {
   version: Awaited<ReturnType<typeof getForecastVersionById>>;
   productScope: ProductScope;
   projectGroupScope?: ProjectGroupScope;
+  regionScope: ForecastRegionScope;
+  splitByRegion: boolean;
 }): Promise<ForecastHorizonResult> {
   const stationFilter = normalizeForecastStation(input.station);
   const conditions = [
@@ -1020,6 +1149,7 @@ async function listForecastHorizonAggregated(input: {
     eq(salesForecastMonthly.station, stationFilter),
     productScopeSql(input.productScope),
   ];
+  pushRegionScope(conditions, input.regionScope);
   pushSkuProjectGroupScope(conditions, input.projectGroupScope);
   if (input.skuId?.trim()) {
     conditions.push(eq(salesForecastMonthly.skuId, input.skuId.trim()));
@@ -1074,18 +1204,21 @@ async function listForecastHorizonAggregated(input: {
     skuCode: string;
     skuName: string;
     category: string | null;
+    salesRegion: string | null;
   }>(sql`
     SELECT
       matched.sku_id AS "skuId",
       matched.sku_code AS "skuCode",
       matched.sku_name AS "skuName",
-      matched.category AS "category"
+      matched.category AS "category",
+      matched.sales_region AS "salesRegion"
     FROM (
       SELECT DISTINCT
         ${salesForecastMonthly.skuId} AS sku_id,
         ${skus.code} AS sku_code,
         ${skus.name} AS sku_name,
-        ${skus.category} AS category
+        ${skus.category} AS category,
+        ${input.splitByRegion ? salesForecastMonthly.salesRegion : sql`'ALL'`} AS sales_region
       FROM ${salesForecastMonthly}
       INNER JOIN ${skus} ON ${eq(skus.id, salesForecastMonthly.skuId)}
       WHERE ${where}
@@ -1098,7 +1231,8 @@ async function listForecastHorizonAggregated(input: {
           skuIdExpr: sql`matched.sku_id`,
         }),
       )} ASC,
-      matched.sku_code ASC
+      matched.sku_code ASC,
+      matched.sales_region ASC
     LIMIT ${input.pageSize}
     OFFSET ${input.offset}
   `);
@@ -1107,7 +1241,9 @@ async function listForecastHorizonAggregated(input: {
   const [countRow, monthLabelRows, seasonalityLookup] = await Promise.all([
     db
       .select({
-        count: sql<number>`count(distinct ${salesForecastMonthly.skuId})::int`,
+        count: input.splitByRegion
+          ? sql<number>`count(distinct (${salesForecastMonthly.skuId}, ${salesForecastMonthly.salesRegion}))::int`
+          : sql<number>`count(distinct ${salesForecastMonthly.skuId})::int`,
       })
       .from(salesForecastMonthly)
       .innerJoin(skus, eq(skus.id, salesForecastMonthly.skuId))
@@ -1155,13 +1291,23 @@ async function listForecastHorizonAggregated(input: {
   }
 
   const skuIds = Array.from(new Set(identityRows.map((row) => row.skuId)));
-  const identityKeySet = new Set(identityRows.map((row) => row.skuId));
+  const identityKeySet = new Set(
+    identityRows.map((row) =>
+      horizonIdentityKey({
+        skuId: row.skuId,
+        platform: 'ALL',
+        salesRegion: row.salesRegion,
+        splitByRegion: input.splitByRegion,
+      }),
+    ),
+  );
 
   const detailRows = await db
     .select({
       id: salesForecastMonthly.id,
       skuId: salesForecastMonthly.skuId,
       station: salesForecastMonthly.station,
+      salesRegion: salesForecastMonthly.salesRegion,
       platform: salesForecastMonthly.platform,
       forecastYear: salesForecastMonthly.forecastYear,
       month: salesForecastMonthly.month,
@@ -1189,11 +1335,21 @@ async function listForecastHorizonAggregated(input: {
         eq(salesForecastMonthly.station, stationFilter),
         inArray(salesForecastMonthly.skuId, skuIds),
         inArray(salesForecastMonthly.platform, [...FORECAST_V41_PLATFORM_CODES]),
+        regionScopeCondition(input.regionScope),
       ),
     )
     .orderBy(asc(skus.code), asc(salesForecastMonthly.forecastYear), asc(salesForecastMonthly.month));
 
-  const filteredDetailRows = detailRows.filter((row) => identityKeySet.has(row.skuId));
+  const filteredDetailRows = detailRows.filter((row) =>
+    identityKeySet.has(
+      horizonIdentityKey({
+        skuId: row.skuId,
+        platform: 'ALL',
+        salesRegion: row.salesRegion,
+        splitByRegion: input.splitByRegion,
+      }),
+    ),
+  );
 
   const historyQtyBySku = historyHorizon.length
     ? await loadHistoryQtyAggregated({ skuIds, historyHorizon })
@@ -1206,7 +1362,12 @@ async function listForecastHorizonAggregated(input: {
   >();
 
   for (const row of filteredDetailRows) {
-    const key = row.skuId;
+    const key = horizonIdentityKey({
+      skuId: row.skuId,
+      platform: 'ALL',
+      salesRegion: row.salesRegion,
+      splitByRegion: input.splitByRegion,
+    });
     const list = rowsByIdentity.get(key) ?? [];
     list.push(row);
     rowsByIdentity.set(key, list);
@@ -1223,7 +1384,12 @@ async function listForecastHorizonAggregated(input: {
   }
 
   const items: ForecastHorizonRow[] = identityRows.map((identity) => {
-    const key = identity.skuId;
+    const key = horizonIdentityKey({
+      skuId: identity.skuId,
+      platform: 'ALL',
+      salesRegion: identity.salesRegion,
+      splitByRegion: input.splitByRegion,
+    });
     const platformRows = rowsByIdentity.get(key) ?? [];
     const months = aggregateHorizonCellsForIdentity({
       rows: platformRows,
@@ -1243,6 +1409,7 @@ async function listForecastHorizonAggregated(input: {
       category: identity.category,
       station: FORECAST_GLOBAL_STATION,
       platform: 'ALL',
+      salesRegion: displayedSalesRegion(input.splitByRegion, identity.salesRegion, input.regionScope),
       lifecycle,
       forecastProfileClass: profile?.forecastProfileClass ?? null,
       profileSegment: profile?.profileSegment ?? null,
@@ -1291,6 +1458,11 @@ export async function listForecastHorizon(input: {
   asOf?: Date;
   productScope?: ProductScope;
   projectGroupScope?: ProjectGroupScope;
+  salesRegion?: string;
+  /** 与平台多选相同：分区域时列出这些区域；空表示全部区域 */
+  salesRegions?: string[];
+  /** 分区域：每个销售区域一行；否则把区域叶子加总成一行 */
+  splitByRegion?: boolean;
 }): Promise<ForecastHorizonResult> {
   const productScope = parseProductScope(input.productScope);
   const page = Math.max(1, input.page ?? 1);
@@ -1327,6 +1499,11 @@ export async function listForecastHorizon(input: {
   const versionId = explicitVersionId;
   const version = await getForecastVersionById(versionId);
   const stationFilter = normalizeForecastStation(input.station);
+  const regionScope = await resolveForecastRegionScope(versionId, [
+    ...(input.salesRegions ?? []),
+    ...(input.salesRegion ? [input.salesRegion] : []),
+  ]);
+  const splitByRegion = input.splitByRegion === true;
 
   const categoryFilters = resolveCategoryFilters({
     category: input.category,
@@ -1355,6 +1532,8 @@ export async function listForecastHorizon(input: {
       version,
       productScope,
       projectGroupScope: input.projectGroupScope,
+      regionScope,
+      splitByRegion,
     });
   }
 
@@ -1385,6 +1564,7 @@ export async function listForecastHorizon(input: {
     inArray(salesForecastMonthly.platform, platforms),
     productScopeSql(productScope),
   ];
+  pushRegionScope(conditions, regionScope);
   pushSkuProjectGroupScope(conditions, input.projectGroupScope);
   if (input.skuId?.trim()) {
     conditions.push(eq(salesForecastMonthly.skuId, input.skuId.trim()));
@@ -1409,20 +1589,23 @@ export async function listForecastHorizon(input: {
     skuName: string;
     category: string | null;
     platform: string;
+    salesRegion: string | null;
   }>(sql`
     SELECT
       matched.sku_id AS "skuId",
       matched.sku_code AS "skuCode",
       matched.sku_name AS "skuName",
       matched.category AS "category",
-      matched.platform AS "platform"
+      matched.platform AS "platform",
+      matched.sales_region AS "salesRegion"
     FROM (
       SELECT DISTINCT
         ${salesForecastMonthly.skuId} AS sku_id,
         ${skus.code} AS sku_code,
         ${skus.name} AS sku_name,
         ${skus.category} AS category,
-        ${salesForecastMonthly.platform} AS platform
+        ${salesForecastMonthly.platform} AS platform,
+        ${splitByRegion ? salesForecastMonthly.salesRegion : sql`'ALL'`} AS sales_region
       FROM ${salesForecastMonthly}
       INNER JOIN ${skus} ON ${eq(skus.id, salesForecastMonthly.skuId)}
       WHERE ${where}
@@ -1437,6 +1620,7 @@ export async function listForecastHorizon(input: {
         }),
       )} ASC,
       matched.sku_code ASC,
+      matched.sales_region ASC,
       matched.platform ASC
     LIMIT ${pageSize}
     OFFSET ${offset}
@@ -1446,7 +1630,9 @@ export async function listForecastHorizon(input: {
   const [countRow, monthLabelRows, seasonalityLookup] = await Promise.all([
     db
       .select({
-        count: sql<number>`count(distinct (${salesForecastMonthly.skuId}, ${salesForecastMonthly.platform}))::int`,
+        count: splitByRegion
+          ? sql<number>`count(distinct (${salesForecastMonthly.skuId}, ${salesForecastMonthly.platform}, ${salesForecastMonthly.salesRegion}))::int`
+          : sql<number>`count(distinct (${salesForecastMonthly.skuId}, ${salesForecastMonthly.platform}))::int`,
       })
       .from(salesForecastMonthly)
       .innerJoin(skus, eq(skus.id, salesForecastMonthly.skuId))
@@ -1494,8 +1680,11 @@ export async function listForecastHorizon(input: {
     };
   }
 
+  const rowKeyOf = (skuId: string, platform: string, salesRegion?: string | null) =>
+    horizonIdentityKey({ skuId, platform, salesRegion, splitByRegion });
+
   const identityKeySet = new Set(
-    identityRows.map((row) => `${row.skuId}::${row.platform}`),
+    identityRows.map((row) => rowKeyOf(row.skuId, row.platform, row.salesRegion)),
   );
   const skuIds = Array.from(new Set(identityRows.map((row) => row.skuId)));
 
@@ -1504,6 +1693,7 @@ export async function listForecastHorizon(input: {
       id: salesForecastMonthly.id,
       skuId: salesForecastMonthly.skuId,
       station: salesForecastMonthly.station,
+      salesRegion: salesForecastMonthly.salesRegion,
       platform: salesForecastMonthly.platform,
       forecastYear: salesForecastMonthly.forecastYear,
       month: salesForecastMonthly.month,
@@ -1531,79 +1721,33 @@ export async function listForecastHorizon(input: {
         eq(salesForecastMonthly.station, stationFilter),
         inArray(salesForecastMonthly.skuId, skuIds),
         inArray(salesForecastMonthly.platform, platforms),
+        regionScopeCondition(regionScope),
       ),
     )
     .orderBy(asc(skus.code), asc(salesForecastMonthly.forecastYear), asc(salesForecastMonthly.month));
 
   const [filteredDetailRows, historyQtyBySkuPlatform] = await Promise.all([
     Promise.resolve(
-      detailRows.filter((row) => identityKeySet.has(`${row.skuId}::${row.platform}`)),
+      detailRows.filter((row) =>
+        identityKeySet.has(rowKeyOf(row.skuId, row.platform, row.salesRegion)),
+      ),
     ),
     historyHorizon.length
       ? loadHistoryQtyBySkuPlatform({ identities: identityRows, historyHorizon })
       : Promise.resolve(new Map<string, Map<string, number>>()),
   ]);
 
-  const cellsByIdentity = new Map<string, ForecastHorizonCell[]>();
-  const metaByIdentity = new Map<string, ForecastIdentity>();
   const profileByIdentity = new Map<
     string,
     { forecastProfileClass: string | null; profileSegment: string | null }
   >();
   const detailRowsByIdentity = new Map<string, ForecastDetailRow[]>();
 
-  for (const row of identityRows) {
-    const key = `${row.skuId}::${row.platform}`;
-    metaByIdentity.set(key, { ...row, station: FORECAST_GLOBAL_STATION });
-    cellsByIdentity.set(key, []);
-    detailRowsByIdentity.set(key, []);
-  }
-
   for (const row of filteredDetailRows) {
-    const key = `${row.skuId}::${row.platform}`;
-    detailRowsByIdentity.get(key)?.push(row);
-    const dailyFields = mapForecastDailyFields({
-      forecastDailyAvg: row.forecastDailyAvg,
-      manualDailyAvg: row.manualDailyAvg,
-    });
-    const forecastDailyAvg = dailyFields.forecastDailyAvg;
-    const baselineDailyAvg = numericOrNull(row.baselineDailyAvg);
-    const categoryFactors = buildCategoryFactors(seasonalityLookup, row.category, row.month);
-
-    const aiAssist = parseAiAssistMeta(row.horizonFactors);
-    const forecastDailyP10 = numericOrNull(row.forecastDailyP10 ?? null);
-    const forecastDailyP90 = numericOrNull(row.forecastDailyP90 ?? null);
-    cellsByIdentity.get(key)?.push({
-      id: row.id,
-      forecastYear: row.forecastYear,
-      month: row.month,
-      monthLabel: formatForecastMonth(row.forecastYear, row.month),
-      forecastDailyAvg,
-      manualDailyAvg: dailyFields.manualDailyAvg,
-      effectiveDailyAvg: dailyFields.effectiveDailyAvg,
-      forecastDailyP10,
-      forecastDailyP50: forecastDailyAvg,
-      forecastDailyP90,
-      adjustReason: row.adjustReason ?? null,
-      baselineDailyAvg,
-      lifecycle: row.lifecycle,
-      confidenceLevel: row.confidenceLevel,
-      skuTrendFactor: deriveSkuTrendFactor({
-        forecastDailyAvg,
-        baselineDailyAvg,
-        categoryCombinedFactor: categoryFactors.categoryCombinedFactor,
-      }),
-      seasonalityFactor: categoryFactors.seasonalityFactor,
-      trendFactor: categoryFactors.trendFactor,
-      categoryCombinedFactor: categoryFactors.categoryCombinedFactor,
-      categoryTrendWasClipped: categoryFactors.categoryTrendWasClipped,
-      categoryTrendMatched: categoryFactors.categoryTrendMatched,
-      horizonFactors: parseHorizonFactors(row.horizonFactors),
-      allCatV41Factors: parseAllCatV41HorizonFactors(row.horizonFactors),
-      forecastModel: row.forecastModel ?? null,
-      aiAssistRationale: aiAssist.tooltip,
-      aiAssistMode: aiAssist.assistMode,
-    });
+    const key = rowKeyOf(row.skuId, row.platform, row.salesRegion);
+    const list = detailRowsByIdentity.get(key) ?? [];
+    list.push(row);
+    detailRowsByIdentity.set(key, list);
   }
 
   for (const [key, identityRowsForKey] of detailRowsByIdentity) {
@@ -1617,15 +1761,14 @@ export async function listForecastHorizon(input: {
   }
 
   const items: ForecastHorizonRow[] = identityRows.map((identity) => {
-    const key = `${identity.skuId}::${identity.platform}`;
-    const months = cellsByIdentity.get(key) ?? [];
-    const lifecycle = months.find((cell) => cell.lifecycle)?.lifecycle ?? null;
-    const monthByLabel = new Map(months.map((cell) => [cell.monthLabel, cell]));
-    const orderedMonths = horizon.map(
-      (h) =>
-        monthByLabel.get(h.monthLabel) ??
-        buildPlaceholderHorizonCell(h, identity.category, seasonalityLookup),
-    );
+    const key = rowKeyOf(identity.skuId, identity.platform, identity.salesRegion);
+    const orderedMonths = aggregateHorizonCellsForIdentity({
+      rows: detailRowsByIdentity.get(key) ?? [],
+      horizon,
+      category: identity.category,
+      seasonalityLookup,
+    });
+    const lifecycle = orderedMonths.find((cell) => cell.lifecycle)?.lifecycle ?? null;
 
     const historyKey = `${normalizeSalesPlatform(identity.platform)}::${identity.skuId}`;
     const qtyByMonth = historyQtyBySkuPlatform.get(historyKey) ?? new Map<string, number>();
@@ -1639,6 +1782,7 @@ export async function listForecastHorizon(input: {
       category: identity.category,
       station: FORECAST_GLOBAL_STATION,
       platform: identity.platform,
+      salesRegion: displayedSalesRegion(splitByRegion, identity.salesRegion, regionScope),
       lifecycle,
       forecastProfileClass: profile?.forecastProfileClass ?? null,
       profileSegment: profile?.profileSegment ?? null,

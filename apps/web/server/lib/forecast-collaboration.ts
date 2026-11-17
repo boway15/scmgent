@@ -99,14 +99,16 @@ import {
   stationForWarehouse,
 } from './forecast-demand.js';
 import {
+  filterDailySalesMapByRegion,
   loadDailySalesBySkuIdsInRange,
+  type DailySalesPoint,
 } from './sales-history-query.js';
 import {
   buildSalesRegionBuckets,
   deriveMonthlyQtyFromDaily,
   firstSaleDateFromRows,
 } from './forecast-region-partition.js';
-import { loadRegionMappingTables } from './region-mapping.js';
+import { loadRegionMappingTables, type RegionMappingTables, type RuntimeRegion } from './region-mapping.js';
 import type { MonthlyTrendRow } from './sales-report-parser.js';
 import {
   emptyEligibilityStats,
@@ -1076,6 +1078,9 @@ async function generateBaselineForPlatformRegions(input: {
   let totalReviewRows = 0;
   const mergedEligibilityStats = emptyEligibilityStats();
   const generatedRegions: string[] = [];
+  const regionMappingTables = await loadRegionMappingTables(db);
+  let platformDailyUnfiltered: Map<string, DailySalesPoint[]> | undefined;
+  let platformDailyAllUnfiltered: Map<string, DailySalesPoint[]> | undefined;
 
   for (let regionIndex = 0; regionIndex < input.regionBuckets.length; regionIndex++) {
     const bucket = input.regionBuckets[regionIndex]!;
@@ -1086,6 +1091,13 @@ async function generateBaselineForPlatformRegions(input: {
       region: bucket.region,
       stationIn: bucket.stationIn,
       stationNotIn: bucket.stationNotIn,
+      regionMappingTables,
+      platformDailyUnfiltered,
+      platformDailyAllUnfiltered,
+      onPlatformDailyLoaded: (maps) => {
+        platformDailyUnfiltered = maps.daily;
+        platformDailyAllUnfiltered = maps.dailyAll;
+      },
       existingVersionId: versionId ?? lastResult?.version.id,
       purgeSkuScope: Boolean(input.purgeSkuScope) && regionIndex === 0,
       purgePlatformScope: regionIndex === 0 ? input.purgePlatformScope : undefined,
@@ -1144,6 +1156,13 @@ async function generateBaselineForStationPlatform(input: {
   stationIn?: string[];
   /** 排除这些站点（用于 UNMAPPED 桶） */
   stationNotIn?: string[];
+  regionMappingTables?: RegionMappingTables;
+  platformDailyUnfiltered?: Map<string, DailySalesPoint[]>;
+  platformDailyAllUnfiltered?: Map<string, DailySalesPoint[]>;
+  onPlatformDailyLoaded?: (maps: {
+    daily: Map<string, DailySalesPoint[]>;
+    dailyAll: Map<string, DailySalesPoint[]>;
+  }) => void;
 }) {
   const station = resolveForecastGenerationStation(input.station);
   const platform = normalizeSalesPlatform(input.platform);
@@ -1307,25 +1326,76 @@ async function generateBaselineForStationPlatform(input: {
     stationIn: input.stationIn,
     stationNotIn: input.stationNotIn,
   };
-  const [loadedDailyBySku, firstSaleBySku, dailyAllBySku] = await Promise.all([
-    loadDailySalesBySkuIdsInRange({
-      skuIds,
-      fromDate: lookbackFrom,
-      toDate: lookbackTo,
-      platform,
-      ...stationFilter,
-    }),
-    Promise.resolve(new Map<string, string | null>()),
-    useAllCatV41
-      ? loadDailySalesBySkuIdsInRange({
-          skuIds,
-          fromDate: lookbackFrom,
-          toDate: lookbackTo,
-          platform: 'ALL',
-          ...stationFilter,
-        })
-      : Promise.resolve(new Map()),
-  ]);
+  const tables = input.regionMappingTables ?? (await loadRegionMappingTables(db));
+  const regionLeafMode = salesRegion !== 'ALL';
+
+  let loadedDailyBySku: Map<string, DailySalesPoint[]>;
+  let dailyAllBySku: Map<string, DailySalesPoint[]>;
+
+  if (regionLeafMode) {
+    const regionCode = salesRegion as RuntimeRegion;
+  const loadFullDailyMaps = async () => {
+    const [daily, dailyAll] = await Promise.all([
+      loadDailySalesBySkuIdsInRange({
+        skuIds,
+        fromDate: lookbackFrom,
+        toDate: lookbackTo,
+        platform,
+      }),
+      useAllCatV41
+        ? loadDailySalesBySkuIdsInRange({
+            skuIds,
+            fromDate: lookbackFrom,
+            toDate: lookbackTo,
+            platform: 'ALL',
+          })
+        : Promise.resolve(new Map<string, DailySalesPoint[]>()),
+    ]);
+    input.onPlatformDailyLoaded?.({ daily, dailyAll });
+    return { daily, dailyAll };
+  };
+
+  if (input.platformDailyUnfiltered) {
+    loadedDailyBySku = filterDailySalesMapByRegion(
+      input.platformDailyUnfiltered,
+      regionCode,
+      tables,
+    );
+    dailyAllBySku =
+      useAllCatV41 && input.platformDailyAllUnfiltered
+        ? filterDailySalesMapByRegion(input.platformDailyAllUnfiltered, regionCode, tables)
+        : new Map<string, DailySalesPoint[]>();
+  } else {
+    const { daily, dailyAll } = await loadFullDailyMaps();
+    loadedDailyBySku = filterDailySalesMapByRegion(daily, regionCode, tables);
+    dailyAllBySku = useAllCatV41
+      ? filterDailySalesMapByRegion(dailyAll, regionCode, tables)
+      : new Map<string, DailySalesPoint[]>();
+  }
+  } else {
+    const [loaded, dailyAll] = await Promise.all([
+      loadDailySalesBySkuIdsInRange({
+        skuIds,
+        fromDate: lookbackFrom,
+        toDate: lookbackTo,
+        platform,
+        ...stationFilter,
+      }),
+      useAllCatV41
+        ? loadDailySalesBySkuIdsInRange({
+            skuIds,
+            fromDate: lookbackFrom,
+            toDate: lookbackTo,
+            platform: 'ALL',
+            ...stationFilter,
+          })
+        : Promise.resolve(new Map<string, DailySalesPoint[]>()),
+    ]);
+    loadedDailyBySku = loaded;
+    dailyAllBySku = dailyAll;
+  }
+
+  const firstSaleBySku = new Map<string, string | null>();
 
   // 区域桶：从日销按 (saleYear, month) 派生月序列（sales_history_monthly 缺 station 列）
   const monthlyBySku = new Map<string, Array<{ saleYear: number; month: number; qtySold: number }>>();

@@ -4937,6 +4937,9 @@ export const api = {
     platform?: string;
     platforms?: string[];
     channelView?: 'merged' | 'by_channel';
+    salesRegion?: string;
+    salesRegions?: string[];
+    splitByRegion?: boolean;
     skuId?: string;
     skuCode?: string;
     category?: string;
@@ -4954,6 +4957,9 @@ export const api = {
     if (params?.station) qs.set('station', params.station);
     if (params?.platform != null && params.platform !== '') qs.set('platform', params.platform);
     if (params?.channelView) qs.set('channelView', params.channelView);
+    if (params?.salesRegion) qs.set('salesRegion', params.salesRegion);
+    appendRepeatedQuery(qs, 'salesRegions', params?.salesRegions);
+    if (params?.splitByRegion) qs.set('splitByRegion', '1');
     appendRepeatedQuery(qs, 'platforms', params?.platforms);
     if (params?.skuId) qs.set('skuId', params.skuId);
     if (params?.skuCode) qs.set('skuCode', params.skuCode);
@@ -4977,6 +4983,7 @@ export const api = {
         category: string | null;
         station: string;
         platform: string;
+        salesRegion?: string;
         lifecycle: string | null;
         forecastProfileClass?: string | null;
         profileSegment?: string | null;
@@ -5037,6 +5044,9 @@ export const api = {
     platform?: string;
     platforms?: string[];
     channelView?: 'merged' | 'by_channel';
+    salesRegion?: string;
+    salesRegions?: string[];
+    splitByRegion?: boolean;
     skuCode?: string;
     category?: string;
     categories?: string[];
@@ -5052,6 +5062,9 @@ export const api = {
     if (params.station) qs.set('station', params.station);
     if (params.platform != null && params.platform !== '') qs.set('platform', params.platform);
     if (params.channelView) qs.set('channelView', params.channelView);
+    if (params.salesRegion) qs.set('salesRegion', params.salesRegion);
+    appendRepeatedQuery(qs, 'salesRegions', params.salesRegions);
+    if (params.splitByRegion) qs.set('splitByRegion', '1');
     appendRepeatedQuery(qs, 'platforms', params.platforms);
     if (params.skuCode) qs.set('skuCode', params.skuCode);
     appendRepeatedQuery(qs, 'categories', params.categories);

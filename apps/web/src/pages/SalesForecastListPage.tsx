@@ -24,8 +24,26 @@ import {
   sleep,
   buildForecastVersionDetailSearch,
 } from '@/lib/forecast-version-utils';
+import { StickyDataTable, type StickyColumnDef } from '@/components/StickyDataTable';
+import { useResizableColumnWidths } from '@/hooks/use-resizable-column-widths';
+import {
+  defaultSalesForecastVersionColumnWidth,
+  loadSalesForecastVersionColumnWidths,
+  saveSalesForecastVersionColumnWidths,
+} from '@/lib/sales-forecast-version-column-widths';
+
 type ListTab = 'versions' | 'strategy';
 type StatusFilter = 'all' | 'draft' | 'published' | 'archived';
+
+const FORECAST_VERSION_COLUMNS: StickyColumnDef[] = [
+  { id: 'version', label: '版本', flexGrow: true },
+  { id: 'status', label: '状态' },
+  { id: 'horizon', label: '开始月 / 月数' },
+  { id: 'counts', label: 'SKU / 行数' },
+  { id: 'creator', label: '创建人' },
+  { id: 'timestamps', label: '创建 / 发布', flexGrow: true },
+  { id: 'actions', label: '操作', flexGrow: true },
+];
 
 function splitGenerationSkuCodes(raw: string): string[] {
   return [
@@ -44,6 +62,15 @@ const LIST_TAB_LABEL: Record<ListTab, string> = {
 };
 
 export function SalesForecastListPage() {
+  const columnWidths = useResizableColumnWidths({
+    storageKey: 'scm.sales-forecast.version-column-widths-v2',
+    loadWidths: loadSalesForecastVersionColumnWidths,
+    saveWidths: saveSalesForecastVersionColumnWidths,
+    defaultColumnWidth: defaultSalesForecastVersionColumnWidth,
+    maxWidth: 360,
+    legacyStorageKeys: ['scm.sales-forecast.version-column-widths-v1'],
+    columnIds: FORECAST_VERSION_COLUMNS.map((c) => c.id),
+  });
   const qc = useQueryClient();
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -479,7 +506,7 @@ export function SalesForecastListPage() {
           <Card>
             <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-2 space-y-0">
               <CardTitle>预测版本</CardTitle>
-              <div className="flex flex-wrap gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 {(['all', 'draft', 'published', 'archived'] as StatusFilter[]).map((filter) => (
                   <Button
                     key={filter}
@@ -496,6 +523,9 @@ export function SalesForecastListPage() {
                           : '已归档'}
                   </Button>
                 ))}
+                <Button variant="ghost" size="sm" className="h-8" onClick={() => columnWidths.resetWidths()}>
+                  重置列宽
+                </Button>
               </div>
             </CardHeader>
             <CardContent>
@@ -515,43 +545,34 @@ export function SalesForecastListPage() {
               )}
               {isLoading ? (
                 <p className="text-sm text-text-sub">加载中…</p>
-              ) : versions.length === 0 ? (
-                <p className="text-sm text-text-sub">暂无预测版本，请先生成草稿。</p>
               ) : (
-                <div className="overflow-auto">
-                  <table className="min-w-full text-sm">
-                    <thead>
-                      <tr className="border-b border-border text-left text-text-sub">
-                        <th className="p-2 font-normal">版本</th>
-                        <th className="p-2 font-normal">状态</th>
-                        <th className="p-2 font-normal">开始月 / 月数</th>
-                        <th className="p-2 font-normal">SKU / 行数</th>
-                        <th className="p-2 font-normal">创建人</th>
-                        <th className="p-2 font-normal">创建 / 发布</th>
-                        <th className="p-2 font-normal">操作</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {versions.map((version) => (
-                        <VersionRow
-                          key={version.id}
-                          version={version}
-                          deleting={deleteDraftVersion.isPending && deleteDraftVersion.variables === version.id}
-                          onDelete={(id) => {
-                            const label = version.versionName || version.versionNo || id;
-                            if (
-                              window.confirm(
-                                `确定删除草稿「${label}」？将同步删除其预测明细与复核项，且不可恢复。`,
-                              )
-                            ) {
-                              deleteDraftVersion.mutate(id);
-                            }
-                          }}
-                        />
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
+                <StickyDataTable
+                  columns={FORECAST_VERSION_COLUMNS}
+                  items={versions}
+                  rowKey={(version) => version.id}
+                  frozenColumnIds={['version']}
+                  getWidth={columnWidths.getWidth}
+                  onResizeStart={columnWidths.onResizeStart}
+                  layoutKey={columnWidths.layoutKey}
+                  emptyLabel="暂无预测版本，请先生成草稿。"
+                  renderCell={(version, columnId) =>
+                    renderForecastVersionCell(version, columnId, {
+                      deleting:
+                        deleteDraftVersion.isPending &&
+                        deleteDraftVersion.variables === version.id,
+                      onDelete: (id) => {
+                        const label = version.versionName || version.versionNo || id;
+                        if (
+                          window.confirm(
+                            `确定删除草稿「${label}」？将同步删除其预测明细与复核项，且不可恢复。`,
+                          )
+                        ) {
+                          deleteDraftVersion.mutate(id);
+                        }
+                      },
+                    })
+                  }
+                />
               )}
               {!isLoading && total > 0 && (
                 <ListPagination
@@ -575,15 +596,11 @@ export function SalesForecastListPage() {
   );
 }
 
-function VersionRow({
-  version,
-  deleting,
-  onDelete,
-}: {
-  version: ForecastVersionListItem;
-  deleting?: boolean;
-  onDelete?: (id: string) => void;
-}) {
+function renderForecastVersionCell(
+  version: ForecastVersionListItem,
+  columnId: string,
+  opts: { deleting?: boolean; onDelete?: (id: string) => void },
+) {
   const scopeLabel =
     version.versionName && version.versionName !== version.versionNo
       ? version.versionName
@@ -596,75 +613,86 @@ function VersionRow({
     platform: version.generationPlatform,
   });
   const accuracySearch = buildForecastVersionDetailSearch({ view: 'accuracy' });
-  return (
-    <tr className="border-b border-border/60 align-top">
-      <td className="p-2">
-        {scopeLabel ? (
-          <>
-            <p className="font-medium text-sm text-text-main">{scopeLabel}</p>
-            <p className="font-mono text-xs text-text-sub">{version.versionNo}</p>
-          </>
-        ) : (
-          <p className="font-medium font-mono text-sm">{version.versionNo}</p>
-        )}
-      </td>
-      <td className="p-2">
-        <ForecastVersionStatusBadge status={version.status} />
-      </td>
-      <td className="p-2 font-numeric">
-        <span>{version.startMonth ?? '—'}</span>
-        <span className="text-text-sub">
-          {' · '}
-          {version.stats.monthCount || '-'} 月
-          {version.stats.monthCount && version.stats.monthCount !== 6 ? '（历史周期）' : ''}
+
+  switch (columnId) {
+    case 'version':
+      return scopeLabel ? (
+        <>
+          <p className="text-sm font-medium text-text-main">{scopeLabel}</p>
+          <p className="font-mono text-sm text-text-sub">{version.versionNo}</p>
+        </>
+      ) : (
+        <p className="font-mono text-sm font-medium">{version.versionNo}</p>
+      );
+    case 'status':
+      return <ForecastVersionStatusBadge status={version.status} />;
+    case 'horizon':
+      return (
+        <span className="font-numeric tabular-nums">
+          <span>{version.startMonth ?? '—'}</span>
+          <span className="text-text-sub">
+            {' · '}
+            {version.stats.monthCount || '-'} 月
+            {version.stats.monthCount && version.stats.monthCount !== 6 ? '（历史周期）' : ''}
+          </span>
         </span>
-      </td>
-      <td className="p-2 font-numeric">
-        {version.stats.skuCount.toLocaleString()} / {version.stats.forecastRowCount.toLocaleString()}
-      </td>
-      <td className="p-2 text-sm text-text-sub">{version.createdByName ?? '—'}</td>
-      <td className="p-2 text-xs text-text-sub">
-        <p>创建 {formatForecastDateTime(version.createdAt)}</p>
-        {version.publishedAt && <p>发布 {formatForecastDateTime(version.publishedAt)}</p>}
-      </td>
-      <td className="p-2">
+      );
+    case 'counts':
+      return (
+        <span className="font-numeric tabular-nums">
+          {version.stats.skuCount.toLocaleString()} /{' '}
+          {version.stats.forecastRowCount.toLocaleString()}
+        </span>
+      );
+    case 'creator':
+      return <span className="text-sm text-text-sub">{version.createdByName ?? '—'}</span>;
+    case 'timestamps':
+      return (
+        <div className="text-sm text-text-sub">
+          <p>创建 {formatForecastDateTime(version.createdAt)}</p>
+          {version.publishedAt ? <p>发布 {formatForecastDateTime(version.publishedAt)}</p> : null}
+        </div>
+      );
+    case 'actions':
+      return (
         <div className="flex flex-wrap gap-2">
           <Link
             to={`/data/forecast/${version.id}${detailSearch}`}
-            className="text-primary hover:underline"
+            className="text-sm text-primary hover:underline"
           >
             查看
           </Link>
-          {version.status === 'draft' && (
+          {version.status === 'draft' ? (
             <Link
               to={`/data/forecast/${version.id}${reviewSearch}`}
-              className="text-primary hover:underline"
+              className="text-sm text-primary hover:underline"
             >
               去复核
             </Link>
-          )}
-          {version.status === 'draft' && onDelete && (
+          ) : null}
+          {version.status === 'draft' && opts.onDelete ? (
             <button
               type="button"
-              className="text-destructive hover:underline disabled:opacity-50"
-              disabled={deleting}
-              onClick={() => onDelete(version.id)}
+              className="text-sm text-destructive hover:underline disabled:opacity-50"
+              disabled={opts.deleting}
+              onClick={() => opts.onDelete?.(version.id)}
             >
-              {deleting ? '删除中…' : '删除'}
+              {opts.deleting ? '删除中…' : '删除'}
             </button>
-          )}
-          {(version.status === 'draft' ||
-            version.status === 'published' ||
-            version.status === 'archived') && (
+          ) : null}
+          {version.status === 'draft' ||
+          version.status === 'published' ||
+          version.status === 'archived' ? (
             <Link
               to={`/data/forecast/${version.id}${accuracySearch}`}
-              className="text-primary hover:underline"
+              className="text-sm text-primary hover:underline"
             >
               复盘
             </Link>
-          )}
+          ) : null}
         </div>
-      </td>
-    </tr>
-  );
+      );
+    default:
+      return null;
+  }
 }

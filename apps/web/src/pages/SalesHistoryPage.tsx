@@ -18,58 +18,22 @@ import { CategorySearchSelect } from '@/components/CategorySearchSelect';
 import { cn } from '@/lib/utils';
 import { ProductScopeSwitch } from '@/components/ProductScopeSwitch';
 import { useProductScope } from '@/lib/product-scope';
+import { SalesHistoryDataTable } from '@/components/SalesHistoryDataTable';
+import { useResizableColumnWidths } from '@/hooks/use-resizable-column-widths';
+import {
+  defaultSalesHistoryDailyColumnWidth,
+  defaultSalesHistoryMonthlyColumnWidth,
+  loadSalesHistoryDailyColumnWidths,
+  loadSalesHistoryMonthlyColumnWidths,
+  saveSalesHistoryDailyColumnWidths,
+  saveSalesHistoryMonthlyColumnWidths,
+  SALES_HISTORY_DAILY_WIDTHS_KEY,
+  SALES_HISTORY_MONTHLY_WIDTHS_KEY,
+} from '@/lib/sales-history-column-widths';
+import { LIST_COLUMN_WIDTH_MAX } from '@/lib/column-width-storage';
 
 const DEFAULT_PAGE_SIZE = 20;
 type SalesDimension = 'daily' | 'monthly';
-
-const salesTableWrap =
-  'max-h-[min(70vh,720px)] overflow-auto rounded-md border border-border bg-card';
-const salesTh =
-  'sticky top-0 z-10 whitespace-nowrap border-b border-border bg-muted p-2.5 text-left text-xs font-medium text-text-sub';
-const salesTd = 'border-b border-border/50 p-2.5 align-top text-sm';
-const salesTr = 'group hover:bg-muted/30';
-
-function formatSourceLabel(source: string | null | undefined) {
-  const raw = source?.trim() ?? '';
-  if (!raw) return '—';
-  const lower = raw.toLowerCase();
-  if (lower === 'import') return '导入';
-  if (lower.includes('feishu') || lower === '飞书') return '飞书';
-  return raw;
-}
-
-function RegionBadge({ code }: { code?: string | null }) {
-  const value = code?.trim();
-  if (!value) return <span className="text-text-hint">—</span>;
-  return (
-    <span className="inline-flex min-w-[2.25rem] justify-center rounded-md bg-primary/10 px-1.5 py-0.5 font-mono text-xs font-medium text-primary">
-      {value}
-    </span>
-  );
-}
-
-function CellText({
-  value,
-  className,
-  clamp = 1,
-}: {
-  value: string;
-  className?: string;
-  clamp?: 1 | 2;
-}) {
-  return (
-    <td className={cn(salesTd, className)} title={value}>
-      <span
-        className={cn(
-          'block text-text-main',
-          clamp === 2 ? 'line-clamp-2 leading-snug' : 'truncate',
-        )}
-      >
-        {value}
-      </span>
-    </td>
-  );
-}
 
 function defaultDailyTo() {
   return new Date().toISOString().slice(0, 10);
@@ -91,6 +55,41 @@ function defaultMonthlyFrom() {
 }
 
 export function SalesHistoryPage() {
+  const dailyColumnWidths = useResizableColumnWidths({
+    storageKey: SALES_HISTORY_DAILY_WIDTHS_KEY,
+    loadWidths: loadSalesHistoryDailyColumnWidths,
+    saveWidths: saveSalesHistoryDailyColumnWidths,
+    defaultColumnWidth: defaultSalesHistoryDailyColumnWidth,
+    maxWidth: LIST_COLUMN_WIDTH_MAX,
+    legacyStorageKeys: [
+      'scm.sales-history.daily-column-widths-v1',
+      'scm.sales-history.daily-column-widths-v2',
+    ],
+    columnIds: [
+      'saleDate',
+      'skuCode',
+      'skuName',
+      'category',
+      'qtySold',
+      'station',
+      'salesRegion',
+      'channel',
+      'warehouseCode',
+      'source',
+    ],
+  });
+  const monthlyColumnWidths = useResizableColumnWidths({
+    storageKey: SALES_HISTORY_MONTHLY_WIDTHS_KEY,
+    loadWidths: loadSalesHistoryMonthlyColumnWidths,
+    saveWidths: saveSalesHistoryMonthlyColumnWidths,
+    defaultColumnWidth: defaultSalesHistoryMonthlyColumnWidth,
+    maxWidth: LIST_COLUMN_WIDTH_MAX,
+    legacyStorageKeys: [
+      'scm.sales-history.monthly-column-widths-v1',
+      'scm.sales-history.monthly-column-widths-v2',
+    ],
+    columnIds: ['saleMonth', 'skuCode', 'skuName', 'category', 'qtySold', 'channel', 'source'],
+  });
   const { productScope } = useProductScope();
   const qc = useQueryClient();
   const { open: importOpen, openDrawer: openImportDrawer, closeDrawer: closeImportDrawer } = useImportDrawer();
@@ -391,130 +390,46 @@ export function SalesHistoryPage() {
       )}
 
       <Card>
-        <CardHeader>
+        <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-2 space-y-0">
           <CardTitle>{dimension === 'daily' ? '日销量明细' : '月销量明细'}</CardTitle>
+          <div className="flex flex-wrap items-center gap-2 text-sm text-text-sub">
+            <span>
+              列头右缘可拖动调宽；
+              {dimension === 'daily' ? '日期' : '月份'}与 SKU 列冻结。
+            </span>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-8"
+              onClick={() =>
+                dimension === 'daily' ? dailyColumnWidths.resetWidths() : monthlyColumnWidths.resetWidths()
+              }
+            >
+              重置列宽
+            </Button>
+          </div>
         </CardHeader>
         <CardContent>
           {isLoading ? (
             <p className="text-text-sub">加载中...</p>
           ) : dimension === 'daily' ? (
-            <div className={salesTableWrap}>
-              <table className="w-full min-w-[1180px] border-collapse text-sm">
-                <thead>
-                  <tr>
-                    <th className={cn(salesTh, 'left-0 z-20 min-w-[6.5rem] shadow-[2px_0_4px_-2px_rgba(0,0,0,0.06)]')}>
-                      日期
-                    </th>
-                    <th className={cn(salesTh, 'sticky left-[6.5rem] z-20 min-w-[7.5rem] shadow-[2px_0_4px_-2px_rgba(0,0,0,0.06)]')}>
-                      SKU
-                    </th>
-                    <th className={cn(salesTh, 'min-w-[11rem] max-w-[14rem]')}>名称</th>
-                    <th className={cn(salesTh, 'min-w-[10rem] max-w-[12rem]')}>品类</th>
-                    <th className={cn(salesTh, 'text-right')}>销量</th>
-                    <th className={cn(salesTh, 'min-w-[8rem]')}>站点</th>
-                    <th className={cn(salesTh, 'text-center')}>区域</th>
-                    <th className={cn(salesTh, 'min-w-[6.5rem]')}>平台</th>
-                    <th className={cn(salesTh, 'min-w-[5.5rem]')}>发货仓</th>
-                    <th className={cn(salesTh, 'min-w-[4rem]')}>来源</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {dailyData?.items.map((row) => (
-                    <tr key={row.id} className={salesTr}>
-                      <td
-                        className={cn(
-                          salesTd,
-                          'sticky left-0 z-10 whitespace-nowrap bg-card font-mono text-text-main shadow-[2px_0_4px_-2px_rgba(0,0,0,0.06)] group-hover:bg-muted/30',
-                        )}
-                      >
-                        {String(row.saleDate).slice(0, 10)}
-                      </td>
-                      <td
-                        className={cn(
-                          salesTd,
-                          'sticky left-[6.5rem] z-10 max-w-[7.5rem] bg-card font-mono text-primary shadow-[2px_0_4px_-2px_rgba(0,0,0,0.06)] group-hover:bg-muted/30',
-                        )}
-                        title={row.skuCode}
-                      >
-                        <span className="block truncate">{row.skuCode}</span>
-                      </td>
-                      <CellText value={row.skuName || '—'} clamp={2} />
-                      <CellText value={row.category ?? '—'} className="text-xs text-text-sub" clamp={2} />
-                      <td className={cn(salesTd, 'text-right font-numeric tabular-nums font-medium text-primary')}>
-                        {row.qtySold.toLocaleString()}
-                      </td>
-                      <td className={cn(salesTd, 'max-w-[10rem] text-text-sub')} title={row.station || undefined}>
-                        <span className="block truncate">{row.station || '—'}</span>
-                      </td>
-                      <td className={cn(salesTd, 'text-center')}>
-                        <RegionBadge code={row.salesRegion} />
-                      </td>
-                      <td className={cn(salesTd, 'font-mono text-xs text-text-sub')} title={row.channel ?? undefined}>
-                        <span className="block truncate">{row.channel?.toUpperCase() ?? '—'}</span>
-                      </td>
-                      <td
-                        className={cn(salesTd, 'max-w-[6rem] font-mono text-xs text-text-sub')}
-                        title={row.warehouseCode ?? undefined}
-                      >
-                        <span className="block truncate">{row.warehouseCode ?? '—'}</span>
-                      </td>
-                      <td className={cn(salesTd, 'whitespace-nowrap text-xs text-text-sub')}>
-                        {formatSourceLabel(row.source)}
-                      </td>
-                    </tr>
-                  ))}
-                  {!dailyData?.items.length && (
-                    <tr>
-                      <td colSpan={10} className="p-4 text-center text-text-hint">
-                        暂无日销量数据，请点击上方「导入销量」
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
+            <SalesHistoryDataTable
+              mode="daily"
+              items={dailyData?.items ?? []}
+              emptyHint="暂无日销量数据，请点击上方「导入销量」"
+              getWidth={dailyColumnWidths.getWidth}
+              onResizeStart={dailyColumnWidths.onResizeStart}
+              layoutKey={dailyColumnWidths.layoutKey}
+            />
           ) : (
-            <div className={salesTableWrap}>
-              <table className="w-full min-w-[900px] border-collapse text-sm">
-                <thead>
-                  <tr>
-                    <th className={salesTh}>月份</th>
-                    <th className={salesTh}>SKU</th>
-                    <th className={cn(salesTh, 'min-w-[11rem]')}>名称</th>
-                    <th className={cn(salesTh, 'min-w-[12rem]')}>品类</th>
-                    <th className={cn(salesTh, 'text-right')}>月销量</th>
-                    <th className={salesTh}>平台</th>
-                    <th className={salesTh}>来源</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {monthlyData?.items.map((row) => (
-                    <tr key={row.id} className={salesTr}>
-                      <td className={cn(salesTd, 'font-mono whitespace-nowrap')}>{row.saleMonth}</td>
-                      <td className={cn(salesTd, 'max-w-[8rem] font-mono text-primary')} title={row.skuCode}>
-                        <span className="block truncate">{row.skuCode}</span>
-                      </td>
-                      <CellText value={row.skuName || '—'} clamp={2} />
-                      <CellText value={row.category ?? '—'} className="text-xs text-text-sub" clamp={2} />
-                      <td className={cn(salesTd, 'text-right font-numeric tabular-nums font-medium text-primary')}>
-                        {row.qtySold.toLocaleString()}
-                      </td>
-                      <td className={cn(salesTd, 'font-mono text-xs text-text-sub')} title={row.channel}>
-                        <span className="block truncate">{row.channel?.toUpperCase()}</span>
-                      </td>
-                      <td className={cn(salesTd, 'text-xs text-text-sub')}>{formatSourceLabel(row.source)}</td>
-                    </tr>
-                  ))}
-                  {!monthlyData?.items.length && (
-                    <tr>
-                      <td colSpan={7} className="p-4 text-center text-text-hint">
-                        暂无月销量数据，请先完成日销量导入（系统自动聚合月表）
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
+            <SalesHistoryDataTable
+              mode="monthly"
+              items={monthlyData?.items ?? []}
+              emptyHint="暂无月销量数据，请先完成日销量导入（系统自动聚合月表）"
+              getWidth={monthlyColumnWidths.getWidth}
+              onResizeStart={monthlyColumnWidths.onResizeStart}
+              layoutKey={monthlyColumnWidths.layoutKey}
+            />
           )}
           {data && (
             <ListPagination

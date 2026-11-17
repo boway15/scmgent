@@ -49,6 +49,7 @@
 - 默认在 `apps/web/server`（ESM）开发；**不要**为妙搭做 CJS/`hono-app` 适配
 - 妙搭规则 `.cursor/rules/miaoda-stack.mdc` 仅归档，非默认约束
 - 自动化任务逻辑抽离为独立 TS 文件（`server/tasks/`），由 HTTP + `CRON_SECRET` 触发
+- **宽列表**：用 `StickyDataTable`（`border-separate` + `colgroup` + 表头 `top:0` / 冻结列 `left`）；列宽走 `useResizableColumnWidths`；单元格对齐 `scm-design`（正文 `text-sm`，SKU `font-mono`+主色，数字 `font-numeric`）。库存周转虚拟表仍用 `InventoryOverviewTable`，仅复用 sticky 工具函数，勿整表重写
 
 **协作**：← `architect` 方案 → `qa` 提测
 

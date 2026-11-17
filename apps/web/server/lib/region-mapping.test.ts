@@ -6,6 +6,7 @@ import {
   loadRegionMappingTables,
   resolveInboundSalesRegion,
   resolveSalesRegion,
+  resolveSalesRowRegion,
   resolveFulfillmentRegion,
   type RegionMappingTables,
 } from './region-mapping.js';
@@ -124,5 +125,17 @@ describe('region-mapping', () => {
   it('accepts MX and BR as mappable regions', () => {
     assert.equal(isMappableRegion('MX'), true);
     assert.equal(isMappableRegion('BR'), true);
+  });
+
+  it('resolveSalesRowRegion prefers row sales_region over station map', () => {
+    assert.equal(
+      resolveSalesRowRegion({ salesRegion: 'US', station: 'Amazon德国' }, tables),
+      'US',
+    );
+    assert.equal(resolveSalesRowRegion({ salesRegion: null, station: 'Amazon德国' }, tables), 'EU');
+    assert.equal(
+      resolveSalesRowRegion({ salesRegion: 'UNMAPPED', station: 'Amazon德国' }, tables),
+      'UNMAPPED',
+    );
   });
 });

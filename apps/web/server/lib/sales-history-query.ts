@@ -4,6 +4,11 @@
 import { and, eq, gte, inArray, lte, or, sql, isNull } from 'drizzle-orm';
 import { db, salesHistory, salesHistoryMonthly } from '@scm/db';
 import {
+  resolveSalesRowRegion,
+  type RegionMappingTables,
+  type RuntimeRegion,
+} from './region-mapping.js';
+import {
   replenishmentSalesLookbackDays,
   salesHistoryLookbackCutoff,
 } from './sales-history-config.js';
@@ -35,6 +40,28 @@ export function groupDailySalesBySkuId(rows: DailySalesPoint[]): Map<string, Dai
     map.set(row.skuId, list);
   }
   return map;
+}
+
+export function filterDailySalesByResolvedRegion<T extends DailySalesPoint>(
+  rows: readonly T[],
+  region: RuntimeRegion,
+  tables: RegionMappingTables,
+): T[] {
+  return rows.filter((row) => resolveSalesRowRegion(row, tables) === region);
+}
+
+/** 从按 SKU 分组的日销 Map 中筛出指定销售区域的子集（保留无行 SKU 的空数组）。 */
+export function filterDailySalesMapByRegion(
+  bySku: Map<string, DailySalesPoint[]>,
+  region: RuntimeRegion,
+  tables: RegionMappingTables,
+): Map<string, DailySalesPoint[]> {
+  const out = new Map<string, DailySalesPoint[]>();
+  for (const [skuId, rows] of bySku) {
+    const filtered = filterDailySalesByResolvedRegion(rows, region, tables);
+    if (filtered.length) out.set(skuId, filtered);
+  }
+  return out;
 }
 
 /** 批量加载多个 SKU 的近 N 日日销量（补货/健康任务用，单次或分块查询）。 */
@@ -146,6 +173,7 @@ export async function loadDailySalesBySkuIdsInRange(input: {
         saleDate: salesHistory.saleDate,
         warehouseCode: salesHistory.warehouseCode,
         station: salesHistory.station,
+        salesRegion: salesHistory.salesRegion,
       })
       .from(salesHistory)
       .where(and(...conditions));
@@ -157,6 +185,7 @@ export async function loadDailySalesBySkuIdsInRange(input: {
         saleDate: normalizeSaleDate(row.saleDate),
         warehouseCode: row.warehouseCode,
         station: row.station ?? '',
+        salesRegion: row.salesRegion,
       };
       const list = map.get(row.skuId) ?? [];
       list.push(point);

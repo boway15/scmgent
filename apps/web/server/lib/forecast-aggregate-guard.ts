@@ -9,7 +9,7 @@ import {
   meanSeasonalIndex,
   monthOf,
 } from './forecast-seasonal-index.js';
-import { loadRegionMappingTables, resolveSalesRegion } from './region-mapping.js';
+import { loadRegionMappingTables, resolveSalesRowRegion } from './region-mapping.js';
 
 export const AGGREGATE_GUARD_CODE = 'aggregate_vs_seasonal_baseline';
 export const AGGREGATE_GUARD_MIN_BASELINE_QTY = 300;
@@ -225,6 +225,7 @@ async function loadRecentDailyBySkuRegionPlatform(
       skuId: salesHistory.skuId,
       channel: salesHistory.channel,
       station: salesHistory.station,
+      salesRegion: salesHistory.salesRegion,
       qty: sql<number>`sum(${salesHistory.qtySold})::float`,
     })
     .from(salesHistory)
@@ -235,12 +236,20 @@ async function loadRecentDailyBySkuRegionPlatform(
         lte(salesHistory.saleDate, end),
       ),
     )
-    .groupBy(salesHistory.skuId, salesHistory.channel, salesHistory.station);
+    .groupBy(
+      salesHistory.skuId,
+      salesHistory.channel,
+      salesHistory.station,
+      salesHistory.salesRegion,
+    );
 
   const qty = new Map<string, number>();
   for (const row of rows) {
     const channel = (row.channel ?? 'UNKNOWN').trim().toUpperCase() || 'UNKNOWN';
-    const region = resolveSalesRegion(row.station, tables);
+    const region = resolveSalesRowRegion(
+      { salesRegion: row.salesRegion, station: row.station },
+      tables,
+    );
     const key = `${row.skuId}::${region}::${channel}`;
     qty.set(key, (qty.get(key) ?? 0) + (Number(row.qty) || 0));
   }

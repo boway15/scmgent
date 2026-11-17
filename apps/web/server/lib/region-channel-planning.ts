@@ -15,10 +15,12 @@ import {
 import { calcForwardAvgDaily } from './forecast-demand.js';
 import {
   resolveFulfillmentRegion,
-  resolveSalesRegion,
+  resolveSalesRowRegion,
   type RegionMappingTables,
 } from './region-mapping.js';
-import { isMappableRegion, type RuntimeRegion } from './region-codes.js';
+import { type RuntimeRegion } from './region-codes.js';
+
+export { resolveSalesRowRegion };
 import { shouldDeferReplenishment } from './warehouse-domain.js';
 
 export type ChannelShareSource = 'forecast' | 'history' | 'empty';
@@ -60,16 +62,6 @@ export type RegionPlatformSalesRow = {
   salesRegion?: string | null;
   channel?: string | null;
 };
-
-/** 单行销量的销售区域：行上码优先，其次站点映射，未知为 UNMAPPED。 */
-export function resolveSalesRowRegion(
-  row: Pick<RegionPlatformSalesRow, 'salesRegion' | 'station'>,
-  tables: RegionMappingTables,
-): RuntimeRegion {
-  const coded = row.salesRegion?.trim().toUpperCase();
-  if (coded && (isMappableRegion(coded) || coded === 'UNMAPPED')) return coded as RuntimeRegion;
-  return resolveSalesRegion(row.station ?? null, tables);
-}
 
 /** 销量按 区域::平台 分桶；一期销售区域 = 履约区域。 */
 export function bucketSalesByRegionPlatform<T extends RegionPlatformSalesRow>(

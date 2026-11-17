@@ -11,6 +11,31 @@ import { ImportDrawer } from '@/components/import/ImportDrawer';
 import { useImportDrawer } from '@/hooks/use-import-drawer';
 import { ProductScopeSwitch } from '@/components/ProductScopeSwitch';
 import { useProductScope } from '@/lib/product-scope';
+import { StickyDataTable, type StickyColumnDef } from '@/components/StickyDataTable';
+import { useResizableColumnWidths } from '@/hooks/use-resizable-column-widths';
+import {
+  defaultSafetyStockColumnWidth,
+  loadSafetyStockColumnWidths,
+  saveSafetyStockColumnWidths,
+} from '@/lib/safety-stock-column-widths';
+
+const SAFETY_STOCK_COLUMNS: StickyColumnDef[] = [
+  { id: 'skuCode', label: 'SKU' },
+  { id: 'warehouse', label: '仓库' },
+  { id: 'configuredDays', label: '配置天数', align: 'right' },
+  { id: 'safetyStockQty', label: '安全库存' },
+  { id: 'reorderPoint', label: 'ROP' },
+  { id: 'reorderQty', label: 'EOQ' },
+  { id: 'suggestedDays', label: '建议天数', align: 'right' },
+  { id: 'suggestedQty', label: '建议件数', align: 'right' },
+  { id: 'delta', label: '偏差' },
+  { id: 'confidence', label: '置信度' },
+  { id: 'method', label: '安全库存方法', flexGrow: true },
+  { id: 'serviceLevel', label: '服务水平' },
+  { id: 'actions', label: '操作', flexGrow: true },
+];
+
+const SAFETY_STOCK_FROZEN = ['skuCode', 'warehouse'];
 
 function rowKey(skuId: string, warehouseCode: string) {
   return `${skuId}::${warehouseCode}`;
@@ -38,6 +63,15 @@ function formatDeltaDays(deltaDays: number | null): string {
 }
 
 export function SafetyStockPage() {
+  const columnWidths = useResizableColumnWidths({
+    storageKey: 'scm.safety-stock.column-widths-v2',
+    loadWidths: loadSafetyStockColumnWidths,
+    saveWidths: saveSafetyStockColumnWidths,
+    defaultColumnWidth: defaultSafetyStockColumnWidth,
+    maxWidth: 360,
+    legacyStorageKeys: ['scm.safety-stock.column-widths-v1'],
+    columnIds: SAFETY_STOCK_COLUMNS.map((c) => c.id),
+  });
   const { productScope } = useProductScope();
   const qc = useQueryClient();
   const { open: importOpen, openDrawer: openImportDrawer, closeDrawer: closeImportDrawer } = useImportDrawer();
@@ -156,8 +190,14 @@ export function SafetyStockPage() {
       </PageHeader>
       <ProductScopeSwitch />
       <Card>
-        <CardHeader>
+        <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-2 space-y-0">
           <CardTitle>安全库存参数</CardTitle>
+          <div className="flex flex-wrap items-center gap-2 text-sm text-text-sub">
+            <span>列头右缘可拖动调宽；SKU 与仓库列冻结。</span>
+            <Button variant="ghost" size="sm" className="h-8" onClick={() => columnWidths.resetWidths()}>
+              重置列宽
+            </Button>
+          </div>
         </CardHeader>
         <CardContent>
           <p className="mb-4 text-sm text-text-sub">
@@ -186,185 +226,204 @@ export function SafetyStockPage() {
               <option value={0.99}>99%</option>
             </select>
           </div>
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[1200px] text-sm">
-              <thead>
-                <tr className="border-b border-border text-left text-text-sub">
-                  <th className="p-2 font-normal">SKU</th>
-                  <th className="p-2 font-normal">仓库</th>
-                  <th className="p-2 font-normal">配置天数</th>
-                  <th className="p-2 font-normal">安全库存</th>
-                  <th className="p-2 font-normal">ROP</th>
-                  <th className="p-2 font-normal">EOQ</th>
-                  <th className="p-2 font-normal">建议天数</th>
-                  <th className="p-2 font-normal">建议件数</th>
-                  <th className="p-2 font-normal">偏差</th>
-                  <th className="p-2 font-normal">置信度</th>
-                  <th className="p-2 font-normal">安全库存方法</th>
-                  <th className="p-2 font-normal">服务水平</th>
-                  <th className="p-2 font-normal">操作</th>
-                </tr>
-              </thead>
-              <tbody>
-                {items.map((item) => {
-                  const key = rowKey(item.skuId, item.warehouseCode ?? 'ALL');
-                  const suggestion = suggestionByKey.get(key);
-                  const edit = editing[key] ?? {
-                    safetyStockQty: item.safetyStockQty ?? 0,
-                    reorderPoint: item.reorderPoint ?? 0,
-                    reorderQty: item.reorderQty ?? 0,
-                    safetyStockDays: item.safetyStockDays ?? 14,
-                    safetyStockMethod: item.safetyStockMethod ?? 'coverage_days',
-                    serviceLevel: Number(item.serviceLevel ?? 0.95),
-                  };
-                  const wh = item.warehouseCode ?? 'ALL';
-                  const configuredDays = item.safetyStockDays ?? 14;
-                  const deltaPct = suggestion?.deltaPctDays ?? null;
-                  const deltaClass =
-                    deltaPct != null && deltaPct > 0.5 ? 'text-amber-600' : 'text-text-sub';
+          <StickyDataTable
+            columns={SAFETY_STOCK_COLUMNS}
+            items={items}
+            rowKey={(item) => rowKey(item.skuId, item.warehouseCode ?? 'ALL')}
+            frozenColumnIds={SAFETY_STOCK_FROZEN}
+            getWidth={columnWidths.getWidth}
+            onResizeStart={columnWidths.onResizeStart}
+            layoutKey={columnWidths.layoutKey}
+            emptyLabel="暂无 SKU，请先创建或导入"
+            renderCell={(item, columnId) => {
+              const key = rowKey(item.skuId, item.warehouseCode ?? 'ALL');
+              const suggestion = suggestionByKey.get(key);
+              const edit = editing[key] ?? {
+                safetyStockQty: item.safetyStockQty ?? 0,
+                reorderPoint: item.reorderPoint ?? 0,
+                reorderQty: item.reorderQty ?? 0,
+                safetyStockDays: item.safetyStockDays ?? 14,
+                safetyStockMethod: item.safetyStockMethod ?? 'coverage_days',
+                serviceLevel: Number(item.serviceLevel ?? 0.95),
+              };
+              const wh = item.warehouseCode ?? 'ALL';
+              const configuredDays = item.safetyStockDays ?? 14;
+              const deltaPct = suggestion?.deltaPctDays ?? null;
+              const deltaClass =
+                deltaPct != null && deltaPct > 0.5 ? 'text-amber-600' : 'text-text-sub';
 
+              switch (columnId) {
+                case 'skuCode':
+                  return <span className="font-mono text-primary">{item.skuCode}</span>;
+                case 'warehouse':
+                  return <span className="font-mono text-text-sub">{wh}</span>;
+                case 'configuredDays':
                   return (
-                    <tr key={key} className="border-b border-border/60">
-                      <td className="p-2 font-mono text-text-main">{item.skuCode}</td>
-                      <td className="p-2 font-mono text-text-sub">{wh}</td>
-                      <td className="p-2 text-text-sub">{configuredDays}</td>
-                      <td className="p-2">
-                        <Input
-                          type="number"
-                          className="h-8 w-20"
-                          value={edit.safetyStockQty}
-                          onChange={(e) =>
-                            setEditing({ ...editing, [key]: { ...edit, safetyStockQty: +e.target.value } })
-                          }
-                        />
-                      </td>
-                      <td className="p-2">
-                        <Input
-                          type="number"
-                          className="h-8 w-20"
-                          value={edit.reorderPoint}
-                          onChange={(e) =>
-                            setEditing({ ...editing, [key]: { ...edit, reorderPoint: +e.target.value } })
-                          }
-                        />
-                      </td>
-                      <td className="p-2">
-                        <Input
-                          type="number"
-                          className="h-8 w-20"
-                          value={edit.reorderQty}
-                          onChange={(e) =>
-                            setEditing({ ...editing, [key]: { ...edit, reorderQty: +e.target.value } })
-                          }
-                        />
-                      </td>
-                      <td className="p-2 text-text-sub">
-                        {suggestion?.suggested.safetyStockDays ?? '—'}
-                      </td>
-                      <td className="p-2 text-text-sub">
-                        {suggestion?.suggested.safetyStockQty ?? '—'}
-                      </td>
-                      <td className={`p-2 ${deltaClass}`} title={suggestion?.suggested.flags.join(', ')}>
-                        {formatDeltaDays(suggestion?.deltaDays ?? null)}
-                      </td>
-                      <td className="p-2 text-text-sub">
-                        {suggestion ? CONFIDENCE_LABEL[suggestion.suggested.confidence] : '—'}
-                      </td>
-                      <td className="p-2">
-                        <select
-                          className="h-8 min-w-[132px] rounded-md border border-input bg-card px-2 text-sm"
-                          value={edit.safetyStockMethod}
-                          onChange={(e) =>
-                            setEditing({
-                              ...editing,
-                              [key]: {
-                                ...edit,
-                                safetyStockMethod: e.target.value as SafetyStockMethod,
-                              },
-                            })
-                          }
-                        >
-                          <option value="coverage_days">覆盖天数</option>
-                          <option value="z_demand">Z 值（需求波动）</option>
-                          <option value="z_demand_leadtime">Z 值（需求+交期）</option>
-                        </select>
-                      </td>
-                      <td className="p-2">
-                        <select
-                          className="h-8 min-w-[88px] rounded-md border border-input bg-card px-2 text-sm disabled:opacity-50"
-                          value={edit.serviceLevel}
-                          disabled={edit.safetyStockMethod === 'coverage_days'}
-                          onChange={(e) =>
-                            setEditing({
-                              ...editing,
-                              [key]: { ...edit, serviceLevel: Number(e.target.value) },
-                            })
-                          }
-                        >
-                          <option value={0.9}>90%</option>
-                          <option value={0.95}>95%</option>
-                          <option value={0.975}>97.5%</option>
-                          <option value={0.99}>99%</option>
-                        </select>
-                      </td>
-                      <td className="space-x-1 p-2">
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() => save.mutate({ skuId: item.skuId, warehouseCode: wh, data: edit })}
-                          disabled={save.isPending}
-                        >
-                          保存
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          onClick={() =>
-                            calc.mutate({ skuId: item.skuId, warehouseCode: wh, data: edit })
-                          }
-                          disabled={calc.isPending}
-                        >
-                          计算
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          disabled={
-                            suggestion?.suggested.safetyStockQty == null ||
-                            suggestion.suggested.reorderPoint == null
-                          }
-                          onClick={() => {
-                            const s = suggestion?.suggested;
-                            if (!s || s.safetyStockQty == null || s.reorderPoint == null) return;
-                            setEditing({
-                              ...editing,
-                              [key]: {
-                                ...edit,
-                                safetyStockQty: s.safetyStockQty,
-                                reorderPoint: s.reorderPoint,
-                                safetyStockDays: s.safetyStockDays ?? edit.safetyStockDays,
-                                safetyStockMethod: 'z_demand',
-                                serviceLevel: suggestionServiceLevel,
-                              },
-                            });
-                          }}
-                        >
-                          采纳
-                        </Button>
-                      </td>
-                    </tr>
+                    <span className="font-numeric tabular-nums text-text-sub">{configuredDays}</span>
                   );
-                })}
-                {!items.length && (
-                  <tr>
-                    <td colSpan={13} className="p-4 text-center text-text-hint">
-                      暂无 SKU，请先创建或导入
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
+                case 'safetyStockQty':
+                  return (
+                    <Input
+                      type="number"
+                      className="h-8 w-20"
+                      value={edit.safetyStockQty}
+                      onChange={(e) =>
+                        setEditing({
+                          ...editing,
+                          [key]: { ...edit, safetyStockQty: +e.target.value },
+                        })
+                      }
+                    />
+                  );
+                case 'reorderPoint':
+                  return (
+                    <Input
+                      type="number"
+                      className="h-8 w-20"
+                      value={edit.reorderPoint}
+                      onChange={(e) =>
+                        setEditing({
+                          ...editing,
+                          [key]: { ...edit, reorderPoint: +e.target.value },
+                        })
+                      }
+                    />
+                  );
+                case 'reorderQty':
+                  return (
+                    <Input
+                      type="number"
+                      className="h-8 w-20"
+                      value={edit.reorderQty}
+                      onChange={(e) =>
+                        setEditing({
+                          ...editing,
+                          [key]: { ...edit, reorderQty: +e.target.value },
+                        })
+                      }
+                    />
+                  );
+                case 'suggestedDays':
+                  return (
+                    <span className="font-numeric tabular-nums text-text-sub">
+                      {suggestion?.suggested.safetyStockDays ?? '—'}
+                    </span>
+                  );
+                case 'suggestedQty':
+                  return (
+                    <span className="font-numeric tabular-nums text-text-sub">
+                      {suggestion?.suggested.safetyStockQty ?? '—'}
+                    </span>
+                  );
+                case 'delta':
+                  return (
+                    <span
+                      className={`font-numeric tabular-nums ${deltaClass}`}
+                      title={suggestion?.suggested.flags.join(', ')}
+                    >
+                      {formatDeltaDays(suggestion?.deltaDays ?? null)}
+                    </span>
+                  );
+                case 'confidence':
+                  return (
+                    <span className="text-text-sub">
+                      {suggestion ? CONFIDENCE_LABEL[suggestion.suggested.confidence] : '—'}
+                    </span>
+                  );
+                case 'method':
+                  return (
+                    <select
+                      className="h-8 min-w-[132px] rounded-md border border-input bg-card px-2 text-sm"
+                      value={edit.safetyStockMethod}
+                      onChange={(e) =>
+                        setEditing({
+                          ...editing,
+                          [key]: {
+                            ...edit,
+                            safetyStockMethod: e.target.value as SafetyStockMethod,
+                          },
+                        })
+                      }
+                    >
+                      <option value="coverage_days">覆盖天数</option>
+                      <option value="z_demand">Z 值（需求波动）</option>
+                      <option value="z_demand_leadtime">Z 值（需求+交期）</option>
+                    </select>
+                  );
+                case 'serviceLevel':
+                  return (
+                    <select
+                      className="h-8 min-w-[88px] rounded-md border border-input bg-card px-2 text-sm disabled:opacity-50"
+                      value={edit.serviceLevel}
+                      disabled={edit.safetyStockMethod === 'coverage_days'}
+                      onChange={(e) =>
+                        setEditing({
+                          ...editing,
+                          [key]: { ...edit, serviceLevel: Number(e.target.value) },
+                        })
+                      }
+                    >
+                      <option value={0.9}>90%</option>
+                      <option value={0.95}>95%</option>
+                      <option value={0.975}>97.5%</option>
+                      <option value={0.99}>99%</option>
+                    </select>
+                  );
+                case 'actions':
+                  return (
+                    <div className="flex flex-wrap gap-1">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() =>
+                          save.mutate({ skuId: item.skuId, warehouseCode: wh, data: edit })
+                        }
+                        disabled={save.isPending}
+                      >
+                        保存
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() =>
+                          calc.mutate({ skuId: item.skuId, warehouseCode: wh, data: edit })
+                        }
+                        disabled={calc.isPending}
+                      >
+                        计算
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        disabled={
+                          suggestion?.suggested.safetyStockQty == null ||
+                          suggestion.suggested.reorderPoint == null
+                        }
+                        onClick={() => {
+                          const s = suggestion?.suggested;
+                          if (!s || s.safetyStockQty == null || s.reorderPoint == null) return;
+                          setEditing({
+                            ...editing,
+                            [key]: {
+                              ...edit,
+                              safetyStockQty: s.safetyStockQty,
+                              reorderPoint: s.reorderPoint,
+                              safetyStockDays: s.safetyStockDays ?? edit.safetyStockDays,
+                              safetyStockMethod: 'z_demand',
+                              serviceLevel: suggestionServiceLevel,
+                            },
+                          });
+                        }}
+                      >
+                        采纳
+                      </Button>
+                    </div>
+                  );
+                default:
+                  return null;
+              }
+            }}
+          />
           <ListPagination
             page={page}
             pageSize={pageSize}

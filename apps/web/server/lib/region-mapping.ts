@@ -29,6 +29,19 @@ export function resolveSalesRegion(
   return tables.stations.get(normalizeStationKey(station)) ?? 'UNMAPPED';
 }
 
+/**
+ * 运行时单行销量销售区域：行上码优先，其次站点映射；未知为 UNMAPPED。
+ * 预测生成、护栏、准确率、补货分桶应与该函数一致。
+ */
+export function resolveSalesRowRegion(
+  row: { salesRegion?: string | null; station?: string | null },
+  tables: RegionMappingTables,
+): RuntimeRegion {
+  const coded = row.salesRegion?.trim().toUpperCase();
+  if (coded && (isMappableRegion(coded) || coded === 'UNMAPPED')) return coded as RuntimeRegion;
+  return resolveSalesRegion(row.station ?? null, tables);
+}
+
 export function resolveFulfillmentRegion(
   warehouseCode: string | null | undefined,
   tables: RegionMappingTables,

@@ -7,9 +7,26 @@ import {
   parseCalibrationDaily,
   parseCalibrationImportCsvBuffer,
   parseCalibrationImportPlatform,
+  parseCalibrationImportRegion,
   shouldApplyCalibrationImport,
   shouldApplyCalibrationWideImport,
 } from './forecast-calibration-import.js';
+
+describe('parseCalibrationImportRegion', () => {
+  it('rejects merged ALL label', () => {
+    assert.deepEqual(parseCalibrationImportRegion('全部'), { error: 'merged' });
+    assert.deepEqual(parseCalibrationImportRegion('ALL'), { error: 'merged' });
+  });
+
+  it('accepts region codes', () => {
+    assert.deepEqual(parseCalibrationImportRegion('US'), { salesRegion: 'US' });
+    assert.deepEqual(parseCalibrationImportRegion('eu'), { salesRegion: 'EU' });
+  });
+
+  it('rejects empty', () => {
+    assert.deepEqual(parseCalibrationImportRegion(''), { error: 'missing' });
+  });
+});
 
 describe('parseCalibrationImportPlatform', () => {
   it('rejects merged ALL label', () => {

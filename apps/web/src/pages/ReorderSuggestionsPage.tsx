@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Link, useSearchParams } from 'react-router-dom';
+import { useSearchParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -7,20 +7,40 @@ import { Button } from '@/components/ui/button';
 import { PageHeader } from '@/components/PageHeader';
 import { ListPagination } from '@/components/ListPagination';
 import { ListSearchBar } from '@/components/ListSearchBar';
-import { InventoryHealthBadge } from '@/components/InventoryHealthBadge';
-import {
-  deriveProjectedStockoutDate,
-  formatSuggestionExplain,
-  isSuggestedOrderOverdue,
-} from '@/lib/reorder-suggestion-explain';
+import { ReorderSuggestionsTable } from '@/components/ReorderSuggestionsTable';
 import { ProductScopeSwitch } from '@/components/ProductScopeSwitch';
 import { useProductScope } from '@/lib/product-scope';
-
-type ReorderSuggestionRow = Awaited<
-  ReturnType<typeof api.getReorderSuggestions>
->['items'][number];
+import { useResizableColumnWidths } from '@/hooks/use-resizable-column-widths';
+import {
+  defaultReorderSuggestionsColumnWidth,
+  loadReorderSuggestionsColumnWidths,
+  saveReorderSuggestionsColumnWidths,
+} from '@/lib/reorder-suggestions-column-widths';
 
 export function ReorderSuggestionsPage() {
+  const columnWidths = useResizableColumnWidths({
+    storageKey: 'scm.reorder-suggestions.column-widths-v2',
+    loadWidths: loadReorderSuggestionsColumnWidths,
+    saveWidths: saveReorderSuggestionsColumnWidths,
+    defaultColumnWidth: defaultReorderSuggestionsColumnWidth,
+    maxWidth: 360,
+    legacyStorageKeys: ['scm.reorder-suggestions.column-widths-v1'],
+    columnIds: [
+      'fulfillmentRegion',
+      'skuCode',
+      'platform',
+      'warehouseCode',
+      'merchant',
+      'healthStatus',
+      'suggestedDate',
+      'stockoutDate',
+      'coverageDays',
+      'suggestedQty',
+      'demandSource',
+      'explain',
+      'status',
+    ],
+  });
   const { productScope } = useProductScope();
   const [searchParams, setSearchParams] = useSearchParams();
   const skuFromUrl = searchParams.get('sku')?.trim() ?? '';
@@ -33,7 +53,15 @@ export function ReorderSuggestionsPage() {
   const [platform, setPlatform] = useState('');
 
   const { data, isLoading } = useQuery({
-    queryKey: ['reorder-suggestions', page, pageSize, appliedKeyword, productScope, fulfillmentRegion, platform],
+    queryKey: [
+      'reorder-suggestions',
+      page,
+      pageSize,
+      appliedKeyword,
+      productScope,
+      fulfillmentRegion,
+      platform,
+    ],
     queryFn: () =>
       api.getReorderSuggestions({
         q: appliedKeyword || undefined,
@@ -45,8 +73,6 @@ export function ReorderSuggestionsPage() {
       }),
   });
   const items = data?.items ?? [];
-
-  const [expandedReason, setExpandedReason] = useState<Record<string, boolean>>({});
 
   useEffect(() => {
     setKeyword(skuFromUrl);
@@ -78,7 +104,7 @@ export function ReorderSuggestionsPage() {
         </Button>
       </PageHeader>
 
-      {skuFromUrl && (
+      {skuFromUrl ? (
         <p className="text-sm text-text-sub">
           筛选 SKU：<span className="font-mono text-text-main">{skuFromUrl}</span>
           {' · '}
@@ -86,17 +112,21 @@ export function ReorderSuggestionsPage() {
             清除筛选
           </button>
         </p>
-      )}
+      ) : null}
 
       <ProductScopeSwitch />
 
       <Card className="border-primary/20 bg-primary/5">
         <CardContent className="pt-6 text-sm text-text-sub">
           <p>
-            <strong className="text-text-main">补货预测</strong>：按履约区域 × 渠道计算覆盖与健康灯。区域内仓库供给先汇总，再按预测（无预测则历史）渠道占比分摊；未映射仓库落入 UNMAPPED，仍会出建议。
+            <strong className="text-text-main">补货预测</strong>
+            ：按履约区域 × 渠道计算覆盖与健康灯。区域内仓库供给先汇总，再按预测（无预测则历史）渠道占比分摊；未映射仓库落入
+            UNMAPPED，仍会出建议。
           </p>
           <p className="mt-1">
-            <strong className="text-text-main">补货建议</strong>：预测产出的只读待办清单，默认按建议下单日排序（逾期优先）。实际下单、改量请在迅捷 ERP 操作；进度以飞书采购镜像为准。
+            <strong className="text-text-main">补货建议</strong>
+            ：预测产出的只读待办清单，默认按建议下单日排序（逾期优先）。实际下单、改量请在迅捷 ERP
+            操作；进度以飞书采购镜像为准。
           </p>
           <p className="mt-1 text-text-hint">
             本页不能采纳或忽略建议。导出数量与口径供 PMC 在迅捷下单时参考。
@@ -105,8 +135,14 @@ export function ReorderSuggestionsPage() {
       </Card>
 
       <Card>
-        <CardHeader>
+        <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-2 space-y-0">
           <CardTitle>待行动建议</CardTitle>
+          <div className="flex flex-wrap items-center gap-2 text-sm text-text-sub">
+            <span>列头右缘可拖动调宽；履约区域与 SKU 列冻结。</span>
+            <Button variant="ghost" size="sm" className="h-8" onClick={() => columnWidths.resetWidths()}>
+              重置列宽
+            </Button>
+          </div>
         </CardHeader>
         <CardContent>
           <ListSearchBar
@@ -145,121 +181,12 @@ export function ReorderSuggestionsPage() {
               }}
             />
           </div>
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-border text-left text-text-sub">
-                <th className="p-2 font-normal">履约区域</th>
-                <th className="p-2 font-normal">渠道</th>
-                <th className="p-2 font-normal">网络</th>
-                <th className="p-2 font-normal">SKU</th>
-                <th className="p-2 font-normal">商家</th>
-                <th className="p-2 font-normal">健康灯</th>
-                <th className="p-2 font-normal">建议下单日</th>
-                <th className="p-2 font-normal">预计断货日</th>
-                <th className="p-2 font-normal">覆盖天数</th>
-                <th className="p-2 font-normal">建议数量</th>
-                <th className="p-2 font-normal">需求口径</th>
-                <th className="p-2 font-normal">口径</th>
-                <th className="p-2 font-normal">状态</th>
-              </tr>
-            </thead>
-            <tbody>
-              {items.map((item: ReorderSuggestionRow) => {
-                const stockoutDate = deriveProjectedStockoutDate(item.coverageDays);
-                const orderOverdue =
-                  item.status === 'pending' && isSuggestedOrderOverdue(item.suggestedDate);
-                return (
-                <tr key={item.id} className="border-b border-border/60">
-                  <td className="p-2 font-mono text-text-main">{item.fulfillmentRegion ?? '—'}</td>
-                  <td className="p-2 font-mono text-text-main">{item.platform ?? '—'}</td>
-                  <td className="p-2 font-mono text-primary">
-                    {item.warehouseCode ?? '网络'}
-                    {Array.isArray(item.metrics?.triggerWarehouses) &&
-                    (item.metrics.triggerWarehouses as string[]).length > 0 ? (
-                      <span className="ml-1 block text-xs font-sans text-text-sub">
-                        触发：{(item.metrics.triggerWarehouses as string[]).join('、')}
-                      </span>
-                    ) : null}
-                  </td>
-                  <td className="p-2 font-mono text-text-main">
-                    {item.skuId ? (
-                      <Link
-                        to={`/inventory/planning/${item.skuId}`}
-                        className="text-primary hover:underline"
-                      >
-                        {item.skuCode}
-                      </Link>
-                    ) : (
-                      item.skuCode
-                    )}
-                  </td>
-                  <td className="p-2">
-                    {item.merchantCode ? (
-                      <span className="font-mono">{item.merchantName ?? item.merchantCode}</span>
-                    ) : (
-                      <span className="text-text-hint">—</span>
-                    )}
-                  </td>
-                  <td className="p-2">
-                    {item.healthStatus ? (
-                      <InventoryHealthBadge health={item.healthStatus} />
-                    ) : (
-                      '-'
-                    )}
-                  </td>
-                  <td
-                    className={`p-2 font-numeric ${orderOverdue ? 'font-medium text-destructive' : 'text-text-main'}`}
-                  >
-                    {item.suggestedDate}
-                    {orderOverdue ? ' · 逾期' : ''}
-                  </td>
-                  <td className="p-2 font-numeric text-text-main">
-                    {stockoutDate ?? '—'}
-                  </td>
-                  <td className="p-2 font-numeric text-text-main">
-                    {item.coverageDays ?? '-'}
-                  </td>
-                  <td className="p-2 font-numeric text-primary">{item.suggestedQty}</td>
-                  <td className="p-2 text-xs text-text-sub">
-                    {(item.metrics?.demandSource as string) === 'forecast' ? '销售预测' : '历史销量'}
-                  </td>
-                  <td className="max-w-md p-2 text-text-sub">
-                    <button
-                      type="button"
-                      className="text-left text-xs text-primary hover:underline"
-                      onClick={() =>
-                        setExpandedReason((prev) => ({ ...prev, [item.id]: !prev[item.id] }))
-                      }
-                    >
-                      {expandedReason[item.id] ? '收起' : '查看口径'}
-                    </button>
-                    {expandedReason[item.id] && (
-                      <p className="mt-1 whitespace-pre-wrap text-xs text-text-main">
-                        {formatSuggestionExplain(item.metrics, item)}
-                      </p>
-                    )}
-                  </td>
-                  <td className="p-2 text-text-main">
-                    {item.status}
-                    {item.planId && (
-                      <>
-                        {' · '}
-                        <Link to={`/pmc/${item.planId}`} className="text-primary hover:underline">已入计划</Link>
-                      </>
-                    )}
-                  </td>
-                </tr>
-              );
-              })}
-              {!items.length && (
-                <tr>
-                  <td colSpan={10} className="p-4 text-center text-text-hint">
-                    暂无建议，点击上方「运行补货预测」生成
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
+          <ReorderSuggestionsTable
+            items={items}
+            getWidth={columnWidths.getWidth}
+            onResizeStart={columnWidths.onResizeStart}
+            layoutKey={columnWidths.layoutKey}
+          />
           <ListPagination
             page={page}
             pageSize={pageSize}

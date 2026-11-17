@@ -33,6 +33,12 @@ const CONFIDENCE_LABEL: Record<string, string> = {
   low: '低',
 };
 
+function formatSalesRegion(value?: string | null): string {
+  const code = value?.trim();
+  if (!code || code === 'ALL') return '全部';
+  return code;
+}
+
 function formatLifecycle(value?: string | null): string {
   if (!value) return '';
   return LIFECYCLE_LABEL[value] ?? value;
@@ -85,12 +91,13 @@ export function buildForecastHorizonWideCsv(dataset: HorizonExportDataset): {
   rowCount: number;
 } {
   const monthLabels = dataset.horizon.map((h) => h.monthLabel);
-  const headers = ['SKU', 'SKU名称', '平台', '生命周期', '分层', ...monthLabels.map(excelKeepYmText)];
+  const headers = ['SKU', 'SKU名称', '区域', '平台', '生命周期', '分层', ...monthLabels.map(excelKeepYmText)];
   const rows = dataset.items.map((row) => {
     const byLabel = new Map(row.months.map((cell) => [cell.monthLabel, cell]));
     return [
       row.skuCode,
       row.skuName,
+      formatSalesRegion(row.salesRegion),
       formatForecastChannelLabel(row.platform),
       formatLifecycle(row.lifecycle),
       formatTierLabel(row.profileSegment),
@@ -116,6 +123,7 @@ export function buildForecastHorizonDetailCsv(dataset: HorizonExportDataset): {
   const headers = [
     '时段',
     'SKU',
+    '区域',
     '品类',
     '平台',
     '绝对月',
@@ -152,6 +160,7 @@ function buildHistoryDetailRow(
   return [
     '历史',
     row.skuCode,
+    formatSalesRegion(row.salesRegion),
     row.category ?? '',
     formatForecastChannelLabel(row.platform),
     excelKeepYmText(cell.monthLabel),
@@ -189,6 +198,7 @@ function buildFutureDetailRow(
   return [
     '未来',
     row.skuCode,
+    formatSalesRegion(row.salesRegion),
     row.category ?? '',
     formatForecastChannelLabel(row.platform),
     excelKeepYmText(cell.monthLabel),
@@ -210,7 +220,9 @@ export function buildForecastCalibrationImportCsv(dataset: HorizonExportDataset)
 } {
   const filtered: HorizonExportDataset = {
     ...dataset,
-    items: dataset.items.filter((row) => row.platform !== 'ALL'),
+    items: dataset.items.filter(
+      (row) => row.platform !== 'ALL' && row.salesRegion && row.salesRegion !== 'ALL',
+    ),
   };
   return buildForecastHorizonWideCsv(filtered);
 }
@@ -221,6 +233,9 @@ export async function loadForecastHorizonExportDataset(input: {
   platform?: string;
   platforms?: string[];
   channelView?: string;
+  salesRegion?: string;
+  salesRegions?: string[];
+  splitByRegion?: boolean;
   skuCode?: string;
   category?: string;
   categories?: string[];
@@ -248,6 +263,9 @@ export async function loadForecastHorizonExportDataset(input: {
       platform: input.platform,
       platforms: input.platforms,
       channelView: input.channelView,
+      salesRegion: input.salesRegion,
+      salesRegions: input.salesRegions,
+      splitByRegion: input.splitByRegion,
       skuCode: input.skuCode,
       category: input.category,
       categories: input.categories,
@@ -281,6 +299,9 @@ export async function buildForecastHorizonExportCsv(input: {
   platform?: string;
   platforms?: string[];
   channelView?: string;
+  salesRegion?: string;
+  salesRegions?: string[];
+  splitByRegion?: boolean;
   skuCode?: string;
   category?: string;
   categories?: string[];

@@ -2,6 +2,8 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+**P0 补丁计划：** [`2026-11-13-forecast-region-platform-p0.md`](./2026-11-13-forecast-region-platform-p0.md)（归区一致 + 校准叶子约束）
+
 **Goal:** 落地显式区域映射，并将预测叶子改为「销售区域 × 渠道」、补货/健康/PMC 改为「履约区域 × 渠道」，一期区域 1:1、不做跨区供货。
 
 **Architecture:** 新增站点/仓库映射表与解析库；预测行增加 `sales_region`（叶子写入，合并视图即时加总）；补货/预警/PMC 增加 `fulfillment_region` + `platform`，区域库存按渠道占比（预测优先否则历史）分摊。旧 `station=ALL` 预测版本只读，不参与新补货主路径。

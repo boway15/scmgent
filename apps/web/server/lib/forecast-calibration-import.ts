@@ -19,6 +19,7 @@ const SAMPLE_LIMIT = 20;
 
 const COL_PERIOD = '时段';
 const COL_SKU = 'SKU';
+const COL_REGION = '区域';
 const COL_PLATFORM = '平台';
 const COL_MONTH = '绝对月';
 const COL_CALIBRATION = '校准值';
@@ -27,6 +28,7 @@ const COL_REASON = '调整原因';
 const IMPORT_COLUMN_ALIASES: Record<string, string[]> = {
   [COL_PERIOD]: ['period', 'time_period'],
   [COL_SKU]: ['sku', 'sku_code', 'skucode'],
+  [COL_REGION]: ['sales_region', 'region', '销售区域'],
   [COL_PLATFORM]: ['platform', 'channel'],
   [COL_MONTH]: ['month', 'forecast_month', '绝对月份'],
   [COL_CALIBRATION]: ['manual_daily_avg', 'manual', '校准日均'],
@@ -85,6 +87,7 @@ type ParsedImportRow = {
   rowIndex: number;
   period: string;
   skuCode: string;
+  salesRegionLabel: string;
   platformLabel: string;
   monthLabel: string;
   calibrationRaw: string;
@@ -97,6 +100,9 @@ const WIDE_FIXED_HEADER_KEYS = new Set(
     'sku名称',
     'sku_name',
     'skuname',
+    '区域',
+    'sales_region',
+    'region',
     '平台',
     'platform',
     'channel',
@@ -136,6 +142,22 @@ export function parseCalibrationDaily(raw: string): number | null | 'invalid' {
   const value = Number(trimmed.replace(/,/g, ''));
   if (!Number.isFinite(value) || value < 0) return 'invalid';
   return roundDaily(value);
+}
+
+/** 解析导出明细中的区域列；全部区域不可导入。 */
+export function parseCalibrationImportRegion(
+  label: string,
+): { salesRegion: string } | { error: 'merged' | 'missing' | 'invalid' } {
+  const trimmed = label.trim();
+  if (!trimmed) return { error: 'missing' };
+  if (trimmed === '全部' || trimmed.toUpperCase() === 'ALL') {
+    return { error: 'merged' };
+  }
+  const code = trimmed.toUpperCase();
+  if (!/^[A-Z0-9_]+$/.test(code)) {
+    return { error: 'invalid' };
+  }
+  return { salesRegion: code };
 }
 
 /** 解析导出明细中的平台列；全平台不可导入。 */
@@ -246,6 +268,7 @@ function parseDetailImportRows(rows: Array<Record<string, string>>): ParsedImpor
     rowIndex: index + 2,
     period: pickRowValue(row, COL_PERIOD),
     skuCode: pickRowValue(row, COL_SKU).trim(),
+    salesRegionLabel: pickRowValue(row, COL_REGION),
     platformLabel: pickRowValue(row, COL_PLATFORM),
     monthLabel: pickRowValue(row, COL_MONTH).trim(),
     calibrationRaw: pickRowValue(row, COL_CALIBRATION),
@@ -259,6 +282,7 @@ function expandWideImportRows(rows: Array<Record<string, string>>): ParsedImport
     const row = rows[index]!;
     const rowIndex = index + 2;
     const skuCode = pickRowValue(row, COL_SKU).trim();
+    const salesRegionLabel = pickRowValue(row, COL_REGION);
     const platformLabel = pickRowValue(row, COL_PLATFORM);
     for (const [header, rawValue] of Object.entries(row)) {
       if (isWideFixedColumn(header)) continue;
@@ -268,6 +292,7 @@ function expandWideImportRows(rows: Array<Record<string, string>>): ParsedImport
         rowIndex,
         period: '未来',
         skuCode,
+        salesRegionLabel,
         platformLabel,
         monthLabel: monthLabelNorm,
         calibrationRaw: rawValue ?? '',
@@ -285,11 +310,12 @@ function parseImportRows(rows: Array<Record<string, string>>): ParsedImportRow[]
 
 function forecastCellKey(
   skuId: string,
+  salesRegion: string,
   platform: string,
   year: number,
   month: number,
 ): string {
-  return `${skuId}|${platform}|${year}|${month}`;
+  return `${skuId}|${salesRegion}|${platform}|${year}|${month}`;
 }
 
 export function parseCalibrationImportCsvBuffer(buffer: Buffer | ArrayBuffer | Uint8Array): {
@@ -357,6 +383,7 @@ export async function runForecastCalibrationImport(input: {
           .select({
             id: salesForecastMonthly.id,
             skuId: salesForecastMonthly.skuId,
+            salesRegion: salesForecastMonthly.salesRegion,
             platform: salesForecastMonthly.platform,
             forecastYear: salesForecastMonthly.forecastYear,
             month: salesForecastMonthly.month,
@@ -371,6 +398,10 @@ export async function runForecastCalibrationImport(input: {
             ),
           );
 
+  const versionHasRegionLeaves = forecastRows.some(
+    (row) => row.salesRegion && row.salesRegion.trim().toUpperCase() !== 'ALL',
+  );
+
   const existingByKey = new Map<string, ExistingForecastCell>();
   for (const row of forecastRows) {
     const system = Number(row.forecastDailyAvg);
@@ -378,8 +409,9 @@ export async function runForecastCalibrationImport(input: {
       row.manualDailyAvg != null && row.manualDailyAvg !== ''
         ? Number(row.manualDailyAvg)
         : null;
+    const region = (row.salesRegion ?? 'ALL').trim().toUpperCase() || 'ALL';
     existingByKey.set(
-      forecastCellKey(row.skuId, row.platform, row.forecastYear, row.month),
+      forecastCellKey(row.skuId, region, row.platform, row.forecastYear, row.month),
       {
         id: row.id,
         forecastDailyAvg: Number.isFinite(system) ? roundDaily(system) : 0,
@@ -400,6 +432,25 @@ export async function runForecastCalibrationImport(input: {
       result.hasBlockingIssues = true;
       if (result.samples.errors.length < SAMPLE_LIMIT) {
         result.samples.errors.push({ row: row.rowIndex, message: 'SKU 为空' });
+      }
+      continue;
+    }
+
+    const regionParsed =
+      versionHasRegionLeaves
+        ? parseCalibrationImportRegion(row.salesRegionLabel)
+        : { salesRegion: 'ALL' as const };
+    if ('error' in regionParsed) {
+      result.errors += 1;
+      result.hasBlockingIssues = true;
+      const message =
+        regionParsed.error === 'merged'
+          ? '区域为全部，请使用「分区域」视图导出后再导入'
+          : regionParsed.error === 'missing'
+            ? '区域为空：区域叶子版本须带「区域」列，请使用分区域视图导出'
+            : `无法识别区域：${row.salesRegionLabel || '（空）'}`;
+      if (result.samples.errors.length < SAMPLE_LIMIT) {
+        result.samples.errors.push({ row: row.rowIndex, message });
       }
       continue;
     }
@@ -459,14 +510,14 @@ export async function runForecastCalibrationImport(input: {
       continue;
     }
 
-    const importKey = `${row.skuCode}|${platformParsed.platform}|${monthLabelNorm}`;
+    const importKey = `${row.skuCode}|${regionParsed.salesRegion}|${platformParsed.platform}|${monthLabelNorm}`;
     if (seenImportKeys.has(importKey)) {
       result.errors += 1;
       result.hasBlockingIssues = true;
       if (result.samples.errors.length < SAMPLE_LIMIT) {
         result.samples.errors.push({
           row: row.rowIndex,
-          message: `重复数据（与第 ${seenImportKeys.get(importKey)} 行相同 SKU/平台/月份）`,
+          message: `重复数据（与第 ${seenImportKeys.get(importKey)} 行相同 SKU/区域/平台/月份）`,
         });
       }
       continue;
@@ -487,7 +538,13 @@ export async function runForecastCalibrationImport(input: {
     }
 
     const existing = existingByKey.get(
-      forecastCellKey(skuId, platformParsed.platform, monthParsed.year, monthParsed.month),
+      forecastCellKey(
+        skuId,
+        regionParsed.salesRegion,
+        platformParsed.platform,
+        monthParsed.year,
+        monthParsed.month,
+      ),
     );
     if (!existing) {
       result.errors += 1;
@@ -495,7 +552,7 @@ export async function runForecastCalibrationImport(input: {
       if (result.samples.errors.length < SAMPLE_LIMIT) {
         result.samples.errors.push({
           row: row.rowIndex,
-          message: `本版本无预测行：${row.skuCode} / ${platformParsed.platform} / ${row.monthLabel}`,
+          message: `本版本无预测行：${row.skuCode} / ${regionParsed.salesRegion} / ${platformParsed.platform} / ${row.monthLabel}`,
         });
       }
       continue;

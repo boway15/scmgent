@@ -1,12 +1,12 @@
 /**
  * 销量按销售区域分桶的纯函数。
  *
- * 预测基线生成需要把 `sales_history` 的日销按 `resolveSalesRegion(station)` 归区，
+ * 预测基线生成需要把 `sales_history` 的日销按 `resolveSalesRowRegion` 归区，
  * 而不是把所有站点合并成 ALL。本模块提供归区分组与按区从日销派生月销的纯函数，
  * 便于在 forecast-collaboration 中按 (sku × region × platform) 训练叶子。
  */
 import type { RegionMappingTables, RuntimeRegion } from './region-mapping.js';
-import { isMappableRegion, resolveSalesRegion } from './region-mapping.js';
+import { resolveSalesRowRegion } from './region-mapping.js';
 
 /** 带站点/行上区域的日销行。warehouseCode 仍保留以兼容旧过滤路径。 */
 export type RegionPartitionableRow = {
@@ -28,11 +28,7 @@ export function groupRowsBySalesRegion<T extends RegionPartitionableRow>(
 ): Map<RuntimeRegion, T[]> {
   const groups = new Map<RuntimeRegion, T[]>();
   for (const row of rows) {
-    const coded = row.salesRegion?.trim().toUpperCase();
-    const region: RuntimeRegion =
-      coded && (isMappableRegion(coded) || coded === 'UNMAPPED')
-        ? (coded as RuntimeRegion)
-        : resolveSalesRegion(row.station ?? null, tables);
+    const region = resolveSalesRowRegion(row, tables);
     const list = groups.get(region) ?? [];
     list.push(row);
     groups.set(region, list);

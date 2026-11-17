@@ -1,4 +1,4 @@
-import { eq, and, desc, sql, inArray, or } from 'drizzle-orm';
+import { eq, and, desc, sql, inArray, or, ne } from 'drizzle-orm';
 import type { Context, Next } from 'hono';
 import { Hono } from 'hono';
 import {
@@ -65,6 +65,10 @@ import {
   clearForecastVersionCalibrations,
   runForecastCalibrationImport,
 } from '../lib/forecast-calibration-import.js';
+import {
+  assertCalibrationWritableLeaf,
+  canExportCalibrationTable,
+} from '../lib/forecast-calibration-guard.js';
 import { runWalkForwardAccuracyBacktest } from '../lib/forecast-walkforward-backtest.js';
 import { enqueueDownloadJob } from '../lib/download-enqueue.js';
 import {
@@ -250,6 +254,18 @@ function seasonalityProjectGroupScopeCondition(scope: ProjectGroupScope) {
       inArray(salesForecastSeasonality.dimensionValue, scope.groups),
     ),
   );
+}
+
+function readSalesRegionsQuery(c: Context): string[] {
+  const raw = c.req.queries('salesRegions') ?? [];
+  return [
+    ...new Set(
+      raw
+        .flatMap((item) => item.split(','))
+        .map((item) => item.trim().toUpperCase())
+        .filter(Boolean),
+    ),
+  ];
 }
 
 function readPlatformsQuery(c: Context): string[] {
@@ -1290,6 +1306,9 @@ salesForecastRoutes.get('/sales-forecasts/horizon', requireMenu('data.forecast')
   const platform = c.req.query('platform')?.trim() || undefined;
   const platforms = readPlatformsQuery(c);
   const channelView = c.req.query('channelView')?.trim() || undefined;
+  const salesRegion = c.req.query('salesRegion')?.trim().toUpperCase() || undefined;
+  const salesRegions = readSalesRegionsQuery(c);
+  const splitByRegion = ['1', 'true'].includes(c.req.query('splitByRegion')?.trim().toLowerCase() ?? '');
   const skuCode = c.req.query('skuCode')?.trim() || undefined;
   const skuId = c.req.query('skuId')?.trim() || undefined;
   const categoryQuery = readCategoryQuery(c);
@@ -1325,6 +1344,9 @@ salesForecastRoutes.get('/sales-forecasts/horizon', requireMenu('data.forecast')
     platform,
     platforms,
     channelView,
+    salesRegion,
+    salesRegions,
+    splitByRegion,
     skuId,
     skuCode,
     categories: categoryQuery.categories,
@@ -1433,18 +1455,43 @@ salesForecastRoutes.get('/sales-forecasts/horizon/export', requireMenu('data.for
   const modeRaw = c.req.query('mode')?.trim().toLowerCase();
   const mode: ForecastHorizonExportMode =
     modeRaw === 'detail' ? 'detail' : modeRaw === 'calibration' ? 'calibration' : 'wide';
+  const version = await getForecastVersionById(versionId);
+  if (!version) {
+    return c.json({ message: 'Forecast version not found' }, 404);
+  }
+
   if (mode === 'calibration') {
     const channelView = c.req.query('channelView')?.trim().toLowerCase();
-    if (channelView !== 'by_channel') {
+    const splitByRegion = ['1', 'true'].includes(
+      c.req.query('splitByRegion')?.trim().toLowerCase() ?? '',
+    );
+    const singleRegion = c.req.query('salesRegion')?.trim().toUpperCase();
+    const salesRegions = [
+      ...new Set([...readSalesRegionsQuery(c), ...(singleRegion ? [singleRegion] : [])]),
+    ];
+    const hasRegionLeaves = await db
+      .select({ id: salesForecastMonthly.id })
+      .from(salesForecastMonthly)
+      .where(
+        and(eq(salesForecastMonthly.versionId, versionId), ne(salesForecastMonthly.salesRegion, 'ALL')),
+      )
+      .limit(1);
+    if (hasRegionLeaves.length > 0) {
+      if (!canExportCalibrationTable({ channelView, splitByRegion, salesRegions })) {
+        return c.json(
+          {
+            message:
+              '导出校准表须为「分平台」，且区域为「分区域」或只筛选一个销售区域',
+          },
+          400,
+        );
+      }
+    } else if (channelView !== 'by_channel') {
       return c.json(
         { message: '导出校准表须使用分平台视图：在矩阵筛选区将「平台展示」切换为「分平台」' },
         400,
       );
     }
-  }
-  const version = await getForecastVersionById(versionId);
-  if (!version) {
-    return c.json({ message: 'Forecast version not found' }, 404);
   }
 
   const monthCountRaw = Number(c.req.query('monthCount')?.trim());
@@ -1473,6 +1520,9 @@ salesForecastRoutes.get('/sales-forecasts/horizon/export', requireMenu('data.for
       platform: c.req.query('platform')?.trim() || undefined,
       platforms: readPlatformsQuery(c),
       channelView: c.req.query('channelView')?.trim() || undefined,
+      salesRegion: c.req.query('salesRegion')?.trim().toUpperCase() || undefined,
+      salesRegions: readSalesRegionsQuery(c),
+      splitByRegion: ['1', 'true'].includes(c.req.query('splitByRegion')?.trim().toLowerCase() ?? ''),
       skuCode: c.req.query('skuCode')?.trim() || undefined,
       categories: categoryQuery.categories,
       profileSegment: c.req.query('profileSegment')?.trim() || undefined,
@@ -2368,17 +2418,14 @@ salesForecastRoutes.put('/sales-forecasts/:id', requireMenu('data.forecast'), re
   if (!existing) return c.json({ message: 'Forecast row not found' }, 404);
   if (existing.versionId) await assertVersionIsDraft(existing.versionId);
 
-  if (
-    existing.platform === 'ALL' &&
-    manualPatch !== undefined
-  ) {
-    return c.json(
-      {
-        message:
-          '全平台预测行不可直接校准，请在分平台视图编辑或使用「导入校准」写回各渠道',
-      },
-      400,
-    );
+  if (manualPatch !== undefined) {
+    const writable = assertCalibrationWritableLeaf({
+      platform: existing.platform,
+      salesRegion: existing.salesRegion ?? 'ALL',
+    });
+    if (!writable.ok) {
+      return c.json({ message: writable.message }, 400);
+    }
   }
 
   const platformCode = body.platform != null ? await resolveSalesPlatformCode(body.platform) : existing.platform;

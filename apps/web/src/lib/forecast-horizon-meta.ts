@@ -94,6 +94,13 @@ export function formatForecastChannelLabel(platform?: string | null): string {
   return code;
 }
 
+/** 预测矩阵/抽屉：销售区域展示（与后端 sales_region 码一致） */
+export function formatSalesRegionLabel(salesRegion?: string | null): string {
+  const code = salesRegion?.trim().toUpperCase();
+  if (!code || code === 'ALL') return '全部区域';
+  return code;
+}
+
 /** 合计 / 全平台视角（非单渠道行） */
 export function isMergedForecastChannel(platform?: string | null): boolean {
   return resolveHorizonPlatformScope(platform) === 'ALL';

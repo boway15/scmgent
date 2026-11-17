@@ -6,6 +6,7 @@ import { ForecastHorizonPanel } from '@/components/ForecastHorizonPanel';
 import type { ForecastHorizonRow } from '@/components/ForecastSkuDetailDrawer';
 import { ProductScopeSwitch } from '@/components/ProductScopeSwitch';
 import { HorizonChannelFilters } from '@/components/planning-horizon/HorizonChannelFilters';
+import { HorizonRegionFilters, regionQuery } from '@/components/planning-horizon/HorizonRegionFilters';
 import { HorizonSkuTierFilters } from '@/components/planning-horizon/HorizonSkuTierFilters';
 import {
   channelQuery,
@@ -31,7 +32,11 @@ type Props = {
   fixedVersionId: string;
   fixedVersionLabel?: string;
   initialPlatform?: string;
-  onSkuClick?: (row: ForecastHorizonRow, versionId: string, ctx: { platform: string }) => void;
+  onSkuClick?: (
+    row: ForecastHorizonRow,
+    versionId: string,
+    ctx: { platform: string; splitByRegion: boolean; salesRegions: string[] },
+  ) => void;
   headerExtra?: React.ReactNode;
   title?: string;
   description?: string;
@@ -52,7 +57,7 @@ export function ForecastDataExplorer({
   onSkuClick,
   headerExtra,
   title = '预测数据',
-  description = '合计时一个 SKU 一行；选「全部」是各平台加总，选一个平台只看该平台。切换「分平台」后每个平台各占一行。SKU 可一次填多个，用逗号或空格分隔。列表按商品分层（T1→T99）再按 SKU 编码排序。导出与当前查询一致。',
+  description = '平台和区域各自可合计或拆开。合计且选「全部」是该维度加总；选一个只看该值。切换「分平台 / 分区域」后每个取值各占一行。SKU 可一次填多个，用逗号或空格分隔。列表按商品分层（T1→T99）再按 SKU 编码排序。导出与当前查询一致。',
   topSection,
   showPendingCalibrationShortcut = false,
   calibrationImportEnabled = false,
@@ -66,12 +71,18 @@ export function ForecastDataExplorer({
   const [selectedPlatforms, setSelectedPlatforms] = useState<string[]>(initialChannel.platforms);
   const [channelOpen, setChannelOpen] = useState(false);
   const channelMenuRef = useRef<HTMLDivElement>(null);
+  const [splitRegions, setSplitRegions] = useState(false);
+  const [primaryRegion, setPrimaryRegion] = useState('');
+  const [selectedRegions, setSelectedRegions] = useState<string[]>([]);
+  const [regionOpen, setRegionOpen] = useState(false);
+  const regionMenuRef = useRef<HTMLDivElement>(null);
   const [categories, setCategories] = useState<string[]>([]);
   const [profileSegment, setProfileSegment] = useState('');
   const [pendingCalibration, setPendingCalibration] = useState(false);
   const [applied, setApplied] = useState({
     skuCode: '',
     ...channelQuery(initialChannel),
+    ...regionQuery({ split: false, primaryRegion: '', regions: [] }),
     categories: [] as string[],
     profileSegment: '',
     pendingCalibration: false,
@@ -79,13 +90,15 @@ export function ForecastDataExplorer({
   });
 
   useEffect(() => {
-    if (!channelOpen) return;
+    if (!channelOpen && !regionOpen) return;
     const onDocClick = (event: MouseEvent) => {
-      if (!channelMenuRef.current?.contains(event.target as Node)) setChannelOpen(false);
+      const target = event.target as Node;
+      if (channelOpen && !channelMenuRef.current?.contains(target)) setChannelOpen(false);
+      if (regionOpen && !regionMenuRef.current?.contains(target)) setRegionOpen(false);
     };
     document.addEventListener('mousedown', onDocClick);
     return () => document.removeEventListener('mousedown', onDocClick);
-  }, [channelOpen]);
+  }, [channelOpen, regionOpen]);
 
   useEffect(() => {
     const next = initialChannelSelection(initialPlatform);
@@ -103,6 +116,9 @@ export function ForecastDataExplorer({
     split?: boolean;
     primaryPlatform?: string;
     platforms?: string[];
+    regionSplit?: boolean;
+    primaryRegion?: string;
+    regions?: string[];
     pendingCalibration?: boolean;
     profileSegment?: string;
   }) => {
@@ -111,9 +127,15 @@ export function ForecastDataExplorer({
       primaryPlatform: next?.primaryPlatform ?? primaryPlatform,
       platforms: next?.platforms ?? selectedPlatforms,
     });
+    const region = regionQuery({
+      split: next?.regionSplit ?? splitRegions,
+      primaryRegion: next?.primaryRegion ?? primaryRegion,
+      regions: next?.regions ?? selectedRegions,
+    });
     setApplied({
       skuCode: skuCode.trim(),
       ...query,
+      ...region,
       categories,
       profileSegment: (next?.profileSegment ?? profileSegment).trim(),
       pendingCalibration: next?.pendingCalibration ?? pendingCalibration,
@@ -143,6 +165,23 @@ export function ForecastDataExplorer({
     setPrimaryPlatform(nextPrimary);
     setChannelOpen(false);
     applyFilters({ split: false, primaryPlatform: nextPrimary });
+  };
+
+  const setRegionGrain = (nextSplit: boolean) => {
+    if (nextSplit) {
+      const seeded =
+        selectedRegions.length === 0 && primaryRegion ? [primaryRegion] : selectedRegions;
+      setSplitRegions(true);
+      setSelectedRegions(seeded);
+      setRegionOpen(false);
+      applyFilters({ regionSplit: true, regions: seeded });
+      return;
+    }
+    const nextPrimary = selectedRegions.length === 1 ? selectedRegions[0]! : '';
+    setSplitRegions(false);
+    setPrimaryRegion(nextPrimary);
+    setRegionOpen(false);
+    applyFilters({ regionSplit: false, primaryRegion: nextPrimary });
   };
 
   const channelOptions = (platformOptions ?? []).filter((item) => item.code !== 'ALL');
@@ -176,6 +215,18 @@ export function ForecastDataExplorer({
             channelOpen={channelOpen}
             onChannelOpenChange={setChannelOpen}
             channelMenuRef={channelMenuRef}
+            onApply={(next) => applyFilters(next)}
+          />
+          <HorizonRegionFilters
+            splitRegions={splitRegions}
+            onSplitChange={setRegionGrain}
+            primaryRegion={primaryRegion}
+            onPrimaryRegionChange={setPrimaryRegion}
+            selectedRegions={selectedRegions}
+            onSelectedRegionsChange={setSelectedRegions}
+            regionOpen={regionOpen}
+            onRegionOpenChange={setRegionOpen}
+            regionMenuRef={regionMenuRef}
             onApply={(next) => applyFilters(next)}
           />
           <div className="flex flex-col gap-1 text-sm">
@@ -226,9 +277,7 @@ export function ForecastDataExplorer({
             onSkuClick={
               onSkuClick
                 ? (row, ctx) =>
-                    onSkuClick(row, fixedVersionId, {
-                      platform: ctx.platform,
-                    })
+                    onSkuClick(row, fixedVersionId, ctx)
                 : undefined
             }
             calibrationImportEnabled={calibrationImportEnabled}

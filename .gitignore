@@ -38,6 +38,13 @@ docs/samples/import-fob/产品销售报表-*.xlsx
 # 本地回测 / 分析产物（降低 git status 噪音，勿提交）
 apps/web/docs/samples/
 docs/samples/forecast-backtest/
+docs/samples/xiaoshou/
+docs/samples/sku-forecast-*
+docs/samples/_*
+映射-区域两层关系.json
+apps/web/scripts/inspect-*.ts
+apps/web/scripts/probe-feishu-*.ts
+apps/web/scripts/verify-inventory-*.ts
 apps/web/.backtest-out.txt
 apps/web/tmp-hono-test/
 apps/web/scripts/.hono-test/

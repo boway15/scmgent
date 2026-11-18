@@ -1,6 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  allChannelPeerLookbackFrom,
   buildReviewItemsForForecast,
   buildReviewItemIdentity,
   buildReviewItemKey,
@@ -16,6 +17,7 @@ import {
   shouldPurgeMonthsOutsideHorizon,
   type SeasonalityLookup,
 } from './forecast-collaboration.js';
+import { effectiveRecentWindowEnd } from './forecast-baseline.js';
 import { resolveBaselineForecastPlatforms } from './forecast-platform-scope.js';
 
 describe('forecast-collaboration', () => {
@@ -434,5 +436,18 @@ describe('forecast-collaboration', () => {
       ['ALL'],
     );
     assert.deepEqual(resolveBaselineGenerateStations({ allStations: ['US', 'EU', 'CA'] }), ['ALL']);
+  });
+
+  it('starts all-channel daily load at the peer window, including the prior month when the current month is incomplete', () => {
+    const midMonth = new Date(Date.UTC(2026, 10, 18));
+    assert.equal(
+      allChannelPeerLookbackFrom(effectiveRecentWindowEnd(midMonth)),
+      '2026-10-02',
+    );
+    const monthEnd = new Date(Date.UTC(2026, 10, 30));
+    assert.equal(
+      allChannelPeerLookbackFrom(effectiveRecentWindowEnd(monthEnd)),
+      '2026-11-01',
+    );
   });
 });

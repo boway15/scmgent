@@ -1116,6 +1116,10 @@ async function generateBaselineForPlatformRegions(input: {
     }
   }
 
+  // 本平台结束即可回收；下一平台会重新加载。区域之间仍复用这两份。
+  platformDailyUnfiltered = undefined;
+  platformDailyAllUnfiltered = undefined;
+
   if (!lastResult) {
     throw new Error('无法生成预测：未配置可用区域');
   }
@@ -1309,6 +1313,9 @@ async function generateBaselineForStationPlatform(input: {
   }> = [];
 
   const recentWindowEnd = effectiveRecentWindowEnd(today);
+  // 全平台日销只覆盖 peer 近端：起点与 recent30Since 同一天，终点是本次 asOf。
+  const recent30Since = addDays(recentWindowEnd, -29);
+  const allChannelFrom = allChannelPeerLookbackFrom(recentWindowEnd);
   /**
    * 批量地平线冻结特征截止（上月末）。过去开始月回测同样需要：
    * 严格无泄漏靠 today/recentWindowEnd 截断历史；若省略 historyCapEnd，
@@ -1334,65 +1341,59 @@ async function generateBaselineForStationPlatform(input: {
 
   if (regionLeafMode) {
     const regionCode = salesRegion as RuntimeRegion;
-  const loadFullDailyMaps = async () => {
-    const [daily, dailyAll] = await Promise.all([
-      loadDailySalesBySkuIdsInRange({
+    const loadFullDailyMaps = async () => {
+      const daily = await loadDailySalesBySkuIdsInRange({
         skuIds,
         fromDate: lookbackFrom,
         toDate: lookbackTo,
         platform,
-      }),
-      useAllCatV41
-        ? loadDailySalesBySkuIdsInRange({
+      });
+      const dailyAll = useAllCatV41
+        ? await loadDailySalesBySkuIdsInRange({
             skuIds,
-            fromDate: lookbackFrom,
+            fromDate: allChannelFrom,
             toDate: lookbackTo,
             platform: 'ALL',
           })
-        : Promise.resolve(new Map<string, DailySalesPoint[]>()),
-    ]);
-    input.onPlatformDailyLoaded?.({ daily, dailyAll });
-    return { daily, dailyAll };
-  };
-
-  if (input.platformDailyUnfiltered) {
-    loadedDailyBySku = filterDailySalesMapByRegion(
-      input.platformDailyUnfiltered,
-      regionCode,
-      tables,
-    );
-    dailyAllBySku =
-      useAllCatV41 && input.platformDailyAllUnfiltered
-        ? filterDailySalesMapByRegion(input.platformDailyAllUnfiltered, regionCode, tables)
         : new Map<string, DailySalesPoint[]>();
+      input.onPlatformDailyLoaded?.({ daily, dailyAll });
+      return { daily, dailyAll };
+    };
+
+    if (input.platformDailyUnfiltered) {
+      loadedDailyBySku = filterDailySalesMapByRegion(
+        input.platformDailyUnfiltered,
+        regionCode,
+        tables,
+      );
+      dailyAllBySku =
+        useAllCatV41 && input.platformDailyAllUnfiltered
+          ? filterDailySalesMapByRegion(input.platformDailyAllUnfiltered, regionCode, tables)
+          : new Map<string, DailySalesPoint[]>();
+    } else {
+      const { daily, dailyAll } = await loadFullDailyMaps();
+      loadedDailyBySku = filterDailySalesMapByRegion(daily, regionCode, tables);
+      dailyAllBySku = useAllCatV41
+        ? filterDailySalesMapByRegion(dailyAll, regionCode, tables)
+        : new Map<string, DailySalesPoint[]>();
+    }
   } else {
-    const { daily, dailyAll } = await loadFullDailyMaps();
-    loadedDailyBySku = filterDailySalesMapByRegion(daily, regionCode, tables);
+    loadedDailyBySku = await loadDailySalesBySkuIdsInRange({
+      skuIds,
+      fromDate: lookbackFrom,
+      toDate: lookbackTo,
+      platform,
+      ...stationFilter,
+    });
     dailyAllBySku = useAllCatV41
-      ? filterDailySalesMapByRegion(dailyAll, regionCode, tables)
+      ? await loadDailySalesBySkuIdsInRange({
+          skuIds,
+          fromDate: allChannelFrom,
+          toDate: lookbackTo,
+          platform: 'ALL',
+          ...stationFilter,
+        })
       : new Map<string, DailySalesPoint[]>();
-  }
-  } else {
-    const [loaded, dailyAll] = await Promise.all([
-      loadDailySalesBySkuIdsInRange({
-        skuIds,
-        fromDate: lookbackFrom,
-        toDate: lookbackTo,
-        platform,
-        ...stationFilter,
-      }),
-      useAllCatV41
-        ? loadDailySalesBySkuIdsInRange({
-            skuIds,
-            fromDate: lookbackFrom,
-            toDate: lookbackTo,
-            platform: 'ALL',
-            ...stationFilter,
-          })
-        : Promise.resolve(new Map<string, DailySalesPoint[]>()),
-    ]);
-    loadedDailyBySku = loaded;
-    dailyAllBySku = dailyAll;
   }
 
   const firstSaleBySku = new Map<string, string | null>();
@@ -1424,7 +1425,6 @@ async function generateBaselineForStationPlatform(input: {
   }
   const dailyBySku = loadedDailyBySku;
 
-  const recent30Since = addDays(recentWindowEnd, -29);
   const recent90Since = addDays(recentWindowEnd, -89);
   const recent90BySkuId = new Map<string, number>();
 
@@ -2343,6 +2343,14 @@ async function loadWarehouseStationMap(): Promise<Map<string, string>> {
       stationForWarehouse(row.regionGroup, row.countryCode).toUpperCase(),
     ]),
   );
+}
+
+/**
+ * 全平台日销只服务 peer 近端抬底。起点与 sumQtySince(recentWindowEnd 往前 29 天) 相同。
+ * 未完成月时 recentWindowEnd 是上月末，因此会带上上月末再往前的那一段，而不是自然日「今天往前 30 天」。
+ */
+export function allChannelPeerLookbackFrom(recentWindowEnd: Date): string {
+  return toDateOnly(addDays(recentWindowEnd, -29));
 }
 
 function sumQtySince(rows: Array<{ saleDate: string; qtySold: number }>, since: Date): number {

@@ -1,9 +1,13 @@
-import { useEffect, useId, useRef, useState } from 'react';
+import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import { ChecklistSearchSelect } from '@/components/ChecklistSearchSelect';
+import { placeFixedPopover } from '@/components/costing/place-fixed-popover';
 import { Input } from '@/components/ui/input';
 import { cn } from '@/lib/utils';
+
+const PANEL_MIN_WIDTH = 320;
 
 type CategorySearchSelectProps = {
   placeholder?: string;
@@ -98,9 +102,29 @@ function CategorySingleSearchSelect({
 }) {
   const listId = useId();
   const rootRef = useRef<HTMLDivElement>(null);
+  const anchorRef = useRef<HTMLDivElement>(null);
+  const listRef = useRef<HTMLUListElement>(null);
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState(value);
+  const [panelStyle, setPanelStyle] = useState<{ top: number; left: number; width: number } | null>(
+    null,
+  );
   const { options, isFetching, debouncedSearch } = useCategoryOptions(scope, search, open);
+
+  const placePanel = () => {
+    const anchor = anchorRef.current;
+    if (!anchor) return;
+    const rect = anchor.getBoundingClientRect();
+    const width = Math.min(Math.max(rect.width, PANEL_MIN_WIDTH), window.innerWidth - 16);
+    const pos = placeFixedPopover({
+      trigger: rect,
+      panelWidth: width,
+      panelHeight: 384,
+      viewportWidth: window.innerWidth,
+      viewportHeight: window.innerHeight,
+    });
+    setPanelStyle({ ...pos, width });
+  };
 
   useEffect(() => {
     setSearch(value);
@@ -108,13 +132,29 @@ function CategorySingleSearchSelect({
 
   useEffect(() => {
     const onDocClick = (event: MouseEvent) => {
-      if (!rootRef.current?.contains(event.target as Node)) {
-        setOpen(false);
-      }
+      const target = event.target as Node;
+      if (rootRef.current?.contains(target) || listRef.current?.contains(target)) return;
+      setOpen(false);
     };
     document.addEventListener('mousedown', onDocClick);
     return () => document.removeEventListener('mousedown', onDocClick);
   }, []);
+
+  useLayoutEffect(() => {
+    if (!open) return;
+    placePanel();
+    const onMove = (event: Event) => {
+      const target = event.target;
+      if (target instanceof Node && listRef.current?.contains(target)) return;
+      placePanel();
+    };
+    window.addEventListener('resize', onMove);
+    window.addEventListener('scroll', onMove, true);
+    return () => {
+      window.removeEventListener('resize', onMove);
+      window.removeEventListener('scroll', onMove, true);
+    };
+  }, [open]);
 
   const pick = (next: string) => {
     onChange(next);
@@ -129,7 +169,8 @@ function CategorySingleSearchSelect({
   };
 
   return (
-    <div ref={rootRef} className={cn('relative min-w-56 w-96 max-w-full', open && 'z-30', className)}>
+    <div ref={rootRef} className={cn('relative min-w-56 w-96 max-w-full', className)}>
+      <div ref={anchorRef}>
       <Input
         className="h-9 pr-8"
         placeholder={placeholder}
@@ -139,7 +180,10 @@ function CategorySingleSearchSelect({
         aria-expanded={open}
         aria-controls={listId}
         aria-autocomplete="list"
-        onFocus={() => setOpen(true)}
+        onFocus={() => {
+          setOpen(true);
+          placePanel();
+        }}
         onChange={(e) => {
           const next = e.target.value;
           setSearch(next);
@@ -153,6 +197,7 @@ function CategorySingleSearchSelect({
           }
         }}
       />
+      </div>
       {search ? (
         <button
           type="button"
@@ -163,12 +208,15 @@ function CategorySingleSearchSelect({
           ×
         </button>
       ) : null}
-      {open ? (
-        <ul
-          id={listId}
-          role="listbox"
-          className="absolute z-30 mt-1 max-h-96 w-full overflow-auto rounded-md border border-border bg-card py-1 text-sm shadow-md"
-        >
+      {open && panelStyle
+        ? createPortal(
+            <ul
+              ref={listRef}
+              id={listId}
+              role="listbox"
+              style={{ top: panelStyle.top, left: panelStyle.left, width: panelStyle.width }}
+              className="fixed z-[80] max-h-96 overflow-auto rounded-md border border-border bg-card py-1 text-sm shadow-md"
+            >
           <li>
             <button
               type="button"
@@ -208,8 +256,10 @@ function CategorySingleSearchSelect({
                 : '输入关键词或粘贴品类路径'}
             </li>
           )}
-        </ul>
-      ) : null}
+            </ul>,
+            document.body,
+          )
+        : null}
     </div>
   );
 }

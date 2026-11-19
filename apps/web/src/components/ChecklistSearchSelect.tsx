@@ -1,7 +1,12 @@
-import { useEffect, useId, useRef, useState } from 'react';
+import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { placeFixedPopover } from '@/components/costing/place-fixed-popover';
 import { Input } from '@/components/ui/input';
 import { cn } from '@/lib/utils';
+
+/** 高于粘性表头（约 60）和列宽拖动手柄所在层，避免下拉被表格盖住 */
+const PANEL_Z_INDEX_CLASS = 'z-[80]';
+const PANEL_MIN_WIDTH = 320;
 
 function BreakablePath({ text }: { text: string }) {
   const parts = text.split(/([/\-])/);
@@ -74,7 +79,7 @@ export function ChecklistSearchSelect({
     const anchor = anchorRef.current;
     if (!anchor) return;
     const rect = anchor.getBoundingClientRect();
-    const width = rect.width;
+    const width = Math.min(Math.max(rect.width, PANEL_MIN_WIDTH), window.innerWidth - 16);
     const pos = placeFixedPopover({
       trigger: rect,
       panelWidth: width,
@@ -87,9 +92,9 @@ export function ChecklistSearchSelect({
 
   useEffect(() => {
     const onDocClick = (event: MouseEvent) => {
-      if (!rootRef.current?.contains(event.target as Node)) {
-        onOpenChange(false);
-      }
+      const target = event.target as Node;
+      if (rootRef.current?.contains(target) || listRef.current?.contains(target)) return;
+      onOpenChange(false);
     };
     document.addEventListener('mousedown', onDocClick);
     return () => document.removeEventListener('mousedown', onDocClick);
@@ -115,11 +120,12 @@ export function ChecklistSearchSelect({
     }, 3000);
   };
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!open) return;
     placePanel();
     const onMove = (event: Event) => {
-      if (listRef.current?.contains(event.target as Node)) return;
+      const target = event.target;
+      if (target instanceof Node && listRef.current?.contains(target)) return;
       placePanel();
     };
     window.addEventListener('resize', onMove);
@@ -165,7 +171,7 @@ export function ChecklistSearchSelect({
   const summaryMode = selectedDisplay === 'summary';
 
   return (
-    <div ref={rootRef} className={cn('relative w-full', open && 'z-30', className)}>
+    <div ref={rootRef} className={cn('relative w-full', className)}>
       <div ref={anchorRef}>
       <Input
         className="h-9 pr-8"
@@ -236,19 +242,19 @@ export function ChecklistSearchSelect({
           ))}
         </div>
       ) : null}
-      {open ? (
-        <ul
-          ref={listRef}
-          id={listId}
-          role="listbox"
-          aria-multiselectable="true"
-          style={
-            panelStyle
-              ? { top: panelStyle.top, left: panelStyle.left, width: panelStyle.width }
-              : undefined
-          }
-          className="fixed z-50 max-h-80 overflow-auto overflow-x-hidden rounded-md border border-border bg-card py-1 text-sm shadow-md"
-        >
+      {open && panelStyle
+        ? createPortal(
+            <ul
+              ref={listRef}
+              id={listId}
+              role="listbox"
+              aria-multiselectable="true"
+              style={{ top: panelStyle.top, left: panelStyle.left, width: panelStyle.width }}
+              className={cn(
+                'fixed max-h-80 overflow-auto overflow-x-hidden rounded-md border border-border bg-card py-1 text-sm shadow-md',
+                PANEL_Z_INDEX_CLASS,
+              )}
+            >
           {summaryMode ? (
             <li className="sticky top-0 z-10 flex gap-2 border-b border-border/60 bg-card px-3 py-2">
               <button
@@ -325,8 +331,10 @@ export function ChecklistSearchSelect({
               {search.trim() ? noMatchHint : emptyHint}
             </li>
           )}
-        </ul>
-      ) : null}
+            </ul>,
+            document.body,
+          )
+        : null}
     </div>
   );
 }
